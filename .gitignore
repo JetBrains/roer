@@ -1,0 +1,19 @@
+# IDE
+.idea/*
+!.idea/runConfigurations/
+.vscode/
+
+# Claude Code local state
+.claude/settings.local.json
+
+# Node
+node_modules/
+dist/
+*.log
+
+# Rust / Tauri
+src-tauri/target/
+src-tauri/gen/
+
+# OS
+.DS_Store
