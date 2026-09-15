@@ -1,0 +1,22 @@
+[package]
+name = "roer"
+version = "0.1.0"
+description = "Session host for agent terminals"
+edition = "2021"
+rust-version = "1.77.2"
+
+[lib]
+name = "roer_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+base64 = "0.23.1"
+notify = "8.2.0"
+portable-pty = "0.9.0"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+tauri = { version = "2", features = [] }
+tauri-plugin-single-instance = "2.4.4"
