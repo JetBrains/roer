@@ -151,7 +151,22 @@ Three more ways, for when you are not in the session at all:
 npm install
 npm run tauri dev   # desktop app (requires Rust)
 npm run dev         # frontend only, http://localhost:1420
+npm run assemble    # debug Roer.app, for testing a handoff by hand
 ```
+
+`assemble` is what makes a handoff testable the way a user meets it. `tauri
+dev` builds a bare executable that LaunchServices cannot address, so the shim's
+`open -a Roer` neither starts it nor brings it forward; the app bundle it
+writes to `src-tauri/target/debug/bundle/macos/Roer.app` has an identifier and
+an icon, so the whole path works — including activation from a terminal and the
+Dock icon a refused activation falls back to.
+
+Stop a `tauri dev` run first. Both builds share the identifier
+`com.jetbrains.roer`, and `tauri-plugin-single-instance` makes whichever starts
+second exit at once — so a stale bundle can quietly answer handoffs while you
+watch a dev instance that is no longer running. The IntelliJ run configurations
+in `.idea/runConfigurations/` cover this: **Assemble Roer.app** stops any
+running instance, builds the bundle and opens it.
 
 Handoffs are delivered through a watched directory (`~/.roer/handoffs/`) rather
 than a `roer://` deep link, because macOS registers custom URL schemes for
