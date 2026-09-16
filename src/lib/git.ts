@@ -17,6 +17,8 @@ export interface FileChange {
   deleted: number;
   renamedFrom?: string | null;
   binary: boolean;
+  /** False when nobody could count the lines, so `added` means nothing. */
+  counted: boolean;
 }
 
 export interface Changes {

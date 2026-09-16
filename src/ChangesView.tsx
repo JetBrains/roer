@@ -200,11 +200,13 @@ export function ChangesView({ cwd, pane, active }: ChangesViewProps) {
   useEffect(() => {
     if (!changes) return;
     setSelection((current) => {
-      if (current && changes.files.some((file) => file.path === current.path)) return current;
-      const first = changes.files[0];
+      if (current && order.some((file) => file.path === current.path)) return current;
+      // Tree order, not git's: the first change is the one at the top of the
+      // list the user is looking at.
+      const first = order[0];
       return first ? { path: first.path, at: 0 } : null;
     });
-  }, [changes]);
+  }, [changes, order]);
 
   const root = changes?.root;
   const path = selected?.path;
@@ -232,7 +234,9 @@ export function ChangesView({ cwd, pane, active }: ChangesViewProps) {
     return () => {
       cancelled = true;
     };
-  }, [root, path, untracked, token]);
+    // `changes` is in here for its identity alone: a fresh listing means the
+    // file may have been edited since, and the diff on screen is then stale.
+  }, [root, path, untracked, token, changes]);
 
   // Only ever the diff of the selected file: a slow answer for the file that
   // was selected two keystrokes ago must not be drawn under this one's name.
@@ -416,9 +420,8 @@ export function ChangesView({ cwd, pane, active }: ChangesViewProps) {
                         {statusLetter(row.file)}
                       </span>
                       <span className="name">{row.name}</span>
-                      {row.file.binary ? (
-                        <span className="muted">bin</span>
-                      ) : (
+                      {row.file.binary && <span className="muted">bin</span>}
+                      {row.file.counted && (
                         <span className="counts">
                           <span className="plus">+{row.file.added}</span>
                           <span className="minus">−{row.file.deleted}</span>

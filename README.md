@@ -225,7 +225,9 @@ Four things are deliberate:
   and releases the session — switching tabs would hand your session away.
 - **Staged and unstaged are kept apart**, because `git commit` treats them
   differently. Porcelain v2 is the only status format that reports both sides,
-  which is why the backend parses that and not `--porcelain=v1`.
+  which is why the backend parses that and not `--porcelain=v1`. It reads it
+  NUL-delimited: a path may hold anything but NUL, and the line form escapes
+  such a name into a spelling that cannot be diffed.
 - **A side-by-side row is a pair, not two lines.** Removals and additions
   arrive from `git diff` as two runs; pairing them in order is what puts an
   edit beside the line it replaced, and a row with only one side is a gap

@@ -121,6 +121,15 @@ describe("pairRows", () => {
     expect(paired[1].right?.text).toBe("two");
   });
 
+  it("pairs across a missing newline at the end of the file", () => {
+    // Git puts its marker between the two runs; the removal and the addition
+    // that replaced it still belong side by side.
+    const paired = rows("@@ -1,1 +1,1 @@\n-two\n\\ No newline at end of file\n+TWO\n");
+    expect(paired.map((row) => row.kind)).toEqual(["change", "meta"]);
+    expect(paired[0].left?.text).toBe("two");
+    expect(paired[0].right?.text).toBe("TWO");
+  });
+
   it("does not pair across a context line", () => {
     // Two separate edits, not one four-line replacement.
     const paired = rows("@@ -1,4 +1,4 @@\n-a\n+A\n keep\n-b\n+B\n");

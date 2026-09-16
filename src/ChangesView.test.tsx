@@ -16,7 +16,16 @@ vi.mock("./lib/git", async (importOriginal) => ({
 vi.mock("./lib/pty", () => ({ listSessions: vi.fn() }));
 
 function file(path: string, extra: Partial<FileChange> = {}): FileChange {
-  return { path, staged: ".", unstaged: "M", added: 1, deleted: 1, binary: false, ...extra };
+  return {
+    path,
+    staged: ".",
+    unstaged: "M",
+    added: 1,
+    deleted: 1,
+    binary: false,
+    counted: true,
+    ...extra,
+  };
 }
 
 const changes: Changes = {
@@ -185,7 +194,7 @@ describe("ChangesView", () => {
   it("reports a binary file instead of an empty diff", async () => {
     vi.mocked(gitChanges).mockResolvedValue({
       ...changes,
-      files: [file("icon.png", { binary: true, added: 0, deleted: 0 })],
+      files: [file("icon.png", { binary: true, added: 0, deleted: 0, counted: false })],
     });
     vi.mocked(gitDiff).mockResolvedValue("Binary files a/icon.png and b/icon.png differ\n");
 
@@ -251,6 +260,45 @@ describe("ChangesView", () => {
     await waitFor(() => expect(position()).toBe("change 1 of 2"));
 
     expect(document.querySelector(".diff-head .kind")?.textContent).toBe("modified");
+  });
+
+  it("says nothing about the size of a change nobody could measure", async () => {
+    vi.mocked(gitChanges).mockResolvedValue({
+      ...changes,
+      files: [file("generated.sql", { unstaged: "?", counted: false, added: 0, deleted: 0 })],
+    });
+
+    view();
+
+    await waitFor(() => expect(screen.getByText("generated.sql")).toBeInTheDocument());
+    // Zero added and zero deleted would be a claim about the file; there is
+    // none to make.
+    expect(document.querySelector(".counts")).toBeNull();
+  });
+
+  it("selects the first change the tree shows, not the first git listed", async () => {
+    // Git lists by path, and a folder sorts after a file at the root; the
+    // tree puts the folder first, and that is the row the keys start on.
+    vi.mocked(gitChanges).mockResolvedValue({
+      ...changes,
+      files: [file("README.md"), file("src/lib/git.ts")],
+    });
+
+    view();
+
+    await waitFor(() => expect(selectedFile()).toBe("git.ts"));
+  });
+
+  it("re-reads the diff of the file it is on when the changes come back", async () => {
+    view();
+    await waitFor(() => expect(gitDiff).toHaveBeenCalledTimes(1));
+
+    // A tab left and returned to re-reads git without anything else moving;
+    // the file may have been edited in the terminal in between.
+    vi.mocked(gitDiff).mockResolvedValue("@@ -1,1 +1,1 @@ later\n-old\n+new\n");
+    fireEvent.click(screen.getByText("Refresh"));
+
+    await waitFor(() => expect(screen.getByText("new")).toBeInTheDocument());
   });
 
   it("re-reads git when asked to refresh", async () => {

@@ -110,6 +110,7 @@ export function pairRows(hunk: Hunk): SideRow[] {
   const rows: SideRow[] = [];
   let dels: DiffLine[] = [];
   let adds: DiffLine[] = [];
+  let metas: DiffLine[] = [];
 
   const flush = () => {
     const paired = Math.min(dels.length, adds.length);
@@ -117,8 +118,10 @@ export function pairRows(hunk: Hunk): SideRow[] {
       rows.push({ kind: "change", left: dels[i], right: adds[i] });
     for (const line of dels.slice(paired)) rows.push({ kind: "del", left: line });
     for (const line of adds.slice(paired)) rows.push({ kind: "add", right: line });
+    for (const line of metas) rows.push({ kind: "meta", left: line });
     dels = [];
     adds = [];
+    metas = [];
   };
 
   for (const line of hunk.lines) {
@@ -126,13 +129,13 @@ export function pairRows(hunk: Hunk): SideRow[] {
       dels.push(line);
     } else if (line.kind === "add") {
       adds.push(line);
+    } else if (line.kind === "meta") {
+      // "\ No newline at end of file" sits between a removal and the
+      // addition that replaced it, and is held back so the two still pair.
+      metas.push(line);
     } else {
       flush();
-      rows.push(
-        line.kind === "context"
-          ? { kind: "context", left: line, right: line }
-          : { kind: "meta", left: line },
-      );
+      rows.push({ kind: "context", left: line, right: line });
     }
   }
   flush();
