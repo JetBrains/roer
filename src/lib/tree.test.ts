@@ -4,7 +4,7 @@ import type { FileChange } from "./git";
 import { ancestors, buildTree, fileOrder, rows } from "./tree";
 
 function file(path: string): FileChange {
-  return { path, staged: ".", unstaged: "M", added: 1, deleted: 0, binary: false };
+  return { path, staged: ".", unstaged: "M", added: 1, deleted: 0, binary: false, counted: true };
 }
 
 const changed = ["src/lib/git.ts", "src/App.tsx", "README.md", "src/lib/tree.ts"].map(file);
