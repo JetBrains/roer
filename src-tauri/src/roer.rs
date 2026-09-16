@@ -35,7 +35,7 @@ fn resolve(explicit: Option<String>, on_path: bool, home: Option<PathBuf>) -> St
         .unwrap_or_else(|| "roer".to_string())
 }
 
-fn home() -> Option<PathBuf> {
+pub fn home() -> Option<PathBuf> {
     std::env::var_os("HOME")
         .map(PathBuf::from)
         .filter(|h| !h.as_os_str().is_empty())

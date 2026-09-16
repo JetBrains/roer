@@ -76,8 +76,18 @@ pub fn pty_spawn(
     for arg in &args {
         cmd.arg(arg);
     }
-    if let Some(dir) = cwd.filter(|d| !d.is_empty()) {
-        cmd.cwd(dir);
+    // Home rather than whatever the app was launched with: a session started
+    // from the launcher belongs in the user's own directory, and the app's
+    // working directory is an accident (`/` for a bundle opened from Finder).
+    // Decided here because the frontend learns home asynchronously and cannot
+    // answer for a click that lands before it does.
+    match cwd.filter(|d| !d.is_empty()) {
+        Some(dir) => cmd.cwd(dir),
+        None => {
+            if let Some(home) = roer::home() {
+                cmd.cwd(home);
+            }
+        }
     }
     // tmux decides its colour capabilities from these, and its own
     // terminal-features override keys off a truecolor-capable outer TERM.

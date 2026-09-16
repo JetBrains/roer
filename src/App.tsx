@@ -2,10 +2,19 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { SessionList, type OpenRequest } from "./SessionList";
 import { TerminalView } from "./TerminalView";
-import { ackHandoff, onHandoff } from "./lib/pty";
+import {
+  ackHandoff,
+  claimHandoff,
+  failHandoff,
+  listSessions,
+  onHandoff,
+  pendingHandoffs,
+  type Handoff,
+} from "./lib/pty";
 
 interface SessionView extends OpenRequest {
-  /** Set when this session was teleported in; a terminal is waiting on it. */
+  /** Set when this session was teleported in; a terminal is waiting on it.
+   * Holds the *claimed* record path, which is what ack and fail take. */
   record?: string;
 }
 
@@ -20,6 +29,17 @@ function targetOf(session: SessionView | null): string {
     : "none";
 }
 
+function viewOf(handoff: Handoff, record: string): SessionView {
+  return {
+    args: handoff.args,
+    cwd: handoff.cwd,
+    title: handoff.label,
+    // The shim hands over a pane for an attach; a resume has no pane yet.
+    pane: handoff.args[0] === "attach" ? handoff.args[1] : undefined,
+    record,
+  };
+}
+
 export function App() {
   const [session, setSession] = useState<SessionView | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -28,75 +48,164 @@ export function App() {
 
   const target = targetOf(session);
 
-  // The handoff listener is registered once, so it cannot close over a
-  // render's values; it reads the stage through these instead.
+  // What is on the stage, read synchronously. The handoff listener is
+  // registered once and cannot close over a render's values, and a handoff
+  // arriving in the same tick as another must see the first one.
+  const stagedRef = useRef<SessionView | null>(null);
   const targetRef = useRef(target);
   targetRef.current = target;
-  const sessionRef = useRef(session);
-  sessionRef.current = session;
   // The target that has proved itself live. A terminal only proves it by
   // producing output, which happens once per mount.
   const attachedRef = useRef<string | null>(null);
+  // Handoffs claimed while the stage still owes a terminal its proof. The
+  // stage holds one session, so showing them at once would evict a session
+  // whose terminal is still waiting to hear that it moved.
+  const queueRef = useRef<SessionView[]>([]);
 
   // A different target is a different terminal, and it has not attached yet.
   useEffect(() => {
     if (attachedRef.current !== target) attachedRef.current = null;
   }, [target]);
 
-  const ack = useCallback((record: string | undefined) => {
-    if (!record || ackedRef.current === record) return;
-    ackedRef.current = record;
-    // Releases the waiting terminal, now that the session is really rendering.
-    void ackHandoff(record).catch(() => {
-      /* The terminal has its own timeout to fall back on. */
-    });
+  const show = useCallback((next: SessionView) => {
+    stagedRef.current = next;
+    setNotice(null);
+    setSession(next);
   }, []);
 
-  useEffect(() => {
-    let cancelled = false;
-    let unlisten: (() => void) | undefined;
+  /** Shows the next queued handoff, if the stage has come free. */
+  const drain = useCallback(() => {
+    const next = queueRef.current.shift();
+    if (!next) return false;
+    show(next);
+    return true;
+  }, [show]);
 
-    void onHandoff((handoff) => {
-      setNotice(null);
-      const next: SessionView = {
-        args: handoff.args,
-        cwd: handoff.cwd,
-        title: handoff.label,
-        // The shim hands over a pane for an attach; a resume has no pane yet.
-        pane: handoff.args[0] === "attach" ? handoff.args[1] : undefined,
-        record: handoff.record,
-      };
+  const ack = useCallback(
+    (record: string | undefined) => {
+      if (!record || ackedRef.current === record) return;
+      ackedRef.current = record;
+      // Releases the waiting terminal, now that the session is really rendering.
+      void ackHandoff(record)
+        .catch(() => {
+          /* The terminal has its own timeout to fall back on. */
+        })
+        // Nobody is owed proof any more, so a handoff that arrived meanwhile
+        // can have the stage.
+        .finally(() => drain());
+    },
+    [drain],
+  );
+
+  /** True while the staged session owes a terminal its proof. */
+  const owesProof = useCallback(() => {
+    const record = stagedRef.current?.record;
+    return Boolean(record) && ackedRef.current !== record;
+  }, []);
+
+  const accept = useCallback(
+    async (handoff: Handoff) => {
+      // Claim before attaching: the shim cancels by renaming this same path,
+      // so a failure here means it gave up and still holds the session.
+      let claimed: string;
+      try {
+        claimed = await claimHandoff(handoff.record);
+      } catch {
+        return;
+      }
+      const next = viewOf(handoff, claimed);
+      if (owesProof()) {
+        queueRef.current.push(next);
+        return;
+      }
       // `roer` in a terminal for the session Roer is already showing. The
       // target does not change, so nothing remounts and no further output
       // will arrive to prove the attach — it is already proved. Without this
       // the waiting terminal blocks for its whole timeout and then reports
       // that nothing moved, even though the session is on screen.
       if (targetOf(next) === targetRef.current && attachedRef.current === targetRef.current) {
-        ack(handoff.record);
+        show(next);
+        ack(claimed);
+        return;
       }
-      setSession(next);
-    }).then((fn) => {
-      if (cancelled) fn();
-      else unlisten = fn;
-    });
+      show(next);
+    },
+    [ack, owesProof, show],
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    let unlisten: (() => void) | undefined;
+
+    void onHandoff((handoff) => {
+      void accept(handoff);
+    })
+      .then((fn) => {
+        if (cancelled) {
+          fn();
+          return;
+        }
+        unlisten = fn;
+        // Only now, with a listener in place, is it safe to ask for what
+        // arrived earlier — the shim starts Roer and then waits, so the
+        // handoff that opened the app is nearly always in here.
+        return pendingHandoffs().then(async (records) => {
+          for (const record of records) {
+            if (cancelled) return;
+            await accept(record);
+          }
+        });
+      })
+      .catch(() => {
+        /* Nothing was waiting, or the backend is not up; the watcher covers
+           anything that arrives from here on. */
+      });
 
     return () => {
       cancelled = true;
       unlisten?.();
     };
-  }, [ack]);
+  }, [accept]);
 
   const handleAttached = useCallback(() => {
     attachedRef.current = targetRef.current;
-    ack(sessionRef.current?.record);
+    ack(stagedRef.current?.record);
   }, [ack]);
 
-  const handleExit = useCallback(() => {
-    setSession(null);
-    setNotice(
-      "Session released. It is still running with no client, so `roer` in a terminal will take it back.",
-    );
+  /**
+   * What became of a session whose PTY just ended. Detaching leaves the
+   * session running with no client; a shell that exited takes it with it, and
+   * saying it can be taken back then would be a lie.
+   */
+  const describeExit = useCallback(async (gone: SessionView) => {
+    if (!gone.pane) return "Session closed.";
+    try {
+      const sessions = await listSessions();
+      return sessions.some((s) => s.pane === gone.pane)
+        ? "Session released. It is still running with no client, so `roer` in a terminal will take it back."
+        : "Session ended.";
+    } catch {
+      return "Session closed.";
+    }
   }, []);
+
+  const handleExit = useCallback(() => {
+    const gone = stagedRef.current;
+    stagedRef.current = null;
+    setSession(null);
+
+    // A claimed handoff whose session never made it on screen: hand the record
+    // back, so the terminal hears that nothing moved instead of waiting out
+    // its timeout.
+    if (gone?.record && ackedRef.current !== gone.record) {
+      void failHandoff(gone.record).catch(() => {
+        /* The terminal's timeout says the same thing, more slowly. */
+      });
+    }
+
+    if (drain()) return;
+    if (gone) void describeExit(gone).then(setNotice);
+  }, [describeExit, drain]);
 
   return (
     <main className="workspace" aria-label="Roer session">
@@ -104,10 +213,7 @@ export function App() {
         activePane={session?.pane}
         token={target}
         error={null}
-        onOpen={(request) => {
-          setNotice(null);
-          setSession(request);
-        }}
+        onOpen={(request) => show(request)}
       />
 
       <section className="stage">

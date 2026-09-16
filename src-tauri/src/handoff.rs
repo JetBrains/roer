@@ -1,10 +1,24 @@
 //! The terminal → app control channel.
 //!
 //! `roer handoff` drops a JSON record into ~/.roer/handoffs and then waits for
-//! that file to disappear. The file vanishing is its signal that Roer holds
-//! the session and the terminal may let go, so the record is deleted only once
-//! the frontend has actually attached — see [`handoff_ack`]. Acking on receipt
+//! it to disappear. The file vanishing is its signal that Roer holds the
+//! session and the terminal may let go, so the record is deleted only once the
+//! frontend has actually attached — see [`handoff_ack`]. Acking on receipt
 //! instead would release the terminal before anything was showing the session.
+//!
+//! A record moves through three states, each reached by one atomic rename or
+//! unlink, so the terminal and the app can never disagree about who has it:
+//!
+//! | `<file>`          | pending: written, nobody has it yet         |
+//! | `<file>.claimed`  | [`handoff_claim`]: Roer has it, and is attaching |
+//! | `<file>.failed`   | [`handoff_fail`]: Roer could not; nothing moved |
+//! | gone              | [`handoff_ack`]: the session is on screen    |
+//!
+//! The claim exists because the shim has to be able to give up. Deleting a
+//! pending record does not recall a handoff the app has already been told
+//! about: it would attach anyway and evict a terminal that had just been told
+//! nothing moved. Both sides therefore cancel by renaming the same path —
+//! exactly one wins, and the loser learns it from the failure.
 //!
 //! A watched directory rather than a `roer://` deep link: macOS registers
 //! custom URL schemes through Launch Services for installed .app bundles only,
@@ -54,17 +68,17 @@ fn is_record(path: &Path) -> bool {
     path.extension().and_then(|e| e.to_str()) == Some("json")
 }
 
-/// Start watching for handoffs, after delivering any that arrived while the
-/// app was down.
+/// Start watching for handoffs.
+///
+/// Records that arrived while the app was down are *not* delivered from here.
+/// This runs in `setup`, long before the webview has registered a listener,
+/// and Tauri drops an event nobody is listening for — so the frontend asks
+/// for them itself once it is ready, through [`handoff_pending`].
 pub fn watch(app: AppHandle) -> notify::Result<()> {
     let dir = handoffs_dir();
     if let Err(e) = std::fs::create_dir_all(&dir) {
         eprintln!("roer: cannot create {}: {e}", dir.display());
         return Ok(());
-    }
-
-    for path in pending(&dir) {
-        deliver(&app, &path);
     }
 
     std::thread::spawn(move || {
@@ -170,16 +184,24 @@ fn pending(dir: &Path) -> Vec<PathBuf> {
     paths
 }
 
-/// Confirm a handoff is attached, releasing the waiting terminal.
-#[tauri::command]
-pub fn handoff_ack(record: String) -> Result<(), String> {
-    let path = PathBuf::from(&record);
-    if !is_record(&path) {
-        return Err(format!("not a handoff record: {record}"));
-    }
-    // The path arrives from the webview, so deletion is confined to the
-    // handoff directory rather than trusting it.
-    let dir = handoffs_dir()
+/// True for a record this app has claimed, which is what ack and fail take.
+fn is_claimed(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.ends_with(".json.claimed"))
+}
+
+/// `<file>` -> `<file>.claimed`, and `.claimed` -> `.failed`.
+fn suffixed(path: &Path, from: &str, to: &str) -> PathBuf {
+    let name = path.file_name().unwrap_or_default().to_string_lossy();
+    let stem = name.strip_suffix(from).unwrap_or(&name);
+    path.with_file_name(format!("{stem}{to}"))
+}
+
+/// Paths arrive from the webview, so every rename and unlink is confined to
+/// the handoff directory rather than trusting what was handed over.
+fn in_dir(path: &Path, dir: &Path) -> Result<(), String> {
+    let dir = dir
         .canonicalize()
         .map_err(|e| format!("no handoff directory: {e}"))?;
     let parent = path
@@ -188,9 +210,89 @@ pub fn handoff_ack(record: String) -> Result<(), String> {
         .canonicalize()
         .map_err(|e| e.to_string())?;
     if parent != dir {
-        return Err(format!("refusing to delete outside {}", dir.display()));
+        return Err(format!(
+            "refusing to touch anything outside {}",
+            dir.display()
+        ));
     }
-    std::fs::remove_file(&path).map_err(|e| e.to_string())
+    Ok(())
+}
+
+/// `<file>` -> `<file>.claimed`. Fails when the shim cancelled first, because
+/// the record it renamed away is no longer there to rename.
+fn claim(path: &Path, dir: &Path) -> Result<PathBuf, String> {
+    if !is_record(path) {
+        return Err(format!("not a handoff record: {}", path.display()));
+    }
+    in_dir(path, dir)?;
+    let claimed = suffixed(path, ".json", ".json.claimed");
+    std::fs::rename(path, &claimed)
+        .map_err(|e| format!("could not claim {}: {e}", path.display()))?;
+    Ok(claimed)
+}
+
+/// `<file>.claimed` -> gone.
+fn ack(path: &Path, dir: &Path) -> Result<(), String> {
+    claimed_in(path, dir)?;
+    std::fs::remove_file(path).map_err(|e| e.to_string())
+}
+
+/// `<file>.claimed` -> `<file>.failed`.
+fn fail(path: &Path, dir: &Path) -> Result<(), String> {
+    claimed_in(path, dir)?;
+    let failed = suffixed(path, ".json.claimed", ".json.failed");
+    std::fs::rename(path, &failed).map_err(|e| e.to_string())
+}
+
+/// Both of the above only ever touch a record this app claimed.
+fn claimed_in(path: &Path, dir: &Path) -> Result<(), String> {
+    if !is_claimed(path) {
+        return Err(format!("not a claimed handoff: {}", path.display()));
+    }
+    in_dir(path, dir)
+}
+
+/// Records waiting to be shown, oldest first.
+///
+/// The frontend asks for these when it is ready to render one, which is the
+/// only way a handoff written while Roer was down ever arrives — and that is
+/// the ordinary case, because the shim starts Roer itself and then waits.
+#[tauri::command]
+pub fn handoff_pending(app: AppHandle) -> Vec<Handoff> {
+    let records: Vec<Handoff> = pending(&handoffs_dir())
+        .iter()
+        .filter_map(|path| read(path).ok())
+        .collect();
+    // Same as a delivery through the watcher: a handoff is also a request to
+    // come forward, and this one has been waiting.
+    if !records.is_empty() {
+        focus(&app);
+    }
+    records
+}
+
+/// Take a pending record, before attaching anything.
+///
+/// Claiming first is what keeps a slow attach from evicting a terminal that
+/// has given up: the shim cancels by renaming this same path, so if it got
+/// there first this fails and the handoff must be dropped. Returns the
+/// claimed path, which [`handoff_ack`] and [`handoff_fail`] take.
+#[tauri::command]
+pub fn handoff_claim(record: String) -> Result<String, String> {
+    claim(Path::new(&record), &handoffs_dir()).map(|path| path.to_string_lossy().into_owned())
+}
+
+/// Confirm a claimed handoff is on screen, releasing the waiting terminal.
+#[tauri::command]
+pub fn handoff_ack(record: String) -> Result<(), String> {
+    ack(Path::new(&record), &handoffs_dir())
+}
+
+/// Give a claimed handoff back: Roer had it and could not show it, so the
+/// terminal keeps the session instead of waiting out the timeout.
+#[tauri::command]
+pub fn handoff_fail(record: String) -> Result<(), String> {
+    fail(Path::new(&record), &handoffs_dir())
 }
 
 #[cfg(test)]
@@ -253,12 +355,97 @@ mod tests {
     }
 
     #[test]
+    fn claimed_records_are_told_apart_from_pending_ones() {
+        assert!(is_claimed(Path::new("/tmp/h/r.json.claimed")));
+        assert!(!is_claimed(Path::new("/tmp/h/r.json")));
+        assert!(!is_claimed(Path::new("/tmp/h/r.json.failed")));
+        // A claim is not a record the watcher should pick up again.
+        assert!(!is_record(Path::new("/tmp/h/r.json.claimed")));
+    }
+
+    #[test]
+    fn suffixes_move_a_record_between_states() {
+        let pending = Path::new("/tmp/h/20260101T000000-1.json");
+        let claimed = suffixed(pending, ".json", ".json.claimed");
+        assert_eq!(claimed, Path::new("/tmp/h/20260101T000000-1.json.claimed"));
+        assert_eq!(
+            suffixed(&claimed, ".json.claimed", ".json.failed"),
+            Path::new("/tmp/h/20260101T000000-1.json.failed")
+        );
+    }
+
+    /// A handoff directory holding one pending record, named after the test
+    /// that owns it so the tests can run in parallel.
+    fn with_record(tag: &str) -> (PathBuf, PathBuf) {
+        let dir = std::env::temp_dir().join(format!("roer-{tag}-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("temp handoff dir");
+        let path = dir.join("20260101T000000-1.json");
+        std::fs::write(&path, r#"{"args":["attach","%3"]}"#).expect("write");
+        (dir, path)
+    }
+
+    #[test]
+    fn a_claim_then_an_ack_takes_the_record_away() {
+        let (dir, path) = with_record("claim");
+
+        let claimed = claim(&path, &dir).expect("claim");
+        assert!(!path.exists(), "the pending record is gone once claimed");
+        assert!(claimed.exists());
+
+        ack(&claimed, &dir).expect("ack");
+        assert!(!claimed.exists());
+        assert!(pending(&dir).is_empty());
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_claim_the_shim_cancelled_first_cannot_be_taken() {
+        let (dir, path) = with_record("cancel");
+        // Exactly what the shim's timeout does: rename the record away.
+        std::fs::rename(&path, dir.join("20260101T000000-1.json.cancelled")).expect("cancel");
+
+        assert!(
+            claim(&path, &dir).is_err(),
+            "a cancelled handoff must not be attachable"
+        );
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn failing_hands_the_record_back_instead_of_deleting_it() {
+        let (dir, path) = with_record("fail");
+
+        let claimed = claim(&path, &dir).expect("claim");
+        fail(&claimed, &dir).expect("fail");
+
+        assert!(!claimed.exists());
+        assert!(dir.join("20260101T000000-1.json.failed").exists());
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn ack_refuses_a_record_that_was_never_claimed() {
+        let (dir, path) = with_record("unclaimed");
+        assert!(ack(&path, &dir).is_err());
+        assert!(path.exists(), "the guard must not have deleted it");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
     fn ack_refuses_paths_outside_the_handoff_directory() {
-        let outside = std::env::temp_dir().join("roer-outside.json");
+        let (dir, _) = with_record("outside");
+        // A claimed-looking path the webview could hand over, anywhere else on
+        // the disk. Unlinking what it names is the whole risk.
+        let outside = std::env::temp_dir().join("roer-outside.json.claimed");
         std::fs::write(&outside, "{}").expect("write");
-        assert!(handoff_ack(outside.to_string_lossy().into_owned()).is_err());
-        // The guard must not have deleted it.
-        assert!(outside.exists());
+
+        assert!(ack(&outside, &dir).is_err());
+        assert!(outside.exists(), "the guard must not have deleted it");
+
         std::fs::remove_file(&outside).ok();
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

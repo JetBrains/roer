@@ -23,6 +23,14 @@ export interface SessionListProps {
   onOpen: (request: OpenRequest) => void;
 }
 
+/** A session's directory, in the form a person recognises it. */
+function shorten(cwd: string, home: string | undefined): string {
+  if (!cwd) return "";
+  if (home && cwd === home) return "~";
+  if (home && cwd.startsWith(`${home}/`)) return `~${cwd.slice(home.length)}`;
+  return cwd;
+}
+
 /**
  * The sessions you can attach to, kept on screen beside the terminal so the
  * list stays navigation rather than a screen you leave.
@@ -63,6 +71,10 @@ export function SessionList({ activePane, token, error, onOpen }: SessionListPro
   // directory. A new session starts in the home directory: the shim names a
   // session after its directory, and the app's own working directory is an
   // accident of how it was launched. `cd` is a shell away once it is open.
+  //
+  // No cwd at all until status resolves, rather than a disabled button: the
+  // backend defaults an empty cwd to home, so a click that lands first still
+  // opens in the right place.
   const openNew = () => {
     openedRef.current += 1;
     onOpen({
@@ -124,6 +136,9 @@ export function SessionList({ activePane, token, error, onOpen }: SessionListPro
                   }
                 >
                   <strong>{session.session}</strong>
+                  {/* Names carry a path hash to tell same-named directories
+                      apart, so the directory itself is what a person reads. */}
+                  <span className="muted">{shorten(session.cwd, status?.home)}</span>
                   <span className="muted">{session.command}</span>
                   {/* Attaching takes a session over from whoever holds it,
                       which may be a terminal or another window of this app. */}

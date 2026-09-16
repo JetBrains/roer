@@ -77,12 +77,34 @@ export const listSessions = (): Promise<SessionInfo[]> => invoke("roer_sessions"
 export const roerStatus = (): Promise<RoerStatus> => invoke("roer_status");
 
 /**
+ * Handoffs written while Roer was down or starting up.
+ *
+ * The watcher cannot deliver those: it runs before the webview exists, and an
+ * event with no listener is dropped. Since the shim starts Roer itself, this
+ * is the ordinary path, not a corner case.
+ */
+export const pendingHandoffs = (): Promise<Handoff[]> => invoke("handoff_pending");
+
+/**
+ * Takes a handoff, before anything is attached. Rejects when the waiting
+ * terminal has already given up, which is the point: without the claim a slow
+ * attach would evict a terminal that had just been told nothing moved.
+ * Resolves to the record token the other two calls take.
+ */
+export const claimHandoff = (record: string): Promise<string> =>
+  invoke("handoff_claim", { record });
+
+/**
  * Releases the terminal that is waiting on this handoff. Call it only once
  * the session is actually rendering — the shim treats it as permission to
  * let go.
  */
 export const ackHandoff = (record: string): Promise<void> =>
   invoke("handoff_ack", { record });
+
+/** Hands a claimed handoff back, so the terminal keeps the session. */
+export const failHandoff = (record: string): Promise<void> =>
+  invoke("handoff_fail", { record });
 
 export const onHandoff = (handler: (handoff: Handoff) => void): Promise<UnlistenFn> =>
   listen<Handoff>("roer://handoff", (event) => handler(event.payload));

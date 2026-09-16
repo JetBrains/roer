@@ -36,10 +36,38 @@ tm_exec() { exec tmux -L "$SOCKET" -f "$CONF" "$@"; }
 
 json_escape() { printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'; }
 
+# Distinguishes two directories that share a basename. cksum is POSIX and
+# stable across machines, and 16 bits is ample for the handful of same-named
+# directories one person has open at once.
+path_hash() {
+    sum=$(printf '%s' "$1" | cksum | cut -d' ' -f1)
+    printf '%04x' "$((sum & 0xffff))"
+}
+
+# A session belongs to a directory, not to a directory *name*: without the
+# hash, /work/api and /tmp/api share one session and `roer` in the second
+# silently hands you a shell sitting in the first. The basename stays in front
+# so the name is still something you can recognise and type.
+#
 # tmux forbids "." and ":" in session names; fold everything unusual to "-".
 session_name() {
     safe=$(printf '%s' "${PWD##*/}" | tr -c 'A-Za-z0-9_-' '-')
-    printf '%s' "${safe:-root}"
+    printf '%s-%s' "${safe:-root}" "$(path_hash "$PWD")"
+}
+
+# The first name in the series that is free. "=" makes the target an exact
+# name rather than a prefix match, so a session called "roer" does not make
+# "roer-app" look taken. With no server running has-session simply fails,
+# which is the answer we want.
+free_name() {
+    base=$1
+    name=$base
+    n=2
+    while tm has-session -t "=$name" 2>/dev/null; do
+        name="$base-$n"
+        n=$((n + 1))
+    done
+    printf '%s' "$name"
 }
 
 usage() {
@@ -120,16 +148,7 @@ cmd_shell() {
 # reuses the session for a directory on purpose, so clicking New session twice
 # there would hand back the first one, scrollback and all.
 cmd_new() {
-    base=${1:-$(session_name)}
-    name=$base
-    n=2
-    # "=" makes the target an exact name rather than a prefix match, so a
-    # session called "roer" does not make "roer-app" look taken. With no
-    # server running has-session simply fails, which is the answer we want.
-    while tm has-session -t "=$name" 2>/dev/null; do
-        name="$base-$n"
-        n=$((n + 1))
-    done
+    name=$(free_name "${1:-$(session_name)}")
     # No -A: the name is free, and a surprise attach is the bug this avoids.
     tm_exec new-session -s "$name" -c "$PWD"
 }
@@ -183,13 +202,37 @@ cmd_resume() {
     # can start acting the moment it is restored. Resuming is not the place to
     # inherit auto: the person teleporting has not seen what that turn wants to
     # do. They can still switch modes once it is on screen.
-    tm_exec new-session -A -D -s "$(session_name)-resume" -c "$PWD" \
+    # A free name, not -A: with -A an existing "<dir>-resume" session is
+    # attached instead of created, and tmux discards the shell command that
+    # comes with it — so the conversation asked for here would never start and
+    # the previous one would come up in its place.
+    tm_exec new-session -s "$(free_name "$(session_name)-resume")" -c "$PWD" \
         "claude --resume $agent --permission-mode manual"
 }
+
+# How long Roer has to pick a record up, and then how long it may take to get
+# the session on screen, both in 0.1s ticks. Attaching is allowed to be the
+# slower half: by then the handoff is Roer's, and giving up on it is what is
+# dangerous.
+PENDING_TICKS=100   # 10s
+CLAIM_TICKS=300     # 30s
 
 # Write a record for the app and wait for it to be picked up. The record
 # carries the shim arguments Roer should run, so session semantics stay here
 # rather than being duplicated in the app.
+#
+# Three states, each reached by one atomic rename or unlink in one directory:
+#
+#   <file>           pending — written, nobody has it yet
+#   <file>.claimed   Roer has it and is attaching
+#   <file>.failed    Roer tried and could not; the session never moved
+#   gone             Roer is showing the session; the terminal may let go
+#
+# The claim is what makes giving up safe. Deleting a pending record does not
+# recall a handoff Roer has already been told about — it would attach anyway
+# and evict a terminal that had just been told nothing moved. So the cancel is
+# a rename: whoever renames first wins, and if Roer got there we stop treating
+# the wait as ours to abandon.
 publish() {
     args_json=$1
     label=$2
@@ -221,22 +264,44 @@ EOF
     # watching this directory either way, and it asks for attention itself.
     open -a "${ROER_APP:-Roer}" 2>/dev/null || true
 
-    # Roer deletes the record once it has attached. Only then is it safe to
-    # let go of the terminal: detaching first would leave a session with no
-    # client and no window showing it if the app never arrived.
+    # Phase 1: wait for Roer to claim the record.
     waited=0
-    while [ -f "$file" ] && [ "$waited" -lt 100 ]; do
+    while [ -f "$file" ] && [ "$waited" -lt "$PENDING_TICKS" ]; do
         sleep 0.1
         waited=$((waited + 1))
     done
     if [ -f "$file" ]; then
-        rm -f "$file"
-        # Nothing has been moved: a handoff still has its terminal, and a
-        # session opened for the app is still sitting there detached.
-        echo "roer: Roer did not take the session within 10s; nothing moved" >&2
-        return 4
+        # Cancel by rename, so it cannot half-happen: if this succeeds the
+        # record is ours again and a Roer that wakes up later finds nothing to
+        # claim. If it fails, Roer claimed it in the last tick — which is the
+        # outcome we were waiting for, so carry on into phase 2.
+        if mv "$file" "$file.cancelled" 2>/dev/null; then
+            rm -f "$file.cancelled"
+            # Nothing has been moved: a handoff still has its terminal, and a
+            # session opened for the app is still sitting there detached.
+            echo "roer: Roer did not take the session within 10s; nothing moved" >&2
+            return 4
+        fi
     fi
 
+    # Phase 2: Roer has the record. It deletes it once the session is really
+    # on screen, which is the only point at which the terminal may let go.
+    waited=0
+    while [ -f "$file.claimed" ] && [ "$waited" -lt "$CLAIM_TICKS" ]; do
+        sleep 0.1
+        waited=$((waited + 1))
+    done
+    if [ -f "$file.claimed" ]; then
+        rm -f "$file.claimed"
+        echo "roer: Roer took the session but never showed it; nothing moved" >&2
+        return 4
+    fi
+    if [ -f "$file.failed" ]; then
+        rm -f "$file.failed"
+        echo "roer: Roer could not open the session; nothing moved" >&2
+        return 4
+    fi
+    # Gone without a trace is success: Roer deleted the record itself.
 }
 
 cmd_handoff() {
@@ -273,10 +338,19 @@ cmd_handoff() {
         sess=$(tm display-message -p -t "$pane" '#{session_name}' 2>/dev/null) || sess=
         [ -n "$sess" ] || { echo "roer: no such pane: $pane" >&2; return 3; }
         cwd=$(tm display-message -p -t "$pane" '#{pane_current_path}' 2>/dev/null)
+        # The client holding the session now, captured before Roer takes it:
+        # the fallback below has to name it. `detach-client -s` would detach
+        # every client of the session, and by the time the handoff is
+        # confirmed the only one left is Roer — so the session would land in
+        # the app and be thrown straight back out, held by nobody.
+        held_by=$(tm list-clients -t "=$sess" -F '#{client_tty}' 2>/dev/null | head -1)
 
         if publish "[\"attach\", \"$(json_escape "$pane")\"]" "$sess" "$cwd"; then
-            # Roer's own `attach -d` has usually evicted this client already.
-            tm detach-client -s "$sess" 2>/dev/null || true
+            # Roer's own `attach -d` has usually evicted that client already;
+            # this is for one that somehow survived.
+            if [ -n "$held_by" ]; then
+                tm detach-client -t "$held_by" 2>/dev/null || true
+            fi
             return 0
         fi
         # stderr from a backgrounded run-shell goes nowhere, and the session is

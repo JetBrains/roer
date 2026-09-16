@@ -17,7 +17,10 @@ pub fn run() {
             pty::pty_write,
             pty::pty_resize,
             pty::pty_close,
+            handoff::handoff_pending,
+            handoff::handoff_claim,
             handoff::handoff_ack,
+            handoff::handoff_fail,
             roer::roer_sessions,
             roer::roer_status,
         ])
