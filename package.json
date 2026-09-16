@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "assemble": "tauri build --debug --bundles app"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.11.1",
