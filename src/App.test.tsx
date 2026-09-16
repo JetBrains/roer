@@ -71,6 +71,14 @@ vi.mock("./lib/pty", () => ({
   }),
 }));
 
+// The changes view has tests of its own; here it only has to mount without
+// reaching for a backend.
+vi.mock("./lib/git", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./lib/git")>()),
+  gitChanges: vi.fn(async () => ({ root: "/Users/test/project", branch: "main", files: [] })),
+  gitDiff: vi.fn(async () => ""),
+}));
+
 const handoff: Handoff = {
   args: ["attach", "%3"],
   cwd: "/Users/test/project",
@@ -326,6 +334,74 @@ describe("App", () => {
 
     expect(screen.queryByTestId("terminal")).not.toBeInTheDocument();
     expect(await screen.findByText(/still running with no client/i)).toBeInTheDocument();
+  });
+
+  it("finds the pane tmux made for a session started here", async () => {
+    // `roer new` names and creates the session itself, so there is nothing to
+    // look it up by until it exists — and without its pane the app cannot say
+    // which row is live, or which directory the session is in now.
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /new session/i }));
+
+    vi.mocked(listSessions).mockResolvedValue([
+      { session: "test-1a2b", pane: "%7", attached: true, cwd: "/Users/test", command: "zsh" },
+    ]);
+    await emit({ kind: "output", data: "aGk=" });
+
+    const open = await screen.findByRole("button", { current: true });
+    expect(open).toHaveTextContent("test-1a2b");
+    expect(open).toHaveTextContent("open here");
+  });
+
+  it("leaves the pane unknown when two sessions appear at once", async () => {
+    // The wrong pane is worse than none: every view keyed on it would be
+    // about somebody else's session.
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /new session/i }));
+
+    vi.mocked(listSessions).mockResolvedValue([
+      { session: "test-1a2b", pane: "%7", attached: true, cwd: "/Users/test", command: "zsh" },
+      { session: "other", pane: "%8", attached: true, cwd: "/Users/test/other", command: "zsh" },
+    ]);
+    await emit({ kind: "output", data: "aGk=" });
+
+    await waitFor(() => expect(listSessions).toHaveBeenCalled());
+    expect(screen.queryByRole("button", { current: true })).not.toBeInTheDocument();
+  });
+
+  it("has no changes to show until a session is staged", async () => {
+    render(<App />);
+
+    // Whose changes? The repository comes from the session's own directory.
+    expect(await screen.findByRole("tab", { name: "Changes" })).toBeDisabled();
+  });
+
+  it("puts the changes view over the terminal without closing it", async () => {
+    render(<App />);
+    await teleport();
+    await emit({ kind: "output", data: "aGk=" });
+
+    fireEvent.click(screen.getByRole("tab", { name: "Changes" }));
+
+    expect(await screen.findByTestId("changes")).toBeInTheDocument();
+    // Unmounting the terminal would end Roer's tmux client, which hands the
+    // session to whoever asks for it next.
+    expect(screen.getByTestId("terminal")).toBeInTheDocument();
+    expect(closePty).not.toHaveBeenCalled();
+  });
+
+  it("keeps the changes view around behind the terminal", async () => {
+    render(<App />);
+    await teleport();
+    await emit({ kind: "output", data: "aGk=" });
+
+    fireEvent.click(screen.getByRole("tab", { name: "Changes" }));
+    await screen.findByTestId("changes");
+    fireEvent.click(screen.getByRole("tab", { name: "Terminal" }));
+
+    // Still mounted, so the file it was showing is still selected when it
+    // comes back — just hidden.
+    expect(screen.getByTestId("changes")).not.toBeVisible();
   });
 
   it("does not offer to take back a session that has ended", async () => {

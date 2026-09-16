@@ -6,6 +6,26 @@
   --roer-muted: #8c8c92;
   --roer-accent: #4ea1ff;
   --roer-warn: #f0a04b;
+
+  /* JetBrains New UI dark, for the diff: an IntelliJ diff's own colours. */
+  --ide-editor: #191a1c;
+  --ide-row: #1f2024;
+  --ide-head: #212326;
+  --ide-border: #26282c;
+  --ide-text: #d1d3d9;
+  --ide-gutter: #4c4f56;
+  --ide-accent: #3871e1;
+  --ide-add: #57965c26;
+  --ide-del: #f57e841f;
+  --ide-add-ink: #57965c4d;
+  --ide-del-ink: #f57e8440;
+  --ide-add-sign: #57965c;
+  --ide-del-sign: #f57e84;
+  --ide-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --t-keyword: #cf8e6d;
+  --t-string: #6aab73;
+  --t-number: #2aacb8;
+  --t-comment: #7a7e85;
   color-scheme: dark;
 }
 
@@ -50,11 +70,61 @@ code {
   border-right: 1px solid var(--roer-border);
 }
 
-/* The terminal sizes itself from this box, so it must be free to shrink. */
 .stage {
   flex: 1 1 auto;
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* The terminal sizes itself from this box, so it must be free to shrink. */
+.stage-body {
+  flex: 1 1 auto;
+  min-height: 0;
   position: relative;
+}
+
+/* Panels that cover the terminal without displacing it. */
+.overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  background: var(--roer-bg);
+}
+
+/* Beats the `display` of anything above, so `hidden` really hides. */
+[hidden] {
+  display: none !important;
+}
+
+.tabs {
+  display: flex;
+  gap: 2px;
+  padding: 4px 6px 0;
+  border-bottom: 1px solid var(--roer-border);
+  background: var(--roer-panel);
+}
+
+button.tab {
+  background: none;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: 6px 6px 0 0;
+  padding: 5px 12px;
+  font-size: 12px;
+  color: var(--roer-muted);
+}
+
+button.tab.on {
+  color: var(--roer-fg);
+  background: var(--roer-bg);
+  border-color: var(--roer-border);
+}
+
+button.tab:disabled {
+  color: #5a5a5f;
+  cursor: default;
+  border-color: transparent;
 }
 
 .empty {
@@ -246,4 +316,374 @@ button.row.active {
 .error {
   color: var(--roer-warn);
   border-color: var(--roer-warn);
+}
+
+/* Local changes: folder tree beside the selected file's diff -------------- */
+
+.changes {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* The panel itself takes the arrow keys, so the ring would sit around the
+   whole view; the selected row is what says where the keys will land. */
+.changes:focus {
+  outline: none;
+}
+
+.changes:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--roer-accent);
+}
+
+.changes-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--roer-border);
+  background: var(--roer-panel);
+  font-size: 12px;
+}
+
+.changes-head .keys {
+  margin-left: auto;
+}
+
+/* Two ways to read the same diff: a terminal's, and an IDE's. */
+.seg {
+  display: flex;
+  border: 1px solid var(--roer-border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.seg button {
+  background: none;
+  border: none;
+  border-radius: 0;
+  padding: 3px 9px;
+  font-size: 11px;
+  color: var(--roer-muted);
+}
+
+.seg button:hover {
+  background: #2e2e32;
+}
+
+.seg button.on {
+  background: #2c3a4a;
+  color: var(--roer-fg);
+}
+
+.changes-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  align-items: stretch;
+}
+
+.pad {
+  padding: 12px;
+}
+
+.tree {
+  flex: 0 0 260px;
+  min-width: 0;
+  overflow: auto;
+  list-style: none;
+  margin: 0;
+  padding: 4px 0;
+  border-right: 1px solid var(--roer-border);
+  background: var(--roer-panel);
+}
+
+button.tree-row {
+  width: 100%;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  background: none;
+  border: none;
+  border-radius: 0;
+  padding: 3px 8px 3px 6px;
+  font-size: 12px;
+  text-align: left;
+}
+
+button.tree-row:hover {
+  background: #2e2e32;
+  border-color: transparent;
+}
+
+button.tree-row.selected {
+  background: #233558;
+  box-shadow: inset 0 0 0 1px #2e4d89;
+}
+
+.tree-row .caret {
+  color: var(--roer-muted);
+  font-size: 9px;
+}
+
+.tree-row .name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tree-row.dir .name {
+  color: var(--roer-muted);
+}
+
+.tree-row .letter {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  width: 1ch;
+  color: var(--roer-muted);
+}
+
+/* Staged and unstaged look different because committing treats them
+   differently, and the letter is the only place that shows it. */
+.tree-row .letter.staged {
+  color: var(--roer-accent);
+}
+
+.counts {
+  display: flex;
+  gap: 5px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+}
+
+.plus {
+  color: #6fbf73;
+}
+
+.minus {
+  color: #d6636b;
+}
+
+/* The diff surface, IntelliJ's style */
+
+.diff {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: auto;
+  background: var(--ide-editor);
+  color: var(--ide-text);
+  font-family: var(--ide-mono);
+  font-size: 12px;
+  line-height: 20px;
+}
+
+/* What happened, to what, and where the keys are — 28px, as in the IDE. */
+.diff-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 28px;
+  padding: 0 12px;
+  background: var(--ide-head);
+  border-bottom: 1px solid var(--ide-border);
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  font-size: 12px;
+}
+
+.diff-head .kind {
+  padding: 0 6px;
+  border-radius: 4px;
+  background: #33353b;
+  color: var(--ide-text);
+  font-size: 10px;
+  line-height: 16px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.diff-head .path {
+  font-family: var(--ide-mono);
+  font-size: 12px;
+  font-weight: 400;
+}
+
+/* The change counter sits at the far end, whatever else is in the head. */
+.diff-head .at {
+  margin-left: auto;
+}
+
+.hunk {
+  border-left: 2px solid transparent;
+}
+
+/* The change the arrow keys are on: the IDE marks it in the gutter, not by
+   tinting the code — the add and delete tints are already saying something. */
+.hunk.current {
+  border-left-color: var(--ide-accent);
+}
+
+.hunk.current .hunk-head {
+  color: var(--ide-text);
+}
+
+.hunk-head {
+  padding: 0 12px;
+  border-top: 1px solid var(--ide-border);
+  border-bottom: 1px solid var(--ide-border);
+  background: var(--ide-head);
+  color: var(--ide-gutter);
+}
+
+/* Unified: both gutters, then the sign, then the code. */
+.line {
+  display: grid;
+  grid-template-columns: 34px 34px 16px minmax(0, 1fr);
+  align-items: start;
+}
+
+.line:hover {
+  background: var(--ide-row);
+}
+
+.line .no {
+  text-align: right;
+  padding-right: 8px;
+  color: var(--ide-gutter);
+  user-select: none;
+}
+
+.line .mark {
+  text-align: center;
+  color: var(--ide-gutter);
+  user-select: none;
+}
+
+.line .text {
+  padding-right: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.line.add {
+  background: var(--ide-add);
+}
+
+.line.add .mark {
+  color: var(--ide-add-sign);
+}
+
+.line.del {
+  background: var(--ide-del);
+}
+
+.line.del .mark {
+  color: var(--ide-del-sign);
+}
+
+/* `\ No newline at end of file` and friends: about the file, not in it. */
+.line.meta {
+  display: block;
+  padding-left: 12px;
+  color: var(--t-comment);
+  background: none;
+}
+
+/* Side by side: the old file on the left, the new one on the right --------- */
+
+.pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+
+.pair .side {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr);
+  align-items: start;
+  min-width: 0;
+}
+
+.pair .side + .side {
+  border-left: 1px solid var(--ide-border);
+}
+
+.side .no {
+  text-align: right;
+  padding-right: 10px;
+  color: var(--ide-gutter);
+  user-select: none;
+}
+
+/* Wrapped, not clipped: half the width holds half the line, and the IDE's own
+   answer — a scrollbar per side — is worse in a pane this narrow. Both halves
+   of a row are as tall as the taller one, so a wrapped line cannot leave the
+   other side's colour half-painted. */
+.side .text {
+  padding: 0 10px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.side.add {
+  background: var(--ide-add);
+}
+
+.side.del {
+  background: var(--ide-del);
+}
+
+/* Nothing on this side of an edit — not an empty line, an absent one. */
+.side.gap {
+  background: #00000026;
+}
+
+/* Editor token colours (Darcula), and the edited run inside a changed line. */
+.t-keyword {
+  color: var(--t-keyword);
+}
+
+.t-string {
+  color: var(--t-string);
+}
+
+.t-number {
+  color: var(--t-number);
+}
+
+.t-comment {
+  color: var(--t-comment);
+  font-style: italic;
+}
+
+.ink {
+  border-radius: 2px;
+}
+
+.add .ink,
+.side.add .ink {
+  background: var(--ide-add-ink);
+}
+
+.del .ink,
+.side.del .ink {
+  background: var(--ide-del-ink);
+}
+
+/* At phone width the tree becomes a strip above the diff. */
+@media (max-width: 620px) {
+  .changes-body {
+    flex-direction: column;
+  }
+
+  .tree {
+    flex: 0 0 auto;
+    max-height: 40%;
+    border-right: none;
+    border-bottom: 1px solid var(--roer-border);
+  }
 }

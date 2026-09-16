@@ -12,6 +12,9 @@ export interface OpenRequest {
   /** Tells one brand new session apart from the next. The shim names them
    * itself, so `args` is identical every time and cannot do it. */
   nonce?: string;
+  /** The panes that already existed, for a session that has none yet: the
+   * one tmux makes for it is the one that was not in this list. */
+  known?: string[];
 }
 
 export interface SessionListProps {
@@ -56,10 +59,12 @@ export function SessionList({ activePane, token, error, onOpen }: SessionListPro
   }, []);
 
   // Opening or releasing a session changes what is attached to what, so the
-  // badges are stale the moment the stage changes.
+  // badges are stale the moment the stage changes. A pane that has only just
+  // become known counts too: a session started here is created by the shim
+  // moments after the click, so the list drawn at click time can predate it.
   useEffect(() => {
     void refresh();
-  }, [refresh, token]);
+  }, [activePane, refresh, token]);
 
   // Counts the sessions opened from here, only so each one is a different
   // request. Two clicks send the same args to the same directory, and without
@@ -82,6 +87,7 @@ export function SessionList({ activePane, token, error, onOpen }: SessionListPro
       cwd: status?.home,
       title: "new session",
       nonce: `new-${openedRef.current}`,
+      known: sessions.map((session) => session.pane),
     });
   };
 

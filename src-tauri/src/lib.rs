@@ -1,3 +1,4 @@
+mod git;
 mod handoff;
 mod pty;
 mod roer;
@@ -21,6 +22,8 @@ pub fn run() {
             handoff::handoff_claim,
             handoff::handoff_ack,
             handoff::handoff_fail,
+            git::git_changes,
+            git::git_diff,
             roer::roer_sessions,
             roer::roer_status,
         ])
