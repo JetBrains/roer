@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { ChangesView } from "./ChangesView";
 import { SessionList, type OpenRequest } from "./SessionList";
 import { TerminalView } from "./TerminalView";
 import {
@@ -10,6 +11,7 @@ import {
   onHandoff,
   pendingHandoffs,
   type Handoff,
+  type SessionInfo,
 } from "./lib/pty";
 
 interface SessionView extends OpenRequest {
@@ -40,9 +42,16 @@ function viewOf(handoff: Handoff, record: string): SessionView {
   };
 }
 
+/** Which panel is on top of the stage. The session behind it never changes. */
+type Tab = "terminal" | "changes";
+
 export function App() {
   const [session, setSession] = useState<SessionView | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [tab, setTab] = useState<Tab>("terminal");
+  // The changes view stays mounted once opened, so switching back to the
+  // terminal and away again keeps the file that was selected.
+  const [everChanges, setEverChanges] = useState(false);
   // Acking twice would try to delete an already-deleted record.
   const ackedRef = useRef<string | null>(null);
 
@@ -167,10 +176,46 @@ export function App() {
     };
   }, [accept]);
 
+  // A session released or ended leaves no repository to be looking at.
+  const staged = Boolean(session);
+  useEffect(() => {
+    if (!staged) setTab("terminal");
+  }, [staged]);
+
+  /**
+   * Learns the pane tmux made for a session started from the launcher.
+   *
+   * `roer new` names and creates the session itself, so there is nothing to
+   * look it up by until it exists. The pane is what says which session is on
+   * screen — which row of the sidebar is the live one, and which directory
+   * the changes view is about, after a `cd` has moved it.
+   */
+  const adopt = useCallback(async () => {
+    const staged = stagedRef.current;
+    const known = staged?.known;
+    if (!staged || staged.pane || !known) return;
+
+    let fresh: SessionInfo[];
+    try {
+      fresh = (await listSessions()).filter((s) => s.attached && !known.includes(s.pane));
+    } catch {
+      return;
+    }
+    // Two sessions appearing at once cannot be told apart, and the wrong pane
+    // is worse than none: the view would be about somebody else's session.
+    if (fresh.length !== 1 || stagedRef.current !== staged) return;
+
+    const next = { ...staged, pane: fresh[0].pane };
+    stagedRef.current = next;
+    // The target does not depend on the pane, so nothing remounts.
+    setSession((current) => (current === staged ? next : current));
+  }, []);
+
   const handleAttached = useCallback(() => {
     attachedRef.current = targetRef.current;
     ack(stagedRef.current?.record);
-  }, [ack]);
+    void adopt();
+  }, [ack, adopt]);
 
   /**
    * What became of a session whose PTY just ended. Detaching leaves the
@@ -217,20 +262,57 @@ export function App() {
       />
 
       <section className="stage">
-        {session ? (
-          <TerminalView
-            key={target}
-            args={session.args}
-            cwd={session.cwd}
-            onAttached={handleAttached}
-            onExit={handleExit}
-          />
-        ) : (
-          <div className="empty">
-            {notice ? <p className="notice">{notice}</p> : null}
-            <p className="muted">Pick a session on the left, or start a new one.</p>
-          </div>
-        )}
+        <div className="tabs" role="tablist" aria-label="Stage">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={tab === "terminal"}
+            className={tab === "terminal" ? "tab on" : "tab"}
+            onClick={() => setTab("terminal")}
+          >
+            Terminal
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={tab === "changes"}
+            className={tab === "changes" ? "tab on" : "tab"}
+            disabled={!session}
+            onClick={() => {
+              setEverChanges(true);
+              setTab("changes");
+            }}
+          >
+            Changes
+          </button>
+        </div>
+
+        <div className="stage-body">
+          {session ? (
+            <TerminalView
+              key={target}
+              args={session.args}
+              cwd={session.cwd}
+              onAttached={handleAttached}
+              onExit={handleExit}
+            />
+          ) : (
+            <div className="empty">
+              {notice ? <p className="notice">{notice}</p> : null}
+              <p className="muted">Pick a session on the left, or start a new one.</p>
+            </div>
+          )}
+
+          {/* An overlay rather than a swap: unmounting the terminal would
+              close its PTY, which releases the session to whoever asks for it
+              next. The terminal keeps its size too, so nothing reflows when
+              the diff is on top of it. */}
+          {everChanges ? (
+            <div className="overlay" hidden={tab !== "changes"}>
+              <ChangesView cwd={session?.cwd} pane={session?.pane} active={tab === "changes"} />
+            </div>
+          ) : null}
+        </div>
       </section>
     </main>
   );
