@@ -88,6 +88,16 @@ tmux runs on the socket `roer` with `-f scripts/roer-tmux.conf`, so roer
 sessions never appear in your own `tmux ls` and your `.tmux.conf` bindings
 cannot reach them.
 
+### Session names
+
+A session is named after its directory, as `<basename>-<hash>`, where the hash
+is 16 bits of the full path: `roer` in `~/work/api` gives `api-3f5c`. The
+basename alone is what you read, and the hash is what keeps two checkouts that
+share a name from being the same session — `roer shell` in the other `api`
+would otherwise attach to the first one and move it out from under whoever had
+it. `roer new` and `roer resume` never reuse a name at all; they count up
+(`api-3f5c-2`) so a new session is always a new session.
+
 ## Getting out of a session
 
 The prefix key is unbound, so there is no multiplexer UI to escape into. Two
@@ -130,7 +140,7 @@ Three more ways, for when you are not in the session at all:
 
 ## Prerequisites
 
-- Node.js 20.19+, 22.13+, or 24+
+- Node.js 22.13+ or 24+ (Vitest 5 and jsdom both require it)
 - Rust toolchain (for the Tauri backend): https://rustup.rs
 - Tauri's platform dependencies: https://tauri.app/start/prerequisites/
 - tmux 3.3+ (for `allow-passthrough`)
@@ -146,6 +156,23 @@ npm run dev         # frontend only, http://localhost:1420
 Handoffs are delivered through a watched directory (`~/.roer/handoffs/`) rather
 than a `roer://` deep link, because macOS registers custom URL schemes for
 installed `.app` bundles only — deep links would be dead under `tauri dev`.
+
+A handoff must not half-happen: the terminal has to know whether it still holds
+the session, and it cannot ask for it back once it has let go. So a record
+moves through three states, each reached by one atomic rename or unlink:
+
+| `<ts>.json` | written by the shim; nobody has it yet |
+| `<ts>.json.claimed` | Roer has taken it and is attaching |
+| gone | Roer has it on screen — the terminal may let go |
+| `<ts>.json.failed` | Roer could not open it; nothing moved |
+
+The claim is what makes a timeout safe. The shim gives up by renaming the same
+path it is waiting on, so if it got there first the claim fails and Roer drops
+the handoff instead of attaching to a session whose terminal has just been told
+it kept it. Exactly one side wins each rename. The record is deleted only once
+a terminal is really rendering the session in the app, and Roer waits for
+output to prove it — an attach that fails prints an error and exits, which
+would otherwise read as success.
 
 ## Checks
 
@@ -167,7 +194,7 @@ src/
   lib/pty.ts              typed bridge to the Rust commands
 src-tauri/src/
   pty.rs                  one PTY per view, output over a Tauri Channel
-  handoff.rs              watches ~/.roer/handoffs/, acks by deleting the record
+  handoff.rs              watches ~/.roer/handoffs/, claim/ack/fail on the record
   roer.rs                 the only place that invokes the shim
 .claude/skills/roer-handoff/
 ```

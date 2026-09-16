@@ -30,11 +30,18 @@ terminal the user was looking at. Stop; the handoff is done.
 | 0 | Roer attached; the terminal has let go. | Nothing. It worked. |
 | 2 | Not inside a roer session. | Use the fallback below. |
 | 3 | Inside tmux, but not Roer's socket. | Use the fallback below. |
-| 4 | Roer did not take it within 10 seconds. | Tell the user to start Roer, then retry. The session was left exactly where it was. |
+| 4 | Roer did not take it, or took it and could not show it. | Read the message, tell the user, and leave the session alone. It is exactly where it was. |
 
-Code 4 is safe by construction: the terminal only detaches after Roer confirms
-it is rendering the session, so a failed handoff never leaves a session with
-no client and no window showing it.
+Code 4 is safe by construction: the terminal lets go only after Roer confirms
+the session is on screen, so a failed handoff never leaves a session with no
+client and no window showing it. The message on stderr says which way it
+failed, and they want different things from the user:
+
+| Message | What happened | Do |
+| --- | --- | --- |
+| `did not take the session within 10s` | Nothing claimed the record — Roer is not running, or not this shim's Roer. | Ask the user to start Roer, then retry. |
+| `took the session but never showed it` | Roer claimed it and then went quiet. | Report it; retrying will hit the same thing. Suggest restarting Roer. |
+| `could not open the session` | Roer tried to attach and the attach died. | Report it as is. The session may be gone; `roer list` says whether it is still there. |
 
 ## Fallback: this terminal cannot be attached
 

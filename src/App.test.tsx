@@ -2,7 +2,15 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "./App";
-import { ackHandoff, closePty, listSessions, spawnPty } from "./lib/pty";
+import {
+  ackHandoff,
+  claimHandoff,
+  closePty,
+  failHandoff,
+  listSessions,
+  pendingHandoffs,
+  spawnPty,
+} from "./lib/pty";
 import type { Handoff, PtyEvent } from "./lib/pty";
 
 // Shared between the test body and the hoisted module mock below.
@@ -52,7 +60,11 @@ vi.mock("./lib/pty", () => ({
   decodeOutput: vi.fn(() => new Uint8Array([0x68, 0x69])),
   listSessions: vi.fn(async () => []),
   roerStatus: vi.fn(async () => ({ bin: "roer", available: true, home: "/Users/test" })),
+  pendingHandoffs: vi.fn(async () => []),
+  // The backend renames the record; the frontend only passes the new path on.
+  claimHandoff: vi.fn(async (record: string) => `${record}.claimed`),
   ackHandoff: vi.fn(async () => undefined),
+  failHandoff: vi.fn(async () => undefined),
   onHandoff: vi.fn(async (handler: (handoff: unknown) => void) => {
     mocks.handoffHandlers.push(handler);
     return () => undefined;
@@ -65,6 +77,9 @@ const handoff: Handoff = {
   label: "roer",
   record: "/Users/test/.roer/handoffs/20260101T000000-1.json",
 };
+
+/** What the app holds after claiming a record: the renamed path. */
+const claimed = (record: Handoff = handoff) => `${record.record}.claimed`;
 
 /** Deliver a handoff the way the backend watcher would. */
 async function teleport(record: Handoff = handoff) {
@@ -166,29 +181,90 @@ describe("App", () => {
     expect(ackHandoff).not.toHaveBeenCalled();
 
     await emit({ kind: "output", data: "aGk=" });
-    await waitFor(() => expect(ackHandoff).toHaveBeenCalledWith(handoff.record));
+    await waitFor(() => expect(ackHandoff).toHaveBeenCalledWith(claimed()));
+  });
+
+  it("claims a handoff before attaching anything", async () => {
+    render(<App />);
+    await teleport();
+
+    // The claim is what makes the two sides agree: the shim cancels by
+    // renaming the same path, so attaching before claiming could evict a
+    // terminal that had already been told nothing moved.
+    await waitFor(() => expect(claimHandoff).toHaveBeenCalledWith(handoff.record));
+    expect(vi.mocked(claimHandoff).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(spawnPty).mock.invocationCallOrder[0] ?? Infinity,
+    );
+  });
+
+  it("ignores a handoff the waiting terminal has given up on", async () => {
+    vi.mocked(claimHandoff).mockRejectedValueOnce(new Error("no such file"));
+    render(<App />);
+    await teleport();
+
+    // The shim timed out and renamed the record away, so it still holds the
+    // session. Attaching now would take a session off a terminal that has
+    // been told it kept it.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(spawnPty).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("terminal")).not.toBeInTheDocument();
   });
 
   it("keeps the terminal holding the session when the attach dies on arrival", async () => {
     render(<App />);
     await teleport();
 
-    // A failed attach prints its error and exits. Acking on that output
-    // would detach the terminal from a session nothing is holding, and the
-    // ack cannot be taken back — so the record must be left alone and the
-    // shim left to time out where it is.
+    // A failed attach prints its error and exits. Acking on that output would
+    // detach the terminal from a session nothing is holding, and the ack
+    // cannot be taken back — so the record goes back instead, which tells the
+    // shim at once that nothing moved.
     await emit({ kind: "output", data: "aGk=" });
     await emit({ kind: "exit", code: 1 });
 
     await new Promise((resolve) => setTimeout(resolve, 400));
     expect(ackHandoff).not.toHaveBeenCalled();
+    expect(failHandoff).toHaveBeenCalledWith(claimed());
+  });
+
+  it("picks up a handoff that arrived while it was starting", async () => {
+    // The ordinary cold start: the shim writes the record, runs `open -a
+    // Roer` and waits. Nothing was listening when the watcher saw it.
+    vi.mocked(pendingHandoffs).mockResolvedValueOnce([handoff]);
+    render(<App />);
+
+    await waitFor(() => expect(spawnPty).toHaveBeenCalled());
+    expect(vi.mocked(spawnPty).mock.calls[0]?.[0]).toEqual(["attach", "%3"]);
+  });
+
+  it("makes a second handoff wait until the first has been answered", async () => {
+    render(<App />);
+    await teleport();
+
+    // Another terminal hands over while the first is still waiting to hear
+    // that its session is on screen. Showing this one now would evict that
+    // session and leave its terminal reporting that nothing moved.
+    const second: Handoff = {
+      args: ["attach", "%7"],
+      cwd: "/Users/test/other",
+      label: "other",
+      record: "/Users/test/.roer/handoffs/20260101T000003-4.json",
+    };
+    await teleport(second);
+    expect(vi.mocked(spawnPty).mock.calls).toHaveLength(1);
+
+    // The first session proves itself, its terminal is released, and the
+    // queued handoff takes the stage.
+    await emit({ kind: "output", data: "aGk=" });
+    await waitFor(() => expect(ackHandoff).toHaveBeenCalledWith(claimed()));
+    await waitFor(() => expect(spawnPty).toHaveBeenCalledTimes(2));
+    expect(vi.mocked(spawnPty).mock.calls[1]?.[0]).toEqual(["attach", "%7"]);
   });
 
   it("answers a handoff for the session already on the stage", async () => {
     render(<App />);
     await teleport();
     await emit({ kind: "output", data: "aGk=" });
-    await waitFor(() => expect(ackHandoff).toHaveBeenCalledWith(handoff.record));
+    await waitFor(() => expect(ackHandoff).toHaveBeenCalledWith(claimed()));
 
     // `roer` in a terminal for the session Roer is already showing. The stage
     // does not change, so no terminal remounts and no output arrives — and
@@ -197,7 +273,7 @@ describe("App", () => {
     const again = { ...handoff, record: "/Users/test/.roer/handoffs/20260101T000002-3.json" };
     await teleport(again);
 
-    await waitFor(() => expect(ackHandoff).toHaveBeenCalledWith(again.record));
+    await waitFor(() => expect(ackHandoff).toHaveBeenCalledWith(claimed(again)));
     // Acked without tearing down the session that was already running.
     expect(spawnPty).toHaveBeenCalledTimes(1);
     expect(closePty).not.toHaveBeenCalled();
@@ -240,11 +316,26 @@ describe("App", () => {
   });
 
   it("returns to the launcher when a terminal takes the session back", async () => {
+    // The session is still there, now held by the terminal that took it.
+    vi.mocked(listSessions).mockResolvedValue([
+      { session: "roer", pane: "%3", attached: true, cwd: "/Users/test/project", command: "claude" },
+    ]);
     render(<App />);
     await teleport();
     await emit({ kind: "exit", code: 0 });
 
     expect(screen.queryByTestId("terminal")).not.toBeInTheDocument();
     expect(await screen.findByText(/still running with no client/i)).toBeInTheDocument();
+  });
+
+  it("does not offer to take back a session that has ended", async () => {
+    // The shell exited, so the session went with it. Saying `roer` would
+    // bring it back would send someone to a terminal to find nothing.
+    vi.mocked(listSessions).mockResolvedValue([]);
+    render(<App />);
+    await teleport();
+    await emit({ kind: "exit", code: 0 });
+
+    expect(await screen.findByText(/session ended/i)).toBeInTheDocument();
   });
 });
