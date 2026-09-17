@@ -1,0 +1,6 @@
+# Labels actionlint cannot know about, because they belong to runners this repo
+# does not own. Without this, every lint run reports `sre-eqx-kata` as unknown
+# and the real findings are lost in the noise.
+self-hosted-runner:
+  labels:
+    - sre-eqx-kata

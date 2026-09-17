@@ -111,6 +111,9 @@ jobs:
 
           while IFS= read -r pattern; do
             [ -n "$pattern" ] || continue
+            # Unquoted on purpose: the input is a list of glob patterns and
+            # this is where they expand, which is what `nullglob` above is for.
+            # shellcheck disable=SC2206
             matches=( $pattern )
             if [ "${#matches[@]}" -gt 0 ]; then
               cp "${matches[@]}" bundle-artifacts/

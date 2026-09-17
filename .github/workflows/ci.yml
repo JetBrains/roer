@@ -63,9 +63,51 @@ jobs:
       - name: Shell syntax
         run: sh -n scripts/roer && sh -n scripts/check-version
 
+  workflows:
+    name: Workflows
+    runs-on: ubuntu-latest
+    env:
+      # Pinned by version and checksum, like the CodeSign client in
+      # release.yml. A linter that moves on its own turns a branch red for
+      # reasons no commit explains, and `latest` would do exactly that.
+      ACTIONLINT_VERSION: 1.7.12
+      ACTIONLINT_SHA256_AMD64: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+      ACTIONLINT_SHA256_ARM64: 325e971b6ba9bfa504672e29be93c24981eeb1c07576d730e9f7c8805afff0c6
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install actionlint
+        run: |
+          set -euo pipefail
+          # Resolved from uname rather than assumed: ubuntu-latest is x64
+          # today, and this should not break the day that changes.
+          case "$(uname -m)" in
+            x86_64) ARCH=amd64; SHA="$ACTIONLINT_SHA256_AMD64" ;;
+            aarch64|arm64) ARCH=arm64; SHA="$ACTIONLINT_SHA256_ARM64" ;;
+            *) echo "No actionlint build pinned for $(uname -m)" >&2; exit 1 ;;
+          esac
+          TARBALL="actionlint_${ACTIONLINT_VERSION}_linux_${ARCH}.tar.gz"
+          curl -fsSL --retry 3 \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/${TARBALL}" \
+            -o "$TARBALL"
+          echo "${SHA}  ${TARBALL}" | sha256sum -c -
+          tar -xzf "$TARBALL" actionlint
+          ./actionlint --version
+
+      # Catches what nothing else here does: unknown keys, bad `needs`
+      # references, undefined contexts, unpinned or misspelled actions. The
+      # runner ships shellcheck, so actionlint checks every `run:` block too —
+      # which is the only automated review the shell in these workflows gets.
+      #
+      # It cannot catch skip propagation through `needs`, the bug that made two
+      # tagged runs publish nothing. Do not read a green lint as a working
+      # pipeline.
+      - name: Lint the workflows
+        run: ./actionlint -color .github/workflows/*.yml
+
   check:
     name: Full gate
-    needs: [checks]
+    needs: [checks, workflows]
     if: always()
     runs-on: ubuntu-latest
     steps:

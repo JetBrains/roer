@@ -275,6 +275,18 @@ build fails with *"The `frontendDist` configuration is set to `../dist` but this
 path doesn't exist"*. `.github/workflows/ci.yml` runs exactly this list, in
 exactly this order.
 
+The workflows are linted separately, in their own CI job:
+
+```sh
+brew install actionlint shellcheck   # actionlint runs shellcheck when it finds it
+actionlint .github/workflows/*.yml
+```
+
+`.github/actionlint.yaml` declares `sre-eqx-kata`, the self-hosted signing
+runner, so the one label actionlint cannot resolve does not drown the real
+findings. Pin the same version CI pins (`ACTIONLINT_VERSION` in `ci.yml`) if you
+want local and CI results to agree.
+
 ## Cutting a release
 
 Versions live in five places — `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock`,
