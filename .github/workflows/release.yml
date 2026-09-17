@@ -315,16 +315,23 @@ jobs:
         working-directory: dist
         run: |
           set -euo pipefail
-          CHANGELOG="$(gh api \
-            --method POST \
-            -H "Accept: application/vnd.github+json" \
-            "/repos/$GITHUB_REPOSITORY/releases/generate-notes" \
-            -f tag_name="$GITHUB_REF_NAME" \
-            --jq '.body')"
-          {
-            printf '\n---\n\n'
-            printf '%s\n' "$CHANGELOG"
-          } >> notes.md
+          # Best-effort on purpose. The changelog is a convenience; the install
+          # instructions in notes.md are the part users cannot do without. A
+          # failure here must not be the reason a built, verified .dmg goes
+          # unreleased — so this is a warning, not an error.
+          if CHANGELOG="$(gh api \
+                --method POST \
+                -H "Accept: application/vnd.github+json" \
+                "/repos/$GITHUB_REPOSITORY/releases/generate-notes" \
+                -f tag_name="$GITHUB_REF_NAME" \
+                --jq '.body')" && [ -n "$CHANGELOG" ]; then
+            {
+              printf '\n---\n\n'
+              printf '%s\n' "$CHANGELOG"
+            } >> notes.md
+          else
+            echo "::warning::Could not generate a changelog for $GITHUB_REF_NAME; publishing the install notes alone."
+          fi
           cat notes.md
 
       - name: Create the draft release
