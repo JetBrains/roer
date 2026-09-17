@@ -1,0 +1,7 @@
+# Pins local development. CI installs its own toolchain via
+# dtolnay/rust-toolchain with an explicit `targets:` input, so this file is here
+# so that `npm run release:local` works on a fresh checkout without anyone
+# having to know which targets a universal build needs.
+[toolchain]
+channel = "stable"
+targets = ["aarch64-apple-darwin", "x86_64-apple-darwin"]

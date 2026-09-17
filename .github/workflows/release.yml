@@ -1,0 +1,346 @@
+name: Release
+
+# Signing has to happen *between* bundling the .app and imaging the .dmg, and
+# the CodeSign service lives on an internal host unreachable from
+# GitHub-hosted runners. Hence the three-runner shuttle:
+#
+#   validate-version  ubuntu-latest   tag agrees with the version records
+#   bundle-macos      macos-26        universal Roer.app.tar.gz
+#   codesign          sre-eqx-kata    Developer ID + hardened runtime
+#   package           macos-26        verify, hdiutil .dmg, shim, checksums
+#   publish           ubuntu-latest   draft prerelease
+#
+# Until the CodeSign service account lands, set no CODESIGN_ENABLED variable and
+# the pipeline runs end to end unsigned.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  # Never cancel a release in flight; a half-published release is worse than a
+  # queued one.
+  cancel-in-progress: false
+
+env:
+  CODESIGN_BASE: https://codesign-distribution.labs.jb.gg
+
+jobs:
+  validate-version:
+    name: Validate version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Needed for the ancestry check below; also gives us origin/main.
+          fetch-depth: 0
+
+      - name: Validate release version
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            git merge-base --is-ancestor "$GITHUB_SHA" origin/main || {
+              echo "Release tag must point to a commit contained in main" >&2
+              exit 1
+            }
+            sh scripts/check-version "$GITHUB_REF_NAME"
+          else
+            # A dispatch run builds, signs and packages but cannot publish:
+            # `publish` is gated on github.ref_type == 'tag'. So it is always a
+            # dry run and is allowed from any branch. If publishing is ever
+            # added to this path, restrict it to main here.
+            echo "Dispatch run on $GITHUB_REF — dry run, nothing will be published."
+            sh scripts/check-version
+          fi
+
+      - name: Export version
+        id: version
+        run: echo "version=$(sh scripts/check-version --print)" >> "$GITHUB_OUTPUT"
+
+  bundle-macos:
+    name: Bundle
+    needs: validate-version
+    uses: ./.github/workflows/tauri-bundle.yml
+    with:
+      runner: macos-26
+      # Cross-compiles x86_64 from the arm64 runner, so the Intel runner sunset
+      # (macos-15-intel / macos-26-intel die with macOS 15 in Fall 2027) is a
+      # non-event and users get one download instead of a choice.
+      rust_targets: aarch64-apple-darwin,x86_64-apple-darwin
+      tauri_args: --target universal-apple-darwin --bundles app
+      bundle_dir: src-tauri/target/universal-apple-darwin/release/bundle
+      artifact_name: unsigned-macos
+      cache_key: macos-universal
+      artifact_paths: Roer.app.tar.gz
+      # Deliberately no release_environment: this job consumes no secrets, so
+      # gating it on `release` would only stop it running from a branch. Only
+      # `codesign` and `publish` touch credentials.
+
+  codesign:
+    name: CodeSign
+    needs: bundle-macos
+    # Repo-level variable, not an environment one: environment variables are not
+    # readable in a job-level `if`. Unset until the service account is issued.
+    if: vars.CODESIGN_ENABLED == 'true'
+    runs-on: sre-eqx-kata
+    environment: release
+    env:
+      # The client reads these implicitly; there is no CLI flag for them.
+      SERVICE_ACCOUNT_NAME: ${{ secrets.SERVICE_ACCOUNT_NAME }}
+      SERVICE_ACCOUNT_TOKEN: ${{ secrets.SERVICE_ACCOUNT_TOKEN }}
+    steps:
+      - name: Install CodeSign client
+        run: |
+          set -euo pipefail
+          case "$(uname -m)" in
+            x86_64) A=amd64 ;;
+            aarch64|arm64) A=arm64 ;;
+            *) echo "unsupported arch $(uname -m)"; exit 1 ;;
+          esac
+          BIN="codesign-client-linux-$A"
+          curl -fsSL "$CODESIGN_BASE/$BIN" -o "$BIN"
+          curl -fsSL "$CODESIGN_BASE/$BIN.sha256" -o "$BIN.sha256"
+          curl -fsSL "$CODESIGN_BASE/$BIN.sha256.asc" -o "$BIN.sha256.asc"
+          # Verify the signature over the checksum file *before* trusting the
+          # checksum. Checking sha256 alone would only prove the binary matches
+          # a file from the same host that served it.
+          curl -fsSL https://download-cdn.jetbrains.com/KEYS | gpg --batch --dearmor --output keyring.gpg
+          gpgv --keyring ./keyring.gpg "$BIN.sha256.asc" "$BIN.sha256"
+          sha256sum -c "$BIN.sha256"
+          mv "$BIN" codesign-client
+          chmod +x codesign-client
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: unsigned-macos
+          path: mac
+
+      - name: Sign (Developer ID + hardened runtime)
+        run: |
+          set -euo pipefail
+          mkdir -p signed-mac
+          # No mac_codesign_entitlements: roer needs no entitlements. Hardened
+          # runtime with no exceptions is correct here — no JIT, no unsigned
+          # dylibs, and JS runs in Apple's separately signed WKWebView process.
+          # Do not add allow-jit or disable-library-validation.
+          ./codesign-client \
+            -signed-files-dir signed-mac \
+            -denoted-content-type "application/x-mac-app-targz" \
+            -extensions "mac_codesign_force=true,mac_codesign_options=runtime" \
+            -log-format json \
+            mac/Roer.app.tar.gz
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: signed-macos
+          path: signed-mac/Roer.app.tar.gz
+          compression-level: 0
+          if-no-files-found: error
+
+  package:
+    name: Package
+    needs: [validate-version, bundle-macos, codesign]
+    # codesign is skipped, not failed, when CODESIGN_ENABLED is unset — so this
+    # job must run on 'skipped' but not on 'failure'. This `if` is the whole of
+    # the "works before signing access lands" mechanism.
+    if: |
+      always()
+      && needs.bundle-macos.result == 'success'
+      && needs.codesign.result != 'failure'
+      && needs.codesign.result != 'cancelled'
+    runs-on: macos-26
+    env:
+      VERSION: ${{ needs.validate-version.outputs.version }}
+      SIGNED: ${{ needs.codesign.result == 'success' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ needs.codesign.result == 'success' && 'signed-macos' || 'unsigned-macos' }}
+          path: incoming
+
+      - name: Unpack the app bundle
+        run: |
+          set -euo pipefail
+          mkdir -p work
+          tar -C work -xzf incoming/Roer.app.tar.gz
+          test -d work/Roer.app
+
+      - name: Verify the signature
+        if: needs.codesign.result == 'success'
+        run: |
+          set -euo pipefail
+          APP="$GITHUB_WORKSPACE/work/Roer.app"
+          # Fail before packaging if CodeSign returned a bundle with an unstable
+          # identity or unsealed resources.
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          INFO="$(codesign -dvv "$APP" 2>&1)"
+          REQ="$(codesign -d -r- "$APP" 2>&1)"
+          grep -q '^Identifier=com.jetbrains.roer$' <<< "$INFO" || {
+            echo "Signed app has the wrong bundle identity" >&2
+            echo "$INFO" >&2
+            exit 1
+          }
+          # An ad-hoc or content-bound (cdhash) designated requirement means
+          # macOS would not remember the app's Keychain ACL across an update.
+          if grep -q '^Signature=adhoc$' <<< "$INFO" || grep -q 'cdhash H' <<< "$REQ"; then
+            echo "Signed app has an ad-hoc/content-bound identity; Keychain trust would not survive an update" >&2
+            echo "$INFO" >&2
+            echo "$REQ" >&2
+            exit 1
+          fi
+          grep -q 'identifier "com.jetbrains.roer"' <<< "$REQ" || {
+            echo "Signed app has an unexpected designated requirement" >&2
+            echo "$REQ" >&2
+            exit 1
+          }
+          # TODO: assert ^TeamIdentifier=<id>$ once SRE confirms which Developer
+          # ID roer signs under. Without it, any valid Developer ID passes.
+          ENT="$(codesign -d --entitlements :- "$APP" 2>&1 || true)"
+          if grep -q '<key>' <<< "$ENT"; then
+            echo "Unexpected entitlement in signed Roer.app" >&2
+            echo "$ENT" >&2
+            exit 1
+          fi
+
+      - name: Verify the binary
+        run: |
+          set -euo pipefail
+          APP="$GITHUB_WORKSPACE/work/Roer.app"
+          ARCHS="$(lipo -archs "$APP/Contents/MacOS/roer")"
+          echo "archs: $ARCHS"
+          for want in x86_64 arm64; do
+            grep -qw "$want" <<< "$ARCHS" || {
+              echo "Universal binary is missing $want" >&2
+              exit 1
+            }
+          done
+          MIN="$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$APP/Contents/Info.plist")"
+          echo "minimum system version: $MIN"
+          [ "$MIN" = "14.0" ] || {
+            echo "Expected LSMinimumSystemVersion 14.0, got $MIN — tauri.conf.json and the README disagree" >&2
+            exit 1
+          }
+
+      - name: Build the .dmg
+        run: |
+          set -euo pipefail
+          mkdir -p stage dist
+          # ditto, never cp: it preserves the extended attributes and symlinks
+          # the signature envelope depends on.
+          ditto "work/Roer.app" "stage/Roer.app"
+          # Gives the normal drag-to-install window.
+          ln -s /Applications stage/Applications
+          # Replaces Tauri's bundle_dmg.sh, which drives AppleScript and fails
+          # intermittently on CI. hdiutil is deterministic.
+          hdiutil create -volname Roer -srcfolder stage -ov -format UDZO \
+            "dist/Roer_${VERSION}_universal.dmg"
+
+      - name: Stage the CLI shim
+        run: |
+          set -euo pipefail
+          mkdir -p shim
+          # The pair must land in one directory and roer must be executable:
+          # scripts/roer hard-exits without $SCRIPT_DIR/roer-tmux.conf, and
+          # roer-tmux.conf binds M-h to "$(dirname "#{config_files}")/roer".
+          install -m 755 scripts/roer shim/roer
+          install -m 644 scripts/roer-tmux.conf shim/roer-tmux.conf
+          tar -czf "dist/roer-cli-${VERSION}.tar.gz" -C shim roer roer-tmux.conf
+          # Also attached loose, for reading before you run them. Release assets
+          # carry no mode bits, hence the chmod note in the release notes.
+          cp shim/roer shim/roer-tmux.conf dist/
+          tar -tvzf "dist/roer-cli-${VERSION}.tar.gz"
+
+      - name: Checksums
+        working-directory: dist
+        run: |
+          set -euo pipefail
+          shasum -a 256 -- *.dmg *.tar.gz roer roer-tmux.conf > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Release notes
+        run: |
+          set -euo pipefail
+          SIGN_LINE="This build is **unsigned**."
+          if [ "$SIGNED" = "true" ]; then
+            SIGN_LINE="This build is signed with a JetBrains Developer ID, but is **not yet notarized**."
+          fi
+          sed -e "s|__VERSION__|${VERSION}|g" \
+              -e "s|__TAG__|${GITHUB_REF_NAME}|g" \
+              -e "s|__SIGNING__|${SIGN_LINE}|g" \
+              .github/release-notes.md > dist/notes.md
+          cat dist/notes.md
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-assets
+          path: dist/*
+          compression-level: 0
+          if-no-files-found: error
+
+  publish:
+    name: Publish
+    needs: [validate-version, package]
+    # Tag pushes only. A workflow_dispatch run therefore exercises the whole
+    # pipeline — build, cache, tarball, codesign skip, hdiutil, shim, checksums
+    # — and creates no release and no tag.
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VERSION: ${{ needs.validate-version.outputs.version }}
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-assets
+          path: dist
+
+      # Not `gh release create --generate-notes`: that flag generates the title
+      # *and* body, so it would compete with --title and --notes-file for the
+      # same fields and could drop the install instructions. Calling the API
+      # and concatenating is unambiguous.
+      - name: Append the generated changelog
+        working-directory: dist
+        run: |
+          set -euo pipefail
+          CHANGELOG="$(gh api \
+            --method POST \
+            -H "Accept: application/vnd.github+json" \
+            "/repos/$GITHUB_REPOSITORY/releases/generate-notes" \
+            -f tag_name="$GITHUB_REF_NAME" \
+            --jq '.body')"
+          {
+            printf '\n---\n\n'
+            printf '%s\n' "$CHANGELOG"
+          } >> notes.md
+          cat notes.md
+
+      - name: Create the draft release
+        working-directory: dist
+        run: |
+          set -euo pipefail
+          # Draft prerelease on purpose: a human confirms the app opens and that
+          # M-h hands a session over before this is visible to anyone.
+          gh release create "$GITHUB_REF_NAME" \
+            --draft \
+            --prerelease \
+            --title "Roer $VERSION" \
+            --notes-file notes.md \
+            "Roer_${VERSION}_universal.dmg" \
+            "roer-cli-${VERSION}.tar.gz" \
+            roer \
+            roer-tmux.conf \
+            SHA256SUMS.txt
+          echo "Draft release created. Review, smoke-test, then publish it."
