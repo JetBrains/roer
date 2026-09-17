@@ -54,7 +54,7 @@ jobs:
             sh scripts/check-version "$GITHUB_REF_NAME"
           else
             # A dispatch run builds, signs and packages but cannot publish:
-            # `publish` is gated on github.ref_type == 'tag'. So it is always a
+            # `publish` is gated on the ref being a v* tag. So it is always a
             # dry run and is allowed from any branch. If publishing is ever
             # added to this path, restrict it to main here.
             echo "Dispatch run on $GITHUB_REF — dry run, nothing will be published."
@@ -293,7 +293,14 @@ jobs:
     # Tag pushes only. A workflow_dispatch run therefore exercises the whole
     # pipeline — build, cache, tarball, codesign skip, hdiutil, shim, checksums
     # — and creates no release and no tag.
-    if: github.ref_type == 'tag'
+    #
+    # Keyed off github.ref, NOT github.ref_type. In the v0.1.0 run the shell saw
+    # GITHUB_REF_TYPE=tag and took the tag branch in validate-version, while
+    # this expression still evaluated false and skipped the job — so the run
+    # reported success and published nothing. An unknown or empty context
+    # property compares false silently, which makes github.ref_type unusable
+    # here regardless of why it was empty.
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     environment: release
     permissions:
@@ -351,3 +358,25 @@ jobs:
             roer-tmux.conf \
             SHA256SUMS.txt
           echo "Draft release created. Review, smoke-test, then publish it."
+
+  release-gate:
+    name: Release gate
+    needs: [publish]
+    # Deliberately keyed off event_name, not the ref: `publish` uses
+    # startsWith(github.ref, ...), and using the same mechanism twice would let
+    # a single bad expression skip the check along with the job it checks. The
+    # only `push` trigger this workflow has is on v* tags.
+    if: always() && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - name: A pushed tag must produce a release
+        env:
+          RESULT: ${{ needs.publish.result }}
+        run: |
+          set -euo pipefail
+          [ "$RESULT" = "success" ] || {
+            echo "Tag $GITHUB_REF_NAME was pushed but Publish did not succeed (result: $RESULT)." >&2
+            echo "Without this gate the run reports success while publishing nothing." >&2
+            exit 1
+          }
+          echo "Publish succeeded for $GITHUB_REF_NAME."
