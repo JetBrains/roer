@@ -1,6 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 
-import { paint, type Span } from "./highlight";
+import { parseDiff } from "./diff";
+import { highlight, loadLang, paint, ready, toSpans, type Span } from "./highlight";
+import { langFor } from "./lang";
 
 /** Which colour each run got, as `kind:text` pairs. */
 const kinds = (spans: Span[]) => spans.map((span) => `${span.kind}:${span.text}`);
@@ -54,5 +56,123 @@ describe("paint", () => {
 
   it("marks nothing when there is no change to mark", () => {
     expect(paint("plain line").some((span) => span.marked)).toBe(false);
+  });
+});
+
+describe("langFor", () => {
+  it("reads the grammar off the extension", () => {
+    expect(langFor("src/lib/git.ts")).toBe("typescript");
+    expect(langFor("src-tauri/src/pty.rs")).toBe("rust");
+    expect(langFor("README.md")).toBe("markdown");
+  });
+
+  it("reads .jsx as TSX, whose grammar covers it", () => {
+    expect(langFor("app/Button.jsx")).toBe("tsx");
+  });
+
+  it("answers for nothing it carries no grammar for", () => {
+    // A dotfile is a name, not an extension.
+    expect(langFor(".gitignore")).toBeUndefined();
+    expect(langFor("Makefile")).toBeUndefined();
+    expect(langFor("script.pl")).toBeUndefined();
+  });
+});
+
+describe("highlight", () => {
+  beforeAll(async () => {
+    await loadLang("typescript");
+  });
+
+  /** The tokens of one line of a one-hunk diff. */
+  const line = (diff: string, at = 0) => {
+    const { hunks } = parseDiff(diff);
+    const coloured = highlight(hunks, "typescript");
+    const found = coloured.get(hunks[0].lines[at]);
+    if (!found) throw new Error("that line was not coloured");
+    return found;
+  };
+
+  it("is ready once its grammar has loaded", () => {
+    expect(ready("typescript")).toBe(true);
+    expect(ready("kotlin")).toBe(false);
+  });
+
+  it("colours what a keyword list cannot", () => {
+    // `parse` is a call, not a keyword, and no regex classing finds it.
+    const spans = toSpans(line("@@ -1 +1 @@\n-const n = parse(x);\n+const n = 2;\n"));
+    const call = spans.find((span) => span.text === "parse");
+    expect(call?.color).toBeDefined();
+    expect(call?.color).not.toBe(spans.find((span) => span.text === "const")?.color);
+  });
+
+  it("leaves default-coloured text to inherit its colour from CSS", () => {
+    const spans = toSpans(line("@@ -1 +1 @@\n-let x = 1;\n+let x = 2;\n"));
+    expect(spans.find((span) => span.text === "x")?.color).toBeUndefined();
+  });
+
+  it("keeps every character, in order", () => {
+    const text = "  const s = f(1, 'two'); /* three */";
+    const spans = toSpans(line(`@@ -1 +1 @@\n-${text}\n+${text}!\n`));
+    expect(spans.reduce((all, span) => all + span.text, "")).toBe(text);
+  });
+
+  it("marks only the changed run, cutting the token it starts inside", () => {
+    const spans = toSpans(line("@@ -1 +1 @@\n-const renamed = 1;\n+const named = 1;\n"), {
+      from: 6,
+      to: 13,
+    });
+    expect(spans.filter((span) => span.marked).map((span) => span.text)).toEqual(["renamed"]);
+    expect(spans.reduce((all, span) => all + span.text, "")).toBe("const renamed = 1;");
+  });
+
+  it("reads a hunk as a file, so a string spanning lines stays one string", () => {
+    // The second line is inside the template literal the first one opens; a
+    // line-at-a-time tokenizer has no way to know that.
+    const diff = "@@ -1,3 +1,3 @@\n-const s = `one\n-two`;\n-const n = 1;\n+const n = 2;\n";
+    const { hunks } = parseDiff(diff);
+    const coloured = highlight(hunks, "typescript");
+    const opens = toSpans(coloured.get(hunks[0].lines[0]) ?? []);
+    const inside = toSpans(coloured.get(hunks[0].lines[1]) ?? []);
+    // The run that closes the literal is the same colour as the run that
+    // opened it, a line earlier.
+    const string = opens.find((span) => span.text === "`one")?.color;
+    expect(string).toBeDefined();
+    expect(inside.find((span) => span.text === "two`")?.color).toBe(string);
+    expect(inside.reduce((all, span) => all + span.text, "")).toBe("two`;");
+  });
+
+  it("answers nothing for a grammar that has not loaded", () => {
+    const { hunks } = parseDiff("@@ -1 +1 @@\n-a\n+b\n");
+    expect(highlight(hunks, "kotlin").size).toBe(0);
+  });
+});
+
+describe("highlight, per language", () => {
+  beforeAll(async () => {
+    await loadLang("rust");
+  });
+
+  /** The spans of the one changed line of a one-line-per-side diff. */
+  const spans = (text: string) => {
+    const { hunks } = parseDiff(`@@ -1 +1 @@\n-${text}\n+x\n`);
+    return toSpans(highlight(hunks, "rust").get(hunks[0].lines[0]) ?? []);
+  };
+
+  it("knows a Rust attribute is not a comment", () => {
+    // `#` opens a comment in Python and shell; a keyword list that colours it
+    // grey greys out every derive in the file.
+    const attribute = spans("#[derive(Debug)] // note");
+    const comment = attribute.find((span) => span.text === "// note");
+    const hash = attribute.find((span) => span.text.startsWith("#"));
+    expect(comment?.color).toBeDefined();
+    expect(hash?.color).not.toBe(comment?.color);
+  });
+
+  it("leaves a `#` inside a string alone", () => {
+    // The `#` neither opens a comment nor breaks the literal in two.
+    const quoted = spans('let s = "a # b";');
+    const literal = quoted.find((span) => span.text.includes("#"));
+    expect(literal?.text).toBe('"a # b"');
+    expect(literal?.color).toBeDefined();
   });
 });

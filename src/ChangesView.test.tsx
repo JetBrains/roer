@@ -237,10 +237,36 @@ describe("ChangesView", () => {
     expect(document.querySelector(".hunk.current .line .text")?.textContent).toBe("two");
   });
 
-  it("colours the code the way an editor would", async () => {
+  /** Darcula, as `theme-darcula.ts` sets it and as jsdom reports it back. */
+  const KEYWORD = "rgb(207, 142, 109)";
+  const COMMENT = "rgb(122, 126, 133)";
+
+  const coloured = (side: string) =>
+    [...document.querySelectorAll<HTMLElement>(`${side} .text span`)].map(
+      (span) => `${span.style.color}:${span.textContent}`,
+    );
+
+  it("colours the code with the language's own grammar", async () => {
     vi.mocked(gitDiff).mockResolvedValue(
       "@@ -1 +1 @@\n-const n = 1; // count\n+const n = 2; // count\n",
     );
+
+    view();
+    await waitFor(() => expect(position()).toBe("change 1 of 1"));
+    // The grammar for `git.ts` is fetched, so the first paint is the painter's
+    // and the one worth asserting on arrives after it.
+    await waitFor(() => expect(coloured(".side.del")).toContain(`${KEYWORD}:const`));
+
+    expect(coloured(".side.del")).toContain(`${COMMENT}:// count`);
+    const comment = [...document.querySelectorAll<HTMLElement>(".side.del .text span")].find(
+      (span) => span.textContent === "// count",
+    );
+    expect(comment?.style.fontStyle).toBe("italic");
+  });
+
+  it("falls back to the painter for a language it carries no grammar for", async () => {
+    vi.mocked(gitChanges).mockResolvedValue({ ...changes, files: [file("run.pl")] });
+    vi.mocked(gitDiff).mockResolvedValue("@@ -1 +1 @@\n-my $n = 1;\n+my $n = 2;\n");
 
     view();
     await waitFor(() => expect(position()).toBe("change 1 of 1"));
@@ -248,8 +274,22 @@ describe("ChangesView", () => {
     const painted = [...document.querySelectorAll(".side.del .text span")].map(
       (span) => `${span.className}:${span.textContent}`,
     );
-    expect(painted).toContain("t-keyword:const");
-    expect(painted).toContain("t-comment:// count");
+    // The digit is both the number and the whole of the edit.
+    expect(painted).toContain("t-number ink:1");
+    expect(painted).toContain("t-plain:my");
+    // Nothing is coloured inline, because no grammar answered.
+    expect(coloured(".side.del").every((entry) => entry.startsWith(":"))).toBe(true);
+  });
+
+  it("picks out only the run that changed", async () => {
+    vi.mocked(gitDiff).mockResolvedValue(
+      "@@ -1 +1 @@\n-const n = 1; // count\n+const n = 2; // count\n",
+    );
+
+    view();
+    await waitFor(() => expect(position()).toBe("change 1 of 1"));
+    await waitFor(() => expect(coloured(".side.add")).toContain(`${KEYWORD}:const`));
+
     // The lines differ in one digit, so that is the only thing picked out.
     const ink = document.querySelectorAll(".side.add .ink");
     expect([...ink].map((span) => span.textContent)).toEqual(["2"]);

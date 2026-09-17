@@ -222,10 +222,13 @@ right.
 The diff pane is dressed as an IntelliJ diff: JetBrains' New UI dark editor
 colours, gutters and Darcula token palette, a sticky head saying what happened to the file, and code that
 is syntax-coloured rather than flat. `lib/highlight.ts` does the colouring
-with regex token classing, not a parser per language: one diff can touch Rust,
-TypeScript, shell and JSON, and being wrong on a token now and then is worth
-not carrying a grammar for each. Text is set in JetBrains Mono when it is
-installed, and falls back to the platform's mono otherwise.
+with a TextMate grammar per language, the same machinery an editor uses, which
+is the only way to know that `#` opens a comment in Python and an attribute in
+Rust. Fifteen grammars are carried, one lazily loaded chunk each, and
+`lib/lang.ts` picks one off the file's extension; a file it has no grammar for
+falls back to regex token classing, which is wrong on a token now and then and
+better than flat. Text is set in JetBrains Mono when it is installed, and falls
+back to the platform's mono otherwise.
 
 Either layout wears it: **Side by side** is the IDE's reading — old file left,
 new one right, with the edited run inside a changed line picked out — and
@@ -342,6 +345,8 @@ src/
   lib/git.ts              typed bridge to the Rust git commands
   lib/diff.ts             unified diff -> hunks, and hunks -> side-by-side rows
   lib/highlight.ts        code -> coloured spans, marking the edited run
+  lib/lang.ts             extension -> grammar, and the lazy loader for each
+  lib/theme-darcula.ts    the Darcula palette as TextMate scope rules
   lib/tree.ts             changed paths -> compacted folder tree
 src-tauri/src/
   pty.rs                  one PTY per view, output over a Tauri Channel
