@@ -1,0 +1,135 @@
+name: Tauri Bundle
+
+# One call = one platform's bundle, uploaded as an artifact. This workflow never
+# creates a release: `release.yml` owns that, because the .dmg cannot be built
+# until after the .app has been signed, on a different runner.
+#
+# Adding a platform is a new caller in release.yml, not a change here. Before
+# one can be added, the app needs work first:
+#   linux   — an activation path to replace `open -a` in scripts/roer
+#   windows — a ConPTY session engine: tmux needs POSIX ptys and unix sockets,
+#             and only builds under Cygwin/MSYS2/WSL, which breaks roer's
+#             "the same shell you are working in" premise
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        required: true
+        type: string
+      rust_targets:
+        required: true
+        type: string
+      tauri_args:
+        required: false
+        type: string
+        default: ""
+      bundle_dir:
+        description: Directory tauri writes bundles into, relative to the repo root.
+        required: true
+        type: string
+      artifact_name:
+        required: true
+        type: string
+      cache_key:
+        required: false
+        type: string
+        default: ""
+      artifact_paths:
+        required: true
+        type: string
+      retention_days:
+        required: false
+        type: number
+        default: 7
+      release_environment:
+        # Unused today: roer's bundle job consumes no secrets. Kept for a
+        # future leg that does (a Windows build needs its cert before the MSI
+        # is even assembled), because adding it later means touching every
+        # caller.
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  bundle:
+    name: ${{ inputs.artifact_name }}
+    runs-on: ${{ inputs.runner }}
+    environment: ${{ inputs.release_environment }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          targets: ${{ inputs.rust_targets }}
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          # roer has no Cargo.toml at the repo root, so the action's default
+          # `. -> target` finds no workspace and silently caches nothing.
+          workspaces: src-tauri -> target
+          key: ${{ inputs.cache_key || inputs.artifact_name }}
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+
+      # No tagName/releaseName, so tauri-action builds and creates nothing.
+      # beforeBuildCommand (npm run build) produces dist/, which
+      # tauri::generate_context!() embeds at compile time.
+      - uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # action-v1.0.0
+        with:
+          args: ${{ inputs.tauri_args }} --verbose
+          uploadUpdaterJson: false
+          uploadUpdaterSignatures: false
+
+      # The CodeSign service takes a gzipped tar of the .app and signs inside
+      # it. Tar also preserves the bundle's symlinks and mode bits, which a
+      # zip round-trip through upload-artifact would not.
+      - name: Tar the .app for signing
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          tar -czf Roer.app.tar.gz -C "${{ inputs.bundle_dir }}/macos" Roer.app
+          ls -lh Roer.app.tar.gz
+
+      - name: Stage selected bundles
+        shell: bash
+        env:
+          ARTIFACT_PATHS: ${{ inputs.artifact_paths }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          mkdir -p bundle-artifacts
+
+          while IFS= read -r pattern; do
+            [ -n "$pattern" ] || continue
+            matches=( $pattern )
+            if [ "${#matches[@]}" -gt 0 ]; then
+              cp "${matches[@]}" bundle-artifacts/
+            fi
+          done <<< "$ARTIFACT_PATHS"
+
+          if [ -z "$(find bundle-artifacts -maxdepth 1 -type f -print -quit)" ]; then
+            echo "No bundle artifacts matched:"
+            printf '%s\n' "$ARTIFACT_PATHS"
+            exit 1
+          fi
+          ls -la bundle-artifacts
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ inputs.artifact_name }}
+          path: bundle-artifacts/*
+          # Already-compressed payload, and re-zipping a signed bundle is how
+          # signatures get mangled.
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: ${{ inputs.retention_days }}

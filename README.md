@@ -65,7 +65,25 @@ plain Terminal.app tab can never be attached; for that case the skill falls
 back to `claude --resume`, which hands over the conversation rather than the
 terminal.
 
-## Install the shim
+## Install
+
+Download `Roer_<version>_universal.dmg` and `roer-cli-<version>.tar.gz` from
+[Releases](https://github.com/JetBrains/roer/releases). One universal build
+covers Apple silicon and Intel; macOS 14 or later.
+
+Three steps, all of which the release notes spell out: drag Roer to
+Applications and clear its quarantine flag (`xattr -dr
+com.apple.quarantine /Applications/Roer.app`), `brew install tmux`, then unpack
+the shim tarball into one directory and symlink `roer` onto your `PATH`.
+
+The quarantine step is required, not optional — the app is killed on first
+launch without it. Roer is not notarized yet, so signing does not remove it;
+each release's notes say whether that build was signed.
+
+Take the tarball rather than the two loose assets: release assets carry no mode
+bits, and `roer` must be executable for `M-h` to work at all.
+
+### Install the shim from a checkout
 
 ```sh
 ln -s "$PWD/scripts/roer" ~/.local/bin/roer   # put this directory on PATH
@@ -243,9 +261,59 @@ their lines are counted from disk, and diffed against `/dev/null`.
 ## Checks
 
 ```sh
-npm test            # Vitest
-npm run build       # tsc --noEmit + vite build
+sh scripts/check-version   # the five version records agree
+npm test                   # Vitest
+npm run build              # tsc --noEmit + vite build
 cargo test --manifest-path src-tauri/Cargo.toml
+sh -n scripts/roer         # the shim has no compiler behind it
+```
+
+**The order is load-bearing, not stylistic.** `npm run build` must precede
+`cargo test`: `dist/` is gitignored and `tauri::generate_context!()` embeds
+`frontendDist` (`../dist`) at compile time, so on a clean checkout the Rust
+build fails with *"The `frontendDist` configuration is set to `../dist` but this
+path doesn't exist"*. `.github/workflows/ci.yml` runs exactly this list, in
+exactly this order.
+
+## Cutting a release
+
+Versions live in five places — `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock`,
+`src-tauri/tauri.conf.json`, `package.json` and `package-lock.json`. Bump all
+of them, then:
+
+```sh
+sh scripts/check-version           # they agree with each other
+sh scripts/check-version v0.2.0    # ...and with the tag you are about to push
+sh scripts/check-version --print   # just print it
+```
+
+`check-version` fails if a regex matches nothing, so a refactor that moves a
+version field breaks the release loudly rather than passing silently.
+
+Merge to `main`, then push the tag:
+
+```sh
+git tag v0.2.0 && git push origin v0.2.0
+```
+
+`.github/workflows/release.yml` refuses a tag that is not an ancestor of `main`
+or that disagrees with those five records, builds the universal bundle, sends
+the `.app` to the JetBrains CodeSign service, images the `.dmg` with `hdiutil`,
+and opens a **draft prerelease**. Publishing it is a manual step, on purpose:
+confirm the app opens from `/Applications` and that `M-h` hands a session over
+first. A correct `.dmg` with a non-executable shim passes `roer help` and fails
+exactly at `M-h`, because `roer-tmux.conf` invokes the shim as an executable.
+
+Signing is gated on a `CODESIGN_ENABLED` repo variable. With it unset the
+`codesign` job is skipped and the pipeline produces an unsigned `.dmg`, so
+releases work before the service account is issued.
+
+To build a release bundle locally:
+
+```sh
+rustup target add aarch64-apple-darwin x86_64-apple-darwin
+npm run release:local
+lipo -archs src-tauri/target/universal-apple-darwin/release/bundle/macos/Roer.app/Contents/MacOS/roer
 ```
 
 ## Layout

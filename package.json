@@ -10,7 +10,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "tauri": "tauri",
-    "assemble": "tauri build --debug --bundles app"
+    "assemble": "tauri build --debug --bundles app",
+    "release:local": "tauri build --target universal-apple-darwin --bundles app"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.11.1",

@@ -1,0 +1,87 @@
+#!/bin/sh
+# check-version — the release guard.
+#
+# There is one app version, recorded in five places because cargo and npm each
+# insist on their own copy and a lockfile echoes each. Nothing derives any of
+# them from another, so the only thing standing between a typo and a release
+# whose .dmg disagrees with its tag is this script. It runs on every PR, and
+# again as the first step of a release with the tag to match against.
+#
+# Every read is asserted non-empty before anything is compared: a refactor that
+# moves a version field has to fail loudly, because the alternative is four
+# empty strings agreeing with each other.
+#
+# usage:
+#   scripts/check-version            the records agree with each other
+#   scripts/check-version v0.2.0     ...and with this tag
+#   scripts/check-version --print    print the version, check nothing
+set -eu
+
+root=$(cd "$(dirname "$0")/.." && pwd)
+cd "$root"
+status=0
+
+fail() { echo "check-version: $1" >&2; status=1; }
+
+# `^version` anchors past `rust-version` and past a dependency's inline
+# `{ version = }`, so the first hit is the [package] one.
+cargo_version=$(sed -n 's/^version *= *"\([^"]*\)".*/\1/p' src-tauri/Cargo.toml | head -n1)
+
+# The roer entry in Cargo.lock: `version` is the line after its `name`.
+cargo_lock_version=$(awk '/^name = "roer"$/ {
+    getline; sub(/^version = "/, ""); sub(/"$/, ""); print; exit
+}' src-tauri/Cargo.lock)
+
+# Each JSON file puts the version it owns in the first "version" it contains.
+json_version() { sed -n 's/.*"version" *: *"\([^"]*\)".*/\1/p' "$1" | head -n1; }
+tauri_version=$(json_version src-tauri/tauri.conf.json)
+npm_version=$(json_version package.json)
+npm_lock_version=$(json_version package-lock.json)
+
+# A field that has moved is a code change, not a version mismatch, and it must
+# not be allowed to read as "" and then match another "".
+for pair in \
+    "src-tauri/Cargo.toml=[package] version=$cargo_version" \
+    "src-tauri/Cargo.lock=the roer package version=$cargo_lock_version" \
+    "src-tauri/tauri.conf.json=the \"version\" key=$tauri_version" \
+    "package.json=the \"version\" key=$npm_version" \
+    "package-lock.json=the \"version\" key=$npm_lock_version"
+do
+    rest=${pair#*=}
+    [ -n "${rest#*=}" ] || fail \
+        "could not read ${rest%%=*} from ${pair%%=*} — has the field moved?"
+done
+[ $status -eq 0 ] || exit 1
+
+case ${1:-} in
+--print) printf '%s\n' "$cargo_version"; exit 0 ;;
+esac
+
+# Cargo.toml is the reference simply because it has to be something.
+for pair in \
+    "src-tauri/Cargo.lock=$cargo_lock_version" \
+    "src-tauri/tauri.conf.json=$tauri_version" \
+    "package.json=$npm_version" \
+    "package-lock.json=$npm_lock_version"
+do
+    [ "${pair#*=}" = "$cargo_version" ] || fail \
+        "${pair%%=*} says ${pair#*=}, src-tauri/Cargo.toml says $cargo_version"
+done
+
+# package-lock records the version twice — at the top and again in packages[""].
+# The top-level one agreeing is not enough; `npm install` repairs the other.
+lock_hits=$(grep -c "\"version\": \"$cargo_version\"" package-lock.json || true)
+[ "$lock_hits" -ge 2 ] || fail \
+    "package-lock.json records $cargo_version $lock_hits time(s), expected 2 (run: npm install)"
+
+if [ $# -gt 0 ]; then
+    case $1 in
+    v*) tag_version=${1#v} ;;
+    *)  fail "tag '$1' does not start with v"; tag_version= ;;
+    esac
+    [ -z "$tag_version" ] || [ "$tag_version" = "$cargo_version" ] || fail \
+        "tag $1 does not match the project version $cargo_version"
+fi
+
+[ $status -eq 0 ] && echo "check-version: $cargo_version${1:+ (matches tag $1)}"
+exit $status
