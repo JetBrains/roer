@@ -290,17 +290,28 @@ jobs:
   publish:
     name: Publish
     needs: [validate-version, package]
-    # Tag pushes only. A workflow_dispatch run therefore exercises the whole
-    # pipeline — build, cache, tarball, codesign skip, hdiutil, shim, checksums
-    # — and creates no release and no tag.
+    # `!cancelled()` is load-bearing, not defensive noise. A skip propagates
+    # transitively through `needs`: this job needs `package`, which needs
+    # `codesign`, which is skipped whenever CODESIGN_ENABLED is unset. A plain
+    # `if:` does not clear that inherited skip, so the first two v0.1.0 runs
+    # skipped this job and published nothing while `package` succeeded.
+    # `package` survives the same chain only because its own `if` says
+    # `always()`. Verified against a tag push: a publish-shaped job with a
+    # plain `if:` skipped, the same job with `!cancelled()` ran.
     #
-    # Keyed off github.ref, NOT github.ref_type. In the v0.1.0 run the shell saw
-    # GITHUB_REF_TYPE=tag and took the tag branch in validate-version, while
-    # this expression still evaluated false and skipped the job — so the run
-    # reported success and published nothing. An unknown or empty context
-    # property compares false silently, which makes github.ref_type unusable
-    # here regardless of why it was empty.
-    if: startsWith(github.ref, 'refs/tags/v')
+    # `!cancelled()` rather than `always()` so a cancelled run cannot publish,
+    # and because it drops the implicit success() the ancestor results have to
+    # be asserted explicitly below — without them a failed `package` would
+    # publish a release with no assets.
+    #
+    # The tag check keeps a workflow_dispatch run from publishing: a dispatch
+    # exercises the whole pipeline — build, cache, tarball, codesign skip,
+    # hdiutil, shim, checksums — and creates no release and no tag.
+    if: |
+      !cancelled()
+      && needs.validate-version.result == 'success'
+      && needs.package.result == 'success'
+      && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     environment: release
     permissions:
@@ -362,10 +373,14 @@ jobs:
   release-gate:
     name: Release gate
     needs: [publish]
-    # Deliberately keyed off event_name, not the ref: `publish` uses
+    # Deliberately keyed off event_name, not the ref: `publish` gates on
     # startsWith(github.ref, ...), and using the same mechanism twice would let
     # a single bad expression skip the check along with the job it checks. The
     # only `push` trigger this workflow has is on v* tags.
+    #
+    # `always()` is what lets this job observe a skipped `publish` at all — a
+    # plain `if:` would inherit the very skip it exists to report, which is the
+    # failure this gate caught on the second v0.1.0 run.
     if: always() && github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
