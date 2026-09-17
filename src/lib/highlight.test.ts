@@ -87,7 +87,7 @@ describe("highlight", () => {
   const line = (diff: string, at = 0) => {
     const { hunks } = parseDiff(diff);
     const coloured = highlight(hunks, "typescript");
-    const found = coloured.get(hunks[0].lines[at]);
+    const found = coloured.old.get(hunks[0].lines[at]);
     if (!found) throw new Error("that line was not coloured");
     return found;
   };
@@ -131,8 +131,8 @@ describe("highlight", () => {
     const diff = "@@ -1,3 +1,3 @@\n-const s = `one\n-two`;\n-const n = 1;\n+const n = 2;\n";
     const { hunks } = parseDiff(diff);
     const coloured = highlight(hunks, "typescript");
-    const opens = toSpans(coloured.get(hunks[0].lines[0]) ?? []);
-    const inside = toSpans(coloured.get(hunks[0].lines[1]) ?? []);
+    const opens = toSpans(coloured.old.get(hunks[0].lines[0]) ?? []);
+    const inside = toSpans(coloured.old.get(hunks[0].lines[1]) ?? []);
     // The run that closes the literal is the same colour as the run that
     // opened it, a line earlier.
     const string = opens.find((span) => span.text === "`one")?.color;
@@ -141,9 +141,28 @@ describe("highlight", () => {
     expect(inside.reduce((all, span) => all + span.text, "")).toBe("two`;");
   });
 
+  it("gives a context line the grammar state of each side, not one of them", () => {
+    // The removal opens a template literal its replacement closes, so `tail;`
+    // is inside a string in the old file and ordinary code in the new one.
+    // Both columns show the same object, and it is right in each.
+    const diff = '@@ -1,2 +1,2 @@\n-const s = `open\n+const s = "closed";\n tail;\n';
+    const { hunks } = parseDiff(diff);
+    const coloured = highlight(hunks, "typescript");
+    const tail = hunks[0].lines[2];
+    expect(tail.kind).toBe("context");
+
+    const inString = toSpans(coloured.old.get(tail) ?? []);
+    const asCode = toSpans(coloured.new.get(tail) ?? []);
+    expect(inString.map((span) => span.text)).toEqual(["tail;"]);
+    expect(inString[0].color).toBeDefined();
+    expect(asCode.find((span) => span.text.startsWith("tail"))?.color).not.toBe(
+      inString[0].color,
+    );
+  });
+
   it("answers nothing for a grammar that has not loaded", () => {
     const { hunks } = parseDiff("@@ -1 +1 @@\n-a\n+b\n");
-    expect(highlight(hunks, "kotlin").size).toBe(0);
+    expect(highlight(hunks, "kotlin").old.size).toBe(0);
   });
 });
 
@@ -155,7 +174,7 @@ describe("highlight, per language", () => {
   /** The spans of the one changed line of a one-line-per-side diff. */
   const spans = (text: string) => {
     const { hunks } = parseDiff(`@@ -1 +1 @@\n-${text}\n+x\n`);
-    return toSpans(highlight(hunks, "rust").get(hunks[0].lines[0]) ?? []);
+    return toSpans(highlight(hunks, "rust").old.get(hunks[0].lines[0]) ?? []);
   };
 
   it("knows a Rust attribute is not a comment", () => {

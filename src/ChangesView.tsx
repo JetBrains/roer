@@ -10,10 +10,17 @@ import {
   type CSSProperties,
   type KeyboardEvent,
 } from "react";
-import type { ThemedToken } from "@shikijs/types";
 
 import { changedRange, pairRows, parseDiff, type DiffLine, type Hunk } from "./lib/diff";
-import { highlight, loadLang, paint, ready, toSpans, type Span } from "./lib/highlight";
+import {
+  highlight,
+  loadLang,
+  paint,
+  ready,
+  toSpans,
+  type Colouring,
+  type Span,
+} from "./lib/highlight";
 import { langFor } from "./lib/lang";
 import {
   changeKind,
@@ -59,7 +66,7 @@ type Layout = "unified" | "split";
  * three know about layout and nothing about colour, and threading a map
  * through them for `Code` alone would say the opposite.
  */
-const Coloured = createContext<Map<DiffLine, ThemedToken[]> | null>(null);
+const Coloured = createContext<Colouring | null>(null);
 
 /** What `git diff` prints: one column, a marker per line, both numbers. */
 function Unified({ hunk }: { hunk: Hunk }) {
@@ -73,7 +80,9 @@ function Unified({ hunk }: { hunk: Hunk }) {
             {line.kind === "add" ? "+" : line.kind === "del" ? "-" : " "}
           </span>
           <span className="text">
-            <Code line={line} />
+            {/* A context line is in both files; one column can only show one
+                of them, and the new file is the one being read. */}
+            <Code line={line} side={line.kind === "del" ? "old" : "new"} />
           </span>
         </div>
       ))}
@@ -105,10 +114,19 @@ function classes(span: Span): string | undefined {
  * same lines. `DiffLine` identity survives that, since the parse is memoised
  * too.
  */
-const Code = memo(function Code({ line, other }: { line: DiffLine; other?: DiffLine }) {
+const Code = memo(function Code({
+  line,
+  other,
+  side,
+}: {
+  line: DiffLine;
+  other?: DiffLine;
+  /** Which file this column is showing, which is whose tokens it wants. */
+  side: "old" | "new";
+}) {
   const coloured = useContext(Coloured);
   const change = other === undefined ? undefined : changedRange(line.text, other.text);
-  const tokens = coloured?.get(line);
+  const tokens = coloured?.[side].get(line);
   const spans = tokens ? toSpans(tokens, change) : paint(line.text, change);
 
   return (
@@ -138,7 +156,7 @@ function Side({
     <span className={`side ${line.kind}`}>
       <span className="no">{(which === "old" ? line.oldNo : line.newNo) ?? ""}</span>
       <span className="text">
-        <Code line={line} other={other} />
+        <Code line={line} other={other} side={which} />
       </span>
     </span>
   );
@@ -287,13 +305,18 @@ export function ChangesView({ cwd, pane, active }: ChangesViewProps) {
 
   // Only ever the diff of the selected file: a slow answer for the file that
   // was selected two keystrokes ago must not be drawn under this one's name.
+  //
+  // Keyed on `path` rather than on `selection`, which is a fresh object every
+  // time a keypress steps a hunk: depending on the whole thing reparsed the
+  // diff, and so retokenised it, for a move within one file — and handed
+  // `Code` new `DiffLine` objects, defeating its memo as well.
   const parsed = useMemo(
-    () => (diff && diff.path === selection?.path ? parseDiff(diff.text) : null),
-    [diff, selection],
+    () => (diff && diff.path === path ? parseDiff(diff.text) : null),
+    [diff, path],
   );
 
   /** The grammar for the selected file, if we carry one. */
-  const lang = useMemo(() => (selection ? langFor(selection.path) : undefined), [selection]);
+  const lang = useMemo(() => (path ? langFor(path) : undefined), [path]);
 
   // Grammars arrive over time and `ready` is not something React watches, so
   // an arrival has to be announced. Until one lands the painter is drawing,

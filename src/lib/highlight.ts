@@ -238,7 +238,17 @@ export function loadLang(lang: Lang): Promise<void> {
 }
 
 /**
- * Every line of every hunk, tokenized.
+ * A hunk's lines tokenised once per side, because each side is a slice of a
+ * different file. A removal appears in `old`, an addition in `new`, and a
+ * context line — which is in both files — in both.
+ */
+export interface Colouring {
+  old: Map<DiffLine, ThemedToken[]>;
+  new: Map<DiffLine, ThemedToken[]>;
+}
+
+/**
+ * Every line of every hunk, tokenised, once per side.
  *
  * The unit handed to the grammar is one side of one hunk — not one line, and
  * not the hunk itself. A hunk's lines interleave removals with the additions
@@ -250,17 +260,21 @@ export function loadLang(lang: Lang): Promise<void> {
  * them, so there is no state to carry across, and git's few lines of context
  * mean a hunk usually opens somewhere a grammar can find its feet.
  */
-export function highlight(hunks: Hunk[], lang: Lang): Map<DiffLine, ThemedToken[]> {
-  const rows = new Map<DiffLine, ThemedToken[]>();
+export function highlight(hunks: Hunk[], lang: Lang): Colouring {
+  const sides: Colouring = { old: new Map(), new: new Map() };
   // A loaded grammar implies a built highlighter, so this reads as an
   // assertion rather than a check — but it is what keeps `highlight`
   // synchronous, and callable straight from render.
-  if (!core || !loaded.has(lang)) return rows;
+  if (!core || !loaded.has(lang)) return sides;
 
   for (const hunk of hunks) {
-    // Removals first, so that a context line — which belongs to both sides —
-    // keeps the colouring of the side the reader is looking at.
-    for (const absent of ["add", "del"] as const) {
+    for (const side of ["old", "new"] as const) {
+      // A context line belongs to both sides and is one object in both, so it
+      // is tokenised twice and kept under both. The two answers differ only
+      // where the lines around it left the grammar in different states — a
+      // removal that opened a string its replacement closes — and then each
+      // column wants its own, which one shared map could not hold.
+      const absent = side === "old" ? "add" : "del";
       const lines = hunk.lines.filter((line) => line.kind !== absent && line.kind !== "meta");
       if (!lines.length) continue;
 
@@ -272,12 +286,15 @@ export function highlight(hunks: Hunk[], lang: Lang): Map<DiffLine, ThemedToken[
       let at = 0;
       lines.forEach((line, i) => {
         // Offsets index the whole side; a line is cut against its own text.
-        rows.set(line, (tokens[i] ?? []).map((token) => ({ ...token, offset: token.offset - at })));
+        sides[side].set(
+          line,
+          (tokens[i] ?? []).map((token) => ({ ...token, offset: token.offset - at })),
+        );
         at += line.text.length + 1;
       });
     }
   }
-  return rows;
+  return sides;
 }
 
 /**
