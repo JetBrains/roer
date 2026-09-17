@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ChangesView } from "./ChangesView";
+import { parseDiff } from "./lib/diff";
 import { gitChanges, gitDiff, type Changes, type FileChange } from "./lib/git";
 import { listSessions } from "./lib/pty";
 
@@ -14,6 +15,12 @@ vi.mock("./lib/git", async (importOriginal) => ({
 }));
 
 vi.mock("./lib/pty", () => ({ listSessions: vi.fn() }));
+
+// Called through, not stubbed: the point is how often, not what it answers.
+vi.mock("./lib/diff", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./lib/diff")>();
+  return { ...actual, parseDiff: vi.fn(actual.parseDiff) };
+});
 
 function file(path: string, extra: Partial<FileChange> = {}): FileChange {
   return {
@@ -100,6 +107,19 @@ describe("ChangesView", () => {
 
     expect(position()).toBe("change 2 of 2");
     expect(selectedFile()).toBe("git.ts");
+  });
+
+  it("does not reparse the diff to step within one file", async () => {
+    // Reparsing would hand every line a new identity, which re-tokenises the
+    // file and re-renders each line — on every keypress.
+    view();
+    await waitFor(() => expect(position()).toBe("change 1 of 2"));
+    const parses = vi.mocked(parseDiff).mock.calls.length;
+
+    await press("ArrowDown");
+
+    expect(position()).toBe("change 2 of 2");
+    expect(vi.mocked(parseDiff).mock.calls.length).toBe(parses);
   });
 
   it("crosses into the next file once the last change is behind it", async () => {
