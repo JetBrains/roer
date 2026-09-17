@@ -1,7 +1,20 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import {
+  createContext,
+  memo,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type KeyboardEvent,
+} from "react";
+import type { ThemedToken } from "@shikijs/types";
 
 import { changedRange, pairRows, parseDiff, type DiffLine, type Hunk } from "./lib/diff";
-import { paint } from "./lib/highlight";
+import { highlight, loadLang, paint, ready, toSpans, type Span } from "./lib/highlight";
+import { langFor } from "./lib/lang";
 import {
   changeKind,
   gitChanges,
@@ -39,6 +52,15 @@ function plural(count: number, one: string, many: string): string {
 /** How a hunk is drawn: the terminal's diff, or an IDE's. */
 type Layout = "unified" | "split";
 
+/**
+ * The grammar's tokens for the file on screen, or null while none has loaded.
+ *
+ * Carried in context rather than through `Unified`, `Split` and `Side`: those
+ * three know about layout and nothing about colour, and threading a map
+ * through them for `Code` alone would say the opposite.
+ */
+const Coloured = createContext<Map<DiffLine, ThemedToken[]> | null>(null);
+
 /** What `git diff` prints: one column, a marker per line, both numbers. */
 function Unified({ hunk }: { hunk: Hunk }) {
   return (
@@ -51,7 +73,7 @@ function Unified({ hunk }: { hunk: Hunk }) {
             {line.kind === "add" ? "+" : line.kind === "del" ? "-" : " "}
           </span>
           <span className="text">
-            <Code text={line.text} />
+            <Code line={line} />
           </span>
         </div>
       ))}
@@ -59,22 +81,46 @@ function Unified({ hunk }: { hunk: Hunk }) {
   );
 }
 
+/** A grammar's colours are its own; the painter's are a class in the stylesheet. */
+function look(span: Span): CSSProperties | undefined {
+  if (!span.color && !span.italic && !span.bold) return undefined;
+  return {
+    color: span.color,
+    fontStyle: span.italic ? "italic" : undefined,
+    fontWeight: span.bold ? "bold" : undefined,
+  };
+}
+
+function classes(span: Span): string | undefined {
+  const names = [span.kind ? `t-${span.kind}` : "", span.marked ? "ink" : ""].filter(Boolean);
+  return names.length > 0 ? names.join(" ") : undefined;
+}
+
 /**
  * A line of code, coloured the way an editor colours it, with the run that
  * differs from `other` picked out on top of that.
+ *
+ * Memoised because it is not cheap and it is drawn thousands of times: every
+ * keystroke that steps a hunk re-renders the whole diff, and the lines are the
+ * same lines. `DiffLine` identity survives that, since the parse is memoised
+ * too.
  */
-function Code({ text, other }: { text: string; other?: string }) {
-  const spans = paint(text, other === undefined ? undefined : changedRange(text, other));
+const Code = memo(function Code({ line, other }: { line: DiffLine; other?: DiffLine }) {
+  const coloured = useContext(Coloured);
+  const change = other === undefined ? undefined : changedRange(line.text, other.text);
+  const tokens = coloured?.get(line);
+  const spans = tokens ? toSpans(tokens, change) : paint(line.text, change);
+
   return (
     <>
       {spans.map((span, i) => (
-        <span key={i} className={span.marked ? `t-${span.kind} ink` : `t-${span.kind}`}>
+        <span key={i} className={classes(span)} style={look(span)}>
           {span.text}
         </span>
       ))}
     </>
   );
-}
+});
 
 /** One half of a row. No line at all is the gap opposite an edit. */
 function Side({
@@ -92,7 +138,7 @@ function Side({
     <span className={`side ${line.kind}`}>
       <span className="no">{(which === "old" ? line.oldNo : line.newNo) ?? ""}</span>
       <span className="text">
-        <Code text={line.text} other={other?.text} />
+        <Code line={line} other={other} />
       </span>
     </span>
   );
@@ -100,9 +146,10 @@ function Side({
 
 /** What an IDE shows: the old file on the left, the new one on the right. */
 function Split({ hunk }: { hunk: Hunk }) {
+  const paired = useMemo(() => pairRows(hunk), [hunk]);
   return (
     <>
-      {pairRows(hunk).map((row, j) =>
+      {paired.map((row, j) =>
         row.kind === "meta" ? (
           <div key={j} className="line meta">
             <span className="text">{row.left?.text}</span>
@@ -243,6 +290,35 @@ export function ChangesView({ cwd, pane, active }: ChangesViewProps) {
   const parsed = useMemo(
     () => (diff && diff.path === selection?.path ? parseDiff(diff.text) : null),
     [diff, selection],
+  );
+
+  /** The grammar for the selected file, if we carry one. */
+  const lang = useMemo(() => (selection ? langFor(selection.path) : undefined), [selection]);
+
+  // Grammars arrive over time and `ready` is not something React watches, so
+  // an arrival has to be announced. Until one lands the painter is drawing,
+  // which is why nothing here waits: the diff is already on screen.
+  const [grammars, setGrammars] = useState(0);
+  useEffect(() => {
+    if (!lang || ready(lang)) return;
+    let live = true;
+    void loadLang(lang).then(() => {
+      if (live) setGrammars((n) => n + 1);
+    });
+    return () => {
+      live = false;
+    };
+  }, [lang]);
+
+  /**
+   * Tokenising is the expensive half and it does not depend on the layout, so
+   * it happens once per file here rather than per line in `Code`. Without
+   * this every arrow keypress would re-tokenise the whole diff.
+   */
+  const coloured = useMemo(
+    () => (parsed && lang && ready(lang) ? highlight(parsed.hunks, lang) : null),
+    // `grammars` stands in for `ready`, which changes without telling anyone.
+    [parsed, lang, grammars],
   );
 
   const index = useMemo(() => {
@@ -458,20 +534,22 @@ export function ChangesView({ cwd, pane, active }: ChangesViewProps) {
               <p className="muted pad">No textual change — a mode or an empty file.</p>
             ) : null}
 
-            {parsed?.hunks.map((hunk, i) => (
-              <div
-                // Hunks have no identity of their own; within one diff the
-                // position is the identity.
-                key={`${selected?.path}:${i}`}
-                ref={(node) => {
-                  hunkRefs.current[i] = node;
-                }}
-                className={i === index ? "hunk current" : "hunk"}
-              >
-                <div className="hunk-head">{hunk.header}</div>
-                {layout === "split" ? <Split hunk={hunk} /> : <Unified hunk={hunk} />}
-              </div>
-            ))}
+            <Coloured.Provider value={coloured}>
+              {parsed?.hunks.map((hunk, i) => (
+                <div
+                  // Hunks have no identity of their own; within one diff the
+                  // position is the identity.
+                  key={`${selected?.path}:${i}`}
+                  ref={(node) => {
+                    hunkRefs.current[i] = node;
+                  }}
+                  className={i === index ? "hunk current" : "hunk"}
+                >
+                  <div className="hunk-head">{hunk.header}</div>
+                  {layout === "split" ? <Split hunk={hunk} /> : <Unified hunk={hunk} />}
+                </div>
+              ))}
+            </Coloured.Provider>
 
             {parsed?.truncated ? (
               <p className="muted pad">The rest of this diff is too large to show.</p>
