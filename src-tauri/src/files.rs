@@ -432,6 +432,12 @@ pub(crate) fn apply(
             state.snapshots.insert(root.to_string(), Arc::new(patched));
             // This is what a patch is for: the snapshot is current again
             // without anybody re-listing the repository.
+            //
+            // Safe to clear because the only thing that sets it is the one
+            // watcher thread for this root, which is the thread running
+            // this — and a mark from anywhere else is a mark against a
+            // snapshot this patch did not descend from, which the generation
+            // above has already refused.
             state.stale.remove(root);
             Ok(true)
         }

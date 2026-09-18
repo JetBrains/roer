@@ -223,7 +223,14 @@ export function ChangesView({ cwd, pane, active, changed }: ChangesViewProps) {
   // Reloaded whenever the view comes to the front: the session behind it has
   // been editing files the whole time it was hidden.
   useEffect(() => {
-    if (!active) return;
+    if (!active) {
+      // Nothing is out, and nothing is queued behind it: the load on the way
+      // back to the front is what covers whatever the flag was holding, and
+      // leaving it set would spend a second `git status` on arrival.
+      loading.current = false;
+      pending.current = false;
+      return;
+    }
     let cancelled = false;
     loading.current = true;
 
@@ -263,13 +270,16 @@ export function ChangesView({ cwd, pane, active, changed }: ChangesViewProps) {
     handled.current = changed;
     // A hidden tab already re-reads on the way in, so it needs nothing here.
     if (!active) return;
-    // Before the first load there is no repository to compare against, and
-    // nothing on screen to refresh either.
-    if (shownRoot.current === null || changed.root !== shownRoot.current) return;
+    // A load is out, and it may have been taken before this change. Before
+    // the first one lands there is no root to compare against either, so
+    // this is also what keeps the opening load from being the one answer
+    // that is never checked.
     if (loading.current) {
       pending.current = true;
       return;
     }
+    // Nothing on screen, and nothing out to put something there.
+    if (shownRoot.current === null || changed.root !== shownRoot.current) return;
     setToken((one) => one + 1);
   }, [active, changed]);
 

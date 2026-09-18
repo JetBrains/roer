@@ -514,4 +514,62 @@ describe("ChangesView", () => {
     await act(async () => {});
     expect(gitChanges).toHaveBeenCalledTimes(2);
   });
+
+  it("does not carry a queued reload across being hidden", async () => {
+    const props = { cwd: "/work/roer/src" };
+    const { rerender } = render(<ChangesView {...props} active />);
+    await waitFor(() => expect(gitChanges).toHaveBeenCalledTimes(1));
+
+    // A reload that never lands, and a batch queued behind it.
+    let release: ((next: Changes) => void) | undefined;
+    vi.mocked(gitChanges).mockImplementationOnce(
+      () =>
+        new Promise<Changes>((resolve) => {
+          release = resolve;
+        }),
+    );
+    rerender(<ChangesView {...props} active changed={batch(["src/one.ts"])} />);
+    await waitFor(() => expect(gitChanges).toHaveBeenCalledTimes(2));
+    rerender(<ChangesView {...props} active changed={batch(["src/two.ts"])} />);
+    await act(async () => {});
+    expect(gitChanges).toHaveBeenCalledTimes(2);
+
+    // Hidden while both are outstanding, then back. The load on the way in
+    // is fresher than anything the queue was holding, so it is the only one:
+    // a second would be a wasted `git status`, 1.7 s of it on a big repo.
+    rerender(<ChangesView {...props} active={false} />);
+    await act(async () => {
+      release?.(changes);
+    });
+    rerender(<ChangesView {...props} active />);
+    await waitFor(() => expect(gitChanges).toHaveBeenCalledTimes(3));
+    await act(async () => {});
+    expect(gitChanges).toHaveBeenCalledTimes(3);
+  });
+
+  it("checks a change that landed while the opening load was out", async () => {
+    // The first `git status` may have been taken before the change, and
+    // until it lands there is no root to compare the batch against — so
+    // dropping it would leave the opening answer the one nobody rechecks.
+    let release: ((next: Changes) => void) | undefined;
+    vi.mocked(gitChanges).mockImplementationOnce(
+      () =>
+        new Promise<Changes>((resolve) => {
+          release = resolve;
+        }),
+    );
+
+    const props = { cwd: "/work/roer/src", active: true };
+    const { rerender } = render(<ChangesView {...props} />);
+    await waitFor(() => expect(gitChanges).toHaveBeenCalledTimes(1));
+
+    rerender(<ChangesView {...props} changed={batch(["src/lib/git.ts"])} />);
+    await act(async () => {});
+    expect(gitChanges).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      release?.(changes);
+    });
+    await waitFor(() => expect(gitChanges).toHaveBeenCalledTimes(2));
+  });
 });

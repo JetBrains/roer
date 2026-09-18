@@ -170,7 +170,7 @@ struct Batch {
     /// batch named more directories than it is worth naming.
     full: bool,
     /// A `.gitignore` moved, so every cached answer was given under the old
-    /// one.
+    /// one — and so was the listing.
     ignores: bool,
 }
 
@@ -249,14 +249,22 @@ fn settle(root: &str, batch: Batch, ignored: &mut HashMap<String, bool>) -> Opti
     if batch.ignores {
         ignored.clear();
     }
+    // A `.gitignore` decides which *existing* files are listed, and none of
+    // them move when it changes — so the paths that just became ignored, or
+    // just stopped being, produce no event of their own and nothing scoped
+    // can see them. Only a whole listing can, and `git status` has the same
+    // problem: an untracked file appears in it or vanishes from it without
+    // having been touched.
+    let whole = batch.full || batch.ignores;
+
     let live = keep(root, &batch.dirs, ignored);
-    if live.is_empty() && !batch.full {
+    if live.is_empty() && !whole {
         return None;
     }
 
     // A batch that already knows it saw more than it can say cannot be
     // patched from, whatever narrowed out of it.
-    let relist = if batch.full { None } else { fit(live) };
+    let relist = if whole { None } else { fit(live) };
 
     let mut paths: Vec<String> = batch.paths.into_iter().collect();
     paths.sort_unstable();
@@ -264,7 +272,7 @@ fn settle(root: &str, batch: Batch, ignored: &mut HashMap<String, bool>) -> Opti
         changed: Changed {
             root: root.to_string(),
             paths,
-            broad: batch.broad || batch.full,
+            broad: batch.broad || whole,
         },
         relist,
     })
@@ -354,7 +362,8 @@ fn relist(root: &str, dirs: &[String]) -> Result<String, String> {
     git::git(root, &args)
 }
 
-/// The directories git does not ignore, asked in one batch and remembered.
+/// The directories that can still change an answer, asked in one batch and
+/// remembered.
 fn keep(root: &str, dirs: &HashSet<String>, ignored: &mut HashMap<String, bool>) -> Vec<String> {
     let mut live = Vec::new();
     let mut ask = Vec::new();
@@ -369,11 +378,26 @@ fn keep(root: &str, dirs: &HashSet<String>, ignored: &mut HashMap<String, bool>)
         return live;
     }
 
-    let answer = asked(root, &ask);
+    // `check-ignore` answers about the rules, and the rules are not the whole
+    // story: a directory may be ignored and still hold tracked files, whose
+    // edits show in `git status` and in the diff on screen like any other.
+    // Only the ones holding nothing tracked are settled by being ignored.
+    let ignores = asked(root, &ask);
+    let suspect: Vec<String> = ask
+        .iter()
+        .filter(|dir| ignores.contains(*dir))
+        .cloned()
+        .collect();
+    let holds = if suspect.is_empty() {
+        HashSet::new()
+    } else {
+        tracked(root, &suspect)
+    };
+
     for dir in ask {
-        let is_ignored = answer.contains(&dir);
-        ignored.insert(dir.clone(), is_ignored);
-        if !is_ignored {
+        let dead = ignores.contains(&dir) && !holds.contains(&dir);
+        ignored.insert(dir.clone(), dead);
+        if !dead {
             live.push(dir);
         }
     }
@@ -381,8 +405,8 @@ fn keep(root: &str, dirs: &HashSet<String>, ignored: &mut HashMap<String, bool>)
 }
 
 /// What the cache already knows about a directory, ancestors included: under
-/// an ignored directory everything is ignored, so one answer settles a whole
-/// subtree without asking again.
+/// a directory nothing can matter in, nothing can matter, so one answer
+/// settles a whole subtree without asking again.
 fn known(dir: &str, ignored: &HashMap<String, bool>) -> Option<bool> {
     let mut at = Some(dir);
     while let Some(part) = at {
@@ -392,6 +416,40 @@ fn known(dir: &str, ignored: &HashMap<String, bool>) -> Option<bool> {
         at = part.rfind('/').map(|slash| &part[..slash]);
     }
     ignored.get(dir).copied()
+}
+
+/// Which of `dirs` hold anything git is tracking, in one call.
+///
+/// Asked only about directories `check-ignore` has already called ignored,
+/// and cached with that answer, so the twenty-thousand-file build that this
+/// is all here to absorb pays for it once and never again.
+///
+/// Anything that is not a plain answer is read as "holds something tracked",
+/// which costs a listing that was not needed — the safe direction, against
+/// silently dropping an edit to a file git really is tracking.
+fn tracked(root: &str, dirs: &[String]) -> HashSet<String> {
+    let specs: Vec<String> = dirs.iter().map(|dir| git::literal(dir)).collect();
+    let mut args = vec!["ls-files", "-z", "--cached", "--"];
+    args.extend(specs.iter().map(String::as_str));
+
+    let listed = match git::git(root, &args) {
+        Ok(listed) => listed,
+        Err(e) => {
+            eprintln!("roer: could not ask git what it tracks under {root}: {e}");
+            return dirs.iter().cloned().collect();
+        }
+    };
+    // Every path git named is under one of the directories it was asked
+    // about, so the directory is read back off the path.
+    let mut holds = HashSet::new();
+    for path in listed.split('\0').filter(|one| !one.is_empty()) {
+        for dir in dirs {
+            if path == dir.as_str() || path.starts_with(dir) && path[dir.len()..].starts_with('/') {
+                holds.insert(dir.clone());
+            }
+        }
+    }
+    holds
 }
 
 /// Which of `dirs` git ignores, in one call.
@@ -576,6 +634,65 @@ mod tests {
         // Nothing to scope a listing to, so the snapshot is retired and the
         // next question takes the full one.
         assert!(settled.relist.is_none());
+    }
+
+    #[test]
+    fn keeps_an_ignored_directory_that_holds_a_tracked_file() {
+        let dir = scratch("watch-tracked");
+        let root = dir.to_str().expect("a utf-8 path");
+        init(root);
+        write(&dir, ".gitignore", "target/\n");
+        write(&dir, "target/keep.txt", "checked in on purpose\n");
+        // Ignored, and tracked anyway — which `git add -f` is for and which
+        // real repositories do.
+        must(root, &["add", "-f", "target/keep.txt", ".gitignore"]);
+
+        let mut ignored = HashMap::new();
+        let mut batch = Batch::default();
+        batch.dirs.insert("target".to_string());
+        batch.paths.insert("target/keep.txt".to_string());
+        // The rules say `target` is ignored. The index says an edit in there
+        // still moves `git status` and the diff on screen, so it is not the
+        // rules that settle it.
+        let settled = settle(root, batch, &mut ignored).expect("a change worth reporting");
+        assert_eq!(settled.relist.as_deref(), Some(&["target".to_string()][..]));
+        assert_eq!(ignored.get("target"), Some(&false));
+
+        // And a directory under it that holds nothing tracked is still
+        // settled by being ignored, so the build firehose costs nothing.
+        let mut batch = Batch::default();
+        batch.dirs.insert("target/debug".to_string());
+        batch.paths.insert("target/debug/roer".to_string());
+        assert!(settle(root, batch, &mut ignored).is_none());
+        assert_eq!(ignored.get("target/debug"), Some(&true));
+
+        std::fs::remove_dir_all(&dir).expect("cleaned up");
+    }
+
+    #[test]
+    fn takes_a_changed_gitignore_as_the_whole_listing() {
+        let dir = scratch("watch-rules");
+        let root = dir.to_str().expect("a utf-8 path");
+        init(root);
+        write(&dir, ".gitignore", "*.log\n");
+        must(root, &["add", "-A"]);
+
+        let mut ignored = HashMap::from([("logs".to_string(), true)]);
+        let mut batch = Batch::default();
+        batch.dirs.insert(".gitignore".to_string());
+        batch.paths.insert(".gitignore".to_string());
+        batch.ignores = true;
+
+        let settled = settle(root, batch, &mut ignored).expect("a change worth reporting");
+        // A rule decides which files that did not move are listed, and none
+        // of them fire an event — so nothing scoped can see it.
+        assert!(settled.relist.is_none());
+        assert!(settled.changed.broad);
+        // And every answer cached under the rules that just went is gone;
+        // what is left was asked under the new ones.
+        assert_eq!(ignored.get("logs"), None);
+
+        std::fs::remove_dir_all(&dir).expect("cleaned up");
     }
 
     #[test]
