@@ -12,7 +12,7 @@
 //! escapes such a path into a spelling that cannot be diffed.
 
 use std::collections::HashMap;
-use std::io::Read;
+use std::io::{Read, Write};
 use std::path::Path;
 use std::process::{Command, Output, Stdio};
 
@@ -23,7 +23,7 @@ use serde::Serialize;
 const MAX_COUNT_BYTES: u64 = 2 * 1024 * 1024;
 
 /// Enough of a file to tell text from binary. Git uses the same trick.
-const SNIFF_BYTES: usize = 8000;
+pub(crate) const SNIFF_BYTES: usize = 8000;
 
 /// A diff long enough to stall the renderer is cut short instead. Git is
 /// stopped at that point rather than read to the end first, so a generated
@@ -72,7 +72,7 @@ pub struct Changes {
 /// Git, told not to interact: a prompt would hang the app with nowhere to
 /// type, and the optional index refresh takes a lock that a terminal session
 /// in the same repo may be holding.
-fn command(dir: &str, args: &[&str]) -> Command {
+pub(crate) fn command(dir: &str, args: &[&str]) -> Command {
     let mut git = Command::new("git");
     git.arg("-C")
         .arg(dir)
@@ -85,10 +85,58 @@ fn command(dir: &str, args: &[&str]) -> Command {
     git
 }
 
-fn run(dir: &str, args: &[&str]) -> Result<Output, String> {
+pub(crate) fn run(dir: &str, args: &[&str]) -> Result<Output, String> {
     command(dir, args)
         .output()
         .map_err(|e| format!("could not run git: {e}"))
+}
+
+/// What git said when it was fed something on standard input.
+pub(crate) struct Fed {
+    pub stdout: String,
+    pub stderr: String,
+    /// Git's exit code, which for some commands is an answer rather than a
+    /// failure: `check-ignore` exits 1 to say "none of these are ignored".
+    pub code: Option<i32>,
+}
+
+/// Runs git with `input` on its standard input.
+///
+/// Separate from [`run`] for two reasons `git check-ignore --stdin` supplies
+/// both of. It wants a pipe on stdin, and `output()` does not open one — it
+/// nulls it. And its exit 1 is an answer, not a failure, so the code is
+/// handed back instead of being turned into an error the way [`git`] does.
+///
+/// The write goes on a thread of its own because git is writing its answer
+/// while we are still writing the question: a batch larger than the 64 KB
+/// pipe buffer deadlocks the moment each side is waiting for the other to
+/// drain.
+pub(crate) fn feed(dir: &str, args: &[&str], input: String) -> Result<Fed, String> {
+    let mut child = command(dir, args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("could not run git: {e}"))?;
+
+    // Moved into the thread, so the pipe closes — and git sees the end of
+    // its input — when the write is done.
+    let mut pipe = child.stdin.take().expect("stdin is a pipe");
+    let writer = std::thread::spawn(move || pipe.write_all(input.as_bytes()));
+
+    let out = child
+        .wait_with_output()
+        .map_err(|e| format!("could not wait for git: {e}"))?;
+    // Joined after the wait and its result dropped: a broken pipe here is
+    // git having stopped reading, which its own exit code says more about
+    // than the failed write does.
+    let _ = writer.join();
+
+    Ok(Fed {
+        stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
+        code: out.status.code(),
+    })
 }
 
 /// Output of a git command read only up to `limit` bytes.
@@ -142,8 +190,17 @@ fn run_bounded(dir: &str, args: &[&str], limit: usize) -> Result<Bounded, String
     })
 }
 
+/// `path` as a pathspec that means exactly itself.
+///
+/// Git reads a bare pathspec as a glob, so a directory really named `a[1]`
+/// would be taken for a character class and match nothing. `:(literal)`
+/// turns that off; a directory still matches everything under it.
+pub(crate) fn literal(path: &str) -> String {
+    format!(":(literal){path}")
+}
+
 /// Standard output of a git command that is expected to succeed.
-fn git(dir: &str, args: &[&str]) -> Result<String, String> {
+pub(crate) fn git(dir: &str, args: &[&str]) -> Result<String, String> {
     let out = run(dir, args)?;
     if !out.status.success() {
         let why = String::from_utf8_lossy(&out.stderr).trim().to_string();
@@ -154,7 +211,16 @@ fn git(dir: &str, args: &[&str]) -> Result<String, String> {
             why
         });
     }
-    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+    // Not `from_utf8_lossy(..).into_owned()`: the `Cow` it hands back for
+    // valid UTF-8 — which is all but a vanishing minority of git output — is
+    // borrowed, so `into_owned` copies the whole of stdout a second time. For
+    // the file listing of a big repo that is another 123 MB. Taking the
+    // bytes converts in place, and the lossy path is kept for output that
+    // really does hold something invalid.
+    Ok(match String::from_utf8(out.stdout) {
+        Ok(text) => text,
+        Err(bad) => String::from_utf8_lossy(bad.as_bytes()).into_owned(),
+    })
 }
 
 /// Whether the repository has a commit yet. A fresh `git init` has none, and
@@ -173,23 +239,46 @@ fn empty_tree(root: &str) -> Result<String, String> {
         .to_string())
 }
 
-/// Everything changed in the session's repository, staged or not.
-#[tauri::command]
-pub fn git_changes(cwd: String) -> Result<Changes, String> {
+/// The worktree root holding `cwd`, in git's own spelling of it.
+///
+/// Not `git()`: git's own wording names `.git` and the walk up the parents,
+/// which reads as something broken. A session simply being outside a
+/// repository is the ordinary case here.
+pub(crate) fn root(cwd: &str) -> Result<String, String> {
     if cwd.is_empty() {
         return Err("no directory for this session".to_string());
     }
-    // Not `git()`: git's own wording names `.git` and the walk up the
-    // parents, which reads as something broken. A session simply being
-    // outside a repository is the ordinary case here.
-    let out = run(&cwd, &["rev-parse", "--show-toplevel"])?;
+    let out = run(cwd, &["rev-parse", "--show-toplevel"])?;
     let root = String::from_utf8_lossy(&out.stdout).trim().to_string();
     if !out.status.success() || root.is_empty() {
         return Err(format!("{cwd} is not in a git repository."));
     }
+    Ok(root)
+}
 
+/// Everything changed in the session's repository, staged or not.
+///
+/// `async` keeps this off the main thread, which is where Tauri runs a plain
+/// synchronous command — and `git status` over a large big_repo takes 1.7 s,
+/// which is 1.7 s of frozen window every time the changes tab comes to the
+/// front. The body is unchanged; only the thread it runs on is.
+#[tauri::command(async)]
+pub fn git_changes(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, crate::files::FileIndex>,
+    cwd: String,
+) -> Result<Changes, String> {
+    let root = root(&cwd)?;
+    // Looking at the diff is asking to be told when it changes.
+    crate::files::watch_root(&app, &state, &root);
+    changes(&root)
+}
+
+/// The status read itself, with nothing of Tauri about it so a test can call
+/// it.
+fn changes(root: &str) -> Result<Changes, String> {
     let status = git(
-        &root,
+        root,
         &[
             "status",
             "--porcelain=v2",
@@ -202,11 +291,11 @@ pub fn git_changes(cwd: String) -> Result<Changes, String> {
 
     // One pass for every tracked file's line counts, rather than a `git`
     // process per row: a repository mid-refactor has hundreds of rows.
-    let counts = if has_head(&root) {
+    let counts = if has_head(root) {
         let mut args = vec!["diff", "--numstat", "-z", "-M"];
         args.extend(NO_DRIVERS);
         args.push("HEAD");
-        numstat(&git(&root, &args)?)
+        numstat(&git(root, &args)?)
     } else {
         HashMap::new()
     };
@@ -231,7 +320,7 @@ pub fn git_changes(cwd: String) -> Result<Changes, String> {
     }
 
     Ok(Changes {
-        root,
+        root: root.to_string(),
         branch,
         files,
     })
@@ -242,7 +331,10 @@ pub fn git_changes(cwd: String) -> Result<Changes, String> {
 /// `untracked` cannot be inferred here: the file is in no index and no
 /// commit, so git has nothing to compare it against unless it is told to
 /// treat it as a pair of paths.
-#[tauri::command]
+///
+/// `async` for the reason [`git_changes`] is: this shells out to git twice and
+/// the main thread should not be the one waiting.
+#[tauri::command(async)]
 pub fn git_diff(root: String, path: String, untracked: bool) -> Result<String, String> {
     let spec = format!("./{path}");
     // Before the first commit the empty tree is the only other side. The
@@ -453,40 +545,10 @@ fn count_lines(path: &Path) -> (Option<u32>, bool) {
 
 #[cfg(test)]
 mod tests {
-    use super::{count_lines, git_changes, git_diff, numstat, parse_status, Stat, MAX_DIFF_BYTES};
-    use std::path::PathBuf;
-
-    /// An empty directory of this test's own, gone by the end of it.
-    fn scratch(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("roer-{name}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        dir
-    }
-
-    fn must(at: &str, args: &[&str]) {
-        let out = super::run(at, args).unwrap();
-        assert!(
-            out.status.success(),
-            "git {args:?}: {}",
-            String::from_utf8_lossy(&out.stderr)
-        );
-    }
-
-    /// A repository that can commit without a key or a global identity.
-    fn init(at: &str) {
-        must(at, &["-c", "init.defaultBranch=main", "init", "-q"]);
-        must(at, &["config", "user.email", "test@example.invalid"]);
-        must(at, &["config", "user.name", "Roer Test"]);
-    }
-
-    fn commit(at: &str, message: &str) {
-        // Signing is a global setting, and a test must not depend on a key.
-        must(
-            at,
-            &["-c", "commit.gpgsign=false", "commit", "-qm", message],
-        );
-    }
+    use super::{
+        changes, count_lines, git_diff, numstat, parse_status, root, Stat, MAX_DIFF_BYTES,
+    };
+    use crate::testing::{commit, init, must, scratch};
 
     #[test]
     fn reads_the_branch_and_an_ordinary_change() {
@@ -621,7 +683,7 @@ mod tests {
         std::fs::write(dir.join("src/kept.txt"), "one\nTWO\nthree\n").unwrap();
         std::fs::write(dir.join("fresh.md"), "new\nfile\n").unwrap();
 
-        let changes = git_changes(at.clone()).expect("changes");
+        let changes = changes(&at).expect("changes");
         assert_eq!(changes.branch, "main");
         let paths: Vec<_> = changes.files.iter().map(|f| f.path.as_str()).collect();
         assert_eq!(paths, ["fresh.md", "src/kept.txt"]);
@@ -662,7 +724,7 @@ mod tests {
         std::fs::write(dir.join(awkward), "x\n").unwrap();
         std::os::unix::fs::symlink("moved file.txt", dir.join("link.txt")).unwrap();
 
-        let changes = git_changes(at.clone()).expect("changes");
+        let changes = changes(&at).expect("changes");
         let paths: Vec<_> = changes.files.iter().map(|f| f.path.as_str()).collect();
         assert_eq!(paths, ["link.txt", "moved file.txt", awkward]);
 
@@ -722,7 +784,9 @@ mod tests {
         let dir = scratch("bare");
         let at = dir.to_string_lossy().to_string();
 
-        let err = git_changes(at.clone()).expect_err("no repository");
+        // `root` is what the command resolves through before it reads
+        // anything, so this is the message the session actually gets.
+        let err = root(&at).expect_err("no repository");
         assert_eq!(err, format!("{at} is not in a git repository."));
 
         std::fs::remove_dir_all(&dir).unwrap();

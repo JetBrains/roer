@@ -1,7 +1,12 @@
+mod files;
 mod git;
 mod handoff;
 mod pty;
 mod roer;
+mod watch;
+
+#[cfg(test)]
+mod testing;
 
 pub fn run() {
     tauri::Builder::default()
@@ -13,6 +18,7 @@ pub fn run() {
             handoff::focus(app);
         }))
         .manage(pty::PtyState::default())
+        .manage(files::FileIndex::default())
         .invoke_handler(tauri::generate_handler![
             pty::pty_spawn,
             pty::pty_write,
@@ -24,6 +30,8 @@ pub fn run() {
             handoff::handoff_fail,
             git::git_changes,
             git::git_diff,
+            files::files_search,
+            files::file_read,
             roer::roer_sessions,
             roer::roer_status,
         ])

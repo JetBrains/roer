@@ -298,6 +298,31 @@ export function highlight(hunks: Hunk[], lang: Lang): Colouring {
 }
 
 /**
+ * A whole file's lines, tokenised.
+ *
+ * A file is a document, so unlike a hunk it goes to the grammar in one piece
+ * and needs no splitting by side: a comment or a string running over several
+ * lines reads as one thing, which is the point of using a grammar at all.
+ *
+ * Empty when the grammar has not arrived, which the caller reads as "use
+ * `paint` for now" — the same contract `highlight` has.
+ */
+export function highlightText(text: string, lang: Lang): ThemedToken[][] {
+  if (!core || !loaded.has(lang)) return [];
+
+  const lines = text.split("\n");
+  const { tokens } = core.codeToTokens(text, { lang, theme: "darcula" });
+
+  // Offsets index the whole document; a line is drawn against its own text.
+  let at = 0;
+  return lines.map((line, i) => {
+    const out = (tokens[i] ?? []).map((token) => ({ ...token, offset: token.offset - at }));
+    at += line.length + 1;
+    return out;
+  });
+}
+
+/**
  * One line's tokens as spans, cut at the edges of `change` exactly as `paint`
  * cuts its own, so the emphasis follows the edit rather than the token.
  */

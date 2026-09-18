@@ -209,9 +209,9 @@ would otherwise read as success.
 
 ## Local changes
 
-The stage has two tabs. **Changes** shows what the session's own repository
-has uncommitted: the folder tree on the left, the selected file's diff on the
-right.
+The stage opens on the terminal, with **Changes** beside it and a tab per file
+you open. **Changes** shows what the session's own repository has uncommitted:
+the folder tree on the left, the selected file's diff on the right.
 
 | Key | Action |
 | --- | --- |
@@ -260,6 +260,291 @@ Line counts come from two bulk calls — `status --porcelain=v2` and one
 `diff --numstat HEAD` — rather than a `git` process per row; a repository
 mid-refactor has hundreds of rows. Untracked files are in no diff at all, so
 their lines are counted from disk, and diffed against `/dev/null`.
+
+## Go to File
+
+`Cmd+Shift+O` — IntelliJ's shortcut — opens a fuzzy search over every file in
+the session's repository, and the file you pick opens in a tab of its own,
+read only.
+
+| Key | Action |
+| --- | --- |
+| `Cmd+Shift+O` | open the search |
+| `↑` / `↓` | previous / next match, wrapping at both ends |
+| `Enter` | open the selected file in a tab |
+| `Escape` | close, and give the keyboard back |
+| `App.tsx:42` | open that file scrolled to line 42 |
+
+The shortcut works while you are typing in the terminal, which is the whole
+reason the listener is registered on `window` in the **capture phase**:
+xterm.js listens on its own textarea deep inside the stage, and capture runs
+on the way down, before any listener on a descendant. The handler stops the
+event there, so the `O` never reaches the PTY. `Cmd+W` is deliberately *not*
+bound — the app defines no menu of its own, so Tauri's default macOS menu owns
+it as Close Window and handles its key equivalent before the webview sees it.
+Tabs close with their `×`.
+
+Typing nothing lists the files already open, most recently used first.
+
+**The selection is a path, not a row number.** A stale snapshot answers
+straight away and rebuilds behind you, and the popup keeps asking the same
+query until that build lands, so the list can come back longer, shorter or in
+a different order while your finger is still on `↓`. Holding a row number
+would move the selection to another file each time; holding the path moves the
+highlight with the file. For the same reason hovering only claims the
+selection when the pointer has really moved — scrolling the list with the
+arrow keys slides a row under a resting mouse, and the browser reports a move
+that no hand made.
+
+### Why the index and the matcher are both in Rust
+
+It is important to scale up to half a million paths. Handing that list to the
+renderer costs more than the search does — once, let alone per keystroke — so
+`files.rs` holds the paths and does the matching, and what crosses the IPC
+bridge is a query and fifty answers with the matched character positions, a
+few kilobytes.
+
+The list is `git ls-files -z --cached --others --exclude-standard`: what git
+tracks plus what you have just written, with `.gitignore` respected. A file
+created a minute ago is findable and `node_modules` is not in the list at all.
+NUL-delimited for the reason the status parser is: a path may hold anything but
+NUL, and the line form escapes such a name into a spelling that cannot be
+opened.
+
+One snapshot per worktree, keyed by root, because a session can `cd` into
+another repository. Every path lives in one contiguous `String` with a `Vec` of
+offsets over it rather than in a `Vec<String>` — half a million paths is about
+thirty megabytes of text, and spelling that as half a million separate
+allocations costs more in headers and allocator churn than the text itself.
+
+**That `String` is the listing itself.** `git ls-files -z` already hands over
+every path in one allocation, in exactly the shape the index wants, so the
+listing is kept and spanned in place: the text is never moved and the *spans*
+are sorted, comparing the slices they point at. Copying it out instead meant
+holding two buffers of the same size plus a `Vec<&str>` of fat pointers, which
+on a big repo of 1.36M files measured like this:
+
+| | listing copied out | spanned in place |
+| --- | --- | --- |
+| Peak while building | 349 MB | **149 MB** |
+| The index it produces | 137.4 MB | 138.7 MB |
+
+The index is the same size either way — the extra 1.3 MB is the NUL after each
+path, kept rather than compacted out. What goes away is the peak, which was
+2.5× the thing being built. `git.rs` earns part of that: `from_utf8_lossy`
+hands back a *borrowed* `Cow` for valid UTF-8, so `into_owned` copied all 123 MB
+of stdout a second time, where `String::from_utf8` converts in place and falls
+back to lossy only for output that really is invalid.
+The snapshot is held behind an `Arc`, so a query clones a pointer, drops the
+lock and matches without holding anything; a rebuild swaps a new `Arc` in and
+never blocks a reader.
+
+**Nothing waits for git.** A search against a root nobody has asked about yet
+answers `indexing` with no hits and starts the build behind it, so the popup
+opens now and fills in when the listing lands. A stale snapshot is served
+anyway and a rebuild starts behind it. A set of roots with a build in flight
+collapses a burst of keystrokes into one `git ls-files`.
+
+**How long a snapshot is trusted is measured, not fixed.** Five seconds is the
+floor; past that a snapshot is trusted for ten times whatever its own build
+cost. `git ls-files` over a big repo of 1.36M paths takes twenty seconds, so a
+fixed five-second window guaranteed that every snapshot was already fifteen
+seconds stale the moment it arrived — every keystroke started another
+twenty-second build, forever, and the repository was never anything but
+indexing. Scaling the window by the cost stops that: a cheap repository stays
+within a second or two of the truth, and an expensive one is re-listed at a
+rate it can actually sustain. The cost is recorded whether the build succeeded
+or failed, because a listing that takes twenty seconds to fail should not be
+retried on the next keystroke either. A **watched** root is kept current by
+patches instead, so its clock is only a backstop and the multiplier is sixty
+on a five-minute floor.
+
+**The poll behind a build backs off.** While `indexing` is true the popup asks
+the same query again, starting at 150 ms and growing by 1.6× to a ceiling of
+two seconds — fourteen round trips across a twenty-second build instead of a
+hundred and thirty-three. Typing resets it, because a new query deserves a prompt
+answer again. What re-arms the next ask is having made one, never the answer
+object: an answer identical to the last would not re-run an effect watching it,
+and over the IPC bridge every answer is a fresh object anyway, which is exactly
+why identity would be a poor thing to depend on.
+
+Matching is three phases, so the expensive part only ever sees a handful of
+candidates: a byte-level case-folded subsequence test rejects almost
+everything; the survivors are scored — an exact file name first, then a prefix
+of it, a match inside the name over one in the directories, contiguous runs
+super-linearly, and a character landing on a word start (a path segment, or
+after `_`, `-`, `.`, or a camelCase hump) like the start of a word, which is
+what makes `gtf` find `GoToFile.tsx`; and only the winners get their match
+positions worked out. A query under three characters is held to a word start,
+or a repository this size would answer with all of it. Positions come back as
+**byte** offsets, which is what slicing a string takes on both sides of the
+bridge.
+
+The scan is spread over the machine's cores with `std::thread::scope`, each
+thread keeping its own best fifty. That is not premature: the prefilter has to
+read every path, and one core cannot keep a keystroke inside a frame at this
+size. On a synthetic big repo of 500k paths, a release build answers a query
+that matches nothing in 1.6 ms and one that matches *every* path in 8.6 ms —
+against 14 ms and 65 ms on one thread. `cargo test --release --lib -- --ignored
+--nocapture searches_a_big_repo` is that measurement. Merging per-thread
+winners reaches the answer one thread would have, because ranking a path never
+depends on another path, and ties break on the path's own position in the
+index; a test asserts the two agree.
+
+A watched repository is **patched**, not re-listed: see
+[Watching the worktree](#watching-the-worktree).
+
+### The file tab
+
+Read only, numbered, coloured by the same grammars the diff uses, and
+**windowed**: only the visible lines are in the DOM, with a spacer above and
+below so the scrollbar still measures the whole file. Rows are uniform height,
+measured once from a real row rather than hardcoded.
+
+Three caps, each for a different reason:
+
+- **The read stops at 1 MB**, and the view says so. The viewer is for reading
+  code; a generated bundle is not that.
+- **Colouring stops at 5 000 lines**, separately from the windowing, because
+  tokenising is not a drawing cost — hiding lines does not make
+  `codeToTokens` cheaper. Past it the view falls back to the regex painter,
+  which is per line, and says the file is too long to colour fully.
+- **Eight file tabs**, evicting the least recently used — IntelliJ's rule, at
+  the width the strip has. The strip keeps the order files were opened in and
+  eviction goes by the order they were last used; folding those two together
+  would shuffle the strip under the pointer on every switch.
+
+A tab stays *mounted* while another is on top, hidden rather than unmounted,
+so its scroll position and colouring survive a trip to the terminal — the same
+reason the changes view is an overlay. It re-reads its file whenever it comes
+back to the front, because the session behind it has been editing files the
+whole time it was hidden; the text on screen is kept until the new read lands,
+so a refresh does not blink and does not lose your place. A path is resolved
+against the worktree root and refused if it escapes it, so a crafted `../`
+cannot read outside the repository.
+
+## Watching the worktree
+
+Every view of a repository used to learn about a change by being *looked at*:
+the diff view reloaded when its tab came to the front, a file tab re-read on
+activation, and the index was re-listed on a timer. An agent edits files the
+whole time you are watching it, so "when you look at it" is the wrong moment —
+you sit on the diff while it works and nothing moves.
+
+macOS can simply say. `watch.rs` arms one recursive FSEvents watch per
+worktree through `notify` — the same crate `handoff.rs` uses — and one thread
+reads it. Arming is kernel-side rather than a walk of the tree: **4.9 ms** on
+a worktree of 1.36M files, so watching costs nothing even where listing costs
+twenty seconds.
+
+Nothing in the frontend arms anything. A watch is started by whichever command
+resolves a root — `git_changes`, `file_read`, `files_search` — so opening the
+diff view is what asks for live diffs and never opening it asks for nothing.
+Eight roots are held at once, the least recently asked about evicted, which
+bounds a session that `cd`s around.
+
+**A batch is classified by directory, never by file.** Twenty thousand files
+written into an ignored build directory arrived as 66,032 events naming 20,002
+distinct paths and exactly *one* distinct parent directory. Reducing each path
+to its directory is what turns that firehose into a single question for git —
+answered "ignored" — after which the whole burst reaches neither git nor the
+UI. A path at the top of the worktree stands for itself, because its directory
+is the whole repository and that is the one pathspec that is never cheap.
+
+Each batch closes after 300 ms of quiet, or 2 s after its first event so a
+continuous build still gets answered, and then:
+
+1. **Drop what git ignores.** Unknown directories go out in one
+   `git check-ignore -z --stdin`; the answer is cached per root, and a
+   directory under a cached ignored one is dropped without asking. Any event
+   naming a `.gitignore` empties the cache.
+2. **Fit the listing.** Git's cost here grows with the *number* of pathspecs,
+   not with what they cover — on a big repo one directory measured at 0.21 s,
+   sixteen at 0.31 s and three hundred at 2.32 s. So past twenty-four the
+   deepest directories give up their last component, all at that depth in one
+   sweep, until few enough are left. Reaching the top of the worktree is where
+   it stops and the snapshot is retired instead.
+3. **Patch the index.** One `git ls-files -z --cached --others
+   --exclude-standard -- <dirs>` and `files::patch`.
+4. **Tell the frontend**, `roer://files-changed` with the paths and a `broad`
+   flag for a batch that gave up naming them.
+
+A batch that survives with nothing in it — the common case under an ignored
+build — skips all four.
+
+`.git` is skipped entirely. Staging, committing and `gc` churn it violently
+and none of them change either answer: `--cached --others` covers staged and
+unstaged alike, and `git status` is re-asked from the worktree events anyway.
+
+**Patching produces a new index, never edits one.** The `Arc` snapshot is read
+without a lock, so `files::patch` builds a replacement and swaps it in exactly
+as a rebuild does. Because the spans are sorted by path text, everything under
+`dir/` is one contiguous range found with two `partition_point` calls — and the
+directory's *own* entry is a second, separate range. That separation is
+load-bearing: `-` is 0x2D and `.` is 0x2E, both below `/` at 0x2F, so `src`
+and `src/App.tsx` are not neighbours — `src-old` and `src.bak` sit between
+them — and one range spanning both would quietly eat them. The merge walks the
+surviving spans once against the sorted fresh listing into a buffer sized
+exactly for the job, and runs with the lock released: the old `Arc` goes on
+answering queries for the tens of milliseconds it takes. The next lever, if
+that copy ever matters, is keeping the base buffer and scanning added text as
+a second chunk.
+
+Pathspecs go out as `:(literal)…`. A bare pathspec is a glob, so a directory
+really named `a[1]` would be read as a character class and match nothing — and
+the patch would then delete it. `check-ignore` needs its own helper for two
+reasons: it exits **1** to say "none of these are ignored", which is an answer
+rather than a failure, and it wants a real pipe on stdin, which
+`Command::output` nulls. The write goes on a thread of its own, because git
+answers while the question is still being asked and a batch past the 64 KB
+pipe buffer would otherwise deadlock.
+
+**The timer is kept as a backstop.** FSEvents can drop events under load, the
+collapse in step 2 gives up on purpose, and a `git rm` of a tracked file inside
+an ignored directory changes the listing without producing an event that is
+kept. All three are *silent* — the index would just quietly lack a file for the
+rest of the session, which on an experimental feature is the failure you would
+not think to blame. A twenty-second listing every twenty minutes on a
+background thread is a cheap price for every such hole closing by itself.
+`Index.built` is therefore carried forward by a patch rather than reset, or a
+steadily-patched repository would hold the backstop off forever. Anything that
+*announces* itself — a rescan flag, an escalation, a watcher error — retires the
+snapshot at once instead of waiting for the window.
+
+The two views that should feel live take one listener, in `App.tsx` beside the
+handoff listener, fanned out through `onFilesChanged`. The event object itself
+is held in state, so each batch is a new identity and a view can tell the one
+it has already acted on. The diff view bumps the token its load effect already
+watches, behind an in-flight guard — `git status` on a big repo is 1.73 s, and
+a batch every 300 ms would otherwise stack reloads faster than they finish, so
+a change during a load sets a pending flag and exactly one more reload follows.
+A file tab re-reads when the event names *its* path, or when `broad` is set;
+only while it is active, since a hidden tab already re-reads on the way in.
+Both keep the old text on screen until the new read lands, so nothing blinks.
+
+The Go to File popup is deliberately left alone. It re-asks on every keystroke,
+so a fresh index is all it needs, and a list reordering itself under your
+fingers is the bug that was just fixed.
+
+## Off the main thread
+
+Tauri runs a plain `#[tauri::command]` **on the main thread**, so anything slow
+in one freezes the window for as long as it takes. Every command that shells
+out is therefore `#[tauri::command(async)]`, which runs the same synchronous
+body on the async runtime instead:
+
+| Command | What it waits for |
+| --- | --- |
+| `files_search` | a `git rev-parse`, then a scan of the whole index — 35 ms per keystroke on a big repo of 1.36M paths |
+| `file_read` | canonicalising two paths and up to a megabyte off a cold disk |
+| `git_changes` | `git status` over the worktree — 1.7 s on that same big repo |
+| `git_diff` | two more git invocations |
+| `roer_status`, `roer_sessions` | spawning the shim; `roer_sessions` is asked on the way into every Go to File, to find out which repository the session is in |
+
+The PTY commands stay synchronous deliberately. They are already cheap — a
+write hands bytes to a file descriptor — and an async command runs on a thread
+pool, which would put the ordering of your keystrokes at the mercy of the
+scheduler.
 
 ## Checks
 
@@ -341,8 +626,15 @@ src/
   SessionList.tsx         the sessions sidebar and the new-session button
   TerminalView.tsx        xterm.js host wired to a PTY
   ChangesView.tsx         folder tree plus diff for the session's repository
+  GoToFile.tsx            the Cmd+Shift+O search over the repository's files
+  FileView.tsx            read-only windowed viewer behind a file tab
+  CodeLine.tsx            coloured spans -> DOM, shared by the diff and viewer
   lib/pty.ts              typed bridge to the Rust PTY and handoff commands
   lib/git.ts              typed bridge to the Rust git commands
+  lib/files.ts            typed bridge to the file index and the file reader
+  lib/tabs.ts             what the stage shows: open, close, activate, evict
+  lib/keys.ts             capture-phase shortcuts, so the terminal cannot eat them
+  lib/session.ts          which directory the session is in, pane first
   lib/diff.ts             unified diff -> hunks, and hunks -> side-by-side rows
   lib/highlight.ts        code -> coloured spans, marking the edited run
   lib/lang.ts             extension -> grammar, and the lazy loader for each
@@ -351,8 +643,11 @@ src/
 src-tauri/src/
   pty.rs                  one PTY per view, output over a Tauri Channel
   handoff.rs              watches ~/.roer/handoffs/, claim/ack/fail on the record
+  watch.rs                one FSEvents watch per worktree, batched by directory
   git.rs                  status and diff for the session's repository
+  files.rs                the flat file list, the fuzzy matcher, the file reader
   roer.rs                 the only place that invokes the shim
+  testing.rs              scratch repositories for the Rust tests
 .claude/skills/roer-handoff/
 ```
 

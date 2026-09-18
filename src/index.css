@@ -551,6 +551,10 @@ button.tree-row.selected {
   background: var(--ide-row);
 }
 
+/* Drawn from an attribute rather than held as text, so a selection dragged
+   down the diff cannot take the gutter with it. `user-select: none` stops the
+   highlight but WebKit still serialises the text it skipped, so the number has
+   to not be text: pseudo-element content is in no DOM node and in no range. */
 .line .no {
   text-align: right;
   padding-right: 8px;
@@ -558,10 +562,18 @@ button.tree-row.selected {
   user-select: none;
 }
 
+.line .no::before {
+  content: attr(data-no);
+}
+
 .line .mark {
   text-align: center;
   color: var(--ide-gutter);
   user-select: none;
+}
+
+.line .mark::before {
+  content: attr(data-mark);
 }
 
 .line .text {
@@ -617,6 +629,10 @@ button.tree-row.selected {
   padding-right: 10px;
   color: var(--ide-gutter);
   user-select: none;
+}
+
+.side .no::before {
+  content: attr(data-no);
 }
 
 /* Wrapped, not clipped: half the width holds half the line, and the IDE's own
@@ -686,4 +702,237 @@ button.tree-row.selected {
     border-right: none;
     border-bottom: 1px solid var(--roer-border);
   }
+}
+
+/* Go to File ------------------------------------------------------------- */
+
+/* Catches a click outside the popup, which closes it. */
+.popup-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  justify-content: center;
+  /* Near the top, where IntelliJ puts it: the list grows downwards and the
+     input stays where the eye already is. */
+  padding-top: 12vh;
+  background: #00000059;
+}
+
+.popup {
+  display: flex;
+  flex-direction: column;
+  width: min(680px, 90vw);
+  max-height: 60vh;
+  overflow: hidden;
+  background: var(--ide-head);
+  border: 1px solid var(--ide-border);
+  border-radius: 10px;
+  box-shadow: 0 12px 32px #00000073;
+}
+
+.popup-input {
+  padding: 12px 14px;
+  border: none;
+  border-bottom: 1px solid var(--ide-border);
+  background: var(--ide-editor);
+  color: var(--ide-text);
+  font-size: 14px;
+  font-family: inherit;
+}
+
+.popup-input:focus {
+  outline: none;
+}
+
+.popup-input::placeholder {
+  color: var(--ide-gutter);
+}
+
+.popup-status {
+  margin: 0;
+  padding: 5px 14px;
+  border-bottom: 1px solid var(--ide-border);
+  font-size: 11px;
+  color: var(--roer-muted);
+}
+
+.popup-status.error {
+  color: var(--roer-warn);
+}
+
+.popup-list {
+  overflow-y: auto;
+}
+
+.hit {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 4px 14px;
+  font-size: 13px;
+  color: var(--ide-text);
+  cursor: default;
+  /* A long directory is cut off rather than wrapped: one row is one file. */
+  white-space: nowrap;
+}
+
+.hit.on {
+  background: var(--ide-accent);
+}
+
+/* The file name leads, and the directory trails it dimmed — IntelliJ's row,
+   and the order in which the eye wants to read them. */
+.hit-name {
+  flex: none;
+}
+
+.hit-dir {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 11px;
+  color: var(--roer-muted);
+}
+
+.hit.on .hit-dir {
+  color: #d5e1f5;
+}
+
+/* The characters the query matched. */
+.hit b {
+  font-weight: 600;
+  color: var(--roer-accent);
+}
+
+.hit.on b {
+  color: #fff;
+}
+
+/* A file tab: its label and its close button inside one tab-shaped box. */
+.tab-wrap {
+  display: inline-flex;
+  align-items: center;
+  max-width: 180px;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: 6px 6px 0 0;
+}
+
+.tab-wrap.on {
+  background: var(--roer-bg);
+  border-color: var(--roer-border);
+}
+
+button.tab.file {
+  padding-right: 4px;
+  border-radius: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tab-wrap.on button.tab.file {
+  color: var(--roer-fg);
+}
+
+button.tab-x {
+  padding: 0 7px 0 2px;
+  background: none;
+  border: none;
+  border-radius: 3px;
+  font-size: 13px;
+  line-height: 1;
+  color: var(--roer-muted);
+}
+
+button.tab-x:hover {
+  background: #ffffff1a;
+  color: var(--roer-fg);
+}
+
+/* The file viewer ------------------------------------------------------- */
+
+.file-view {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  background: var(--ide-editor);
+}
+
+.file-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--ide-border);
+  background: var(--ide-head);
+  font-size: 11px;
+  color: var(--ide-text);
+}
+
+.file-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--ide-mono);
+}
+
+.file-head .muted {
+  margin: 0 0 0 auto;
+  flex: none;
+}
+
+.file-note {
+  margin: 0;
+  padding: 10px 12px;
+  font-size: 12px;
+  color: var(--roer-muted);
+}
+
+.file-note.error {
+  color: var(--roer-warn);
+}
+
+.file-body {
+  flex: 1;
+  overflow: auto;
+  font-family: var(--ide-mono);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.file-body:focus-visible {
+  outline: none;
+}
+
+/* A row is one line: it must not wrap, or the window's arithmetic — every
+   line the same height — stops being true. */
+.file-line {
+  display: flex;
+  white-space: pre;
+}
+
+.file-no {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  flex: none;
+  box-sizing: border-box;
+  width: 56px;
+  padding-right: 12px;
+  background: var(--ide-editor);
+  color: var(--ide-gutter);
+  text-align: right;
+  user-select: none;
+}
+
+.file-no::before {
+  content: attr(data-no);
+}
+
+.file-code {
+  flex: none;
+  padding-right: 16px;
+  color: var(--ide-text);
 }

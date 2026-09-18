@@ -88,7 +88,12 @@ pub struct Status {
 
 /// Whether the shim can be found, so the UI can explain how to install it
 /// instead of failing at spawn time with a bare ENOENT.
-#[tauri::command]
+///
+/// `async` because both of these spawn a process, and Tauri runs a plain
+/// synchronous command on the main thread. `roer_sessions` in particular is
+/// asked on the way into every Go to File — resolving which repository the
+/// session is in starts there — so a stall here is a stall before the popup.
+#[tauri::command(async)]
 pub fn roer_status() -> Status {
     let bin = bin();
     let available = std::process::Command::new(&bin)
@@ -105,7 +110,9 @@ pub fn roer_status() -> Status {
 }
 
 /// Existing sessions, for the launcher's attach list.
-#[tauri::command]
+///
+/// `async` for the reason [`roer_status`] is.
+#[tauri::command(async)]
 pub fn roer_sessions() -> Result<Vec<SessionInfo>, String> {
     let out = std::process::Command::new(bin())
         .arg("list")
