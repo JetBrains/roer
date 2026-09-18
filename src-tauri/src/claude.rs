@@ -252,15 +252,13 @@ pub fn roer_claude_threads(cwds: Vec<String>) -> Vec<ClaudeThread> {
 mod tests {
     use super::*;
 
+    /// A directory of this test's own. Not just a timestamp: tests run in
+    /// parallel threads of the same process, so two calls close enough
+    /// together can otherwise land on the same nanosecond and collide.
     fn temp_home() -> PathBuf {
-        std::env::temp_dir().join(format!(
-            "roer-claude-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ))
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        std::env::temp_dir().join(format!("roer-claude-{}-{n}", std::process::id()))
     }
 
     fn write_transcript(home: &Path, cwd: &str, id: &str, lines: &[&str]) {
