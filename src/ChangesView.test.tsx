@@ -209,6 +209,7 @@ describe("ChangesView", () => {
     // directory is the one that matters.
     vi.mocked(listSessions).mockResolvedValue([
       {
+        id: "1",
         session: "roer-1",
         pane: "%3",
         attached: true,

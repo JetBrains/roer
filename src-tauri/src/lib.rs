@@ -1,6 +1,8 @@
+mod claude;
 mod files;
 mod git;
 mod handoff;
+mod history;
 mod pty;
 mod roer;
 mod watch;
@@ -30,10 +32,13 @@ pub fn run() {
             handoff::handoff_fail,
             git::git_changes,
             git::git_diff,
+            git::git_root,
             files::files_search,
             files::file_read,
             roer::roer_sessions,
+            roer::roer_past_sessions,
             roer::roer_status,
+            claude::roer_claude_threads,
         ])
         .setup(|app| {
             handoff::watch(app.handle().clone())?;

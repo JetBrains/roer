@@ -29,6 +29,9 @@ export interface Changes {
 
 export const gitChanges = (cwd: string): Promise<Changes> => invoke("git_changes", { cwd });
 
+/** The repository a directory sits in, or `null` outside one. */
+export const gitRoot = (cwd: string): Promise<string | null> => invoke("git_root", { cwd });
+
 export const gitDiff = (root: string, path: string, untracked: boolean): Promise<string> =>
   invoke("git_diff", { root, path, untracked });
 

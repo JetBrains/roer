@@ -12,11 +12,40 @@ export type PtyEvent =
   | { kind: "exit"; code: number | null };
 
 export interface SessionInfo {
+  id: string;
   session: string;
   pane: string;
   attached: boolean;
   cwd: string;
   command: string;
+}
+
+/**
+ * A session that no longer has a live tmux counterpart. Only ever metadata —
+ * never a pane, attach state, or command line — so it can be reopened as a
+ * fresh `new` in the same directory, not attached to.
+ */
+export interface PastSession {
+  id: string;
+  name: string;
+  cwd: string;
+  /** Seconds since the epoch. */
+  createdAt: number;
+  updatedAt: number;
+  endedAt: number;
+}
+
+/**
+ * A past Claude Code conversation, resumable with `roer resume <id>`. Read
+ * straight from Claude's own on-disk transcripts under `~/.claude` — roer
+ * never writes there.
+ */
+export interface ClaudeSession {
+  id: string;
+  cwd: string;
+  title: string;
+  /** Seconds since the epoch (the transcript file's mtime). */
+  updatedAt: number;
 }
 
 export interface RoerStatus {
@@ -73,6 +102,20 @@ export const resizePty = (id: string, cols: number, rows: number): Promise<void>
 export const closePty = (id: string): Promise<void> => invoke("pty_close", { id });
 
 export const listSessions = (): Promise<SessionInfo[]> => invoke("roer_sessions");
+
+/**
+ * Sessions that have ended, most recently ended first. Calling this is what
+ * reconciles history against the live list, so it is only meaningful right
+ * after (or alongside) a {@link listSessions} call.
+ */
+export const listPastSessions = (): Promise<PastSession[]> => invoke("roer_past_sessions");
+
+/**
+ * Past Claude conversations across the given cwds, most recently updated
+ * first. Scoped to cwds roer already knows about — never a global scan.
+ */
+export const listClaudeSessions = (cwds: string[]): Promise<ClaudeSession[]> =>
+  invoke("roer_claude_threads", { cwds });
 
 export const roerStatus = (): Promise<RoerStatus> => invoke("roer_status");
 
