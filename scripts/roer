@@ -70,6 +70,31 @@ free_name() {
     printf '%s' "$name"
 }
 
+new_id() {
+    uuidgen | tr 'A-Z' 'a-z'
+}
+
+# A session's durable identity, unlike its name or pane: a name is freed the
+# moment the session ends, so a later unrelated session can legitimately
+# reuse it, and a pane id is recycled by the server. Stamped as a tmux user
+# option so it survives for the session's whole life without a file of our
+# own to keep in sync. Sessions from before this existed pick one up here,
+# lazily, the first time anything looks them up — there is no migration step.
+#
+# set-option/show-options take a *pane* target even for a session option (the
+# session is inferred from the pane), so "=$name" alone does not resolve —
+# it needs the trailing colon to mean "the active pane of $name's active
+# window".
+ensure_id() {
+    name=$1
+    id=$(tm show-options -t "=$name:" -v -q "@roer_id" 2>/dev/null)
+    if [ -z "$id" ]; then
+        id=$(new_id)
+        tm set-option -t "=$name:" "@roer_id" "$id" 2>/dev/null || true
+    fi
+    printf '%s' "$id"
+}
+
 usage() {
     cat <<'EOF'
 roer — session host for agent terminals
@@ -86,7 +111,7 @@ usage:
   roer attach [name]    take a session back, detaching whoever holds it;
                         with no name, lists sessions
   roer list             list sessions as TSV:
-                        session<TAB>pane<TAB>attached|detached<TAB>cwd<TAB>command
+                        id<TAB>session<TAB>pane<TAB>attached|detached<TAB>cwd<TAB>command
   roer detach [name]    release the session; it keeps running with no client
   roer resume <id>      resume a Claude conversation inside a new session
   roer handoff          teleport this session into the Roer app (used by the skill)
@@ -123,6 +148,7 @@ cmd_app() {
     if ! tm has-session -t "=$name" 2>/dev/null; then
         tm new-session -d -s "$name" -c "$PWD" || return 1
     fi
+    ensure_id "$name" >/dev/null
     # list-panes rather than display-message: as a *pane* target "=name" is
     # not a session, and tmux answers an unresolvable one with an empty line
     # and exit 0 rather than an error. The filter picks the active pane of the
@@ -154,8 +180,13 @@ cmd_new() {
 }
 
 cmd_list() {
+    # Stamp any session that predates @roer_id before formatting rows, so the
+    # id column below is never empty for a session that actually exists.
+    for sess in $(tm list-sessions -F '#{session_name}' 2>/dev/null); do
+        ensure_id "$sess" >/dev/null
+    done
     tm list-panes -a -F \
-'#{session_name}	#{pane_id}	#{?session_attached,attached,detached}	#{pane_current_path}	#{pane_current_command}' \
+'#{@roer_id}	#{session_name}	#{pane_id}	#{?session_attached,attached,detached}	#{pane_current_path}	#{pane_current_command}' \
         2>/dev/null || true
 }
 
@@ -337,6 +368,7 @@ cmd_handoff() {
         esac
         sess=$(tm display-message -p -t "$pane" '#{session_name}' 2>/dev/null) || sess=
         [ -n "$sess" ] || { echo "roer: no such pane: $pane" >&2; return 3; }
+        ensure_id "$sess" >/dev/null
         cwd=$(tm display-message -p -t "$pane" '#{pane_current_path}' 2>/dev/null)
         # The client holding the session now, captured before Roer takes it:
         # the fallback below has to name it. `detach-client -s` would detach
@@ -377,6 +409,7 @@ cmd_handoff() {
 
     pane=${TMUX_PANE:-$(tmux display-message -p '#{pane_id}')}
     sess=$(tmux display-message -p '#{session_name}')
+    ensure_id "$sess" >/dev/null
 
     publish "[\"attach\", \"$(json_escape "$pane")\"]" "$sess" || return $?
 

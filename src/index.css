@@ -193,6 +193,22 @@ button.tab:disabled {
   gap: 6px;
 }
 
+/* A sub-heading grouping sessions by git root, only shown when a list spans
+   more than one repository. Bolder than a plain muted label, since it's the
+   only place the repository is named — the rows below no longer repeat it. */
+h3.group {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--roer-fg);
+  margin: 10px 0 6px;
+}
+
+h3.group:first-child {
+  margin-top: 0;
+}
+
 button {
   font: inherit;
   font-size: 13px;
@@ -297,6 +313,11 @@ button.row.active {
 
 .badge.free {
   color: var(--roer-muted);
+}
+
+.badge.resume {
+  color: var(--roer-muted);
+  border-style: dashed;
 }
 
 .notice,

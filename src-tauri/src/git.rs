@@ -256,6 +256,14 @@ pub(crate) fn root(cwd: &str) -> Result<String, String> {
     Ok(root)
 }
 
+/// The git root for a session's directory, for grouping sessions by
+/// repository in the sidebar. `None` outside a repository, so the sidebar
+/// can fall back to the directory itself as its own group.
+#[tauri::command]
+pub fn git_root(cwd: String) -> Option<String> {
+    root(&cwd).ok()
+}
+
 /// Everything changed in the session's repository, staged or not.
 ///
 /// `async` keeps this off the main thread, which is where Tauri runs a plain
@@ -546,7 +554,8 @@ fn count_lines(path: &Path) -> (Option<u32>, bool) {
 #[cfg(test)]
 mod tests {
     use super::{
-        changes, count_lines, git_diff, numstat, parse_status, root, Stat, MAX_DIFF_BYTES,
+        changes, count_lines, git_diff, git_root, numstat, parse_status, root, Stat,
+        MAX_DIFF_BYTES,
     };
     use crate::testing::{commit, init, must, scratch};
 
@@ -772,6 +781,35 @@ mod tests {
         let diff = git_diff(at.clone(), "huge.txt".to_string(), true).expect("diff");
         assert!(diff.contains("diff truncated"), "{}", &diff[..80]);
         assert!(diff.len() < MAX_DIFF_BYTES + 200, "{}", diff.len());
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn git_root_finds_the_toplevel_from_a_subdirectory() {
+        let dir = scratch("root");
+        std::fs::create_dir_all(dir.join("src")).unwrap();
+        let at = dir.to_string_lossy().to_string();
+        init(&at);
+
+        // git resolves symlinks in its answer (macOS's `/tmp` is one, into
+        // `/private/tmp`), so the expectation is canonicalized too.
+        let canonical = std::fs::canonicalize(&dir)
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+        let from_sub = dir.join("src").to_string_lossy().to_string();
+        assert_eq!(git_root(from_sub), Some(canonical));
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn git_root_is_none_outside_a_repository() {
+        let dir = scratch("no-root");
+        let at = dir.to_string_lossy().to_string();
+
+        assert_eq!(git_root(at), None);
 
         std::fs::remove_dir_all(&dir).unwrap();
     }

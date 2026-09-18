@@ -8,6 +8,8 @@ use std::path::PathBuf;
 
 use serde::Serialize;
 
+use crate::history::{self, PastSession};
+
 /// Where the shim is looked for, relative to `$HOME`. A window opened from
 /// Finder inherits `/usr/bin:/bin:/usr/sbin:/sbin` and nothing else, so an
 /// installed app cannot rely on `PATH` the way a `tauri dev` run can — and the
@@ -69,6 +71,7 @@ fn is_executable(_path: &std::path::Path) -> bool {
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionInfo {
+    pub id: String,
     pub session: String,
     pub pane: String,
     pub attached: bool,
@@ -114,6 +117,19 @@ pub fn roer_status() -> Status {
 /// `async` for the reason [`roer_status`] is.
 #[tauri::command(async)]
 pub fn roer_sessions() -> Result<Vec<SessionInfo>, String> {
+    Ok(live_sessions()?)
+}
+
+/// Sessions that used to be live and no longer are, most recently ended
+/// first. Reconciling history is a side effect of this call, so it is only
+/// meaningful read alongside (or just after) [`roer_sessions`].
+#[tauri::command]
+pub fn roer_past_sessions() -> Result<Vec<PastSession>, String> {
+    let live = live_sessions()?;
+    Ok(history::reconcile(&live))
+}
+
+fn live_sessions() -> Result<Vec<SessionInfo>, String> {
     let out = std::process::Command::new(bin())
         .arg("list")
         .output()
@@ -127,10 +143,11 @@ pub fn roer_sessions() -> Result<Vec<SessionInfo>, String> {
         .collect())
 }
 
-/// One TSV row: session, pane, attached|detached, cwd, command.
+/// One TSV row: id, session, pane, attached|detached, cwd, command.
 fn parse_line(line: &str) -> Option<SessionInfo> {
     let mut f = line.split('\t');
     let info = SessionInfo {
+        id: f.next()?.to_string(),
         session: f.next()?.to_string(),
         pane: f.next()?.to_string(),
         attached: f.next()? == "attached",
@@ -192,7 +209,8 @@ mod tests {
 
     #[test]
     fn parses_a_tsv_row() {
-        let got = parse_line("roer\t%0\tattached\t/tmp/x\tclaude").expect("row");
+        let got = parse_line("abc123\troer\t%0\tattached\t/tmp/x\tclaude").expect("row");
+        assert_eq!(got.id, "abc123");
         assert_eq!(got.session, "roer");
         assert_eq!(got.pane, "%0");
         assert!(got.attached);
@@ -203,7 +221,7 @@ mod tests {
     #[test]
     fn detached_rows_are_not_attached() {
         assert!(
-            !parse_line("s\t%1\tdetached\t/tmp\tzsh")
+            !parse_line("id\ts\t%1\tdetached\t/tmp\tzsh")
                 .expect("row")
                 .attached
         );
@@ -212,12 +230,12 @@ mod tests {
     #[test]
     fn rejects_rows_without_the_required_fields() {
         assert!(parse_line("").is_none());
-        assert!(parse_line("only-a-session-name").is_none());
+        assert!(parse_line("only-an-id").is_none());
     }
 
     #[test]
     fn tolerates_a_cwd_containing_spaces() {
-        let got = parse_line("s\t%0\tdetached\t/tmp/my project\tzsh").expect("row");
+        let got = parse_line("id\ts\t%0\tdetached\t/tmp/my project\tzsh").expect("row");
         assert_eq!(got.cwd, "/tmp/my project");
     }
 }

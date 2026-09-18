@@ -68,6 +68,8 @@ vi.mock("./lib/pty", () => ({
   closePty: vi.fn(async () => undefined),
   decodeOutput: vi.fn(() => new Uint8Array([0x68, 0x69])),
   listSessions: vi.fn(async () => []),
+  listPastSessions: vi.fn(async () => []),
+  listClaudeSessions: vi.fn(async () => []),
   roerStatus: vi.fn(async () => ({
     bin: "roer",
     available: true,
@@ -119,6 +121,7 @@ vi.mock("./lib/git", async (importOriginal) => ({
     files: [],
   })),
   gitDiff: vi.fn(async () => ""),
+  gitRoot: vi.fn(async () => null),
 }));
 
 const handoff: Handoff = {
@@ -378,6 +381,7 @@ describe("App", () => {
   it("marks the session on the stage instead of offering it again", async () => {
     vi.mocked(listSessions).mockResolvedValue([
       {
+        id: "1",
         session: "roer",
         pane: "%3",
         attached: true,
@@ -385,6 +389,7 @@ describe("App", () => {
         command: "claude",
       },
       {
+        id: "2",
         session: "other",
         pane: "%9",
         attached: false,
@@ -406,6 +411,7 @@ describe("App", () => {
     // The session is still there, now held by the terminal that took it.
     vi.mocked(listSessions).mockResolvedValue([
       {
+        id: "1",
         session: "roer",
         pane: "%3",
         attached: true,
@@ -434,6 +440,7 @@ describe("App", () => {
 
     vi.mocked(listSessions).mockResolvedValue([
       {
+        id: "1",
         session: "test-1a2b",
         pane: "%7",
         attached: true,
@@ -458,6 +465,7 @@ describe("App", () => {
 
     vi.mocked(listSessions).mockResolvedValue([
       {
+        id: "1",
         session: "test-1a2b",
         pane: "%7",
         attached: true,
@@ -465,6 +473,7 @@ describe("App", () => {
         command: "zsh",
       },
       {
+        id: "2",
         session: "other",
         pane: "%8",
         attached: true,

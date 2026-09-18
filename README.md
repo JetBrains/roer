@@ -116,6 +116,34 @@ would otherwise attach to the first one and move it out from under whoever had
 it. `roer new` and `roer resume` never reuse a name at all; they count up
 (`api-3f5c-2`) so a new session is always a new session.
 
+### Session history
+
+Roer holds no session state of its own by design: tmux is the persistence
+layer, and the app can restart without losing anything. Past-session history
+is a deliberate, narrow exception to that, not a reversal of it. Every
+session gets a durable id — a tmux user option (`@roer_id`) stamped by the
+shim, since a pane id is recycled the moment a session ends and a name is
+freed for reuse at the same instant, so neither survives long enough to key
+history. `~/.roer/sessions.json` records only `{id, name, cwd, createdAt,
+updatedAt, endedAt}` for sessions that have ended — never a pane, attach
+state, command line, or anything typed into or printed by the session. Every
+*live* fact still comes fresh from `tmux`/`roer list` on every read, never
+from that file, so deleting it costs only its own bookkeeping (the set of
+directories the "Resume" list below scans), never a running session.
+
+The sidebar's "Resume" list itself shows past **Claude Code conversations**,
+not raw tmux history: it reads Claude's own transcripts under
+`~/.claude/projects/<encoded cwd>/` (bounded head/tail reads, never a whole
+transcript) for every directory roer already knows about — live sessions'
+directories plus the ones in `sessions.json` above — and never scans any
+other project on the machine. It also checks Claude's own
+`~/.claude/sessions/<pid>.json` registry so a conversation a live `claude`
+process still holds elsewhere isn't offered twice; this check is best-effort
+(no pid-reuse tolerance), so the worst case is `claude --resume` itself
+refusing, not a wrong resume. Roer only ever reads under `~/.claude`, never
+writes there. Clicking a row runs `roer resume <id>`, which is nothing
+special until you click it — no conversation resumes on its own.
+
 ## Getting out of a session
 
 The prefix key is unbound, so there is no multiplexer UI to escape into. Two
@@ -150,7 +178,7 @@ Three more ways, for when you are not in the session at all:
 | `roer` / `roer app [name]` | open this directory's session in the Roer app, creating it detached if needed; inside a session, teleport that session |
 | `roer shell [name]` | create or reattach this directory's session **in this terminal**, detaching any other client |
 | `roer attach [name]` | take a session back; with no name, lists sessions |
-| `roer list` | sessions as TSV: session, pane, attached/detached, cwd, command |
+| `roer list` | sessions as TSV: id, session, pane, attached/detached, cwd, command |
 | `roer detach [name]` | release the session; it keeps running with no client |
 | `roer resume <id>` | resume a Claude conversation inside a new session, in manual permission mode |
 | `roer handoff` | teleport this session into Roer (used by the skill) |
@@ -650,6 +678,8 @@ src-tauri/src/
   pty.rs                  one PTY per view, output over a Tauri Channel
   handoff.rs              watches ~/.roer/handoffs/, claim/ack/fail on the record
   watch.rs                one FSEvents watch per worktree, batched by directory
+  history.rs              ~/.roer/sessions.json: past-session metadata only
+  claude.rs               reads ~/.claude/* for resumable past conversations
   git.rs                  status and diff for the session's repository
   files.rs                the flat file list, the fuzzy matcher, the file reader
   roer.rs                 the only place that invokes the shim
