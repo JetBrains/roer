@@ -1,9 +1,16 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ChangesView } from "./ChangesView";
 import { parseDiff } from "./lib/diff";
 import { gitChanges, gitDiff, type Changes, type FileChange } from "./lib/git";
+import { type FilesChanged } from "./lib/files";
 import { listSessions } from "./lib/pty";
 
 vi.mock("./lib/git", async (importOriginal) => ({
@@ -67,7 +74,8 @@ async function press(key: string) {
 /** Which hunk the view says the keys are on, out of how many. */
 const position = () => screen.getByText(/change \d+ of \d+/).textContent;
 
-const selectedFile = () => document.querySelector(".tree-row.selected .name")?.textContent ?? null;
+const selectedFile = () =>
+  document.querySelector(".tree-row.selected .name")?.textContent ?? null;
 
 beforeEach(() => {
   vi.mocked(gitChanges).mockReset().mockResolvedValue(changes);
@@ -81,10 +89,20 @@ beforeEach(() => {
 
 const view = () => render(<ChangesView cwd="/work/roer/src" active />);
 
+/** One batch from the worktree watch, as the backend reports it. */
+const batch = (paths: string[], over: Partial<FilesChanged> = {}): FilesChanged => ({
+  root: "/work/roer",
+  paths,
+  broad: false,
+  ...over,
+});
+
 describe("ChangesView", () => {
   it("groups the changed files into a folder tree", async () => {
     view();
-    await waitFor(() => expect(screen.getByText("src/lib")).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByText("src/lib")).toBeInTheDocument(),
+    );
     // `src` holds nothing but `lib`, so the two rows are folded into one.
     const rows = [...document.querySelectorAll(".tree-row")].map(
       (row) => row.querySelector(".name")?.textContent,
@@ -170,7 +188,9 @@ describe("ChangesView", () => {
 
   it("opens a collapsed folder rather than hiding the selection in it", async () => {
     view();
-    await waitFor(() => expect(screen.getByText("src/lib")).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByText("src/lib")).toBeInTheDocument(),
+    );
 
     fireEvent.click(screen.getByText("src/lib"));
     expect(screen.queryByText("tree.ts")).not.toBeInTheDocument();
@@ -178,7 +198,9 @@ describe("ChangesView", () => {
     // The keys still walk every change; landing on one reopens its folder.
     await press("ArrowRight");
 
-    await waitFor(() => expect(screen.getByText("tree.ts")).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByText("tree.ts")).toBeInTheDocument(),
+    );
     expect(selectedFile()).toBe("tree.ts");
   });
 
@@ -186,7 +208,13 @@ describe("ChangesView", () => {
     // A `cd` in the terminal is how you change repository, so the pane's live
     // directory is the one that matters.
     vi.mocked(listSessions).mockResolvedValue([
-      { session: "roer-1", pane: "%3", attached: true, cwd: "/work/other", command: "zsh" },
+      {
+        session: "roer-1",
+        pane: "%3",
+        attached: true,
+        cwd: "/work/other",
+        command: "zsh",
+      },
     ]);
 
     render(<ChangesView cwd="/work/roer/src" pane="%3" active />);
@@ -199,7 +227,9 @@ describe("ChangesView", () => {
 
     view();
 
-    await waitFor(() => expect(screen.getByText(/not a git repository/)).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByText(/not a git repository/)).toBeInTheDocument(),
+    );
   });
 
   it("has nothing to show for a clean worktree", async () => {
@@ -207,20 +237,33 @@ describe("ChangesView", () => {
 
     view();
 
-    await waitFor(() => expect(screen.getByText(/No local changes/)).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByText(/No local changes/)).toBeInTheDocument(),
+    );
     expect(gitDiff).not.toHaveBeenCalled();
   });
 
   it("reports a binary file instead of an empty diff", async () => {
     vi.mocked(gitChanges).mockResolvedValue({
       ...changes,
-      files: [file("icon.png", { binary: true, added: 0, deleted: 0, counted: false })],
+      files: [
+        file("icon.png", {
+          binary: true,
+          added: 0,
+          deleted: 0,
+          counted: false,
+        }),
+      ],
     });
-    vi.mocked(gitDiff).mockResolvedValue("Binary files a/icon.png and b/icon.png differ\n");
+    vi.mocked(gitDiff).mockResolvedValue(
+      "Binary files a/icon.png and b/icon.png differ\n",
+    );
 
     view();
 
-    await waitFor(() => expect(screen.getByText(/Binary file/)).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByText(/Binary file/)).toBeInTheDocument(),
+    );
   });
 
   it("shows a change as two sides, the old one beside the new", async () => {
@@ -240,9 +283,11 @@ describe("ChangesView", () => {
     fireEvent.click(screen.getByText("Unified"));
 
     expect(document.querySelectorAll(".pair")).toHaveLength(0);
-    const marks = [...document.querySelectorAll(".hunk.current .line .mark")].map(
-      (mark) => mark.textContent,
-    );
+    // On the attribute, not in the text: the marker column is drawn by CSS
+    // so that selecting a diff copies the code alone.
+    const marks = [
+      ...document.querySelectorAll(".hunk.current .line .mark"),
+    ].map((mark) => mark.getAttribute("data-mark"));
     expect(marks).toEqual(["-", "+"]);
   });
 
@@ -254,7 +299,9 @@ describe("ChangesView", () => {
     fireEvent.click(screen.getByText("Unified"));
 
     expect(position()).toBe("change 2 of 2");
-    expect(document.querySelector(".hunk.current .line .text")?.textContent).toBe("two");
+    expect(
+      document.querySelector(".hunk.current .line .text")?.textContent,
+    ).toBe("two");
   });
 
   /** Darcula, as `theme-darcula.ts` sets it and as jsdom reports it back. */
@@ -275,18 +322,25 @@ describe("ChangesView", () => {
     await waitFor(() => expect(position()).toBe("change 1 of 1"));
     // The grammar for `git.ts` is fetched, so the first paint is the painter's
     // and the one worth asserting on arrives after it.
-    await waitFor(() => expect(coloured(".side.del")).toContain(`${KEYWORD}:const`));
+    await waitFor(() =>
+      expect(coloured(".side.del")).toContain(`${KEYWORD}:const`),
+    );
 
     expect(coloured(".side.del")).toContain(`${COMMENT}:// count`);
-    const comment = [...document.querySelectorAll<HTMLElement>(".side.del .text span")].find(
-      (span) => span.textContent === "// count",
-    );
+    const comment = [
+      ...document.querySelectorAll<HTMLElement>(".side.del .text span"),
+    ].find((span) => span.textContent === "// count");
     expect(comment?.style.fontStyle).toBe("italic");
   });
 
   it("falls back to the painter for a language it carries no grammar for", async () => {
-    vi.mocked(gitChanges).mockResolvedValue({ ...changes, files: [file("run.pl")] });
-    vi.mocked(gitDiff).mockResolvedValue("@@ -1 +1 @@\n-my $n = 1;\n+my $n = 2;\n");
+    vi.mocked(gitChanges).mockResolvedValue({
+      ...changes,
+      files: [file("run.pl")],
+    });
+    vi.mocked(gitDiff).mockResolvedValue(
+      "@@ -1 +1 @@\n-my $n = 1;\n+my $n = 2;\n",
+    );
 
     view();
     await waitFor(() => expect(position()).toBe("change 1 of 1"));
@@ -298,7 +352,9 @@ describe("ChangesView", () => {
     expect(painted).toContain("t-number ink:1");
     expect(painted).toContain("t-plain:my");
     // Nothing is coloured inline, because no grammar answered.
-    expect(coloured(".side.del").every((entry) => entry.startsWith(":"))).toBe(true);
+    expect(coloured(".side.del").every((entry) => entry.startsWith(":"))).toBe(
+      true,
+    );
   });
 
   it("picks out only the run that changed", async () => {
@@ -308,7 +364,9 @@ describe("ChangesView", () => {
 
     view();
     await waitFor(() => expect(position()).toBe("change 1 of 1"));
-    await waitFor(() => expect(coloured(".side.add")).toContain(`${KEYWORD}:const`));
+    await waitFor(() =>
+      expect(coloured(".side.add")).toContain(`${KEYWORD}:const`),
+    );
 
     // The lines differ in one digit, so that is the only thing picked out.
     const ink = document.querySelectorAll(".side.add .ink");
@@ -319,18 +377,29 @@ describe("ChangesView", () => {
     view();
     await waitFor(() => expect(position()).toBe("change 1 of 2"));
 
-    expect(document.querySelector(".diff-head .kind")?.textContent).toBe("modified");
+    expect(document.querySelector(".diff-head .kind")?.textContent).toBe(
+      "modified",
+    );
   });
 
   it("says nothing about the size of a change nobody could measure", async () => {
     vi.mocked(gitChanges).mockResolvedValue({
       ...changes,
-      files: [file("generated.sql", { unstaged: "?", counted: false, added: 0, deleted: 0 })],
+      files: [
+        file("generated.sql", {
+          unstaged: "?",
+          counted: false,
+          added: 0,
+          deleted: 0,
+        }),
+      ],
     });
 
     view();
 
-    await waitFor(() => expect(screen.getByText("generated.sql")).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByText("generated.sql")).toBeInTheDocument(),
+    );
     // Zero added and zero deleted would be a claim about the file; there is
     // none to make.
     expect(document.querySelector(".counts")).toBeNull();
@@ -368,5 +437,81 @@ describe("ChangesView", () => {
     fireEvent.click(screen.getByText("Refresh"));
 
     await waitFor(() => expect(gitChanges).toHaveBeenCalledTimes(2));
+  });
+
+  it("reloads when the watch says this repository changed", async () => {
+    const props = { cwd: "/work/roer/src", active: true };
+    const { rerender } = render(<ChangesView {...props} />);
+    await waitFor(() => expect(gitChanges).toHaveBeenCalledTimes(1));
+
+    // The whole point: nobody left the tab and came back to it.
+    rerender(<ChangesView {...props} changed={batch(["src/lib/git.ts"])} />);
+    await waitFor(() => expect(gitChanges).toHaveBeenCalledTimes(2));
+
+    // Another worktree entirely. Roer watches one per session it has been
+    // asked about, and this view is showing only one of them.
+    rerender(
+      <ChangesView
+        {...props}
+        changed={batch(["a.ts"], { root: "/work/elsewhere" })}
+      />,
+    );
+    await act(async () => {});
+    expect(gitChanges).toHaveBeenCalledTimes(2);
+  });
+
+  it("queues one reload behind a slow one, not a reload per batch", async () => {
+    const props = { cwd: "/work/roer/src", active: true };
+    const { rerender } = render(<ChangesView {...props} />);
+    await waitFor(() => expect(gitChanges).toHaveBeenCalledTimes(1));
+
+    // `git status` over a big repo is 1.7 s and a batch lands every few
+    // hundred milliseconds, so this is the ordinary case, not the edge.
+    let release: ((next: Changes) => void) | undefined;
+    vi.mocked(gitChanges).mockImplementationOnce(
+      () =>
+        new Promise<Changes>((resolve) => {
+          release = resolve;
+        }),
+    );
+
+    rerender(<ChangesView {...props} changed={batch(["src/one.ts"])} />);
+    await waitFor(() => expect(gitChanges).toHaveBeenCalledTimes(2));
+
+    rerender(<ChangesView {...props} changed={batch(["src/two.ts"])} />);
+    rerender(<ChangesView {...props} changed={batch(["src/three.ts"])} />);
+    await act(async () => {});
+    // Both landed while the first was still out; neither started a second.
+    expect(gitChanges).toHaveBeenCalledTimes(2);
+
+    await act(async () => {
+      release?.(changes);
+    });
+    await waitFor(() => expect(gitChanges).toHaveBeenCalledTimes(3));
+
+    // One more, and only one: the queue is a flag, not a list.
+    await act(async () => {});
+    expect(gitChanges).toHaveBeenCalledTimes(3);
+  });
+
+  it("leaves a hidden view to reload on its way back to the front", async () => {
+    const props = { cwd: "/work/roer/src" };
+    const { rerender } = render(<ChangesView {...props} active />);
+    await waitFor(() => expect(gitChanges).toHaveBeenCalledTimes(1));
+
+    // The same object App holds in state, which is what lets the view tell
+    // an event it has already acted on from a new one.
+    const slept = batch(["src/x.ts"]);
+    rerender(<ChangesView {...props} active={false} />);
+    rerender(<ChangesView {...props} active={false} changed={slept} />);
+    await act(async () => {});
+    expect(gitChanges).toHaveBeenCalledTimes(1);
+
+    // Coming to the front reloads once, and the event it slept through does
+    // not make that twice.
+    rerender(<ChangesView {...props} active changed={slept} />);
+    await waitFor(() => expect(gitChanges).toHaveBeenCalledTimes(2));
+    await act(async () => {});
+    expect(gitChanges).toHaveBeenCalledTimes(2);
   });
 });

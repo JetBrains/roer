@@ -1,8 +1,23 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { ChangesView } from "./ChangesView";
+import { FileView } from "./FileView";
+import { GoToFile } from "./GoToFile";
 import { SessionList, type OpenRequest } from "./SessionList";
 import { TerminalView } from "./TerminalView";
+import { onFilesChanged, type FilesChanged } from "./lib/files";
+import { isGoToFile, useHotkey } from "./lib/keys";
+import {
+  activate,
+  closeTab,
+  forRoot,
+  noTabs,
+  openFile,
+  recent,
+  tabId,
+  tabName,
+  type Tabs,
+} from "./lib/tabs";
 import {
   ackHandoff,
   claimHandoff,
@@ -42,15 +57,14 @@ function viewOf(handoff: Handoff, record: string): SessionView {
   };
 }
 
-/** Which panel is on top of the stage. The session behind it never changes. */
-type Tab = "terminal" | "changes";
-
 export function App() {
   const [session, setSession] = useState<SessionView | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [tab, setTab] = useState<Tab>("terminal");
+  const [tabs, setTabs] = useState<Tabs>(noTabs);
+  const [finding, setFinding] = useState(false);
   // The changes view stays mounted once opened, so switching back to the
-  // terminal and away again keeps the file that was selected.
+  // terminal and away again keeps the file that was selected. File tabs get
+  // this for free: being open is being in `tabs.files`.
   const [everChanges, setEverChanges] = useState(false);
   // Acking twice would try to delete an already-deleted record.
   const ackedRef = useRef<string | null>(null);
@@ -70,6 +84,16 @@ export function App() {
   // stage holds one session, so showing them at once would evict a session
   // whose terminal is still waiting to hear that it moved.
   const queueRef = useRef<SessionView[]>([]);
+
+  // Go to File asks about the session's repository, so there is nothing to
+  // search without one. Read through the ref, so the handler stays the same
+  // function across renders and the listener is registered once.
+  useHotkey(
+    isGoToFile,
+    useCallback(() => {
+      if (stagedRef.current) setFinding(true);
+    }, []),
+  );
 
   // A different target is a different terminal, and it has not attached yet.
   useEffect(() => {
@@ -176,11 +200,52 @@ export function App() {
     };
   }, [accept]);
 
-  // A session released or ended leaves no repository to be looking at.
+  // One listener for every watched worktree, fanned out to the views by the
+  // views themselves: only they know which repository and which file they
+  // are showing. Held as the event object, so each batch is a new identity
+  // and a view can tell the one it has already acted on.
+  const [changed, setChanged] = useState<FilesChanged | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    let unlisten: (() => void) | undefined;
+
+    void onFilesChanged(setChanged)
+      .then((fn) => {
+        if (cancelled) {
+          fn();
+          return;
+        }
+        unlisten = fn;
+      })
+      .catch(() => {
+        /* No watcher for this session; the views go back to refreshing when
+           they are looked at, which is what they did before. */
+      });
+
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, []);
+
+  // A session released or ended leaves no repository to be looking at, so
+  // every file tab is about a directory nobody is in any more.
   const staged = Boolean(session);
   useEffect(() => {
-    if (!staged) setTab("terminal");
+    if (!staged) {
+      setTabs((current) => activate(forRoot(current, undefined), "terminal"));
+      setFinding(false);
+    }
   }, [staged]);
+
+  /** Opens a file from Go to File, in a tab of its own. */
+  const openInTab = useCallback((root: string, path: string, line?: number) => {
+    setTabs((current) =>
+      // A file from another repository means the session has moved, and the
+      // tabs from where it was are about nothing now.
+      openFile(forRoot(current, root), { kind: "file", root, path, line }),
+    );
+  }, []);
 
   /**
    * Learns the pane tmux made for a session started from the launcher.
@@ -266,25 +331,54 @@ export function App() {
           <button
             type="button"
             role="tab"
-            aria-selected={tab === "terminal"}
-            className={tab === "terminal" ? "tab on" : "tab"}
-            onClick={() => setTab("terminal")}
+            aria-selected={tabs.active === "terminal"}
+            className={tabs.active === "terminal" ? "tab on" : "tab"}
+            onClick={() => setTabs((current) => activate(current, "terminal"))}
           >
             Terminal
           </button>
           <button
             type="button"
             role="tab"
-            aria-selected={tab === "changes"}
-            className={tab === "changes" ? "tab on" : "tab"}
+            aria-selected={tabs.active === "changes"}
+            className={tabs.active === "changes" ? "tab on" : "tab"}
             disabled={!session}
             onClick={() => {
               setEverChanges(true);
-              setTab("changes");
+              setTabs((current) => activate(current, "changes"));
             }}
           >
             Changes
           </button>
+
+          {tabs.files.map((file) => {
+            const id = tabId(file);
+            const name = tabName(file);
+            return (
+              // The tab and its close button are two controls, so they are two
+              // buttons; the wrapper is what looks like one tab.
+              <span key={id} className={tabs.active === id ? "tab-wrap on" : "tab-wrap"}>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={tabs.active === id}
+                  className="tab file"
+                  title={file.path}
+                  onClick={() => setTabs((current) => activate(current, id))}
+                >
+                  {name}
+                </button>
+                <button
+                  type="button"
+                  className="tab-x"
+                  aria-label={`Close ${name}`}
+                  onClick={() => setTabs((current) => closeTab(current, id))}
+                >
+                  ×
+                </button>
+              </span>
+            );
+          })}
         </div>
 
         <div className="stage-body">
@@ -308,12 +402,44 @@ export function App() {
               next. The terminal keeps its size too, so nothing reflows when
               the diff is on top of it. */}
           {everChanges ? (
-            <div className="overlay" hidden={tab !== "changes"}>
-              <ChangesView cwd={session?.cwd} pane={session?.pane} active={tab === "changes"} />
+            <div className="overlay" hidden={tabs.active !== "changes"}>
+              <ChangesView
+                cwd={session?.cwd}
+                pane={session?.pane}
+                active={tabs.active === "changes"}
+                changed={changed}
+              />
             </div>
           ) : null}
+
+          {/* Open is mounted, for the same reason: a file tab keeps its scroll
+              position while you are away in the terminal. */}
+          {tabs.files.map((file) => {
+            const id = tabId(file);
+            return (
+              <div key={id} className="overlay" hidden={tabs.active !== id}>
+                <FileView
+                  root={file.root}
+                  path={file.path}
+                  line={file.line}
+                  active={tabs.active === id}
+                  changed={changed}
+                />
+              </div>
+            );
+          })}
         </div>
       </section>
+
+      {finding ? (
+        <GoToFile
+          cwd={session?.cwd}
+          pane={session?.pane}
+          recent={recent(tabs)}
+          onOpen={openInTab}
+          onClose={() => setFinding(false)}
+        />
+      ) : null}
     </main>
   );
 }

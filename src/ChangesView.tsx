@@ -7,11 +7,17 @@ import {
   useMemo,
   useRef,
   useState,
-  type CSSProperties,
   type KeyboardEvent,
 } from "react";
 
-import { changedRange, pairRows, parseDiff, type DiffLine, type Hunk } from "./lib/diff";
+import { Spans } from "./CodeLine";
+import {
+  changedRange,
+  pairRows,
+  parseDiff,
+  type DiffLine,
+  type Hunk,
+} from "./lib/diff";
 import {
   highlight,
   loadLang,
@@ -19,8 +25,8 @@ import {
   ready,
   toSpans,
   type Colouring,
-  type Span,
 } from "./lib/highlight";
+import { type FilesChanged } from "./lib/files";
 import { langFor } from "./lib/lang";
 import {
   changeKind,
@@ -32,7 +38,7 @@ import {
   type Changes,
   type FileChange,
 } from "./lib/git";
-import { listSessions } from "./lib/pty";
+import { resolveDir } from "./lib/session";
 import { ancestors, buildTree, fileOrder, rows } from "./lib/tree";
 
 export interface ChangesViewProps {
@@ -42,6 +48,9 @@ export interface ChangesViewProps {
   pane?: string;
   /** Whether the view is on top, which is when it takes the keyboard. */
   active: boolean;
+  /** The last thing a worktree watch reported, so the diff does not have to
+   * be left and come back to before it moves. */
+  changed?: FilesChanged | null;
 }
 
 /** Where the selection is: a file, and which of its hunks. */
@@ -74,11 +83,17 @@ function Unified({ hunk }: { hunk: Hunk }) {
     <>
       {hunk.lines.map((line, j) => (
         <div key={j} className={`line ${line.kind}`}>
-          <span className="no">{line.oldNo ?? ""}</span>
-          <span className="no">{line.newNo ?? ""}</span>
-          <span className="mark">
-            {line.kind === "add" ? "+" : line.kind === "del" ? "-" : " "}
-          </span>
+          {/* Numbers and the marker are attributes drawn by a `::before`,
+              so a selection dragged across the diff copies the code and
+              nothing else. See `.file-no` for why the CSS is not enough. */}
+          <span className="no" data-no={line.oldNo ?? ""} />
+          <span className="no" data-no={line.newNo ?? ""} />
+          <span
+            className="mark"
+            data-mark={
+              line.kind === "add" ? "+" : line.kind === "del" ? "-" : ""
+            }
+          />
           <span className="text">
             {/* A context line is in both files; one column can only show one
                 of them, and the new file is the one being read. */}
@@ -91,20 +106,6 @@ function Unified({ hunk }: { hunk: Hunk }) {
 }
 
 /** A grammar's colours are its own; the painter's are a class in the stylesheet. */
-function look(span: Span): CSSProperties | undefined {
-  if (!span.color && !span.italic && !span.bold) return undefined;
-  return {
-    color: span.color,
-    fontStyle: span.italic ? "italic" : undefined,
-    fontWeight: span.bold ? "bold" : undefined,
-  };
-}
-
-function classes(span: Span): string | undefined {
-  const names = [span.kind ? `t-${span.kind}` : "", span.marked ? "ink" : ""].filter(Boolean);
-  return names.length > 0 ? names.join(" ") : undefined;
-}
-
 /**
  * A line of code, coloured the way an editor colours it, with the run that
  * differs from `other` picked out on top of that.
@@ -125,19 +126,12 @@ const Code = memo(function Code({
   side: "old" | "new";
 }) {
   const coloured = useContext(Coloured);
-  const change = other === undefined ? undefined : changedRange(line.text, other.text);
+  const change =
+    other === undefined ? undefined : changedRange(line.text, other.text);
   const tokens = coloured?.[side].get(line);
   const spans = tokens ? toSpans(tokens, change) : paint(line.text, change);
 
-  return (
-    <>
-      {spans.map((span, i) => (
-        <span key={i} className={classes(span)} style={look(span)}>
-          {span.text}
-        </span>
-      ))}
-    </>
-  );
+  return <Spans spans={spans} />;
 });
 
 /** One half of a row. No line at all is the gap opposite an edit. */
@@ -154,7 +148,10 @@ function Side({
   if (!line) return <span className="side gap" />;
   return (
     <span className={`side ${line.kind}`}>
-      <span className="no">{(which === "old" ? line.oldNo : line.newNo) ?? ""}</span>
+      <span
+        className="no"
+        data-no={(which === "old" ? line.oldNo : line.newNo) ?? ""}
+      />
       <span className="text">
         <Code line={line} other={other} side={which} />
       </span>
@@ -195,7 +192,7 @@ function Split({ hunk }: { hunk: Hunk }) {
  * Local changes: the folder tree on the left, the selected file's diff on the
  * right, and the arrow keys stepping through the changes themselves.
  */
-export function ChangesView({ cwd, pane, active }: ChangesViewProps) {
+export function ChangesView({ cwd, pane, active, changed }: ChangesViewProps) {
   const [changes, setChanges] = useState<Changes | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selection, setSelection] = useState<Selection | null>(null);
@@ -206,37 +203,35 @@ export function ChangesView({ cwd, pane, active }: ChangesViewProps) {
   const [token, setToken] = useState(0);
 
   const rootRef = useRef<HTMLDivElement>(null);
+  // Which worktree the changes on screen belong to, so an event for another
+  // repository is ignored without a render to find that out.
+  const shownRoot = useRef<string | null>(null);
+  // `git status` over a big repo is 1.7 s and a batch lands every few hundred
+  // milliseconds, so reloads would stack faster than they finish. One more
+  // reload is queued behind the running one, never a queue of them.
+  const loading = useRef(false);
+  const pending = useRef(false);
+  // The event this view has already acted on, so coming back to the front
+  // does not reload twice for it.
+  const handled = useRef<FilesChanged | null>(null);
   const hunkRefs = useRef<(HTMLDivElement | null)[]>([]);
   const rowRefs = useRef<Map<string, HTMLButtonElement | null>>(new Map());
 
-  /**
-   * The directory to ask about. A session's own directory moves — `cd` in the
-   * terminal is the usual way to change repository — so the live pane is the
-   * better answer, and the directory it was opened in is the fallback.
-   */
-  const resolveDir = useCallback(async () => {
-    if (pane) {
-      try {
-        const live = (await listSessions()).find((s) => s.pane === pane)?.cwd;
-        if (live) return live;
-      } catch {
-        /* The shim is unavailable; the opening directory is still right
-           unless the session has moved. */
-      }
-    }
-    return cwd ?? "";
-  }, [cwd, pane]);
+  // Shared with Go to File, which has to answer the same question.
+  const dir = useCallback(() => resolveDir(cwd, pane), [cwd, pane]);
 
   // Reloaded whenever the view comes to the front: the session behind it has
   // been editing files the whole time it was hidden.
   useEffect(() => {
     if (!active) return;
     let cancelled = false;
+    loading.current = true;
 
-    void resolveDir()
+    void dir()
       .then(gitChanges)
       .then((next) => {
         if (cancelled) return;
+        shownRoot.current = next.root;
         setChanges(next);
         setError(null);
       })
@@ -244,12 +239,39 @@ export function ChangesView({ cwd, pane, active }: ChangesViewProps) {
         if (cancelled) return;
         setChanges(null);
         setError(String(cause));
+      })
+      .finally(() => {
+        // Not when cancelled: a newer load is already running and owns the
+        // flag now.
+        if (cancelled) return;
+        loading.current = false;
+        if (pending.current) {
+          pending.current = false;
+          setToken((one) => one + 1);
+        }
       });
 
     return () => {
       cancelled = true;
     };
-  }, [active, resolveDir, token]);
+  }, [active, dir, token]);
+
+  // The watch saw the worktree move. Same reload the front of the tab and
+  // the reload button ask for, on a change instead of on a look.
+  useEffect(() => {
+    if (!changed || changed === handled.current) return;
+    handled.current = changed;
+    // A hidden tab already re-reads on the way in, so it needs nothing here.
+    if (!active) return;
+    // Before the first load there is no repository to compare against, and
+    // nothing on screen to refresh either.
+    if (shownRoot.current === null || changed.root !== shownRoot.current) return;
+    if (loading.current) {
+      pending.current = true;
+      return;
+    }
+    setToken((one) => one + 1);
+  }, [active, changed]);
 
   const tree = useMemo(() => buildTree(changes?.files ?? []), [changes]);
   const order = useMemo(() => fileOrder(tree), [tree]);
@@ -265,7 +287,8 @@ export function ChangesView({ cwd, pane, active }: ChangesViewProps) {
   useEffect(() => {
     if (!changes) return;
     setSelection((current) => {
-      if (current && order.some((file) => file.path === current.path)) return current;
+      if (current && order.some((file) => file.path === current.path))
+        return current;
       // Tree order, not git's: the first change is the one at the top of the
       // list the user is looking at.
       const first = order[0];
@@ -339,7 +362,8 @@ export function ChangesView({ cwd, pane, active }: ChangesViewProps) {
    * this every arrow keypress would re-tokenise the whole diff.
    */
   const coloured = useMemo(
-    () => (parsed && lang && ready(lang) ? highlight(parsed.hunks, lang) : null),
+    () =>
+      parsed && lang && ready(lang) ? highlight(parsed.hunks, lang) : null,
     // `grammars` stands in for `ready`, which changes without telling anyone.
     [parsed, lang, grammars],
   );
@@ -422,7 +446,10 @@ export function ChangesView({ cwd, pane, active }: ChangesViewProps) {
   }, [index, diff]);
 
   useEffect(() => {
-    if (selection) rowRefs.current.get(selection.path)?.scrollIntoView?.({ block: "nearest" });
+    if (selection)
+      rowRefs.current
+        .get(selection.path)
+        ?.scrollIntoView?.({ block: "nearest" });
   }, [selection]);
 
   const toggle = (dir: string) =>
@@ -447,7 +474,9 @@ export function ChangesView({ cwd, pane, active }: ChangesViewProps) {
         {changes ? (
           <>
             <strong>{changes.branch}</strong>
-            <span className="muted">{plural(count, "file", "files")} changed</span>
+            <span className="muted">
+              {plural(count, "file", "files")} changed
+            </span>
             <span className="muted keys">↑↓ change · ←→ file</span>
           </>
         ) : (
@@ -473,7 +502,11 @@ export function ChangesView({ cwd, pane, active }: ChangesViewProps) {
             Unified
           </button>
         </div>
-        <button type="button" className="link" onClick={() => setToken((n) => n + 1)}>
+        <button
+          type="button"
+          className="link"
+          onClick={() => setToken((n) => n + 1)}
+        >
           Refresh
         </button>
       </header>
@@ -481,14 +514,17 @@ export function ChangesView({ cwd, pane, active }: ChangesViewProps) {
       {error ? <p className="error">{error}</p> : null}
 
       {changes && count === 0 ? (
-        <p className="muted pad">No local changes. The worktree matches HEAD.</p>
+        <p className="muted pad">
+          No local changes. The worktree matches HEAD.
+        </p>
       ) : null}
 
       {count > 0 ? (
         <div className="changes-body">
           <ul className="tree" aria-label="Changed files">
             {visible.map((row) => {
-              const isSelected = row.kind === "file" && row.path === selection?.path;
+              const isSelected =
+                row.kind === "file" && row.path === selection?.path;
               const indent = { paddingLeft: `${6 + row.depth * 12}px` };
               return (
                 <li key={`${row.kind}:${row.path}`}>
@@ -500,7 +536,9 @@ export function ChangesView({ cwd, pane, active }: ChangesViewProps) {
                       onClick={() => toggle(row.path)}
                       aria-expanded={!collapsed.has(row.path)}
                     >
-                      <span className="caret">{collapsed.has(row.path) ? "▸" : "▾"}</span>
+                      <span className="caret">
+                        {collapsed.has(row.path) ? "▸" : "▾"}
+                      </span>
                       <span className="name">{row.name}</span>
                       <span className="muted">{row.count}</span>
                     </button>
@@ -510,12 +548,18 @@ export function ChangesView({ cwd, pane, active }: ChangesViewProps) {
                       ref={(node) => {
                         rowRefs.current.set(row.path, node);
                       }}
-                      className={isSelected ? "tree-row file selected" : "tree-row file"}
+                      className={
+                        isSelected ? "tree-row file selected" : "tree-row file"
+                      }
                       style={indent}
                       aria-current={isSelected ? "true" : undefined}
                       onClick={() => select({ path: row.path, at: 0 })}
                     >
-                      <span className={isStaged(row.file) ? "letter staged" : "letter"}>
+                      <span
+                        className={
+                          isStaged(row.file) ? "letter staged" : "letter"
+                        }
+                      >
                         {statusLetter(row.file)}
                       </span>
                       <span className="name">{row.name}</span>
@@ -539,7 +583,9 @@ export function ChangesView({ cwd, pane, active }: ChangesViewProps) {
                 <span className="kind">{changeKind(selected)}</span>
                 <strong className="path">{selected.path}</strong>
                 {selected.renamedFrom ? (
-                  <span className="muted">renamed from {selected.renamedFrom}</span>
+                  <span className="muted">
+                    renamed from {selected.renamedFrom}
+                  </span>
                 ) : null}
                 {parsed && parsed.hunks.length > 0 ? (
                   <span className="muted at">
@@ -551,10 +597,14 @@ export function ChangesView({ cwd, pane, active }: ChangesViewProps) {
 
             {diffError ? <p className="error">{diffError}</p> : null}
 
-            {parsed?.binary ? <p className="muted pad">Binary file — nothing to show.</p> : null}
+            {parsed?.binary ? (
+              <p className="muted pad">Binary file — nothing to show.</p>
+            ) : null}
 
             {parsed && !parsed.binary && parsed.hunks.length === 0 ? (
-              <p className="muted pad">No textual change — a mode or an empty file.</p>
+              <p className="muted pad">
+                No textual change — a mode or an empty file.
+              </p>
             ) : null}
 
             <Coloured.Provider value={coloured}>
@@ -569,13 +619,19 @@ export function ChangesView({ cwd, pane, active }: ChangesViewProps) {
                   className={i === index ? "hunk current" : "hunk"}
                 >
                   <div className="hunk-head">{hunk.header}</div>
-                  {layout === "split" ? <Split hunk={hunk} /> : <Unified hunk={hunk} />}
+                  {layout === "split" ? (
+                    <Split hunk={hunk} />
+                  ) : (
+                    <Unified hunk={hunk} />
+                  )}
                 </div>
               ))}
             </Coloured.Provider>
 
             {parsed?.truncated ? (
-              <p className="muted pad">The rest of this diff is too large to show.</p>
+              <p className="muted pad">
+                The rest of this diff is too large to show.
+              </p>
             ) : null}
           </div>
         </div>
