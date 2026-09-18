@@ -454,10 +454,18 @@ is the whole repository and that is the one pathspec that is never cheap.
 Each batch closes after 300 ms of quiet, or 2 s after its first event so a
 continuous build still gets answered, and then:
 
-1. **Drop what git ignores.** Unknown directories go out in one
+1. **Drop what nothing can matter in.** Unknown directories go out in one
    `git check-ignore -z --stdin`; the answer is cached per root, and a
-   directory under a cached ignored one is dropped without asking. Any event
-   naming a `.gitignore` empties the cache.
+   directory under a cached dead one is dropped without asking. Ignored is
+   not quite the test, though — a directory can be ignored and still hold
+   *tracked* files, whose edits show in `git status` and in the diff like any
+   other, so each ignored directory is also asked once whether
+   `ls-files --cached` finds anything in it. The verdict is cached with the
+   ignore answer, so the twenty-thousand-file build pays for that question
+   once. An event naming a `.gitignore` empties the cache — and takes the
+   whole listing, because a rule decides which *existing* files are listed
+   and none of those files move when it changes, so nothing scoped can see
+   it and neither can `git status`.
 2. **Fit the listing.** Git's cost here grows with the *number* of pathspecs,
    not with what they cover — on a big repo one directory measured at 0.21 s,
    sixteen at 0.31 s and three hundred at 2.32 s. So past twenty-four the
@@ -499,12 +507,10 @@ rather than a failure, and it wants a real pipe on stdin, which
 answers while the question is still being asked and a batch past the 64 KB
 pipe buffer would otherwise deadlock.
 
-**The timer is kept as a backstop.** FSEvents can drop events under load, the
-collapse in step 2 gives up on purpose, and a `git rm` of a tracked file inside
-an ignored directory changes the listing without producing an event that is
-kept. All three are *silent* — the index would just quietly lack a file for the
-rest of the session, which on an experimental feature is the failure you would
-not think to blame. A twenty-second listing every twenty minutes on a
+**The timer is kept as a backstop.** FSEvents can drop events under load, and
+the collapse in step 2 gives up on purpose. Both are *silent* — the index would
+just quietly lack a file for the rest of the session, which on an experimental
+feature is the failure you would not think to blame. A twenty-second listing every twenty minutes on a
 background thread is a cheap price for every such hole closing by itself.
 `Index.built` is therefore carried forward by a patch rather than reset, or a
 steadily-patched repository would hold the backstop off forever. Anything that
