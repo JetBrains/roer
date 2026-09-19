@@ -10,6 +10,7 @@ set -eu
 SOCKET=roer
 ROER_HOME="${ROER_HOME:-$HOME/.roer}"
 HANDOFFS="$ROER_HOME/handoffs"
+PLUGIN_UI="$ROER_HOME/plugin-ui"
 
 # Resolve this script's real directory through any symlinks, so installing is
 # just `ln -s .../scripts/roer ~/.local/bin/roer` while the config in the repo
@@ -121,6 +122,11 @@ usage:
   roer handoff --resume <id>
                         hand a conversation over when this terminal is not a
                         roer session and so cannot be attached
+  roer plugin-ui        read one A2UI-shaped JSON message from stdin and show
+                        it in the app's Plugin UI tab, for this session's pane
+  roer plugin-ui --pane <id>
+                        same, tagged with a pane explicitly rather than the
+                        one this shell is running in
 
 A session outlives every client, so it can move freely between terminal and
 app. Exactly one client holds it at a time.
@@ -421,6 +427,50 @@ cmd_handoff() {
     tmux detach-client 2>/dev/null || true
 }
 
+# Hands one A2UI-shaped JSON message (read from stdin) to the app's Plugin UI
+# tab, tagged with the pane it came from. Unlike a handoff, nothing is waiting
+# on this: it is fire-and-forget, so there is no claim, ack, or timeout.
+cmd_plugin_ui() {
+    if [ "${1:-}" = "--pane" ]; then
+        pane=${2:-}
+        case $pane in
+            %[0-9]*) : ;;
+            *)
+                echo "roer: --pane needs a pane id like %3" >&2
+                return 2
+                ;;
+        esac
+    else
+        [ -n "${TMUX:-}" ] || {
+            echo "roer: not inside a session - start one with \`roer\` first" >&2
+            return 2
+        }
+        sock=$(tmux display-message -p '#{socket_path}')
+        case $sock in
+            */"$SOCKET") : ;;
+            *)
+                echo "roer: inside tmux on $sock, which is not the roer socket" >&2
+                return 3
+                ;;
+        esac
+        pane=${TMUX_PANE:-$(tmux display-message -p '#{pane_id}')}
+    fi
+
+    message=$(cat)
+    [ -n "$message" ] || {
+        echo "roer: plugin-ui needs a JSON message on stdin" >&2
+        return 2
+    }
+
+    mkdir -p "$PLUGIN_UI"
+    file="$PLUGIN_UI/$(date +%Y%m%dT%H%M%S)-$$.json"
+    # Write under a .partial name and rename, so the app's watcher can never
+    # observe a half-written record — same reasoning as a handoff.
+    printf '{"pane": "%s", "message": %s}\n' "$(json_escape "$pane")" "$message" \
+        > "$file.partial"
+    mv "$file.partial" "$file"
+}
+
 # No arguments means the app, which is where a session is meant to end up.
 cmd=${1:-app}
 if [ $# -gt 0 ]; then shift; fi
@@ -433,6 +483,7 @@ case $cmd in
     detach)         cmd_detach "$@" ;;
     resume)         cmd_resume "$@" ;;
     handoff)        cmd_handoff "$@" ;;
+    plugin-ui)      cmd_plugin_ui "$@" ;;
     help|-h|--help) usage ;;
     *)
         echo "roer: unknown command: $cmd" >&2

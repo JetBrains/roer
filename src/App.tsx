@@ -4,6 +4,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { BranchDiffView } from "./BranchDiffView";
 import { ChangesView } from "./ChangesView";
 import { FileView } from "./FileView";
+import { GenerativeUITab } from "./generative-ui/GenerativeUITab";
+import { applyAll, applyMessage } from "./generative-ui/apply";
+import { approvalGateMessages, SURFACE_ID } from "./generative-ui/fixtures";
+import { emptyState, type A2uiMessage, type RenderState } from "./generative-ui/schema";
 import { GoToFile } from "./GoToFile";
 import { NewSessionButton } from "./NewSessionButton";
 import { SessionBrowser, type OpenRequest } from "./SessionBrowser";
@@ -33,6 +37,7 @@ import {
   type Handoff,
   type SessionInfo,
 } from "./lib/pty";
+import { onPluginUi } from "./lib/pluginUi";
 
 interface SessionView extends OpenRequest {
   /** Set when this session was teleported in; a terminal is waiting on it.
@@ -73,6 +78,24 @@ export function App() {
   const [everChanges, setEverChanges] = useState(false);
   // Same reason, for the branch-diff tab.
   const [everBranchDiff, setEverBranchDiff] = useState(false);
+  // Same reasoning as `everChanges`: mount once, keep it mounted, so flipping
+  // a checkbox and switching back to the terminal does not reset the demo.
+  const [everPluginUI, setEverPluginUI] = useState(false);
+  // The Plugin UI tab's state: the built-in fixture until a real message
+  // arrives from `roer plugin-ui`, at which point the fixture is dropped
+  // rather than merged with it — a live surface and a demo one sharing the
+  // tab would just be confusing.
+  const [pluginUi, setPluginUi] = useState<{
+    state: RenderState;
+    surfaceId: string;
+    log: readonly A2uiMessage[];
+    live: boolean;
+  }>(() => ({
+    state: applyAll(approvalGateMessages),
+    surfaceId: SURFACE_ID,
+    log: approvalGateMessages,
+    live: false,
+  }));
   // Acking twice would try to delete an already-deleted record.
   const ackedRef = useRef<string | null>(null);
   // Persisted so the sidebar doesn't spring back open on the next launch.
@@ -101,6 +124,8 @@ export function App() {
   // stage holds one session, so showing them at once would evict a session
   // whose terminal is still waiting to hear that it moved.
   const queueRef = useRef<SessionView[]>([]);
+  // This session's pane, for scoping incoming plugin-ui messages to it.
+  const paneRef = useRef<string | undefined>(undefined);
 
   // Go to File asks about the session's repository, so there is nothing to
   // search without one. Read through the ref, so the handler stays the same
@@ -243,6 +268,47 @@ export function App() {
       .catch(() => {
         /* No watcher for this session; the views go back to refreshing when
            they are looked at, which is what they did before. */
+      });
+
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, []);
+
+  // Read through a ref for the same reason as `targetRef`: the listener is
+  // registered once and cannot close over a render's `session`.
+  paneRef.current = session?.pane;
+  useEffect(() => {
+    let cancelled = false;
+    let unlisten: (() => void) | undefined;
+
+    void onPluginUi((record) => {
+      // Scoped to this session's pane: a message tagged for a pane nobody is
+      // looking at would otherwise pop the tab open and overwrite whatever
+      // is on screen for the session that *is*.
+      if (!paneRef.current || record.pane !== paneRef.current) return;
+
+      setPluginUi((current) => ({
+        // The fixture and a live surface are dropped together, not merged —
+        // the first real message starts the reducer over.
+        state: applyMessage(current.live ? current.state : emptyState, record.message),
+        surfaceId: record.message.surfaceId,
+        log: current.live ? [...current.log, record.message] : [record.message],
+        live: true,
+      }));
+      setEverPluginUI(true);
+      setTabs((current) => activate(current, "plugin-ui"));
+    })
+      .then((fn) => {
+        if (cancelled) {
+          fn();
+          return;
+        }
+        unlisten = fn;
+      })
+      .catch(() => {
+        /* No watcher available; the tab stays on its fixture. */
       });
 
     return () => {
@@ -474,6 +540,18 @@ export function App() {
               >
                 Branch diff
               </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={tabs.active === "plugin-ui"}
+                className={tabs.active === "plugin-ui" ? "tab on" : "tab"}
+                onClick={() => {
+                  setEverPluginUI(true);
+                  setTabs((current) => activate(current, "plugin-ui"));
+                }}
+              >
+                Plugin UI
+              </button>
 
               {tabs.files.map((file) => {
                 const id = tabId(file);
@@ -594,6 +672,21 @@ export function App() {
                   cwd={session?.cwd}
                   pane={session?.pane}
                   active={tabs.active === "branchdiff"}
+                />
+              </div>
+            ) : null}
+
+            {/* An A2UI-shaped surface: the built-in fixture until an agent in
+              this session's terminal pipes a real one to `roer plugin-ui` —
+              see src/generative-ui/ and .claude/skills/generative-ui/. */}
+            {everPluginUI ? (
+              <div className="overlay" hidden={tabs.active !== "plugin-ui"}>
+                <GenerativeUITab
+                  state={pluginUi.state}
+                  surfaceId={pluginUi.surfaceId}
+                  onChange={(state) => setPluginUi((current) => ({ ...current, state }))}
+                  log={pluginUi.log}
+                  live={pluginUi.live}
                 />
               </div>
             ) : null}

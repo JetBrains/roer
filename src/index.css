@@ -1378,6 +1378,123 @@ button.tab-x:hover {
   content: attr(data-no);
 }
 
+/* Generative UI prototype -------------------------------------------------
+   Styled from the same tokens as the rest of the app, on purpose: the whole
+   point of a native-first renderer is that a generated surface looks like
+   Roer, not like an embedded page with its own visual language. */
+
+.gen-tab {
+  width: 100%;
+  height: 100%;
+  overflow: auto;
+  padding: 28px;
+}
+
+.gen-surface {
+  display: flex;
+}
+
+.gen-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: 460px;
+  padding: 18px 20px;
+  background: var(--roer-panel);
+  border: 1px solid var(--roer-border);
+  border-radius: 8px;
+}
+
+.gen-card .gen-card {
+  padding: 4px 0 0;
+  background: none;
+  border: none;
+  gap: 8px;
+}
+
+.gen-text {
+  margin: 0;
+  font-size: 13.5px;
+  color: var(--roer-fg);
+}
+
+.gen-text.muted {
+  color: var(--roer-muted);
+  font-size: 12px;
+}
+
+.gen-divider {
+  height: 1px;
+  margin: 2px 0;
+  border: 0;
+  background: var(--roer-border);
+}
+
+.gen-checkbox {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 12.5px;
+  color: var(--roer-fg);
+  cursor: pointer;
+}
+
+.gen-checkbox input {
+  margin-top: 2px;
+}
+
+.gen-button-row {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+button.gen-button {
+  font-size: 12px;
+  padding: 6px 14px;
+  border-radius: 6px;
+  border: 1px solid var(--roer-border);
+  background: transparent;
+  color: var(--roer-fg);
+}
+
+button.gen-button.primary {
+  background: var(--ide-accent);
+  border-color: var(--ide-accent);
+  color: #fff;
+}
+
+.gen-result {
+  margin-top: 16px;
+  font-size: 12.5px;
+  color: var(--roer-accent);
+}
+
+.gen-wire {
+  margin-top: 24px;
+  max-width: 640px;
+}
+
+.gen-wire summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--roer-muted);
+}
+
+.gen-wire pre {
+  margin-top: 8px;
+  padding: 12px;
+  max-height: 260px;
+  overflow: auto;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--ide-text);
+  background: var(--ide-editor);
+  border: 1px solid var(--ide-border);
+  border-radius: 6px;
+}
+
 .file-code {
   flex: none;
   padding-right: 16px;
