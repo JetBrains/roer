@@ -3,6 +3,7 @@ mod files;
 mod git;
 mod handoff;
 mod history;
+mod plugin_ui;
 mod projects;
 mod pty;
 mod roer;
@@ -65,6 +66,7 @@ pub fn run() {
         ])
         .setup(|app| {
             handoff::watch(app.handle().clone())?;
+            plugin_ui::watch(app.handle().clone())?;
             Ok(())
         })
         .run(tauri::generate_context!())

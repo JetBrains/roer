@@ -1,0 +1,567 @@
+<title>Generative Plugin UI</title>
+<meta name="description" content="Research draft: giving Roer plugins AI-generated UI over the A2UI protocol, scoped to agent-development-lifecycle scenarios, with a look at where TypeSafe's new Jev model fits and where it doesn't.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+  :root {
+    --bg: #f6f5f2;
+    --surface: #ffffff;
+    --surface-2: #edece6;
+    --text: #1c1b19;
+    --text-muted: #63605a;
+    --border: #ddd9d0;
+    --accent: #2f4fce;
+    --accent-ink: #ffffff;
+    --accent-soft: #e7ebfb;
+    --warn: #8a4f14;
+    --warn-soft: #f6ead7;
+    --mono-bg: #efede6;
+    --shadow: 0 1px 0 rgba(28,27,25,0.04);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #18191b;
+      --surface: #202124;
+      --surface-2: #26282b;
+      --text: #e9e7e1;
+      --text-muted: #a5a299;
+      --border: #35373b;
+      --accent: #8ba0ff;
+      --accent-ink: #14172b;
+      --accent-soft: #232a44;
+      --warn: #e2a45c;
+      --warn-soft: #332a1b;
+      --mono-bg: #232427;
+      --shadow: 0 1px 0 rgba(0,0,0,0.3);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #18191b;
+    --surface: #202124;
+    --surface-2: #26282b;
+    --text: #e9e7e1;
+    --text-muted: #a5a299;
+    --border: #35373b;
+    --accent: #8ba0ff;
+    --accent-ink: #14172b;
+    --accent-soft: #232a44;
+    --warn: #e2a45c;
+    --warn-soft: #332a1b;
+    --mono-bg: #232427;
+    --shadow: 0 1px 0 rgba(0,0,0,0.3);
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: "IBM Plex Sans", system-ui, sans-serif;
+    line-height: 1.6;
+    margin: 0;
+    padding-inline: 20px;
+  }
+  code, .mono { font-family: "IBM Plex Mono", ui-monospace, monospace; }
+
+  .page {
+    max-width: 1100px;
+    margin: 0 auto;
+    display: grid;
+    grid-template-columns: 210px minmax(0, 700px);
+    gap: 56px;
+    padding-block: 56px 90px;
+  }
+  @media (max-width: 900px) {
+    .page { grid-template-columns: 1fr; gap: 28px; }
+    nav.toc { display: none; }
+  }
+
+  header.masthead {
+    grid-column: 1 / -1;
+    max-width: 700px;
+    margin-inline: auto;
+    width: 100%;
+  }
+  .kicker {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 12px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--accent);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .kicker::before {
+    content: "";
+    width: 20px;
+    height: 1px;
+    background: var(--accent);
+    display: inline-block;
+  }
+  h1.title {
+    font-size: clamp(28px, 4vw, 40px);
+    line-height: 1.12;
+    margin: 14px 0 10px;
+    text-wrap: balance;
+    letter-spacing: -0.01em;
+  }
+  .dek {
+    color: var(--text-muted);
+    font-size: 17px;
+    max-width: 58ch;
+    margin: 0 0 22px;
+  }
+  .meta-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 18px;
+    font-size: 13px;
+    color: var(--text-muted);
+    border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+    padding-block: 12px;
+  }
+  .meta-row strong { color: var(--text); font-weight: 600; }
+
+  nav.toc {
+    position: sticky;
+    top: 32px;
+    align-self: start;
+    font-size: 13px;
+  }
+  nav.toc .toc-label {
+    font-family: "IBM Plex Mono", monospace;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-bottom: 10px;
+  }
+  nav.toc ol {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    counter-reset: toc;
+    display: flex;
+    flex-direction: column;
+    gap: 9px;
+  }
+  nav.toc li { counter-increment: toc; }
+  nav.toc a {
+    color: var(--text-muted);
+    text-decoration: none;
+    display: flex;
+    gap: 8px;
+  }
+  nav.toc a:hover { color: var(--accent); }
+  nav.toc a::before {
+    content: counter(toc, decimal-leading-zero);
+    font-family: "IBM Plex Mono", monospace;
+    color: var(--accent);
+    flex-shrink: 0;
+  }
+
+  main { min-width: 0; }
+  section { margin-bottom: 46px; scroll-margin-top: 24px; }
+  section h2 {
+    font-size: 21px;
+    margin: 0 0 6px;
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+  }
+  section h2 .num {
+    font-family: "IBM Plex Mono", monospace;
+    color: var(--accent);
+    font-size: 14px;
+    font-weight: 500;
+  }
+  section h3 {
+    font-size: 16px;
+    margin: 22px 0 8px;
+  }
+  section > p, section > ul, section > ol { max-width: 66ch; }
+  p { margin: 0 0 14px; }
+  ul, ol { padding-left: 22px; margin: 0 0 14px; }
+  li { margin-bottom: 6px; }
+  a { color: var(--accent); }
+
+  .lede {
+    font-size: 15px;
+    color: var(--text-muted);
+    margin: 0 0 20px;
+    max-width: 66ch;
+  }
+
+  .callout {
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    background: var(--accent-soft);
+    border-radius: 6px;
+    padding: 14px 16px;
+    margin: 18px 0;
+    font-size: 14.5px;
+  }
+  .callout.warn {
+    border-left-color: var(--warn);
+    background: var(--warn-soft);
+  }
+  .callout .label {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--accent);
+    display: block;
+    margin-bottom: 6px;
+  }
+  .callout.warn .label { color: var(--warn); }
+
+  code.inline {
+    background: var(--mono-bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 1px 6px;
+    font-size: 0.9em;
+  }
+
+  figure {
+    margin: 22px 0;
+    padding: 18px 18px 14px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    box-shadow: var(--shadow);
+  }
+  figure svg { width: 100%; height: auto; display: block; }
+  figcaption {
+    font-size: 13px;
+    color: var(--text-muted);
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px dashed var(--border);
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 14px;
+    margin: 18px 0;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  th, td {
+    text-align: left;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+  }
+  thead th {
+    background: var(--surface-2);
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-muted);
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  td.yes { color: var(--accent); font-weight: 600; }
+  td.no { color: var(--text-muted); }
+
+  .scenario-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 14px;
+    margin: 18px 0;
+  }
+  .scenario {
+    border: 1px solid var(--border);
+    background: var(--surface);
+    border-radius: 8px;
+    padding: 14px 15px;
+  }
+  .scenario .tag {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 10.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--accent);
+    background: var(--accent-soft);
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 999px;
+    margin-bottom: 8px;
+  }
+  .scenario h3 { margin: 0 0 6px; font-size: 15px; }
+  .scenario p { font-size: 13.5px; color: var(--text-muted); margin: 0; }
+
+  .file-ref {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 0.88em;
+    color: var(--text-muted);
+  }
+
+  ol.steps {
+    list-style: none;
+    padding: 0;
+    counter-reset: step;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  ol.steps li {
+    counter-increment: step;
+    display: flex;
+    gap: 12px;
+    align-items: baseline;
+  }
+  ol.steps li::before {
+    content: counter(step);
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 12px;
+    color: var(--accent-ink);
+    background: var(--accent);
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+
+  footer.sources {
+    grid-column: 1 / -1;
+    max-width: 700px;
+    margin-inline: auto;
+    width: 100%;
+    border-top: 1px solid var(--border);
+    padding-top: 22px;
+    font-size: 13px;
+    color: var(--text-muted);
+  }
+  footer.sources h2 { font-size: 14px; color: var(--text); margin-bottom: 10px; }
+  footer.sources ul { columns: 2; padding-left: 18px; }
+  @media (max-width: 640px) { footer.sources ul { columns: 1; } }
+  footer.sources li { margin-bottom: 6px; break-inside: avoid; }
+</style>
+
+<div class="page">
+  <header class="masthead">
+    <span class="kicker">Research draft · roer</span>
+    <h1 class="title">Generative plugin UI over A2UI, for agent-development scenarios</h1>
+    <p class="dek">Plugins today have to ship hand-built React. This looks at replacing that with agent-drafted interfaces — using Google's A2UI protocol as the wire format — and asks, honestly, where TypeSafe's brand-new Jev model does and doesn't belong in that pipeline.</p>
+    <div class="meta-row">
+      <span><strong>Scope</strong> Agent Development Life Cycle (ADLC) surfaces, not general end-user UI</span>
+      <span><strong>Status</strong> Pre-prototype research</span>
+      <span><strong>Dated</strong> 2026-09-19</span>
+    </div>
+  </header>
+
+  <nav class="toc">
+    <div class="toc-label">Contents</div>
+    <ol>
+      <li><a href="#framing">Why not just ship a form</a></li>
+      <li><a href="#a2ui">What A2UI actually is</a></li>
+      <li><a href="#scenarios">ADLC scenarios worth it</a></li>
+      <li><a href="#jev">Where Jev fits</a></li>
+      <li><a href="#architecture">Architecture for Roer</a></li>
+      <li><a href="#risks">Risks &amp; open questions</a></li>
+      <li><a href="#next">Smallest useful prototype</a></li>
+    </ol>
+  </nav>
+
+  <main>
+    <section id="framing">
+      <h2><span class="num">01</span> Why not just ship a form</h2>
+      <p class="lede">The case for generating the interface instead of coding it.</p>
+      <p>Roer has no plugin system yet — every surface (<code class="inline">ChangesView</code>, <code class="inline">GoToFile</code>, <code class="inline">FileView</code>) is hand-built React shipped in the app itself. A plugin ecosystem changes that math: a plugin author now has to design and ship UI for every shape of input an agent might need — a config form, a multi-step approval, a disambiguation prompt — and maintain it across Roer's own UI changes.</p>
+      <p>A generated surface flips who authors the pixels. The plugin (or the agent acting on its behalf) describes <em>intent and data</em> — "confirm these three fields before running," "let the user pick one of these five branches" — and a model drafts the actual component tree at the moment it's needed, from a catalog Roer already trusts. The plugin author writes intent once; the interface adapts to the actual data and actual step, instead of a static form built for the worst case.</p>
+      <p>That only works if the generated tree can't run arbitrary code, and the app doesn't have to guess at a rendering engine per plugin. Both of those are exactly what A2UI was built to provide.</p>
+    </section>
+
+    <section id="a2ui">
+      <h2><span class="num">02</span> What A2UI actually is</h2>
+      <p class="lede">Confirmed from Google's spec and blog posts — not a guess.</p>
+      <p><a href="https://a2ui.org/" target="_blank" rel="noopener">A2UI</a> ("Agent to UI") is an Apache-2.0, declarative protocol Google published on 2025-12-15, now at stable <span class="mono">v0.9.1</span> with a <span class="mono">v1.0</span> candidate in progress. It solves one specific problem: an agent needs to hand a client a rich interface across a trust boundary, without handing over executable code.</p>
+      <ul>
+        <li><strong>Declarative, not code.</strong> The agent sends a flat, ID-referenced list of components (<code class="inline">Surface</code>, <code class="inline">Component</code>, <code class="inline">Data Model</code>) as JSON messages — <code class="inline">surfaceUpdate</code>, <code class="inline">dataModelUpdate</code>, <code class="inline">beginRendering</code>. Nothing is <code class="inline">eval</code>'d.</li>
+        <li><strong>Client owns the catalog.</strong> The agent can only reference component types the client has pre-registered as trusted. Roer would define that catalog — a button, a diff card, a select, whatever it chooses to support — and no plugin or agent can introduce a component outside it.</li>
+        <li><strong>Streams and self-heals.</strong> v0.9 added incremental parsing, so a surface can render while the model is still generating it, which matters for a terminal-first app where a blank overlay reads as broken.</li>
+        <li><strong>Transport-agnostic.</strong> It rides on A2A or inside AG-UI's <code class="inline">CUSTOM</code> events; it's a payload shape, not a network protocol of its own.</li>
+        <li><strong>No Tauri renderer yet.</strong> Official renderers exist for Flutter, Lit, Angular and React; Roer would write its own React-side catalog mapped to its existing Darcula styling (<span class="file-ref">lib/theme-darcula.ts</span>) rather than adopt one wholesale.</li>
+      </ul>
+      <div class="callout">
+        <span class="label">Why this beats the alternative</span>
+        MCP Apps' <code class="inline">ui://</code> approach renders agent-supplied HTML in a sandboxed iframe — it's a resource fetch. A2UI is "native-first": the client draws its own widgets from data, so a generated surface in Roer can actually look like Roer (same fonts, same Darcula tokens, same overlay behavior) instead of an embedded web page with its own visual language.
+      </div>
+    </section>
+
+    <section id="scenarios">
+      <h2><span class="num">03</span> ADLC scenarios worth building for</h2>
+      <p class="lede">Scoped to the lifecycle of developing and configuring an agent or plugin — not general application UI.</p>
+      <p>Roer's whole premise is a session that outlives any one client (<span class="file-ref">README.md</span>, "Coming to the front"). The moments below are places in that lifecycle where a static form is either wasteful to hand-build or actively wrong for the step, because the step's shape depends on what the agent is doing right now.</p>
+      <div class="scenario-grid">
+        <div class="scenario">
+          <span class="tag">First run</span>
+          <h3>Plugin onboarding</h3>
+          <p>A plugin declares what it needs (a token, a repo path, a mode) without shipping a settings screen; the agent drafts the exact form for what's still missing this session.</p>
+        </div>
+        <div class="scenario">
+          <span class="tag">Approval gate</span>
+          <h3>Plan review before execution</h3>
+          <p>An agent proposes a multi-step change; instead of a wall of text, it renders the plan as a checklist surface the user can edit or approve step-by-step, styled like the existing diff overlay.</p>
+        </div>
+        <div class="scenario">
+          <span class="tag">Disambiguation</span>
+          <h3>"Which one did you mean"</h3>
+          <p>The agent found three candidate branches, files, or configs; it renders a picker instead of a text list, because the picker is generated per-question rather than templated in advance.</p>
+        </div>
+        <div class="scenario">
+          <span class="tag">Live state</span>
+          <h3>In-progress task panel</h3>
+          <p>A long-running agent step (tests, a build) reports structured progress the client renders as a live surface — a natural fit for A2UI's incremental <code class="inline">dataModelUpdate</code>, alongside the existing terminal.</p>
+        </div>
+        <div class="scenario">
+          <span class="tag">Mid-session ask</span>
+          <h3>One more input, on demand</h3>
+          <p>The agent hits a fork it can't resolve alone and needs one field back — generated in place, in the overlay pattern <span class="file-ref">App.tsx</span> already uses for Changes, rather than blocking in the terminal as raw text.</p>
+        </div>
+        <div class="scenario">
+          <span class="tag">Config drift</span>
+          <h3>Re-prompting on schema change</h3>
+          <p>A plugin's expected input shape changes between versions; because the UI is generated from the current schema, there's no stale hand-built form to catch up.</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="jev">
+      <h2><span class="num">04</span> Where Jev fits — and where it doesn't</h2>
+      <p class="lede">TypeSafe AI announced Jev on 2026-09-15, four days before this draft. Worth taking seriously, worth being precise about.</p>
+      <p>Jev is not a chat or generation model. It's what TypeSafe calls a "System One" model: it returns typed, calibrated <em>decisions</em> — <code class="inline">Choice</code> (pick one of up to 255 options with a probability distribution), <code class="inline">Score</code> (a continuous value), and <code class="inline">Noul</code> (a calibrated yes/no) — through a non-autoregressive parallel sampler, with no free-text output at all. TypeSafe's own numbers claim 40–200x lower latency and roughly two orders of magnitude lower cost than a frontier LLM on classification-shaped tasks, at comparable accuracy on their published benchmark.</p>
+      <p>That's exactly the profile that <strong>cannot</strong> draft an A2UI surface: building a component tree from an open-ended prompt is free-form structured generation, and Jev's whole design point is that it doesn't do free-form generation. So this pipeline needs two models doing two different jobs, not one model doing both.</p>
+      <table>
+        <thead><tr><th>Job in the pipeline</th><th>Generative model (Gemini / Claude / etc.)</th><th>Jev</th></tr></thead>
+        <tbody>
+          <tr><td>Draft the A2UI component tree from plugin intent</td><td class="yes">Yes — this is free-form structured generation</td><td class="no">No — no free-text/tree output</td></tr>
+          <tr><td>Pick which cataloged template a request maps to (<code class="inline">Choice</code>)</td><td class="yes">Can, but overkill</td><td class="yes">Good fit — bounded option set</td></tr>
+          <tr><td>Gate whether a drafted surface should render at all (<code class="inline">Noul</code>)</td><td class="yes">Can, but slow/costly per gate</td><td class="yes">Good fit — cheap enough to run on every surface update</td></tr>
+          <tr><td>Score confidence / risk before an approval-gate surface shows</td><td class="yes">Possible via reasoning</td><td class="yes">Good fit — calibrated <code class="inline">Score</code> is the point</td></tr>
+          <tr><td>Rank candidate layouts for the same data</td><td class="yes">Natural</td><td class="no">Would need the options pre-enumerated first</td></tr>
+        </tbody>
+      </table>
+      <figure>
+        <svg viewBox="0 0 900 300" role="img" aria-label="Pipeline diagram: a plugin's intent is drafted into an A2UI tree by a generative model, then rendered by Roer's catalog and renderer into the session UI. Jev sits below the pipeline, feeding fast Choice and Noul decisions into the drafting and rendering steps without ever drafting the tree itself.">
+          <defs>
+            <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="currentColor"></path>
+            </marker>
+          </defs>
+          <g font-family="IBM Plex Mono, monospace" font-size="12" fill="currentColor">
+            <rect x="20" y="40" width="150" height="64" rx="8" fill="none" stroke="currentColor" stroke-width="1.4"></rect>
+            <text x="95" y="66" text-anchor="middle" font-weight="600">Plugin</text>
+            <text x="95" y="84" text-anchor="middle" font-size="10.5" opacity="0.65">declares intent</text>
+
+            <rect x="234" y="40" width="200" height="64" rx="8" fill="none" stroke="currentColor" stroke-width="1.4"></rect>
+            <text x="334" y="62" text-anchor="middle" font-weight="600">Generative model</text>
+            <text x="334" y="80" text-anchor="middle" font-size="10.5" opacity="0.65">drafts A2UI tree</text>
+            <text x="334" y="94" text-anchor="middle" font-size="10.5" opacity="0.65">(Gemini / Claude / etc.)</text>
+
+            <rect x="494" y="40" width="210" height="64" rx="8" fill="none" stroke="currentColor" stroke-width="1.4"></rect>
+            <text x="599" y="62" text-anchor="middle" font-weight="600">Roer catalog + renderer</text>
+            <text x="599" y="80" text-anchor="middle" font-size="10.5" opacity="0.65">only trusted components</text>
+            <text x="599" y="94" text-anchor="middle" font-size="10.5" opacity="0.65">render from the tree</text>
+
+            <rect x="764" y="40" width="120" height="64" rx="8" fill="none" stroke="currentColor" stroke-width="1.4"></rect>
+            <text x="824" y="66" text-anchor="middle" font-weight="600">Session UI</text>
+            <text x="824" y="84" text-anchor="middle" font-size="10.5" opacity="0.65">overlay / tab</text>
+
+            <line x1="170" y1="72" x2="228" y2="72" stroke="currentColor" stroke-width="1.4" marker-end="url(#arrow)"></line>
+            <text x="199" y="64" text-anchor="middle" font-size="10">intent</text>
+
+            <line x1="434" y1="72" x2="488" y2="72" stroke="currentColor" stroke-width="1.4" marker-end="url(#arrow)"></line>
+            <text x="461" y="56" text-anchor="middle" font-size="9.5">surfaceUpdate /</text>
+            <text x="461" y="66" text-anchor="middle" font-size="9.5">dataModelUpdate</text>
+
+            <line x1="704" y1="72" x2="758" y2="72" stroke="currentColor" stroke-width="1.4" marker-end="url(#arrow)"></line>
+            <text x="731" y="64" text-anchor="middle" font-size="10">beginRendering</text>
+
+            <rect x="304" y="216" width="230" height="60" rx="8" fill="none" stroke="var(--accent)" stroke-width="1.6"></rect>
+            <text x="419" y="240" text-anchor="middle" font-weight="600" fill="var(--accent)">Jev</text>
+            <text x="419" y="256" text-anchor="middle" font-size="10.5" opacity="0.75" fill="var(--accent)">Choice / Score / Noul only</text>
+            <text x="419" y="269" text-anchor="middle" font-size="10.5" opacity="0.75" fill="var(--accent)">never drafts the tree</text>
+
+            <line x1="400" y1="216" x2="345" y2="104" stroke="var(--accent)" stroke-width="1.3" stroke-dasharray="4 3" marker-end="url(#arrow)"></line>
+            <text x="270" y="175" text-anchor="middle" font-size="10" fill="var(--accent)">Choice:</text>
+            <text x="270" y="188" text-anchor="middle" font-size="10" fill="var(--accent)">which template?</text>
+
+            <line x1="470" y1="216" x2="580" y2="104" stroke="var(--accent)" stroke-width="1.3" stroke-dasharray="4 3" marker-end="url(#arrow)"></line>
+            <text x="600" y="175" text-anchor="middle" font-size="10" fill="var(--accent)">Noul:</text>
+            <text x="600" y="188" text-anchor="middle" font-size="10" fill="var(--accent)">render now?</text>
+          </g>
+        </svg>
+        <figcaption>The generative model is the only thing that ever drafts the A2UI tree; Jev sits beside the pipeline making two narrow, high-frequency decisions — which cataloged template applies, and whether a drafted surface clears the bar to render — cheaply enough to run on every step instead of only once.</figcaption>
+      </figure>
+    </section>
+
+    <section id="architecture">
+      <h2><span class="num">05</span> Architecture sketch for Roer</h2>
+      <p class="lede">Where this would actually live in the existing codebase.</p>
+      <ol class="steps">
+        <li><strong>Plugin declares intent</strong> as structured data (schema + current values), not markup — over whatever the plugin transport ends up being.</li>
+        <li><strong>A generative model drafts the A2UI surface</strong> server- or agent-side, scoped to Roer's registered component catalog only.</li>
+        <li><strong>A new Tauri command carries the message</strong> the way <span class="file-ref">pty.rs</span> carries terminal output today — a typed channel into the frontend, not a raw pass-through.</li>
+        <li><strong>A React catalog/renderer renders it</strong> as a new sibling to <span class="file-ref">ChangesView.tsx</span> and <span class="file-ref">FileView.tsx</span>, reusing Darcula tokens (<span class="file-ref">lib/theme-darcula.ts</span>) so a generated surface looks native, not embedded.</li>
+        <li><strong>It mounts through the existing overlay/tab pattern</strong> in <span class="file-ref">App.tsx</span> / <span class="file-ref">lib/tabs.ts</span> — the terminal stays mounted underneath, exactly as Changes and file tabs already require, so a generated surface never risks the session's PTY.</li>
+        <li><strong>Jev (optional) sits beside step 2</strong>, doing template selection and render-gating, called from the same place that requests the draft — not part of the render path itself.</li>
+      </ol>
+    </section>
+
+    <section id="risks">
+      <h2><span class="num">06</span> Risks and open questions</h2>
+      <div class="callout warn">
+        <span class="label">No Tauri renderer exists</span>
+        Flutter, Lit, Angular and React renderers exist; Roer's React catalog is new work, not an adoption. Budget for building and maintaining it, including keeping it in step with A2UI's still-moving spec (v0.9.1 stable, v1.0 candidate).
+      </div>
+      <div class="callout warn">
+        <span class="label">The catalog is the whole security model</span>
+        A2UI's safety guarantee is "the agent can only reference what the client trusts." If plugins are ever allowed to extend the catalog themselves, that guarantee weakens to whatever review process governs new catalog entries — worth deciding up front, not after the first plugin asks for a custom component.
+      </div>
+      <div class="callout warn">
+        <span class="label">Jev is four days old at the time of this draft</span>
+        Announced 2026-09-15 alongside a $40M seed round, from a company that only just left stealth. Its 40–200x speed and hallucination-free claims are TypeSafe's own benchmark numbers, not independently reproduced yet. Treat it as a promising fit for the narrow gating/routing role above, not as infrastructure to depend on for v1.
+      </div>
+      <div class="callout warn">
+        <span class="label">Streaming UX inside a terminal-first app</span>
+        A2UI's incremental rendering is built for chat-style surfaces. Roer's overlay pattern is deliberate about not disturbing the terminal underneath (<span class="file-ref">README.md</span>, "Local changes"); a generated surface popping in mid-stream needs the same care that the diff overlay already gives to not stealing focus from a running session.
+      </div>
+    </section>
+
+    <section id="next">
+      <h2><span class="num">07</span> Smallest useful prototype</h2>
+      <p>Before building a plugin system, spike the part that's actually unproven: <strong>one plugin, one hand-picked ADLC scenario (the approval-gate checklist reads best against Roer's existing diff overlay), one hardcoded catalog of five or six components, no Jev</strong>. Ship a generative model drafting real A2UI messages and a minimal React renderer honoring the Darcula tokens. That answers the two questions this document can't: whether a generated surface actually feels native next to the terminal, and how much catalog a real scenario needs before reaching for Jev's routing/gating role is worth the second integration.</p>
+    </section>
+  </main>
+
+  <footer class="sources">
+    <h2>Sources</h2>
+    <ul>
+      <li><a href="https://a2ui.org/" target="_blank" rel="noopener">a2ui.org</a></li>
+      <li><a href="https://a2ui.org/introduction/what-is-a2ui/" target="_blank" rel="noopener">What is A2UI? — a2ui.org</a></li>
+      <li><a href="https://developers.googleblog.com/introducing-a2ui-an-open-project-for-agent-driven-interfaces/" target="_blank" rel="noopener">Introducing A2UI — Google Developers Blog</a></li>
+      <li><a href="https://developers.googleblog.com/a2ui-v0-9-generative-ui/" target="_blank" rel="noopener">A2UI v0.9 — Google Developers Blog</a></li>
+      <li><a href="https://github.com/a2ui-project/a2ui" target="_blank" rel="noopener">a2ui-project/a2ui — GitHub</a></li>
+      <li><a href="https://www.copilotkit.ai/blog/build-with-googles-new-a2ui-spec-agent-user-interfaces-with-a2ui-ag-ui" target="_blank" rel="noopener">Build with A2UI + AG-UI — CopilotKit</a></li>
+      <li><a href="https://www.copilotkit.ai/blog/a2ui-whats-new-in-google-generative-ui-spec" target="_blank" rel="noopener">A2UI v0.9: What's new — CopilotKit</a></li>
+      <li><a href="https://www.marktechpost.com/2025/12/22/google-introduces-a2ui-agent-to-user-interface-an-open-sourc-protocol-for-agent-driven-interfaces/" target="_blank" rel="noopener">Google introduces A2UI — MarkTechPost</a></li>
+      <li><a href="https://typesafe.ai/blog/introducing-system-one-models-and-jev" target="_blank" rel="noopener">Introducing System One Models & Jev — TypeSafe AI</a></li>
+      <li><a href="https://www.therundown.ai/news/typesafe-jev-ai-decisions-software" target="_blank" rel="noopener">TypeSafe launches Jev — The Rundown AI</a></li>
+      <li><a href="https://www.infoworld.com/article/4223468/typesafe-ais-new-models-work-with-machines-not-humans.html" target="_blank" rel="noopener">TypeSafe AI's new models — InfoWorld</a></li>
+      <li><a href="https://www.datacamp.com/blog/system-one-models-jev" target="_blank" rel="noopener">Jev: a System One model — DataCamp</a></li>
+      <li><a href="https://www.mindstudio.ai/blog/jev-system-one-model-launch" target="_blank" rel="noopener">Jev explained — MindStudio</a></li>
+      <li><a href="https://www.heise.de/en/news/AI-model-Jev-to-make-machines-decide-faster-11457071.html" target="_blank" rel="noopener">AI model "Jev" — heise online</a></li>
+    </ul>
+  </footer>
+</div>
