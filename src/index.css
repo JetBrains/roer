@@ -1,3 +1,10 @@
+@import "tailwindcss";
+
+/* This app has one theme, always dark — there is no `.dark` class to flip,
+   so shadcn/ui's `dark:` variants are inert and every token below is just
+   this theme, not a light default. */
+@custom-variant dark (&:is(.dark *));
+
 :root {
   --roer-bg: #1e1e1e;
   --roer-fg: #d4d4d4;
@@ -27,6 +34,53 @@
   --t-number: #2aacb8;
   --t-comment: #7a7e85;
   color-scheme: dark;
+
+  /* shadcn/ui's semantic tokens, aliased onto this app's own palette above
+     rather than shadcn's default one — one theme, not two to keep in sync. */
+  --radius: 0.5rem;
+  --background: var(--roer-bg);
+  --foreground: var(--roer-fg);
+  --card: var(--roer-panel);
+  --card-foreground: var(--roer-fg);
+  --popover: var(--roer-panel);
+  --popover-foreground: var(--roer-fg);
+  --primary: var(--roer-accent);
+  --primary-foreground: var(--roer-bg);
+  --secondary: var(--roer-panel);
+  --secondary-foreground: var(--roer-fg);
+  --muted: var(--roer-panel);
+  --muted-foreground: var(--roer-muted);
+  --accent: #333336;
+  --accent-foreground: var(--roer-fg);
+  --destructive: var(--roer-warn);
+  --border: var(--roer-border);
+  --input: var(--roer-border);
+  --ring: var(--roer-accent);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
 }
 
 * {
@@ -53,9 +107,10 @@ code {
   color: var(--roer-fg);
 }
 
-/* Workspace: the list stays beside the terminal ------------------------- */
+/* Shell: the Workspace switcher stays beside the stage; the sessions it
+   filters are a tab within it, not a second column ------------------------ */
 
-.workspace {
+.shell {
   display: flex;
   align-items: stretch;
   height: 100%;
@@ -105,6 +160,15 @@ code {
   background: var(--roer-panel);
 }
 
+/* Which of "Workspaces" or "Projects" the sidebar's list below is showing —
+ * same look as the stage's own tab strip, just scoped to the sidebar. */
+.workspace-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 4px 6px 0;
+  border-bottom: 1px solid var(--roer-border);
+}
+
 button.tab {
   background: none;
   border: 1px solid transparent;
@@ -142,9 +206,9 @@ button.tab:disabled {
   max-width: 48ch;
 }
 
-/* At phone width the sidebar becomes a strip above the terminal. */
+/* At phone width the Workspace switcher becomes a strip above the stage. */
 @media (max-width: 620px) {
-  .workspace {
+  .shell {
     flex-direction: column;
   }
 
@@ -156,7 +220,16 @@ button.tab:disabled {
   }
 }
 
-/* Sidebar contents -------------------------------------------------------- */
+/* The session browser's own view, an overlay like Changes or a file tab —
+   it's the whole stage, not a strip beside it, now that picking a Workspace
+   and browsing what it filters are two different places on screen. */
+
+.sessions-view {
+  width: 100%;
+  overflow-y: auto;
+  padding: 14px 12px;
+  background: var(--roer-bg);
+}
 
 .sidebar header {
   display: flex;
@@ -172,7 +245,8 @@ button.tab:disabled {
   letter-spacing: 0.02em;
 }
 
-.sidebar h2 {
+.sidebar h2,
+.sessions-view h2 {
   font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.07em;
@@ -184,13 +258,79 @@ button.tab:disabled {
   gap: 8px;
 }
 
-.sidebar ul {
+.sidebar ul,
+.sessions-view ul {
   list-style: none;
   margin: 0;
   padding: 0;
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+
+/* Workspaces: the switcher in the sidebar that filters the session browser */
+
+.workspace-switcher {
+  padding-bottom: 12px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--roer-border);
+}
+
+.workspace-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.workspace-input {
+  width: 100%;
+}
+
+/* A Workspace row and its delete button are two controls, so two sibling
+   buttons — same reasoning as a file tab and its × in .tab-wrap. */
+.workspace-row {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+}
+
+.workspace-row button.row {
+  flex: 1 1 auto;
+}
+
+/* A session or conversation's own Workspace, next to its row rather than
+   inside its button — same sibling-controls shape as the row and its delete
+   ×. Styled like the existing .badge rows, not a form control, since picking
+   a Workspace is an aside to the row, not a field it owns. */
+.workspace-tag {
+  flex: 0 0 auto;
+  align-self: center;
+  max-width: 90px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--roer-accent);
+  color: var(--roer-accent);
+  background: none;
+}
+
+.workspace-tag-empty {
+  border-style: dashed;
+  border-color: var(--roer-border);
+  color: var(--roer-muted);
+}
+
+.workspace-item {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 2px 8px;
+  padding: 7px 9px;
+  font-size: 12px;
 }
 
 /* A sub-heading grouping sessions by git root, only shown when a list spans

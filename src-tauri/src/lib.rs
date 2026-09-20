@@ -3,9 +3,11 @@ mod files;
 mod git;
 mod handoff;
 mod history;
+mod projects;
 mod pty;
 mod roer;
 mod watch;
+mod workspaces;
 
 #[cfg(test)]
 mod testing;
@@ -19,6 +21,7 @@ pub fn run() {
             // A second launch is someone asking for the app they already have.
             handoff::focus(app);
         }))
+        .plugin(tauri_plugin_dialog::init())
         .manage(pty::PtyState::default())
         .manage(files::FileIndex::default())
         .invoke_handler(tauri::generate_handler![
@@ -39,6 +42,21 @@ pub fn run() {
             roer::roer_past_sessions,
             roer::roer_status,
             claude::roer_claude_threads,
+            workspaces::workspaces_list,
+            workspaces::workspace_create,
+            workspaces::workspace_rename,
+            workspaces::workspace_delete,
+            workspaces::workspace_attach_project,
+            workspaces::workspace_detach_project,
+            workspaces::workspace_add_item,
+            workspaces::workspace_remove_item,
+            workspaces::workspace_assignments,
+            workspaces::workspace_assign,
+            workspaces::workspace_unassign,
+            projects::projects_list,
+            projects::project_create,
+            projects::project_rename,
+            projects::project_delete,
         ])
         .setup(|app| {
             handoff::watch(app.handle().clone())?;

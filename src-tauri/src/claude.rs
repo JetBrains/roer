@@ -94,8 +94,8 @@ fn process_alive(pid: u64) -> bool {
 }
 
 /// Past Claude conversations across the given cwds, most recently updated
-/// first. Scoped strictly to those cwds — never a scan of every Claude
-/// project on the machine.
+/// first. Scoped to those cwds and their descendant directories — never a
+/// scan of every Claude project on the machine.
 pub fn threads_for(cwds: &[String]) -> Vec<ClaudeThread> {
     threads_for_home(&claude_home(), cwds)
 }
@@ -105,41 +105,73 @@ fn threads_for_home(home: &Path, cwds: &[String]) -> Vec<ClaudeThread> {
     let mut dirs_seen = HashSet::new();
     let mut threads = Vec::new();
 
+    let Ok(project_dirs) = std::fs::read_dir(home.join("projects")) else {
+        return threads;
+    };
+    let project_dirs: Vec<PathBuf> = project_dirs.flatten().map(|e| e.path()).collect();
+
     for cwd in cwds {
         let encoded = encode_project_path(cwd);
-        if !dirs_seen.insert(encoded.clone()) {
-            continue;
-        }
-        let Ok(entries) = std::fs::read_dir(home.join("projects").join(&encoded)) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
-                continue;
-            }
-            let Some(id) = path.file_stem().and_then(|s| s.to_str()) else {
+        let descendant_prefix = format!("{encoded}-");
+
+        for dir in &project_dirs {
+            let Some(name) = dir.file_name().and_then(|n| n.to_str()) else {
                 continue;
             };
-            if live.contains(id) {
+            // Encoding maps every byte one-for-one to itself or `-`, so a
+            // path's encoded form is always a prefix of any descendant's —
+            // the trailing `-` is what tells "under this root" apart from
+            // an unrelated sibling that merely shares a string prefix (e.g.
+            // `/tmp/one` from `/tmp/one2`).
+            let is_root = name == encoded;
+            if !is_root && !name.starts_with(&descendant_prefix) {
                 continue;
             }
-            let Ok(metadata) = entry.metadata() else {
+            if !dirs_seen.insert(name.to_string()) {
+                continue;
+            }
+            let Ok(entries) = std::fs::read_dir(dir) else {
                 continue;
             };
-            let updated_at = metadata
-                .modified()
-                .ok()
-                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                .map(|d| d.as_secs())
-                .unwrap_or(0);
-            let title = title_for(&path).unwrap_or_else(|| id.to_string());
-            threads.push(ClaudeThread {
-                id: id.to_string(),
-                cwd: cwd.clone(),
-                title,
-                updated_at,
-            });
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
+                    continue;
+                }
+                let Some(id) = path.file_stem().and_then(|s| s.to_str()) else {
+                    continue;
+                };
+                if live.contains(id) {
+                    continue;
+                }
+                // The exact root's own cwd is the one asked for; a
+                // descendant directory's actual cwd has to come from the
+                // transcript itself, since the encoding cannot be reversed.
+                let actual_cwd = if is_root {
+                    cwd.clone()
+                } else {
+                    match cwd_in(&read_head(&path, HEAD_BYTES)) {
+                        Some(found) => found,
+                        None => continue,
+                    }
+                };
+                let Ok(metadata) = entry.metadata() else {
+                    continue;
+                };
+                let updated_at = metadata
+                    .modified()
+                    .ok()
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+                let title = title_for(&path).unwrap_or_else(|| id.to_string());
+                threads.push(ClaudeThread {
+                    id: id.to_string(),
+                    cwd: actual_cwd,
+                    title,
+                    updated_at,
+                });
+            }
         }
     }
 
@@ -205,6 +237,13 @@ fn summary_in(text: &str) -> Option<String> {
             .and_then(Value::as_str)
             .map(str::to_string)
     })
+}
+
+/// The cwd an event recorded itself running in — used to recover a
+/// descendant conversation's real directory, since its project-folder name
+/// only encodes that directory losslessly in the forward direction.
+fn cwd_in(text: &str) -> Option<String> {
+    lines_of(text).find_map(|event| event.get("cwd").and_then(Value::as_str).map(str::to_string))
 }
 
 fn first_prompt_in(text: &str) -> Option<String> {
@@ -369,6 +408,40 @@ mod tests {
 
         let threads = threads_for_home(&home, &["/tmp/x".to_string()]);
         assert_eq!(threads.len(), 1);
+
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn finds_a_conversation_in_a_descendant_directory() {
+        let home = temp_home();
+        write_transcript(
+            &home,
+            "/tmp/root/sub",
+            "abc",
+            &[r#"{"type":"summary","summary":"under the root","cwd":"/tmp/root/sub"}"#],
+        );
+
+        let threads = threads_for_home(&home, &["/tmp/root".to_string()]);
+        assert_eq!(threads.len(), 1);
+        assert_eq!(threads[0].cwd, "/tmp/root/sub");
+        assert_eq!(threads[0].title, "under the root");
+
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn does_not_treat_an_unrelated_sibling_as_a_descendant() {
+        let home = temp_home();
+        write_transcript(
+            &home,
+            "/tmp/root2",
+            "abc",
+            &[r#"{"type":"summary","summary":"a different repo"}"#],
+        );
+
+        let threads = threads_for_home(&home, &["/tmp/root".to_string()]);
+        assert!(threads.is_empty());
 
         std::fs::remove_dir_all(&home).ok();
     }

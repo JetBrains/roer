@@ -364,18 +364,25 @@ describe("App", () => {
     expect(ackHandoff).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps the session list beside the terminal", async () => {
+  it("shows the session list over the terminal on its own tab", async () => {
     render(<App />);
     await teleport();
 
-    // The list is navigation, not a screen you leave: both are on screen.
+    // A session on the stage is what the list was opened to find, so
+    // finding one puts the terminal in front of it, not beside it.
+    expect(
+      screen.queryByRole("navigation", { name: /sessions/i }),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("tab", { name: "Sessions" }));
+
+    // Covers the terminal rather than replacing it: nothing about the PTY
+    // changes just from looking at the list again.
+    expect(
+      await screen.findByRole("navigation", { name: /sessions/i }),
+    ).toBeInTheDocument();
     expect(screen.getByTestId("terminal")).toBeInTheDocument();
-    expect(
-      screen.getByRole("navigation", { name: /sessions/i }),
-    ).toBeInTheDocument();
-    expect(
-      await screen.findByRole("button", { name: /new session/i }),
-    ).toBeInTheDocument();
+    expect(closePty).not.toHaveBeenCalled();
   });
 
   it("marks the session on the stage instead of offering it again", async () => {
@@ -399,6 +406,7 @@ describe("App", () => {
     ]);
     render(<App />);
     await teleport();
+    fireEvent.click(await screen.findByRole("tab", { name: "Sessions" }));
 
     const rows = await screen.findAllByRole("button", { current: false });
     expect(rows.some((row) => row.textContent?.includes("other"))).toBe(true);
@@ -450,6 +458,7 @@ describe("App", () => {
     ]);
     await emit({ kind: "output", data: "aGk=" });
 
+    fireEvent.click(screen.getByRole("tab", { name: "Sessions" }));
     const open = await screen.findByRole("button", { current: true });
     expect(open).toHaveTextContent("test-1a2b");
     expect(open).toHaveTextContent("open here");
@@ -508,6 +517,24 @@ describe("App", () => {
     // session to whoever asks for it next.
     expect(screen.getByTestId("terminal")).toBeInTheDocument();
     expect(closePty).not.toHaveBeenCalled();
+  });
+
+  it("switches to Sessions when a Workspace is picked, even mid-diff", async () => {
+    render(<App />);
+    await teleport();
+    await emit({ kind: "output", data: "aGk=" });
+
+    fireEvent.click(screen.getByRole("tab", { name: "Changes" }));
+    await screen.findByTestId("changes");
+
+    // Picking a Workspace is asking to see what's in it, so it comes to the
+    // front even over a tab nothing about Workspaces points at.
+    fireEvent.click(screen.getByRole("button", { name: "All" }));
+
+    expect(
+      await screen.findByRole("navigation", { name: /sessions/i }),
+    ).toBeInTheDocument();
+    expect(screen.getByTestId("changes")).not.toBeVisible();
   });
 
   it("keeps the changes view around behind the terminal", async () => {
