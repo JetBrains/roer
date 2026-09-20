@@ -2,8 +2,11 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { gitRoot } from "./lib/git";
-import { SessionList, type OpenRequest } from "./SessionList";
 import { listClaudeSessions, listPastSessions, listSessions, roerStatus } from "./lib/pty";
+import { useSessionBrowser } from "./lib/useSessionBrowser";
+import { assignSession, listWorkspaces, unassignSession, workspaceAssignments } from "./lib/workspaces";
+import { SessionBrowser, type OpenRequest } from "./SessionBrowser";
+import { WorkspaceSidebar } from "./WorkspaceSidebar";
 
 vi.mock("./lib/pty", () => ({
   listSessions: vi.fn(),
@@ -16,6 +19,27 @@ vi.mock("./lib/git", () => ({
   gitRoot: vi.fn(),
 }));
 
+vi.mock("./lib/workspaces", () => ({
+  listWorkspaces: vi.fn(async () => []),
+  createWorkspace: vi.fn(),
+  renameWorkspace: vi.fn(),
+  deleteWorkspace: vi.fn(),
+  attachProject: vi.fn(),
+  detachProject: vi.fn(),
+  addWorkspaceItem: vi.fn(),
+  removeWorkspaceItem: vi.fn(),
+  workspaceAssignments: vi.fn(async () => ({})),
+  assignSession: vi.fn(),
+  unassignSession: vi.fn(),
+}));
+
+vi.mock("./lib/projects", () => ({
+  listProjects: vi.fn(async () => []),
+  createProject: vi.fn(),
+  renameProject: vi.fn(),
+  deleteProject: vi.fn(),
+}));
+
 beforeEach(() => {
   vi.mocked(listSessions).mockReset().mockResolvedValue([]);
   vi.mocked(listPastSessions).mockReset().mockResolvedValue([]);
@@ -26,12 +50,70 @@ beforeEach(() => {
     .mockResolvedValue({ bin: "roer", available: true, home: "/Users/test" });
 });
 
+/**
+ * The sidebar and the browser split one hook's state across two places on
+ * screen — same shape as `App.tsx`, just without the stage around it.
+ */
+function Harness({ onOpen }: { onOpen: (request: OpenRequest) => void }) {
+  const browser = useSessionBrowser({ token: "none", onOpen });
+  return (
+    <>
+      <WorkspaceSidebar
+        status={browser.status}
+        failure={browser.failure}
+        workspaces={browser.workspaces}
+        projects={browser.projects}
+        selectedWorkspaceId={browser.selectedWorkspaceId}
+        setSelectedWorkspaceId={browser.setSelectedWorkspaceId}
+        selectedProjectId={browser.selectedProjectId}
+        setSelectedProjectId={browser.setSelectedProjectId}
+        handleCreateWorkspace={browser.handleCreateWorkspace}
+        handleRenameWorkspace={browser.handleRenameWorkspace}
+        handleDeleteWorkspace={browser.handleDeleteWorkspace}
+        handleCreateProject={browser.handleCreateProject}
+        handleRenameProject={browser.handleRenameProject}
+        handleDeleteProject={browser.handleDeleteProject}
+        openNew={browser.openNew}
+        pickingProjectFor={browser.pickingProjectFor}
+        cancelProjectPick={browser.cancelProjectPick}
+        pickProjectForNewSession={browser.pickProjectForNewSession}
+        attachNewProjectForNewSession={browser.attachNewProjectForNewSession}
+      />
+      <SessionBrowser
+        status={browser.status}
+        workspaces={browser.workspaces}
+        projects={browser.projects}
+        assignments={browser.assignments}
+        selectedWorkspace={browser.selectedWorkspace}
+        selectedWorkspaceProjects={browser.selectedWorkspaceProjects}
+        handleAssign={browser.handleAssign}
+        handleAttachExistingProject={browser.handleAttachExistingProject}
+        handleAttachNewProject={browser.handleAttachNewProject}
+        handleDetachProject={browser.handleDetachProject}
+        addingItem={browser.addingItem}
+        setAddingItem={browser.setAddingItem}
+        itemTitle={browser.itemTitle}
+        setItemTitle={browser.setItemTitle}
+        handleAddItem={browser.handleAddItem}
+        handleRemoveItem={browser.handleRemoveItem}
+        roots={browser.roots}
+        visibleSessions={browser.visibleSessions}
+        visibleClaudeSessions={browser.visibleClaudeSessions}
+        activePane={browser.activePane}
+        openClaudeSession={browser.openClaudeSession}
+        refresh={browser.refresh}
+        onOpen={onOpen}
+      />
+    </>
+  );
+}
+
 function renderList(onOpen: (request: OpenRequest) => void = vi.fn()) {
-  return render(<SessionList token="none" error={null} onOpen={onOpen} />);
+  return render(<Harness onOpen={onOpen} />);
 }
 
 describe("past Claude conversations", () => {
-  it("renders resumable conversations under a divider", async () => {
+  it("renders resumable conversations alongside live sessions", async () => {
     vi.mocked(listPastSessions).mockResolvedValue([
       {
         id: "past-1",
@@ -52,7 +134,6 @@ describe("past Claude conversations", () => {
     ]);
     renderList();
 
-    expect(await screen.findByRole("heading", { name: /resume/i })).toBeInTheDocument();
     const row = await screen.findByRole("button", { name: /fix the flaky test/i });
     expect(row).toHaveTextContent("ago");
   });
@@ -117,11 +198,6 @@ describe("past Claude conversations", () => {
     expect(listClaudeSessions).toHaveBeenCalledWith(["/Users/test/live", "/Users/test/ended"]);
   });
 
-  it("shows no Resume divider when there is no history", async () => {
-    renderList();
-    await screen.findByRole("navigation", { name: /sessions/i });
-    expect(screen.queryByRole("heading", { name: /resume/i })).not.toBeInTheDocument();
-  });
 });
 
 describe("grouping by git root", () => {
@@ -202,5 +278,41 @@ describe("naming the agent", () => {
 
     const row = await screen.findByRole("button", { name: /fix the flaky test/i });
     expect(row).toHaveTextContent("claude");
+  });
+});
+
+describe("assigning a session to a workspace", () => {
+  it("assigns a live session to a workspace via its right-click menu", async () => {
+    vi.mocked(listWorkspaces).mockResolvedValue([{ id: "w1", name: "Feature work", projects: [], items: [] }]);
+    vi.mocked(listSessions).mockResolvedValue([
+      { id: "1", session: "roer-a", pane: "%0", attached: true, cwd: "/Users/test/project", command: "zsh" },
+    ]);
+    vi.mocked(assignSession).mockResolvedValue(undefined);
+    renderList();
+
+    const row = await screen.findByRole("button", { name: /roer-a/i });
+    fireEvent.contextMenu(row);
+
+    fireEvent.click(await screen.findByText("Assign to Feature work"));
+
+    expect(assignSession).toHaveBeenCalledWith("1", "w1");
+  });
+
+  it("unassigns a session that is already in a workspace", async () => {
+    vi.mocked(listWorkspaces).mockResolvedValue([{ id: "w1", name: "Feature work", projects: [], items: [] }]);
+    vi.mocked(workspaceAssignments).mockResolvedValue({ "1": "w1" });
+    vi.mocked(listSessions).mockResolvedValue([
+      { id: "1", session: "roer-a", pane: "%0", attached: true, cwd: "/Users/test/project", command: "zsh" },
+    ]);
+    vi.mocked(unassignSession).mockResolvedValue(undefined);
+    renderList();
+
+    const row = await screen.findByRole("button", { name: /roer-a/i });
+    fireEvent.contextMenu(row);
+
+    expect(await screen.findByText("Assign to Feature work")).toHaveAttribute("aria-disabled", "true");
+    fireEvent.click(screen.getByText("Unassign"));
+
+    expect(unassignSession).toHaveBeenCalledWith("1");
   });
 });

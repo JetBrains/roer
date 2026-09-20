@@ -3,10 +3,12 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ChangesView } from "./ChangesView";
 import { FileView } from "./FileView";
 import { GoToFile } from "./GoToFile";
-import { SessionList, type OpenRequest } from "./SessionList";
+import { SessionBrowser, type OpenRequest } from "./SessionBrowser";
 import { TerminalView } from "./TerminalView";
+import { WorkspaceSidebar } from "./WorkspaceSidebar";
 import { onFilesChanged, type FilesChanged } from "./lib/files";
 import { isGoToFile, useHotkey } from "./lib/keys";
+import { useSessionBrowser } from "./lib/useSessionBrowser";
 import {
   activate,
   closeTab,
@@ -104,6 +106,9 @@ export function App() {
     stagedRef.current = next;
     setNotice(null);
     setSession(next);
+    // Opening a session is what the list was for; showing it is the point,
+    // not another thing to switch to once it's found.
+    setTabs((current) => activate(current, "terminal"));
   }, []);
 
   /** Shows the next queued handoff, if the stage has come free. */
@@ -229,11 +234,13 @@ export function App() {
   }, []);
 
   // A session released or ended leaves no repository to be looking at, so
-  // every file tab is about a directory nobody is in any more.
+  // every file tab is about a directory nobody is in any more. With nothing
+  // to show on the stage, the session list is the useful thing to be
+  // looking at, so it's what comes up rather than an empty terminal.
   const staged = Boolean(session);
   useEffect(() => {
     if (!staged) {
-      setTabs((current) => activate(forRoot(current, undefined), "terminal"));
+      setTabs((current) => activate(forRoot(current, undefined), "sessions"));
       setFinding(false);
     }
   }, [staged]);
@@ -252,8 +259,8 @@ export function App() {
    *
    * `roer new` names and creates the session itself, so there is nothing to
    * look it up by until it exists. The pane is what says which session is on
-   * screen — which row of the sidebar is the live one, and which directory
-   * the changes view is about, after a `cd` has moved it.
+   * screen — which row of the session browser is the live one, and which
+   * directory the changes view is about, after a `cd` has moved it.
    */
   const adopt = useCallback(async () => {
     const staged = stagedRef.current;
@@ -317,17 +324,71 @@ export function App() {
     if (gone) void describeExit(gone).then(setNotice);
   }, [describeExit, drain]);
 
+  // The Workspace sidebar and the session browser are two places on screen
+  // for one piece of state — which Workspace is selected, and what it
+  // filters — so one hook call feeds both rather than each keeping its own.
+  const browser = useSessionBrowser({
+    activePane: session?.pane,
+    token: target,
+    onOpen: show,
+  });
+
+  // Picking a Workspace is asking to see what's in it — if the diff or a
+  // file is up instead, that answer is hidden behind a tab nothing else
+  // points at.
+  const selectWorkspace = useCallback(
+    (id: string | null) => {
+      browser.setSelectedWorkspaceId(id);
+      setTabs((current) => activate(current, "sessions"));
+    },
+    [browser.setSelectedWorkspaceId],
+  );
+
+  // Same reasoning as `selectWorkspace`: picking a Project is asking to see
+  // what's running under it.
+  const selectProject = useCallback(
+    (id: string | null) => {
+      browser.setSelectedProjectId(id);
+      setTabs((current) => activate(current, "sessions"));
+    },
+    [browser.setSelectedProjectId],
+  );
+
   return (
-    <main className="workspace" aria-label="Roer session">
-      <SessionList
-        activePane={session?.pane}
-        token={target}
-        error={null}
-        onOpen={(request) => show(request)}
+    <main className="shell" aria-label="Roer session">
+      <WorkspaceSidebar
+        status={browser.status}
+        failure={browser.failure}
+        workspaces={browser.workspaces}
+        projects={browser.projects}
+        selectedWorkspaceId={browser.selectedWorkspaceId}
+        setSelectedWorkspaceId={selectWorkspace}
+        selectedProjectId={browser.selectedProjectId}
+        setSelectedProjectId={selectProject}
+        handleCreateWorkspace={browser.handleCreateWorkspace}
+        handleRenameWorkspace={browser.handleRenameWorkspace}
+        handleDeleteWorkspace={browser.handleDeleteWorkspace}
+        handleCreateProject={browser.handleCreateProject}
+        handleRenameProject={browser.handleRenameProject}
+        handleDeleteProject={browser.handleDeleteProject}
+        openNew={browser.openNew}
+        pickingProjectFor={browser.pickingProjectFor}
+        cancelProjectPick={browser.cancelProjectPick}
+        pickProjectForNewSession={browser.pickProjectForNewSession}
+        attachNewProjectForNewSession={browser.attachNewProjectForNewSession}
       />
 
       <section className="stage">
         <div className="tabs" role="tablist" aria-label="Stage">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={tabs.active === "sessions"}
+            className={tabs.active === "sessions" ? "tab on" : "tab"}
+            onClick={() => setTabs((current) => activate(current, "sessions"))}
+          >
+            Sessions
+          </button>
           <button
             type="button"
             role="tab"
@@ -393,9 +454,40 @@ export function App() {
           ) : (
             <div className="empty">
               {notice ? <p className="notice">{notice}</p> : null}
-              <p className="muted">Pick a session on the left, or start a new one.</p>
+              <p className="muted">Pick a session, or start a new one.</p>
             </div>
           )}
+
+          {/* Covers the terminal rather than replacing it, so picking a
+              session never has to wait on a teardown, and a session left
+              running behind the list keeps its PTY. */}
+          <div className="overlay" hidden={tabs.active !== "sessions"}>
+            <SessionBrowser
+              status={browser.status}
+              workspaces={browser.workspaces}
+              projects={browser.projects}
+              assignments={browser.assignments}
+              selectedWorkspace={browser.selectedWorkspace}
+              selectedWorkspaceProjects={browser.selectedWorkspaceProjects}
+              handleAssign={browser.handleAssign}
+              handleAttachExistingProject={browser.handleAttachExistingProject}
+              handleAttachNewProject={browser.handleAttachNewProject}
+              handleDetachProject={browser.handleDetachProject}
+              addingItem={browser.addingItem}
+              setAddingItem={browser.setAddingItem}
+              itemTitle={browser.itemTitle}
+              setItemTitle={browser.setItemTitle}
+              handleAddItem={browser.handleAddItem}
+              handleRemoveItem={browser.handleRemoveItem}
+              roots={browser.roots}
+              visibleSessions={browser.visibleSessions}
+              visibleClaudeSessions={browser.visibleClaudeSessions}
+              activePane={browser.activePane}
+              openClaudeSession={browser.openClaudeSession}
+              refresh={browser.refresh}
+              onOpen={show}
+            />
+          </div>
 
           {/* An overlay rather than a swap: unmounting the terminal would
               close its PTY, which releases the session to whoever asks for it
