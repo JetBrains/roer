@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 import { Spans } from "./CodeLine";
 import { fileRead, type FilesChanged, type FileText } from "./lib/files";
@@ -72,6 +74,11 @@ export function FileView({ root, path, line, active, changed }: FileViewProps) {
   // Bumped when the watch names this file, which is what re-runs the read.
   const [reload, setReload] = useState(0);
 
+  // Markdown only: which of the two renderings is on screen. Kept here
+  // rather than on the tab, since the tab stays mounted for as long as this
+  // component does.
+  const [mode, setMode] = useState<"preview" | "raw">("preview");
+
   const boxRef = useRef<HTMLDivElement>(null);
   const probeRef = useRef<HTMLDivElement>(null);
   // The event this tab has already acted on, so coming back to the front
@@ -127,6 +134,7 @@ export function FileView({ root, path, line, active, changed }: FileViewProps) {
   }, [active, changed, path, root]);
 
   const lang = useMemo(() => langFor(path), [path]);
+  const isMarkdown = lang === "markdown";
 
   // Split once, so the memo below and the row components hold across scrolls.
   const lines = useMemo<Line[]>(() => {
@@ -177,6 +185,14 @@ export function FileView({ root, path, line, active, changed }: FileViewProps) {
     return () => window.removeEventListener("resize", measure);
   }, [active, lines, measure]);
 
+  // A line target only means anything against the raw, numbered view — the
+  // Markdown preview has nothing for it to scroll to. Switching here (rather
+  // than folding it into the scroll effect below) leaves the user free to
+  // pick Preview again afterwards, since this only re-fires for a new target.
+  useEffect(() => {
+    if (isMarkdown && line) setMode("raw");
+  }, [isMarkdown, line, path, root]);
+
   // The line a `path:42` query asked for, put in the middle of the view.
   useEffect(() => {
     const box = boxRef.current;
@@ -221,6 +237,26 @@ export function FileView({ root, path, line, active, changed }: FileViewProps) {
     <div className="file-view" data-testid="file-view">
       <div className="file-head">
         <span className="file-path">{path}</span>
+        {isMarkdown && !message ? (
+          <div className="seg" role="group" aria-label="Markdown view">
+            <button
+              type="button"
+              className={mode === "preview" ? "on" : undefined}
+              aria-pressed={mode === "preview"}
+              onClick={() => setMode("preview")}
+            >
+              Preview
+            </button>
+            <button
+              type="button"
+              className={mode === "raw" ? "on" : undefined}
+              aria-pressed={mode === "raw"}
+              onClick={() => setMode("raw")}
+            >
+              Raw
+            </button>
+          </div>
+        ) : null}
         {file && !file.binary && lines.length > 0 ? (
           <span className="muted">
             {lines.length} {lines.length === 1 ? "line" : "lines"}
@@ -233,6 +269,12 @@ export function FileView({ root, path, line, active, changed }: FileViewProps) {
 
       {message ? (
         <p className={error ? "file-note error" : "file-note"}>{message}</p>
+      ) : isMarkdown && mode === "preview" ? (
+        <div className="file-markdown">
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>
+            {file?.text ?? ""}
+          </ReactMarkdown>
+        </div>
       ) : (
         <div
           className="file-body"

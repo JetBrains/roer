@@ -270,6 +270,53 @@ describe("FileView", () => {
     expect(screen.queryByText("row1")).not.toBeInTheDocument();
   });
 
+  describe("Markdown", () => {
+    it("renders a Markdown file as Preview by default", async () => {
+      read.mockResolvedValue(
+        text({ text: "# Title\n\n- one\n- two\n", lines: 4, bytes: 20 }),
+      );
+      show({ path: "README.md" });
+
+      expect(await screen.findByRole("heading", { name: "Title" })).toBeInTheDocument();
+      expect(screen.getByText("one")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Preview" })).toHaveAttribute(
+        "aria-pressed",
+        "true",
+      );
+    });
+
+    it("switches to Raw and shows the line-numbered source", async () => {
+      read.mockResolvedValue(
+        text({ text: "# Title\n\nrow1\n", lines: 3, bytes: 14 }),
+      );
+      show({ path: "README.md" });
+      await screen.findByRole("heading", { name: "Title" });
+
+      fireEvent.click(screen.getByRole("button", { name: "Raw" }));
+
+      expect(await screen.findByText("# Title")).toBeInTheDocument();
+      expect(screen.queryByRole("heading", { name: "Title" })).not.toBeInTheDocument();
+    });
+
+    it("shows no Preview/Raw toggle for a non-Markdown file", async () => {
+      show({ path: "src/App.tsx" });
+      await screen.findByText("row1");
+
+      expect(screen.queryByRole("button", { name: "Preview" })).not.toBeInTheDocument();
+    });
+
+    it("opens a Markdown file at a line in Raw view, not Preview", async () => {
+      read.mockResolvedValue(numbered(1000));
+      show({ path: "NOTES.md", line: 400 });
+
+      expect(await screen.findByText("row400")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Raw" })).toHaveAttribute(
+        "aria-pressed",
+        "true",
+      );
+    });
+  });
+
   it("re-reads when the watch names this file, and not when it names another", async () => {
     const props = { root: "/Users/test/project", path: "src/App.tsx", active: true };
     const changed = (paths: string[], over: Partial<FilesChanged> = {}): FilesChanged => ({

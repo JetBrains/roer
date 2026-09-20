@@ -927,6 +927,111 @@ button.tab-x:hover {
   outline: none;
 }
 
+/* Tailwind's preflight resets heading/list/etc. styling globally, so the
+   Markdown preview needs its own rules restoring it — scoped to this class
+   rather than un-resetting every heading/list in the app. */
+.file-markdown {
+  flex: 1;
+  overflow: auto;
+  padding: 16px 20px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--ide-text);
+}
+
+.file-markdown h1,
+.file-markdown h2,
+.file-markdown h3,
+.file-markdown h4,
+.file-markdown h5,
+.file-markdown h6 {
+  margin: 1.2em 0 0.5em;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.file-markdown h1:first-child,
+.file-markdown h2:first-child,
+.file-markdown h3:first-child {
+  margin-top: 0;
+}
+
+.file-markdown h1 {
+  font-size: 1.6em;
+  padding-bottom: 0.3em;
+  border-bottom: 1px solid var(--ide-border);
+}
+
+.file-markdown h2 {
+  font-size: 1.3em;
+  padding-bottom: 0.2em;
+  border-bottom: 1px solid var(--ide-border);
+}
+
+.file-markdown p,
+.file-markdown ul,
+.file-markdown ol,
+.file-markdown pre,
+.file-markdown blockquote,
+.file-markdown table {
+  margin: 0.6em 0;
+}
+
+.file-markdown ul,
+.file-markdown ol {
+  padding-left: 1.6em;
+}
+
+.file-markdown li + li {
+  margin-top: 0.2em;
+}
+
+.file-markdown code {
+  font-family: var(--ide-mono);
+  font-size: 0.9em;
+  background: var(--ide-row);
+  border-radius: 3px;
+  padding: 0.1em 0.35em;
+}
+
+.file-markdown pre {
+  overflow: auto;
+  padding: 10px 12px;
+  background: var(--ide-row);
+  border-radius: 6px;
+}
+
+.file-markdown pre code {
+  background: none;
+  padding: 0;
+}
+
+.file-markdown blockquote {
+  padding-left: 1em;
+  border-left: 3px solid var(--ide-border);
+  color: var(--roer-muted);
+}
+
+.file-markdown a {
+  color: var(--roer-accent);
+}
+
+.file-markdown hr {
+  margin: 1.2em 0;
+  border: none;
+  border-top: 1px solid var(--ide-border);
+}
+
+.file-markdown table {
+  border-collapse: collapse;
+}
+
+.file-markdown th,
+.file-markdown td {
+  padding: 4px 10px;
+  border: 1px solid var(--ide-border);
+}
+
 /* A row is one line: it must not wrap, or the window's arithmetic — every
    line the same height — stops being true. */
 .file-line {
