@@ -393,17 +393,15 @@ export function DiffPane({
       aria-label={ariaLabel ?? "Diff"}
     >
       <header className="changes-head">
+        <strong>{title}</strong>
         {files ? (
           <>
-            <strong>{title}</strong>
             <span className="muted">
               {plural(count, "file", "files")} changed
             </span>
             <span className="muted keys">↑↓ change · ←→ file</span>
           </>
-        ) : (
-          <strong>{title}</strong>
-        )}
+        ) : null}
         <div className="seg" role="group" aria-label="Diff layout">
           <button
             type="button"
