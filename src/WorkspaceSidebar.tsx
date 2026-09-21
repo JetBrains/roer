@@ -1,12 +1,5 @@
-import { open } from "@tauri-apps/plugin-dialog";
 import { useState } from "react";
 
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import type { SessionBrowserState } from "./lib/useSessionBrowser";
 import { ProjectsPanel } from "./ProjectsPanel";
 import { WorkspaceSwitcher } from "./WorkspaceSwitcher";
@@ -26,15 +19,13 @@ export type WorkspaceSidebarProps = Pick<
   | "handleCreateProject"
   | "handleRenameProject"
   | "handleDeleteProject"
-  | "openNew"
-  | "pickingProjectFor"
-  | "cancelProjectPick"
-  | "pickProjectForNewSession"
-  | "attachNewProjectForNewSession"
 > & {
   /** Not the hook's raw setter: `App` wraps it to also switch the stage to
    * the Sessions tab, so picking a Workspace always shows what it filters. */
   setSelectedWorkspaceId: (id: string | null) => void;
+  /** Collapsed to a sliver by the toggle in the title bar. Stays mounted so
+   * the Workspaces/Projects tab choice survives being reopened. */
+  collapsed: boolean;
 };
 
 /**
@@ -59,68 +50,19 @@ export function WorkspaceSidebar({
   handleCreateProject,
   handleRenameProject,
   handleDeleteProject,
-  openNew,
-  pickingProjectFor,
-  cancelProjectPick,
-  pickProjectForNewSession,
-  attachNewProjectForNewSession,
+  collapsed,
 }: WorkspaceSidebarProps) {
   const [tab, setTab] = useState<"workspaces" | "projects">("workspaces");
 
-  const pickedProjects = pickingProjectFor
-    ? pickingProjectFor.projects
-        .map((id) => projects.find((project) => project.id === id))
-        .filter((project): project is (typeof projects)[number] => project != null)
-    : [];
-
-  const attachNewForPicker = async () => {
-    const picked = await open({ directory: true, multiple: false });
-    if (typeof picked === "string") {
-      attachNewProjectForNewSession(picked);
-    } else {
-      // The dialog was dismissed — nothing was picked, so nothing else in
-      // this flow will close the menu for us.
-      cancelProjectPick();
-    }
-  };
-
   return (
-    <nav className="sidebar" aria-label="Workspaces">
+    <nav
+      className={collapsed ? "sidebar collapsed" : "sidebar"}
+      aria-label="Workspaces"
+      aria-hidden={collapsed}
+      inert={collapsed}
+    >
       <header>
         <h1>Roer</h1>
-        <DropdownMenu
-          open={pickingProjectFor != null}
-          onOpenChange={(next) => {
-            if (!next) cancelProjectPick();
-          }}
-        >
-          <DropdownMenuTrigger asChild>
-            <button type="button" className="primary" onClick={openNew}>
-              New session
-            </button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="start">
-            {pickedProjects.map((project) => (
-              <DropdownMenuItem
-                key={project.id}
-                onSelect={() => pickProjectForNewSession(project.path)}
-              >
-                {project.name}
-              </DropdownMenuItem>
-            ))}
-            <DropdownMenuItem
-              onSelect={(event) => {
-                // The dialog is async and the Workspace it's for only lives
-                // in `pickingProjectFor` — letting Radix's default close
-                // through here would clear it before the dialog resolves.
-                event.preventDefault();
-                void attachNewForPicker();
-              }}
-            >
-              Attach a new project…
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
       </header>
 
       <div className="workspace-tabs" role="tablist" aria-label="Sidebar">

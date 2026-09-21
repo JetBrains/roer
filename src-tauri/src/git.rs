@@ -264,6 +264,175 @@ pub fn git_root(cwd: String) -> Option<String> {
     root(&cwd).ok()
 }
 
+/// Every local branch, for the branch-diff view's two pickers.
+#[tauri::command(async)]
+pub fn git_branches(cwd: String) -> Result<Vec<String>, String> {
+    let root = root(&cwd)?;
+    branches(&root)
+}
+
+fn branches(root: &str) -> Result<Vec<String>, String> {
+    let out = git(root, &["branch", "--format=%(refname:short)"])?;
+    Ok(out.lines().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string).collect())
+}
+
+/// The session's own branch, the sensible default for "which branch". Empty
+/// when detached, which is not a branch a diff view can be about.
+#[tauri::command(async)]
+pub fn git_current_branch(cwd: String) -> Result<String, String> {
+    let root = root(&cwd)?;
+    Ok(git(&root, &["branch", "--show-current"])?.trim().to_string())
+}
+
+/// One commit, as much as the branch-diff view names it by.
+#[derive(Clone, Debug, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Commit {
+    pub hash: String,
+    pub short: String,
+    pub author: String,
+    /// Unix seconds, author date.
+    pub date: i64,
+    pub subject: String,
+}
+
+/// Field separator within one `git log` record. `\x1f` (unit separator)
+/// rather than a tab or comma: nothing a person types ever contains it, so a
+/// commit message can hold either without breaking the split.
+const FIELD_SEP: &str = "\x1f";
+
+/// Every commit `branch` has that `base` does not, oldest first — the order
+/// a reviewer steps through them in, not the order `git log` prints by
+/// default.
+#[tauri::command(async)]
+pub fn git_branch_commits(root: String, branch: String, base: String) -> Result<Vec<Commit>, String> {
+    branch_commits(&root, &branch, &base)
+}
+
+fn branch_commits(root: &str, branch: &str, base: &str) -> Result<Vec<Commit>, String> {
+    let format = format!("%H{FIELD_SEP}%h{FIELD_SEP}%an{FIELD_SEP}%at{FIELD_SEP}%s");
+    let range = format!("{base}..{branch}");
+    let out = git(root, &["log", "--reverse", &format!("--format={format}"), &range])?;
+    Ok(out.lines().filter(|line| !line.is_empty()).filter_map(parse_commit).collect())
+}
+
+fn parse_commit(line: &str) -> Option<Commit> {
+    let mut fields = line.splitn(5, FIELD_SEP);
+    Some(Commit {
+        hash: fields.next()?.to_string(),
+        short: fields.next()?.to_string(),
+        author: fields.next()?.to_string(),
+        date: fields.next()?.parse().ok()?,
+        subject: fields.next()?.to_string(),
+    })
+}
+
+/// `commit`'s parent, or the empty tree for a root commit — the other side
+/// of what `git show` would diff it against.
+fn commit_parent(root: &str, commit: &str) -> Result<String, String> {
+    let out = run(root, &["rev-parse", "--verify", "--quiet", &format!("{commit}^")])?;
+    if out.status.success() {
+        Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+    } else {
+        empty_tree(root)
+    }
+}
+
+/// The files one commit touched, diffed against its own parent — what
+/// stepping to that commit in the branch-diff view shows, independent of
+/// which base branch the commit range was picked against.
+#[tauri::command(async)]
+pub fn git_commit_files(root: String, commit: String) -> Result<Vec<FileChange>, String> {
+    commit_files(&root, &commit)
+}
+
+fn commit_files(root: &str, commit: &str) -> Result<Vec<FileChange>, String> {
+    let parent = commit_parent(root, commit)?;
+    diff_files(root, &parent, commit)
+}
+
+/// One commit's unified diff of a single file, against its own parent.
+#[tauri::command(async)]
+pub fn git_commit_diff(root: String, commit: String, path: String) -> Result<String, String> {
+    let parent = commit_parent(&root, &commit)?;
+    let mut args = vec!["diff", "--no-color"];
+    args.extend(NO_DRIVERS);
+    args.extend(["-M", parent.as_str(), commit.as_str(), "--", path.as_str()]);
+    let out = run_bounded(&root, &args, MAX_DIFF_BYTES)?;
+
+    if !out.success {
+        let why = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        return Err(if why.is_empty() {
+            format!("could not diff {path}")
+        } else {
+            why
+        });
+    }
+
+    let text = String::from_utf8_lossy(&out.stdout).into_owned();
+    Ok(cap(text, out.truncated))
+}
+
+/// The files changed between two trees — a commit and its parent here,
+/// rather than the worktree and `HEAD` that [`changes`] compares.
+fn diff_files(root: &str, from: &str, to: &str) -> Result<Vec<FileChange>, String> {
+    let mut status_args = vec!["diff", "--no-color", "-z", "-M", "--name-status"];
+    status_args.extend(NO_DRIVERS);
+    status_args.extend([from, to]);
+    let mut files = parse_name_status(&git(root, &status_args)?);
+
+    let mut numstat_args = vec!["diff", "--numstat", "-z", "-M"];
+    numstat_args.extend(NO_DRIVERS);
+    numstat_args.extend([from, to]);
+    let counts = numstat(&git(root, &numstat_args)?);
+
+    for file in &mut files {
+        if let Some(stat) = counts.get(&file.path) {
+            file.added = stat.added;
+            file.deleted = stat.deleted;
+            file.binary = stat.binary;
+            file.counted = !stat.binary;
+        }
+    }
+
+    files.sort_by(|a, b| a.path.cmp(&b.path));
+    Ok(files)
+}
+
+/// `--name-status -z` records: `<X><score>\0<path>\0`, or for a rename or a
+/// copy `<X><score>\0<origPath>\0<path>\0`. The letter goes on the worktree
+/// side, not the index: a commit has nothing staged, and [`isStaged`] on the
+/// frontend would otherwise mark every row as if it did.
+fn parse_name_status(text: &str) -> Vec<FileChange> {
+    let mut files = Vec::new();
+    let mut records = text.split('\0').filter(|record| !record.is_empty());
+    while let Some(status) = records.next() {
+        let mut letters = status.chars();
+        let kind = letters.next().unwrap_or('M');
+        let file = if kind == 'R' || kind == 'C' {
+            let Some(from) = records.next() else { break };
+            let Some(path) = records.next() else { break };
+            FileChange {
+                path: path.to_string(),
+                staged: ".".to_string(),
+                unstaged: kind.to_string(),
+                renamed_from: (kind == 'R').then(|| from.to_string()),
+                ..FileChange::default()
+            }
+        } else {
+            let Some(path) = records.next() else { break };
+            FileChange {
+                path: path.to_string(),
+                staged: ".".to_string(),
+                unstaged: kind.to_string(),
+                ..FileChange::default()
+            }
+        };
+        files.push(file);
+    }
+    files
+}
+
 /// Everything changed in the session's repository, staged or not.
 ///
 /// `async` keeps this off the main thread, which is where Tauri runs a plain
@@ -554,10 +723,10 @@ fn count_lines(path: &Path) -> (Option<u32>, bool) {
 #[cfg(test)]
 mod tests {
     use super::{
-        changes, count_lines, git_diff, git_root, numstat, parse_status, root, Stat,
-        MAX_DIFF_BYTES,
+        branch_commits, branches, changes, commit_files, count_lines, git, git_commit_diff,
+        git_diff, git_root, numstat, parse_name_status, parse_status, root, Stat, MAX_DIFF_BYTES,
     };
-    use crate::testing::{commit, init, must, scratch};
+    use crate::testing::{commit, init, must, scratch, write};
 
     #[test]
     fn reads_the_branch_and_an_ordinary_change() {
@@ -873,6 +1042,121 @@ mod tests {
         let large = dir.join("large.txt");
         std::fs::write(&large, vec![b'x'; super::MAX_COUNT_BYTES as usize + 1]).unwrap();
         assert_eq!(count_lines(&large), (None, false));
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn parses_an_ordinary_name_status_record() {
+        let files = parse_name_status("M\0src/App.tsx\0");
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].path, "src/App.tsx");
+        assert_eq!(files[0].staged, ".");
+        assert_eq!(files[0].unstaged, "M");
+    }
+
+    #[test]
+    fn parses_a_rename_name_status_record() {
+        let files = parse_name_status("R100\0src/old.ts\0src/new.ts\0");
+        assert_eq!(files[0].path, "src/new.ts");
+        assert_eq!(files[0].renamed_from.as_deref(), Some("src/old.ts"));
+        assert_eq!(files[0].unstaged, "R");
+    }
+
+    #[test]
+    fn lists_the_commits_a_branch_added_over_its_base() {
+        let dir = scratch("branch-commits");
+        let at = dir.to_string_lossy().to_string();
+        init(&at);
+
+        write(&dir, "a.txt", "one\n");
+        must(&at, &["add", "."]);
+        commit(&at, "base commit");
+
+        must(&at, &["checkout", "-q", "-b", "feature"]);
+        write(&dir, "a.txt", "one\ntwo\n");
+        must(&at, &["add", "."]);
+        commit(&at, "second commit");
+        write(&dir, "b.txt", "new\n");
+        must(&at, &["add", "."]);
+        commit(&at, "third commit");
+
+        let commits = branch_commits(&at, "feature", "main").expect("commits");
+        let subjects: Vec<_> = commits.iter().map(|c| c.subject.as_str()).collect();
+        // Oldest first: stepping through them is reading the branch in the
+        // order it was written.
+        assert_eq!(subjects, ["second commit", "third commit"]);
+        assert!(commits[0].hash.starts_with(&commits[0].short));
+        assert!(!commits[0].author.is_empty());
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn diffs_one_commit_against_its_own_parent() {
+        let dir = scratch("commit-diff");
+        let at = dir.to_string_lossy().to_string();
+        init(&at);
+
+        write(&dir, "a.txt", "one\n");
+        must(&at, &["add", "."]);
+        commit(&at, "first");
+
+        write(&dir, "a.txt", "one\ntwo\n");
+        write(&dir, "b.txt", "new\n");
+        must(&at, &["add", "."]);
+        commit(&at, "second");
+
+        let head = git(&at, &["rev-parse", "HEAD"]).unwrap().trim().to_string();
+        let files = commit_files(&at, &head).expect("files");
+        let paths: Vec<_> = files.iter().map(|f| f.path.as_str()).collect();
+        assert_eq!(paths, ["a.txt", "b.txt"]);
+        // Nothing about a commit is staged; the letter belongs on the
+        // worktree side so `isStaged` on the frontend does not mark it.
+        assert_eq!(files[0].staged, ".");
+        assert_eq!(files[0].unstaged, "M");
+        assert_eq!((files[0].added, files[0].deleted), (1, 0));
+        assert_eq!(files[1].unstaged, "A");
+
+        let diff = git_commit_diff(at.clone(), head, "a.txt".to_string()).expect("diff");
+        assert!(diff.contains("+two"), "{diff}");
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn diffs_a_root_commit_against_the_empty_tree() {
+        let dir = scratch("root-commit-diff");
+        let at = dir.to_string_lossy().to_string();
+        init(&at);
+
+        write(&dir, "a.txt", "one\n");
+        must(&at, &["add", "."]);
+        commit(&at, "first");
+
+        let head = git(&at, &["rev-parse", "HEAD"]).unwrap().trim().to_string();
+        let files = commit_files(&at, &head).expect("files");
+        assert_eq!(files[0].path, "a.txt");
+        assert_eq!(files[0].unstaged, "A");
+
+        let diff = git_commit_diff(at.clone(), head, "a.txt".to_string()).expect("diff");
+        assert!(diff.contains("+one"), "{diff}");
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn lists_local_branches() {
+        let dir = scratch("branches");
+        let at = dir.to_string_lossy().to_string();
+        init(&at);
+        write(&dir, "a.txt", "one\n");
+        must(&at, &["add", "."]);
+        commit(&at, "first");
+        must(&at, &["checkout", "-q", "-b", "feature"]);
+
+        let names = branches(&at).expect("branches");
+        assert_eq!(names, vec!["feature".to_string(), "main".to_string()]);
 
         std::fs::remove_dir_all(&dir).unwrap();
     }

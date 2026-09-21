@@ -14,6 +14,12 @@
   --roer-accent: #4ea1ff;
   --roer-warn: #f0a04b;
 
+  /* A row's own surface, one step up from the page behind it — without this
+     a row's border is the only thing separating it from its neighbours, and
+     on a near-black background that reads as no separation at all. */
+  --roer-row: #2e2e33;
+  --roer-row-hover: #3a3a41;
+
   /* JetBrains New UI dark, for the diff: an IntelliJ diff's own colours. */
   --ide-editor: #191a1c;
   --ide-row: #1f2024;
@@ -90,6 +96,7 @@
 html,
 body,
 #root,
+.app-frame,
 main {
   height: 100%;
   margin: 0;
@@ -110,10 +117,46 @@ code {
 /* Shell: the Workspace switcher stays beside the stage; the sessions it
    filters are a tab within it, not a second column ------------------------ */
 
+.app-frame {
+  display: flex;
+  flex-direction: column;
+}
+
+/* The native title bar is drawn over this, traffic lights and all — without
+   it macOS paints its own light chrome above a dark app, which is the seam
+   the user is asking to close. Its color matches the sidebar it sits above
+   since that's where the traffic lights land. */
+.titlebar {
+  display: flex;
+  align-items: center;
+  flex: 0 0 28px;
+  background: var(--roer-panel);
+  border-bottom: 1px solid var(--roer-border);
+}
+
+/* Clears the traffic lights, which macOS insets from the left regardless of
+   what's under them. */
+.sidebar-toggle {
+  margin-left: 72px;
+  padding: 4px;
+  display: flex;
+  color: var(--roer-muted);
+  background: none;
+  border: none;
+  border-radius: 4px;
+}
+
+.sidebar-toggle:hover {
+  color: var(--roer-fg);
+  background: var(--roer-row-hover);
+  border-color: transparent;
+}
+
 .shell {
   display: flex;
   align-items: stretch;
-  height: 100%;
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .sidebar {
@@ -123,6 +166,16 @@ code {
   padding: 14px 12px;
   background: var(--roer-panel);
   border-right: 1px solid var(--roer-border);
+  transition: flex-basis 0.12s ease;
+}
+
+/* Collapsed rather than unmounted, so the Workspaces/Projects tab choice
+   survives being reopened. */
+.sidebar.collapsed {
+  flex: 0 0 0;
+  padding: 0;
+  border-right: none;
+  overflow: hidden;
 }
 
 .stage {
@@ -152,12 +205,55 @@ code {
   display: none !important;
 }
 
-.tabs {
+/* Holds the tab strip and the New session button on one row — the button
+   sits outside `.tabs` so its own scrollbar never eats into it as tabs
+   accumulate. */
+.tab-bar {
   display: flex;
-  gap: 2px;
-  padding: 4px 6px 0;
+  align-items: center;
+  gap: 8px;
   border-bottom: 1px solid var(--roer-border);
   background: var(--roer-panel);
+}
+
+.tabs {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  gap: 2px;
+  padding: 4px 6px 0;
+  /* Enough file tabs must scroll, not squeeze every tab down to an
+     unreadable sliver — flex would otherwise shrink them past their
+     ellipsis floor since overflow: hidden removes the usual min-content
+     stop. `flex: none` below is what makes that floor real. */
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.tab-bar .new-session {
+  flex: none;
+  margin-right: 8px;
+}
+
+.tabs button.tab,
+.tabs .tab-wrap {
+  flex: none;
+}
+
+/* `scrollbar-width` above is Firefox's own property; the app's actual
+   runtime is WKWebView, which only understands the `::-webkit-scrollbar`
+   pseudo-elements, so both are needed for the same thin, unobtrusive bar. */
+.tabs::-webkit-scrollbar {
+  height: 4px;
+}
+
+.tabs::-webkit-scrollbar-thumb {
+  background: var(--roer-border);
+  border-radius: 2px;
+}
+
+.tabs::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 /* Which of "Workspaces" or "Projects" the sidebar's list below is showing —
@@ -331,6 +427,8 @@ button.tab:disabled {
   gap: 2px 8px;
   padding: 7px 9px;
   font-size: 12px;
+  background: var(--roer-row);
+  border-radius: 6px;
 }
 
 /* A sub-heading grouping sessions by git root, only shown when a list spans
@@ -390,18 +488,29 @@ button.link {
   letter-spacing: 0;
 }
 
-/* A session row: name, its directory, what is running in it, and who holds it. */
+/* A session row: name, its directory, what is running in it, and who holds it
+ * — one line, not two, so a list of them reads as a list rather than a stack
+ * of two-line cards. The name takes whatever space the other two don't need,
+ * and shrinks under an ellipsis first since it's the one that varies most in
+ * length. */
 button.row {
   width: 100%;
-  display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 2px 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
   text-align: left;
-  background: none;
+  background: var(--roer-row);
   padding: 7px 9px;
+  transition: background-color 0.1s ease, border-color 0.1s ease;
+}
+
+button.row:hover {
+  background: var(--roer-row-hover);
 }
 
 button.row strong {
+  flex: 1 1 auto;
+  min-width: 0;
   font-weight: 600;
   font-size: 12px;
   overflow: hidden;
@@ -410,17 +519,28 @@ button.row strong {
 }
 
 button.row .muted {
-  grid-column: 1 / 2;
+  flex: 0 1 auto;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 button.row .badge {
-  /* However many lines the row has; the badge is about the row as a whole. */
-  grid-row: 1 / -1;
-  grid-column: 2 / 3;
-  align-self: center;
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+
+/* A Project row's own name shares no line with a session's, so squeezing it
+ * against a full filesystem path buys nothing — the path is what tells two
+ * same-named projects apart, and it needs the room. */
+button.row.wrap {
+  flex-wrap: wrap;
+}
+
+button.row.wrap strong,
+button.row.wrap .muted {
+  flex-basis: 100%;
 }
 
 button.row.active {
@@ -444,11 +564,13 @@ button.row.active {
 .badge.here {
   color: var(--roer-accent);
   border-color: var(--roer-accent);
+  background: color-mix(in srgb, var(--roer-accent) 15%, transparent);
 }
 
 .badge.held {
   color: var(--roer-warn);
   border-color: var(--roer-warn);
+  background: color-mix(in srgb, var(--roer-warn) 15%, transparent);
 }
 
 .badge.free {
@@ -547,6 +669,56 @@ button.row.active {
 
 .pad {
   padding: 12px;
+}
+
+/* Branch diff: a branch and a base picker above the same tree-and-diff pane
+   local changes use, one commit of the range at a time ----------------- */
+
+.branch-diff {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.branch-diff-pickers {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--roer-border);
+  background: var(--roer-panel);
+  font-size: 12px;
+}
+
+.branch-diff-pickers label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--roer-muted);
+}
+
+.branch-diff-pickers select {
+  background: var(--roer-bg);
+  color: var(--roer-fg);
+  border: 1px solid var(--roer-border);
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 12px;
+}
+
+.branch-diff-pickers .seg {
+  margin-left: auto;
+}
+
+.branch-diff-pickers .seg button:disabled {
+  opacity: 0.4;
+}
+
+.branch-diff .changes {
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .tree {

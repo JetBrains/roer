@@ -270,6 +270,7 @@ describe("ChangesView", () => {
   it("shows a change as two sides, the old one beside the new", async () => {
     view();
     await waitFor(() => expect(position()).toBe("change 1 of 2"));
+    fireEvent.click(screen.getByText("Side by side"));
 
     const [pair] = document.querySelectorAll(".hunk.current .pair");
     expect(pair.querySelector(".side.del .text")?.textContent).toBe("one");
@@ -321,6 +322,7 @@ describe("ChangesView", () => {
 
     view();
     await waitFor(() => expect(position()).toBe("change 1 of 1"));
+    fireEvent.click(screen.getByText("Side by side"));
     // The grammar for `git.ts` is fetched, so the first paint is the painter's
     // and the one worth asserting on arrives after it.
     await waitFor(() =>
@@ -345,6 +347,7 @@ describe("ChangesView", () => {
 
     view();
     await waitFor(() => expect(position()).toBe("change 1 of 1"));
+    fireEvent.click(screen.getByText("Side by side"));
 
     const painted = [...document.querySelectorAll(".side.del .text span")].map(
       (span) => `${span.className}:${span.textContent}`,
@@ -365,6 +368,7 @@ describe("ChangesView", () => {
 
     view();
     await waitFor(() => expect(position()).toBe("change 1 of 1"));
+    fireEvent.click(screen.getByText("Side by side"));
     await waitFor(() =>
       expect(coloured(".side.add")).toContain(`${KEYWORD}:const`),
     );

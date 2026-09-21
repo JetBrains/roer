@@ -164,9 +164,27 @@ beforeEach(() => {
   mocks.handoffHandlers.length = 0;
   mocks.changedHandlers.length = 0;
   mocks.emit.current = undefined;
+  // The sidebar's collapsed state persists here across renders on purpose;
+  // it must not persist across tests too.
+  localStorage.clear();
 });
 
 describe("App", () => {
+  it("collapses and reopens the sidebar, remembering the choice", async () => {
+    render(<App />);
+
+    const toggle = screen.getByRole("button", { name: "Hide sidebar" });
+    expect(screen.getByLabelText("Workspaces")).not.toHaveClass("collapsed");
+
+    fireEvent.click(toggle);
+    expect(screen.getByLabelText("Workspaces")).toHaveClass("collapsed");
+    expect(localStorage.getItem("roer:sidebar-collapsed")).toBe("1");
+
+    fireEvent.click(screen.getByRole("button", { name: "Show sidebar" }));
+    expect(screen.getByLabelText("Workspaces")).not.toHaveClass("collapsed");
+    expect(localStorage.getItem("roer:sidebar-collapsed")).toBe("0");
+  });
+
   it("opens on the launcher rather than a terminal", async () => {
     render(<App />);
 
