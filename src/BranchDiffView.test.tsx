@@ -71,6 +71,15 @@ describe("BranchDiffView", () => {
     await waitFor(() => expect(gitBranchCommits).toHaveBeenCalledWith("/work/roer", "feature", "main"));
   });
 
+  it("falls back to another branch as the base when the repository has no main", async () => {
+    vi.mocked(gitBranches).mockResolvedValue(["trunk", "feature"]);
+    vi.mocked(gitCurrentBranch).mockResolvedValue("feature");
+
+    view();
+
+    await waitFor(() => expect(gitBranchCommits).toHaveBeenCalledWith("/work/roer", "feature", "trunk"));
+  });
+
   it("shows the first commit of the range and steps through them with Next", async () => {
     vi.mocked(gitBranchCommits).mockResolvedValue([commit("first change"), commit("second change")]);
     vi.mocked(gitCommitFiles).mockImplementation(async (_root, hash) =>

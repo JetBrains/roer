@@ -41,7 +41,7 @@ export function BranchDiffView({ cwd, pane, active }: BranchDiffViewProps) {
   const [root, setRoot] = useState<string | null>(null);
   const [branches, setBranches] = useState<string[]>([]);
   const [branch, setBranch] = useState("");
-  const [base, setBase] = useState("main");
+  const [base, setBase] = useState("");
   const [commits, setCommits] = useState<Commit[] | null>(null);
   const [commitsError, setCommitsError] = useState<string | null>(null);
   const [index, setIndex] = useState(0);
@@ -50,6 +50,21 @@ export function BranchDiffView({ cwd, pane, active }: BranchDiffViewProps) {
   const [token, setToken] = useState(0);
 
   const dir = useCallback(() => resolveDir(cwd, pane), [cwd, pane]);
+
+  // The stage keeps this view mounted across session switches, and a `cd`
+  // moves `pane` to a new directory without remounting anything — so a new
+  // `cwd`/`pane` means the repository discovered below may no longer be the
+  // right one. Clearing it here makes the discovery effect run again instead
+  // of continuing to show the previous session's branches and commits.
+  useEffect(() => {
+    setRoot(null);
+    setBranches([]);
+    setBranch("");
+    setBase("");
+    setCommits(null);
+    setCommitsError(null);
+    setIndex(0);
+  }, [cwd, pane]);
 
   // Discovers the repository once, along with its branches and the one the
   // session is on — the sensible default for "which branch" the first time
@@ -68,7 +83,16 @@ export function BranchDiffView({ cwd, pane, active }: BranchDiffViewProps) {
         if (cancelled || !rootDir) return;
         setRoot(rootDir);
         setBranches(names);
-        setBranch((existing) => existing || current || names[0] || "");
+        const branchToUse = current || names[0] || "";
+        setBranch((existing) => existing || branchToUse);
+        // `main` when the repository has one; otherwise anything but the
+        // branch itself, since diffing a branch against its own name is
+        // always empty.
+        setBase(
+          (existing) =>
+            existing ||
+            (names.includes("main") ? "main" : names.find((name) => name !== branchToUse) ?? names[0] ?? ""),
+        );
       })
       .catch((cause: unknown) => {
         if (cancelled) return;
@@ -112,6 +136,11 @@ export function BranchDiffView({ cwd, pane, active }: BranchDiffViewProps) {
       setFiles(null);
       return;
     }
+    // Cleared up front, not just on failure: without this, `DiffPane` briefly
+    // renders the previous commit's files under the new commit's title while
+    // this request is in flight.
+    setFiles(null);
+    setFilesError(null);
     let cancelled = false;
 
     void gitCommitFiles(root, commit.hash)
