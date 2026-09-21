@@ -455,11 +455,19 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
     assignments[id] === workspace.id ||
     selectedWorkspaceProjects.some((project) => underProject(cwd, project));
 
-  const visibleSessions = selectedProject
-    ? sessions.filter((session) => underProject(session.cwd, selectedProject))
-    : selectedWorkspace
-      ? sessions.filter((session) => underWorkspace(session.cwd, session.id, selectedWorkspace))
-      : sessions;
+  // A resumed conversation's tmux session (`<dir>-resume`, `-resume-2`, ...):
+  // scaffolding the shim creates so the resume is teleportable, not something
+  // the user asked to open as its own session. It's already represented by
+  // the Claude conversation the user clicked to get here.
+  const isResumeScaffold = (session: SessionInfo) => /-resume(-\d+)?$/.test(session.session);
+
+  const visibleSessions = (
+    selectedProject
+      ? sessions.filter((session) => underProject(session.cwd, selectedProject))
+      : selectedWorkspace
+        ? sessions.filter((session) => underWorkspace(session.cwd, session.id, selectedWorkspace))
+        : sessions
+  ).filter((session) => !isResumeScaffold(session));
   const visibleClaudeSessions = selectedProject
     ? claudeSessions.filter((session) => underProject(session.cwd, selectedProject))
     : selectedWorkspace
