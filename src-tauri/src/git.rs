@@ -355,9 +355,10 @@ fn commit_files(root: &str, commit: &str) -> Result<Vec<FileChange>, String> {
 #[tauri::command(async)]
 pub fn git_commit_diff(root: String, commit: String, path: String) -> Result<String, String> {
     let parent = commit_parent(&root, &commit)?;
+    let spec = literal(&path);
     let mut args = vec!["diff", "--no-color"];
     args.extend(NO_DRIVERS);
-    args.extend(["-M", parent.as_str(), commit.as_str(), "--", path.as_str()]);
+    args.extend(["-M", parent.as_str(), commit.as_str(), "--", spec.as_str()]);
     let out = run_bounded(&root, &args, MAX_DIFF_BYTES)?;
 
     if !out.success {
