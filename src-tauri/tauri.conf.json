@@ -14,7 +14,9 @@
       {
         "title": "Roer",
         "width": 1024,
-        "height": 700
+        "height": 700,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true
       }
     ],
     "security": {

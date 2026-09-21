@@ -35,6 +35,38 @@ export const gitRoot = (cwd: string): Promise<string | null> => invoke("git_root
 export const gitDiff = (root: string, path: string, untracked: boolean): Promise<string> =>
   invoke("git_diff", { root, path, untracked });
 
+/** One commit, as much as the branch-diff view names it by. */
+export interface Commit {
+  hash: string;
+  short: string;
+  author: string;
+  /** Unix seconds, author date. */
+  date: number;
+  subject: string;
+}
+
+/** Every local branch, for the branch-diff view's two pickers. */
+export const gitBranches = (cwd: string): Promise<string[]> => invoke("git_branches", { cwd });
+
+/** The session's own branch, the sensible default for "which branch". */
+export const gitCurrentBranch = (cwd: string): Promise<string> =>
+  invoke("git_current_branch", { cwd });
+
+/** Every commit `branch` has that `base` does not, oldest first. */
+export const gitBranchCommits = (
+  root: string,
+  branch: string,
+  base: string,
+): Promise<Commit[]> => invoke("git_branch_commits", { root, branch, base });
+
+/** The files one commit touched, diffed against its own parent. */
+export const gitCommitFiles = (root: string, commit: string): Promise<FileChange[]> =>
+  invoke("git_commit_files", { root, commit });
+
+/** One commit's unified diff of a single file, against its own parent. */
+export const gitCommitDiff = (root: string, commit: string, path: string): Promise<string> =>
+  invoke("git_commit_diff", { root, commit, path });
+
 /** True for a file git has never seen, which is diffed differently. */
 export const isUntracked = (file: FileChange): boolean => file.unstaged === "?";
 

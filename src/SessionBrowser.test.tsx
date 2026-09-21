@@ -5,6 +5,7 @@ import { gitRoot } from "./lib/git";
 import { listClaudeSessions, listPastSessions, listSessions, roerStatus } from "./lib/pty";
 import { useSessionBrowser } from "./lib/useSessionBrowser";
 import { assignSession, listWorkspaces, unassignSession, workspaceAssignments } from "./lib/workspaces";
+import { NewSessionButton } from "./NewSessionButton";
 import { SessionBrowser, type OpenRequest } from "./SessionBrowser";
 import { WorkspaceSidebar } from "./WorkspaceSidebar";
 
@@ -59,6 +60,7 @@ function Harness({ onOpen }: { onOpen: (request: OpenRequest) => void }) {
   return (
     <>
       <WorkspaceSidebar
+        collapsed={false}
         status={browser.status}
         failure={browser.failure}
         workspaces={browser.workspaces}
@@ -73,6 +75,9 @@ function Harness({ onOpen }: { onOpen: (request: OpenRequest) => void }) {
         handleCreateProject={browser.handleCreateProject}
         handleRenameProject={browser.handleRenameProject}
         handleDeleteProject={browser.handleDeleteProject}
+      />
+      <NewSessionButton
+        projects={browser.projects}
         openNew={browser.openNew}
         pickingProjectFor={browser.pickingProjectFor}
         cancelProjectPick={browser.cancelProjectPick}

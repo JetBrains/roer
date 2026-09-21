@@ -1,45 +1,9 @@
-import {
-  createContext,
-  memo,
-  useCallback,
-  useContext,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type KeyboardEvent,
-} from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
-import { Spans } from "./CodeLine";
-import {
-  changedRange,
-  pairRows,
-  parseDiff,
-  type DiffLine,
-  type Hunk,
-} from "./lib/diff";
-import {
-  highlight,
-  loadLang,
-  paint,
-  ready,
-  toSpans,
-  type Colouring,
-} from "./lib/highlight";
+import { DiffPane } from "./DiffPane";
 import { type FilesChanged } from "./lib/files";
-import { langFor } from "./lib/lang";
-import {
-  changeKind,
-  gitChanges,
-  gitDiff,
-  isStaged,
-  isUntracked,
-  statusLetter,
-  type Changes,
-  type FileChange,
-} from "./lib/git";
+import { gitChanges, gitDiff, type Changes } from "./lib/git";
 import { resolveDir } from "./lib/session";
-import { ancestors, buildTree, fileOrder, rows } from "./lib/tree";
 
 export interface ChangesViewProps {
   /** Directory the session was opened in; the repository is whatever holds it. */
@@ -53,156 +17,17 @@ export interface ChangesViewProps {
   changed?: FilesChanged | null;
 }
 
-/** Where the selection is: a file, and which of its hunks. */
-interface Selection {
-  path: string;
-  /** `"last"` asks for the final hunk of a file whose diff is still loading,
-   * which is what stepping backwards into a file means. */
-  at: number | "last";
-}
-
-function plural(count: number, one: string, many: string): string {
-  return `${count} ${count === 1 ? one : many}`;
-}
-
-/** How a hunk is drawn: the terminal's diff, or an IDE's. */
-type Layout = "unified" | "split";
-
 /**
- * The grammar's tokens for the file on screen, or null while none has loaded.
- *
- * Carried in context rather than through `Unified`, `Split` and `Side`: those
- * three know about layout and nothing about colour, and threading a map
- * through them for `Code` alone would say the opposite.
- */
-const Coloured = createContext<Colouring | null>(null);
-
-/** What `git diff` prints: one column, a marker per line, both numbers. */
-function Unified({ hunk }: { hunk: Hunk }) {
-  return (
-    <>
-      {hunk.lines.map((line, j) => (
-        <div key={j} className={`line ${line.kind}`}>
-          {/* Numbers and the marker are attributes drawn by a `::before`,
-              so a selection dragged across the diff copies the code and
-              nothing else. See `.file-no` for why the CSS is not enough. */}
-          <span className="no" data-no={line.oldNo ?? ""} />
-          <span className="no" data-no={line.newNo ?? ""} />
-          <span
-            className="mark"
-            data-mark={
-              line.kind === "add" ? "+" : line.kind === "del" ? "-" : ""
-            }
-          />
-          <span className="text">
-            {/* A context line is in both files; one column can only show one
-                of them, and the new file is the one being read. */}
-            <Code line={line} side={line.kind === "del" ? "old" : "new"} />
-          </span>
-        </div>
-      ))}
-    </>
-  );
-}
-
-/** A grammar's colours are its own; the painter's are a class in the stylesheet. */
-/**
- * A line of code, coloured the way an editor colours it, with the run that
- * differs from `other` picked out on top of that.
- *
- * Memoised because it is not cheap and it is drawn thousands of times: every
- * keystroke that steps a hunk re-renders the whole diff, and the lines are the
- * same lines. `DiffLine` identity survives that, since the parse is memoised
- * too.
- */
-const Code = memo(function Code({
-  line,
-  other,
-  side,
-}: {
-  line: DiffLine;
-  other?: DiffLine;
-  /** Which file this column is showing, which is whose tokens it wants. */
-  side: "old" | "new";
-}) {
-  const coloured = useContext(Coloured);
-  const change =
-    other === undefined ? undefined : changedRange(line.text, other.text);
-  const tokens = coloured?.[side].get(line);
-  const spans = tokens ? toSpans(tokens, change) : paint(line.text, change);
-
-  return <Spans spans={spans} />;
-});
-
-/** One half of a row. No line at all is the gap opposite an edit. */
-function Side({
-  line,
-  other,
-  which,
-}: {
-  line?: DiffLine;
-  /** The line this one replaced, or was replaced by, if any. */
-  other?: DiffLine;
-  which: "old" | "new";
-}) {
-  if (!line) return <span className="side gap" />;
-  return (
-    <span className={`side ${line.kind}`}>
-      <span
-        className="no"
-        data-no={(which === "old" ? line.oldNo : line.newNo) ?? ""}
-      />
-      <span className="text">
-        <Code line={line} other={other} side={which} />
-      </span>
-    </span>
-  );
-}
-
-/** What an IDE shows: the old file on the left, the new one on the right. */
-function Split({ hunk }: { hunk: Hunk }) {
-  const paired = useMemo(() => pairRows(hunk), [hunk]);
-  return (
-    <>
-      {paired.map((row, j) =>
-        row.kind === "meta" ? (
-          <div key={j} className="line meta">
-            <span className="text">{row.left?.text}</span>
-          </div>
-        ) : (
-          <div key={j} className="pair">
-            <Side
-              line={row.left}
-              other={row.kind === "change" ? row.right : undefined}
-              which="old"
-            />
-            <Side
-              line={row.right}
-              other={row.kind === "change" ? row.left : undefined}
-              which="new"
-            />
-          </div>
-        ),
-      )}
-    </>
-  );
-}
-
-/**
- * Local changes: the folder tree on the left, the selected file's diff on the
- * right, and the arrow keys stepping through the changes themselves.
+ * Local changes: the worktree against `HEAD`, with the folder tree on the
+ * left and the selected file's diff on the right. The tree and diff
+ * rendering itself lives in `DiffPane`, shared with `BranchDiffView`; this
+ * component's own job is knowing when to reload `git status`.
  */
 export function ChangesView({ cwd, pane, active, changed }: ChangesViewProps) {
   const [changes, setChanges] = useState<Changes | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [selection, setSelection] = useState<Selection | null>(null);
-  const [diff, setDiff] = useState<{ path: string; text: string } | null>(null);
-  const [diffError, setDiffError] = useState<string | null>(null);
-  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
-  const [layout, setLayout] = useState<Layout>("split");
   const [token, setToken] = useState(0);
 
-  const rootRef = useRef<HTMLDivElement>(null);
   // Which worktree the changes on screen belong to, so an event for another
   // repository is ignored without a render to find that out.
   const shownRoot = useRef<string | null>(null);
@@ -214,8 +39,6 @@ export function ChangesView({ cwd, pane, active, changed }: ChangesViewProps) {
   // The event this view has already acted on, so coming back to the front
   // does not reload twice for it.
   const handled = useRef<FilesChanged | null>(null);
-  const hunkRefs = useRef<(HTMLDivElement | null)[]>([]);
-  const rowRefs = useRef<Map<string, HTMLButtonElement | null>>(new Map());
 
   // Shared with Go to File, which has to answer the same question.
   const dir = useCallback(() => resolveDir(cwd, pane), [cwd, pane]);
@@ -279,239 +102,31 @@ export function ChangesView({ cwd, pane, active, changed }: ChangesViewProps) {
       return;
     }
     // Nothing on screen, and nothing out to put something there.
-    if (shownRoot.current === null || changed.root !== shownRoot.current) return;
+    if (shownRoot.current === null || changed.root !== shownRoot.current)
+      return;
     setToken((one) => one + 1);
   }, [active, changed]);
 
-  const tree = useMemo(() => buildTree(changes?.files ?? []), [changes]);
-  const order = useMemo(() => fileOrder(tree), [tree]);
-  const visible = useMemo(() => rows(tree, collapsed), [tree, collapsed]);
-
-  const selected: FileChange | undefined = useMemo(
-    () => order.find((file) => file.path === selection?.path),
-    [order, selection],
-  );
-
-  // A file that stopped being changed — committed, or reverted — cannot stay
-  // selected, and the first change is the one the user wants next.
-  useEffect(() => {
-    if (!changes) return;
-    setSelection((current) => {
-      if (current && order.some((file) => file.path === current.path))
-        return current;
-      // Tree order, not git's: the first change is the one at the top of the
-      // list the user is looking at.
-      const first = order[0];
-      return first ? { path: first.path, at: 0 } : null;
-    });
-  }, [changes, order]);
-
   const root = changes?.root;
-  const path = selected?.path;
-  const untracked = selected ? isUntracked(selected) : false;
-
-  useEffect(() => {
-    if (!root || !path) {
-      setDiff(null);
-      return;
-    }
-    let cancelled = false;
-
-    void gitDiff(root, path, untracked)
-      .then((text) => {
-        if (cancelled) return;
-        setDiff({ path, text });
-        setDiffError(null);
-      })
-      .catch((cause: unknown) => {
-        if (cancelled) return;
-        setDiff(null);
-        setDiffError(String(cause));
-      });
-
-    return () => {
-      cancelled = true;
-    };
-    // `changes` is in here for its identity alone: a fresh listing means the
-    // file may have been edited since, and the diff on screen is then stale.
-  }, [root, path, untracked, token, changes]);
-
-  // Only ever the diff of the selected file: a slow answer for the file that
-  // was selected two keystrokes ago must not be drawn under this one's name.
-  //
-  // Keyed on `path` rather than on `selection`, which is a fresh object every
-  // time a keypress steps a hunk: depending on the whole thing reparsed the
-  // diff, and so retokenised it, for a move within one file — and handed
-  // `Code` new `DiffLine` objects, defeating its memo as well.
-  const parsed = useMemo(
-    () => (diff && diff.path === path ? parseDiff(diff.text) : null),
-    [diff, path],
-  );
-
-  /** The grammar for the selected file, if we carry one. */
-  const lang = useMemo(() => (path ? langFor(path) : undefined), [path]);
-
-  // Grammars arrive over time and `ready` is not something React watches, so
-  // an arrival has to be announced. Until one lands the painter is drawing,
-  // which is why nothing here waits: the diff is already on screen.
-  const [grammars, setGrammars] = useState(0);
-  useEffect(() => {
-    if (!lang || ready(lang)) return;
-    let live = true;
-    void loadLang(lang).then(() => {
-      if (live) setGrammars((n) => n + 1);
-    });
-    return () => {
-      live = false;
-    };
-  }, [lang]);
-
-  /**
-   * Tokenising is the expensive half and it does not depend on the layout, so
-   * it happens once per file here rather than per line in `Code`. Without
-   * this every arrow keypress would re-tokenise the whole diff.
-   */
-  const coloured = useMemo(
-    () =>
-      parsed && lang && ready(lang) ? highlight(parsed.hunks, lang) : null,
-    // `grammars` stands in for `ready`, which changes without telling anyone.
-    [parsed, lang, grammars],
-  );
-
-  const index = useMemo(() => {
-    const count = parsed?.hunks.length ?? 0;
-    if (count === 0) return 0;
-    if (selection?.at === "last") return count - 1;
-    return Math.min(selection?.at ?? 0, count - 1);
-  }, [parsed, selection]);
-
-  const select = useCallback((next: Selection) => {
-    setSelection(next);
-    // Stepping into a file inside a closed folder opens the folder; the
-    // selection is never somewhere the tree cannot show it.
-    setCollapsed((current) => {
-      const hidden = ancestors(next.path).filter((dir) => current.has(dir));
-      if (hidden.length === 0) return current;
-      const open = new Set(current);
-      for (const dir of hidden) open.delete(dir);
-      return open;
-    });
-  }, []);
-
-  /** Moves the selection by whole files, landing on `at` in the new one. */
-  const stepFile = useCallback(
-    (delta: 1 | -1, at: number | "last") => {
-      if (order.length === 0) return;
-      const from = order.findIndex((file) => file.path === selection?.path);
-      const next = order[from < 0 ? 0 : from + delta];
-      if (next) select({ path: next.path, at });
+  const loadDiff = useCallback(
+    (path: string, untracked: boolean) => {
+      if (!root) return Promise.reject(new Error("no repository loaded yet"));
+      return gitDiff(root, path, untracked);
     },
-    [order, select, selection],
+    [root],
   );
-
-  /** Next or previous change, crossing into the next file at the edges. */
-  const stepHunk = useCallback(
-    (delta: 1 | -1) => {
-      if (!selection) {
-        stepFile(1, 0);
-        return;
-      }
-      // Without the parsed diff there is no telling where the edges are; the
-      // keystroke is dropped rather than guessed at.
-      if (!parsed) return;
-      const next = index + delta;
-      if (next >= 0 && next < parsed.hunks.length) {
-        setSelection({ path: selection.path, at: next });
-        return;
-      }
-      stepFile(delta, delta === 1 ? 0 : "last");
-    },
-    [index, parsed, selection, stepFile],
-  );
-
-  const onKeyDown = (event: KeyboardEvent) => {
-    const step: Record<string, () => void> = {
-      ArrowDown: () => stepHunk(1),
-      ArrowUp: () => stepHunk(-1),
-      ArrowRight: () => stepFile(1, 0),
-      ArrowLeft: () => stepFile(-1, 0),
-    };
-    const move = step[event.key];
-    if (!move) return;
-    // Otherwise the pane scrolls as well, and the selection leaves the view.
-    event.preventDefault();
-    move();
-  };
-
-  // The keys belong to this view while it is on top, and nothing else in it
-  // is focusable on arrival.
-  useEffect(() => {
-    if (active) rootRef.current?.focus();
-  }, [active]);
-
-  // Follow the selection with the scroll, in both panes. `nearest` keeps a
-  // selection that is already visible exactly where it is.
-  useEffect(() => {
-    hunkRefs.current[index]?.scrollIntoView?.({ block: "nearest" });
-  }, [index, diff]);
-
-  useEffect(() => {
-    if (selection)
-      rowRefs.current
-        .get(selection.path)
-        ?.scrollIntoView?.({ block: "nearest" });
-  }, [selection]);
-
-  const toggle = (dir: string) =>
-    setCollapsed((current) => {
-      const next = new Set(current);
-      if (!next.delete(dir)) next.add(dir);
-      return next;
-    });
-
-  const count = changes?.files.length ?? 0;
 
   return (
-    <div
-      className="changes"
-      data-testid="changes"
-      ref={rootRef}
-      tabIndex={0}
-      onKeyDown={onKeyDown}
-      aria-label="Local changes"
-    >
-      <header className="changes-head">
-        {changes ? (
-          <>
-            <strong>{changes.branch}</strong>
-            <span className="muted">
-              {plural(count, "file", "files")} changed
-            </span>
-            <span className="muted keys">↑↓ change · ←→ file</span>
-          </>
-        ) : (
-          <strong>Local changes</strong>
-        )}
-        <div className="seg" role="group" aria-label="Diff layout">
-          <button
-            type="button"
-            className={layout === "split" ? "on" : undefined}
-            aria-pressed={layout === "split"}
-            title="Side by side, the way an IDE shows a diff"
-            onClick={() => setLayout("split")}
-          >
-            Side by side
-          </button>
-          <button
-            type="button"
-            className={layout === "unified" ? "on" : undefined}
-            aria-pressed={layout === "unified"}
-            title="One column with + and −, the way a terminal shows a diff"
-            onClick={() => setLayout("unified")}
-          >
-            Unified
-          </button>
-        </div>
+    <DiffPane
+      files={changes?.files ?? null}
+      error={error}
+      active={active}
+      loadDiff={loadDiff}
+      resetKey={root ?? ""}
+      refreshToken={token}
+      title={changes?.branch ?? "Local changes"}
+      emptyMessage="No local changes. The worktree matches HEAD."
+      headerExtra={
         <button
           type="button"
           className="link"
@@ -519,133 +134,7 @@ export function ChangesView({ cwd, pane, active, changed }: ChangesViewProps) {
         >
           Refresh
         </button>
-      </header>
-
-      {error ? <p className="error">{error}</p> : null}
-
-      {changes && count === 0 ? (
-        <p className="muted pad">
-          No local changes. The worktree matches HEAD.
-        </p>
-      ) : null}
-
-      {count > 0 ? (
-        <div className="changes-body">
-          <ul className="tree" aria-label="Changed files">
-            {visible.map((row) => {
-              const isSelected =
-                row.kind === "file" && row.path === selection?.path;
-              const indent = { paddingLeft: `${6 + row.depth * 12}px` };
-              return (
-                <li key={`${row.kind}:${row.path}`}>
-                  {row.kind === "dir" ? (
-                    <button
-                      type="button"
-                      className="tree-row dir"
-                      style={indent}
-                      onClick={() => toggle(row.path)}
-                      aria-expanded={!collapsed.has(row.path)}
-                    >
-                      <span className="caret">
-                        {collapsed.has(row.path) ? "▸" : "▾"}
-                      </span>
-                      <span className="name">{row.name}</span>
-                      <span className="muted">{row.count}</span>
-                    </button>
-                  ) : (
-                    <button
-                      type="button"
-                      ref={(node) => {
-                        rowRefs.current.set(row.path, node);
-                      }}
-                      className={
-                        isSelected ? "tree-row file selected" : "tree-row file"
-                      }
-                      style={indent}
-                      aria-current={isSelected ? "true" : undefined}
-                      onClick={() => select({ path: row.path, at: 0 })}
-                    >
-                      <span
-                        className={
-                          isStaged(row.file) ? "letter staged" : "letter"
-                        }
-                      >
-                        {statusLetter(row.file)}
-                      </span>
-                      <span className="name">{row.name}</span>
-                      {row.file.binary && <span className="muted">bin</span>}
-                      {row.file.counted && (
-                        <span className="counts">
-                          <span className="plus">+{row.file.added}</span>
-                          <span className="minus">−{row.file.deleted}</span>
-                        </span>
-                      )}
-                    </button>
-                  )}
-                </li>
-              );
-            })}
-          </ul>
-
-          <div className="diff" aria-label="Diff">
-            {selected ? (
-              <div className="diff-head">
-                <span className="kind">{changeKind(selected)}</span>
-                <strong className="path">{selected.path}</strong>
-                {selected.renamedFrom ? (
-                  <span className="muted">
-                    renamed from {selected.renamedFrom}
-                  </span>
-                ) : null}
-                {parsed && parsed.hunks.length > 0 ? (
-                  <span className="muted at">
-                    change {index + 1} of {parsed.hunks.length}
-                  </span>
-                ) : null}
-              </div>
-            ) : null}
-
-            {diffError ? <p className="error">{diffError}</p> : null}
-
-            {parsed?.binary ? (
-              <p className="muted pad">Binary file — nothing to show.</p>
-            ) : null}
-
-            {parsed && !parsed.binary && parsed.hunks.length === 0 ? (
-              <p className="muted pad">
-                No textual change — a mode or an empty file.
-              </p>
-            ) : null}
-
-            <Coloured.Provider value={coloured}>
-              {parsed?.hunks.map((hunk, i) => (
-                <div
-                  // Hunks have no identity of their own; within one diff the
-                  // position is the identity.
-                  key={`${selected?.path}:${i}`}
-                  ref={(node) => {
-                    hunkRefs.current[i] = node;
-                  }}
-                  className={i === index ? "hunk current" : "hunk"}
-                >
-                  <div className="hunk-head">{hunk.header}</div>
-                  {layout === "split" ? (
-                    <Split hunk={hunk} />
-                  ) : (
-                    <Unified hunk={hunk} />
-                  )}
-                </div>
-              ))}
-            </Coloured.Provider>
-
-            {parsed?.truncated ? (
-              <p className="muted pad">
-                The rest of this diff is too large to show.
-              </p>
-            ) : null}
-          </div>
-        </div>
-      ) : null}
-    </div>
+      }
+    />
   );
 }

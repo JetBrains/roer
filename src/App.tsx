@@ -1,8 +1,11 @@
+import { PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { BranchDiffView } from "./BranchDiffView";
 import { ChangesView } from "./ChangesView";
 import { FileView } from "./FileView";
 import { GoToFile } from "./GoToFile";
+import { NewSessionButton } from "./NewSessionButton";
 import { SessionBrowser, type OpenRequest } from "./SessionBrowser";
 import { TerminalView } from "./TerminalView";
 import { WorkspaceSidebar } from "./WorkspaceSidebar";
@@ -68,8 +71,20 @@ export function App() {
   // terminal and away again keeps the file that was selected. File tabs get
   // this for free: being open is being in `tabs.files`.
   const [everChanges, setEverChanges] = useState(false);
+  // Same reason, for the branch-diff tab.
+  const [everBranchDiff, setEverBranchDiff] = useState(false);
   // Acking twice would try to delete an already-deleted record.
   const ackedRef = useRef<string | null>(null);
+  // Persisted so the sidebar doesn't spring back open on the next launch.
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(
+    () => localStorage.getItem("roer:sidebar-collapsed") === "1",
+  );
+  useEffect(() => {
+    localStorage.setItem(
+      "roer:sidebar-collapsed",
+      sidebarCollapsed ? "1" : "0",
+    );
+  }, [sidebarCollapsed]);
 
   const target = targetOf(session);
 
@@ -161,7 +176,10 @@ export function App() {
       // will arrive to prove the attach — it is already proved. Without this
       // the waiting terminal blocks for its whole timeout and then reports
       // that nothing moved, even though the session is on screen.
-      if (targetOf(next) === targetRef.current && attachedRef.current === targetRef.current) {
+      if (
+        targetOf(next) === targetRef.current &&
+        attachedRef.current === targetRef.current
+      ) {
         show(next);
         ack(claimed);
         return;
@@ -269,7 +287,9 @@ export function App() {
 
     let fresh: SessionInfo[];
     try {
-      fresh = (await listSessions()).filter((s) => s.attached && !known.includes(s.pane));
+      fresh = (await listSessions()).filter(
+        (s) => s.attached && !known.includes(s.pane),
+      );
     } catch {
       return;
     }
@@ -365,183 +385,248 @@ export function App() {
   );
 
   return (
-    <main className="shell" aria-label="Roer session">
-      <WorkspaceSidebar
-        status={browser.status}
-        failure={browser.failure}
-        workspaces={browser.workspaces}
-        projects={browser.projects}
-        selectedWorkspaceId={browser.selectedWorkspaceId}
-        setSelectedWorkspaceId={selectWorkspace}
-        selectedProjectId={browser.selectedProjectId}
-        setSelectedProjectId={selectProject}
-        handleCreateWorkspace={browser.handleCreateWorkspace}
-        handleRenameWorkspace={browser.handleRenameWorkspace}
-        handleDeleteWorkspace={browser.handleDeleteWorkspace}
-        handleCreateProject={browser.handleCreateProject}
-        handleRenameProject={browser.handleRenameProject}
-        handleDeleteProject={browser.handleDeleteProject}
-        openNew={browser.openNew}
-        pickingProjectFor={browser.pickingProjectFor}
-        cancelProjectPick={browser.cancelProjectPick}
-        pickProjectForNewSession={browser.pickProjectForNewSession}
-        attachNewProjectForNewSession={browser.attachNewProjectForNewSession}
-      />
-
-      <section className="stage">
-        <div className="tabs" role="tablist" aria-label="Stage">
-          <button
-            type="button"
-            role="tab"
-            aria-selected={tabs.active === "sessions"}
-            className={tabs.active === "sessions" ? "tab on" : "tab"}
-            onClick={() => setTabs((current) => activate(current, "sessions"))}
-          >
-            Sessions
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={tabs.active === "terminal"}
-            className={tabs.active === "terminal" ? "tab on" : "tab"}
-            onClick={() => setTabs((current) => activate(current, "terminal"))}
-          >
-            Terminal
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={tabs.active === "changes"}
-            className={tabs.active === "changes" ? "tab on" : "tab"}
-            disabled={!session}
-            onClick={() => {
-              setEverChanges(true);
-              setTabs((current) => activate(current, "changes"));
-            }}
-          >
-            Changes
-          </button>
-
-          {tabs.files.map((file) => {
-            const id = tabId(file);
-            const name = tabName(file);
-            return (
-              // The tab and its close button are two controls, so they are two
-              // buttons; the wrapper is what looks like one tab.
-              <span key={id} className={tabs.active === id ? "tab-wrap on" : "tab-wrap"}>
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={tabs.active === id}
-                  className="tab file"
-                  title={file.path}
-                  onClick={() => setTabs((current) => activate(current, id))}
-                >
-                  {name}
-                </button>
-                <button
-                  type="button"
-                  className="tab-x"
-                  aria-label={`Close ${name}`}
-                  onClick={() => setTabs((current) => closeTab(current, id))}
-                >
-                  ×
-                </button>
-              </span>
-            );
-          })}
-        </div>
-
-        <div className="stage-body">
-          {session ? (
-            <TerminalView
-              key={target}
-              args={session.args}
-              cwd={session.cwd}
-              onAttached={handleAttached}
-              onExit={handleExit}
-            />
+    <div className="app-frame">
+      {/* macOS draws its native traffic lights over this; a button placed
+          inside a drag region stays clickable since only the exact element
+          carrying the attribute drags the window. */}
+      <div className="titlebar" data-tauri-drag-region="">
+        <button
+          type="button"
+          className="sidebar-toggle"
+          aria-label={sidebarCollapsed ? "Show sidebar" : "Hide sidebar"}
+          aria-pressed={sidebarCollapsed}
+          onClick={() => setSidebarCollapsed((current) => !current)}
+        >
+          {sidebarCollapsed ? (
+            <PanelLeftOpen size={15} />
           ) : (
-            <div className="empty">
-              {notice ? <p className="notice">{notice}</p> : null}
-              <p className="muted">Pick a session, or start a new one.</p>
-            </div>
+            <PanelLeftClose size={15} />
           )}
+        </button>
+      </div>
+      <main className="shell" aria-label="Roer session">
+        <WorkspaceSidebar
+          collapsed={sidebarCollapsed}
+          status={browser.status}
+          failure={browser.failure}
+          workspaces={browser.workspaces}
+          projects={browser.projects}
+          selectedWorkspaceId={browser.selectedWorkspaceId}
+          setSelectedWorkspaceId={selectWorkspace}
+          selectedProjectId={browser.selectedProjectId}
+          setSelectedProjectId={selectProject}
+          handleCreateWorkspace={browser.handleCreateWorkspace}
+          handleRenameWorkspace={browser.handleRenameWorkspace}
+          handleDeleteWorkspace={browser.handleDeleteWorkspace}
+          handleCreateProject={browser.handleCreateProject}
+          handleRenameProject={browser.handleRenameProject}
+          handleDeleteProject={browser.handleDeleteProject}
+        />
 
-          {/* Covers the terminal rather than replacing it, so picking a
-              session never has to wait on a teardown, and a session left
-              running behind the list keeps its PTY. */}
-          <div className="overlay" hidden={tabs.active !== "sessions"}>
-            <SessionBrowser
-              status={browser.status}
-              workspaces={browser.workspaces}
+        <section className="stage">
+          <div className="tab-bar">
+            <div className="tabs" role="tablist" aria-label="Stage">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={tabs.active === "sessions"}
+                className={tabs.active === "sessions" ? "tab on" : "tab"}
+                onClick={() =>
+                  setTabs((current) => activate(current, "sessions"))
+                }
+              >
+                Sessions
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={tabs.active === "terminal"}
+                className={tabs.active === "terminal" ? "tab on" : "tab"}
+                onClick={() =>
+                  setTabs((current) => activate(current, "terminal"))
+                }
+              >
+                Terminal
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={tabs.active === "changes"}
+                className={tabs.active === "changes" ? "tab on" : "tab"}
+                disabled={!session}
+                onClick={() => {
+                  setEverChanges(true);
+                  setTabs((current) => activate(current, "changes"));
+                }}
+              >
+                Changes
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={tabs.active === "branchdiff"}
+                className={tabs.active === "branchdiff" ? "tab on" : "tab"}
+                disabled={!session}
+                onClick={() => {
+                  setEverBranchDiff(true);
+                  setTabs((current) => activate(current, "branchdiff"));
+                }}
+              >
+                Branch diff
+              </button>
+
+              {tabs.files.map((file) => {
+                const id = tabId(file);
+                const name = tabName(file);
+                return (
+                  // The tab and its close button are two controls, so they are two
+                  // buttons; the wrapper is what looks like one tab.
+                  <span
+                    key={id}
+                    className={tabs.active === id ? "tab-wrap on" : "tab-wrap"}
+                  >
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={tabs.active === id}
+                      className="tab file"
+                      title={file.path}
+                      onClick={() =>
+                        setTabs((current) => activate(current, id))
+                      }
+                    >
+                      {name}
+                    </button>
+                    <button
+                      type="button"
+                      className="tab-x"
+                      aria-label={`Close ${name}`}
+                      onClick={() =>
+                        setTabs((current) => closeTab(current, id))
+                      }
+                    >
+                      ×
+                    </button>
+                  </span>
+                );
+              })}
+            </div>
+
+            <NewSessionButton
               projects={browser.projects}
-              assignments={browser.assignments}
-              selectedWorkspace={browser.selectedWorkspace}
-              selectedWorkspaceProjects={browser.selectedWorkspaceProjects}
-              handleAssign={browser.handleAssign}
-              handleAttachExistingProject={browser.handleAttachExistingProject}
-              handleAttachNewProject={browser.handleAttachNewProject}
-              handleDetachProject={browser.handleDetachProject}
-              addingItem={browser.addingItem}
-              setAddingItem={browser.setAddingItem}
-              itemTitle={browser.itemTitle}
-              setItemTitle={browser.setItemTitle}
-              handleAddItem={browser.handleAddItem}
-              handleRemoveItem={browser.handleRemoveItem}
-              roots={browser.roots}
-              visibleSessions={browser.visibleSessions}
-              visibleClaudeSessions={browser.visibleClaudeSessions}
-              activePane={browser.activePane}
-              openClaudeSession={browser.openClaudeSession}
-              refresh={browser.refresh}
-              onOpen={show}
+              openNew={browser.openNew}
+              pickingProjectFor={browser.pickingProjectFor}
+              cancelProjectPick={browser.cancelProjectPick}
+              pickProjectForNewSession={browser.pickProjectForNewSession}
+              attachNewProjectForNewSession={
+                browser.attachNewProjectForNewSession
+              }
             />
           </div>
 
-          {/* An overlay rather than a swap: unmounting the terminal would
+          <div className="stage-body">
+            {session ? (
+              <TerminalView
+                key={target}
+                args={session.args}
+                cwd={session.cwd}
+                onAttached={handleAttached}
+                onExit={handleExit}
+              />
+            ) : (
+              <div className="empty">
+                {notice ? <p className="notice">{notice}</p> : null}
+                <p className="muted">Pick a session, or start a new one.</p>
+              </div>
+            )}
+
+            {/* Covers the terminal rather than replacing it, so picking a
+              session never has to wait on a teardown, and a session left
+              running behind the list keeps its PTY. */}
+            <div className="overlay" hidden={tabs.active !== "sessions"}>
+              <SessionBrowser
+                status={browser.status}
+                workspaces={browser.workspaces}
+                projects={browser.projects}
+                assignments={browser.assignments}
+                selectedWorkspace={browser.selectedWorkspace}
+                selectedWorkspaceProjects={browser.selectedWorkspaceProjects}
+                handleAssign={browser.handleAssign}
+                handleAttachExistingProject={
+                  browser.handleAttachExistingProject
+                }
+                handleAttachNewProject={browser.handleAttachNewProject}
+                handleDetachProject={browser.handleDetachProject}
+                addingItem={browser.addingItem}
+                setAddingItem={browser.setAddingItem}
+                itemTitle={browser.itemTitle}
+                setItemTitle={browser.setItemTitle}
+                handleAddItem={browser.handleAddItem}
+                handleRemoveItem={browser.handleRemoveItem}
+                roots={browser.roots}
+                visibleSessions={browser.visibleSessions}
+                visibleClaudeSessions={browser.visibleClaudeSessions}
+                activePane={browser.activePane}
+                openClaudeSession={browser.openClaudeSession}
+                refresh={browser.refresh}
+                onOpen={show}
+              />
+            </div>
+
+            {/* An overlay rather than a swap: unmounting the terminal would
               close its PTY, which releases the session to whoever asks for it
               next. The terminal keeps its size too, so nothing reflows when
               the diff is on top of it. */}
-          {everChanges ? (
-            <div className="overlay" hidden={tabs.active !== "changes"}>
-              <ChangesView
-                cwd={session?.cwd}
-                pane={session?.pane}
-                active={tabs.active === "changes"}
-                changed={changed}
-              />
-            </div>
-          ) : null}
-
-          {/* Open is mounted, for the same reason: a file tab keeps its scroll
-              position while you are away in the terminal. */}
-          {tabs.files.map((file) => {
-            const id = tabId(file);
-            return (
-              <div key={id} className="overlay" hidden={tabs.active !== id}>
-                <FileView
-                  root={file.root}
-                  path={file.path}
-                  line={file.line}
-                  active={tabs.active === id}
+            {everChanges ? (
+              <div className="overlay" hidden={tabs.active !== "changes"}>
+                <ChangesView
+                  cwd={session?.cwd}
+                  pane={session?.pane}
+                  active={tabs.active === "changes"}
                   changed={changed}
                 />
               </div>
-            );
-          })}
-        </div>
-      </section>
+            ) : null}
 
-      {finding ? (
-        <GoToFile
-          cwd={session?.cwd}
-          pane={session?.pane}
-          recent={recent(tabs)}
-          onOpen={openInTab}
-          onClose={() => setFinding(false)}
-        />
-      ) : null}
-    </main>
+            {everBranchDiff ? (
+              <div className="overlay" hidden={tabs.active !== "branchdiff"}>
+                <BranchDiffView
+                  cwd={session?.cwd}
+                  pane={session?.pane}
+                  active={tabs.active === "branchdiff"}
+                />
+              </div>
+            ) : null}
+
+            {/* Open is mounted, for the same reason: a file tab keeps its scroll
+              position while you are away in the terminal. */}
+            {tabs.files.map((file) => {
+              const id = tabId(file);
+              return (
+                <div key={id} className="overlay" hidden={tabs.active !== id}>
+                  <FileView
+                    root={file.root}
+                    path={file.path}
+                    line={file.line}
+                    active={tabs.active === id}
+                    changed={changed}
+                  />
+                </div>
+              );
+            })}
+          </div>
+        </section>
+
+        {finding ? (
+          <GoToFile
+            cwd={session?.cwd}
+            pane={session?.pane}
+            recent={recent(tabs)}
+            onOpen={openInTab}
+            onClose={() => setFinding(false)}
+          />
+        ) : null}
+      </main>
+    </div>
   );
 }
