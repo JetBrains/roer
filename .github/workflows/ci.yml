@@ -38,7 +38,7 @@ jobs:
           node-version: 24
           cache: npm
 
-      # The order below is load-bearing. See README "Checks".
+      # The order below is load-bearing. See docs/design.md "Checks".
 
       # Cheapest, and first: version drift is caught on the PR rather than by a
       # release that fails after a full universal build.
