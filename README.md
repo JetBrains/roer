@@ -14,9 +14,17 @@ The quarantine step is required — the app is killed on first launch without it
 
 ## Screenshots
 
-| Teleported `claude` session | Branch diff view | Markdown preview |
-| --- | --- | --- |
-| ![Claude session in Roer](docs/screenshots/claude.png) | ![Branch diff view](docs/screenshots/diff.png) | ![Markdown preview](docs/screenshots/markdown.png) |
+**Teleported `claude` session** — a running session hands off from the terminal to the Roer app without restarting.
+
+![Claude session in Roer](docs/screenshots/claude.png)
+
+**Branch diff view** — step through a branch's commits against its base and view each commit's file diff.
+
+![Branch diff view](docs/screenshots/diff.png)
+
+**Markdown preview** — view rendered Markdown for any changed file straight from the diff view.
+
+![Markdown preview](docs/screenshots/markdown.png)
 
 ## Features
 
