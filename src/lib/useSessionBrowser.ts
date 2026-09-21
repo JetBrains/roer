@@ -379,11 +379,16 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
   };
 
   // `new` rather than `shell`, because `shell` reuses the session for a
-  // directory. A new session starts in the home directory, or the selected
-  // Workspace's attached Project when it has exactly one. A Workspace with
-  // several Projects asks which one, rather than guessing — `pickingProjectFor`
-  // holds the Workspace while that picker is up.
+  // directory. A new session starts in the selected Project's directory when
+  // one is selected directly (the Projects tab), otherwise in the selected
+  // Workspace's attached Project when it has exactly one, otherwise the home
+  // directory. A Workspace with several Projects asks which one, rather than
+  // guessing — `pickingProjectFor` holds the Workspace while that picker is up.
   const openNew = () => {
+    if (selectedProject) {
+      startNewSession(selectedProject.path, selectedWorkspace);
+      return;
+    }
     if (selectedWorkspace && selectedWorkspaceProjects.length > 1) {
       setPickingProjectFor(selectedWorkspace);
       return;
