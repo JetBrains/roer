@@ -179,6 +179,22 @@ describe("renaming", () => {
   });
 });
 
+describe("new session cwd", () => {
+  it("starts a new session in the selected Project's directory", async () => {
+    vi.mocked(listProjects).mockResolvedValue([{ id: "p1", path: "/tmp/one", name: "one" }]);
+    const onOpen = vi.fn();
+    const { result } = renderHook(() => useSessionBrowser({ token: "none", onOpen }));
+    await waitFor(() => expect(result.current.projects).toHaveLength(1));
+
+    act(() => result.current.setSelectedProjectId("p1"));
+    act(() => result.current.openNew());
+
+    expect(onOpen).toHaveBeenCalledWith(
+      expect.objectContaining({ args: ["new"], cwd: "/tmp/one" }),
+    );
+  });
+});
+
 describe("filtering by project", () => {
   it("shows only sessions under the selected project's path", async () => {
     vi.mocked(listProjects).mockResolvedValue([{ id: "p1", path: "/tmp/one", name: "one" }]);

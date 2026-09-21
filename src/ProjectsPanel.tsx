@@ -112,8 +112,9 @@ export function ProjectsPanel({
                   <ContextMenuTrigger asChild>
                     <button
                       type="button"
-                      className={active ? "row active" : "row"}
+                      className={active ? "row wrap active" : "row wrap"}
                       aria-pressed={active}
+                      title={project.path}
                       onClick={() => onSelect(project.id)}
                     >
                       <strong>{project.name}</strong>
