@@ -58,8 +58,13 @@ export function NewSessionButton({
       }}
     >
       <DropdownMenuTrigger asChild>
-        <button type="button" className="primary new-session" onClick={openNew}>
-          New session
+        <button
+          type="button"
+          className="primary new-session"
+          title="New session (⌘T)"
+          onClick={openNew}
+        >
+          New session <span className="hotkey">⌘T</span>
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
