@@ -608,6 +608,23 @@ describe("App", () => {
     expect(screen.queryByTestId("go-to-file")).not.toBeInTheDocument();
   });
 
+  it("starts a new session on Cmd+T while the terminal has the keyboard", async () => {
+    render(<App />);
+    await teleport();
+    vi.mocked(spawnPty).mockClear();
+
+    // Dispatched at the terminal, same reasoning as Go to File: the listener
+    // runs in the capture phase precisely so xterm never sees the T.
+    fireEvent.keyDown(screen.getByTestId("terminal"), {
+      key: "t",
+      code: "KeyT",
+      metaKey: true,
+    });
+
+    await waitFor(() => expect(spawnPty).toHaveBeenCalled());
+    expect(vi.mocked(spawnPty).mock.calls[0]?.[0]).toEqual(["new"]);
+  });
+
   /** Open a file through Go to File, as a user would. */
   async function pick(name = "App.tsx") {
     goToFile(window);
