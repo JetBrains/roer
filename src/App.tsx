@@ -7,7 +7,7 @@ import { SessionBrowser, type OpenRequest } from "./SessionBrowser";
 import { TerminalView } from "./TerminalView";
 import { WorkspaceSidebar } from "./WorkspaceSidebar";
 import { onFilesChanged, type FilesChanged } from "./lib/files";
-import { isGoToFile, useHotkey } from "./lib/keys";
+import { isGoToFile, isNewSession, useHotkey } from "./lib/keys";
 import { useSessionBrowser } from "./lib/useSessionBrowser";
 import {
   activate,
@@ -332,6 +332,16 @@ export function App() {
     token: target,
     onOpen: show,
   });
+
+  // Cmd+T for a new session, the same key a browser binds to a new tab. Read
+  // through a ref for the same reason as Go to File: the listener is
+  // registered once, so it must not close over a stale `openNew`.
+  const openNewRef = useRef(browser.openNew);
+  openNewRef.current = browser.openNew;
+  useHotkey(
+    isNewSession,
+    useCallback(() => openNewRef.current(), []),
+  );
 
   // Picking a Workspace is asking to see what's in it — if the diff or a
   // file is up instead, that answer is hidden behind a tab nothing else

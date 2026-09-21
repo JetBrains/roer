@@ -37,3 +37,34 @@ export const isGoToFile = (event: KeyboardEvent): boolean =>
   !event.ctrlKey &&
   !event.altKey &&
   (event.code === "KeyO" || (!event.code && event.key.toLowerCase() === "o"));
+
+/**
+ * New session: `Cmd+T`, the same key a browser uses for a new tab — this
+ * app's sessions are the closest thing it has to tabs.
+ */
+export const isNewSession = (event: KeyboardEvent): boolean =>
+  event.metaKey &&
+  !event.shiftKey &&
+  !event.ctrlKey &&
+  !event.altKey &&
+  (event.code === "KeyT" || (!event.code && event.key.toLowerCase() === "t"));
+
+/**
+ * Step to the previous commit in a branch diff: `Cmd+Left`, the same key a
+ * browser binds to "back" — moving through a list of commits is the same
+ * kind of move.
+ */
+export const isPrevCommit = (event: KeyboardEvent): boolean =>
+  event.metaKey &&
+  !event.shiftKey &&
+  !event.ctrlKey &&
+  !event.altKey &&
+  (event.code === "ArrowLeft" || (!event.code && event.key === "ArrowLeft"));
+
+/** The next commit in a branch diff: `Cmd+Right`, a browser's "forward". */
+export const isNextCommit = (event: KeyboardEvent): boolean =>
+  event.metaKey &&
+  !event.shiftKey &&
+  !event.ctrlKey &&
+  !event.altKey &&
+  (event.code === "ArrowRight" || (!event.code && event.key === "ArrowRight"));
