@@ -12,6 +12,12 @@ Latest build: [v0.2.0](https://github.com/JetBrains/roer/releases/tag/v0.2.0).
 
 The quarantine step is required — the app is killed on first launch without it. Use the tarball, not the loose binary: release assets carry no mode bits, and `roer` must be executable.
 
+## Screenshots
+
+| Teleported `claude` session | Branch diff view | Markdown preview |
+| --- | --- | --- |
+| ![Claude session in Roer](docs/screenshots/claude.png) | ![Branch diff view](docs/screenshots/diff.png) | ![Markdown preview](docs/screenshots/markdown.png) |
+
 ## Features
 
 - **Session teleport (`M-h`)** — hand a running terminal session (`claude`, `vim`, a dev server) off to the Roer app mid-flight, and back again, with the process never restarting.
