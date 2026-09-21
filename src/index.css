@@ -478,6 +478,11 @@ button.primary:hover {
   background: #2c3a4a;
 }
 
+.hotkey {
+  margin-left: 4px;
+  color: var(--roer-muted);
+}
+
 button.link {
   background: none;
   border: none;
