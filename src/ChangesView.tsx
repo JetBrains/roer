@@ -124,6 +124,7 @@ export function ChangesView({ cwd, pane, active, changed }: ChangesViewProps) {
       loadDiff={loadDiff}
       resetKey={root ?? ""}
       refreshToken={token}
+      defaultLayout="split"
       title={changes?.branch ?? "Local changes"}
       emptyMessage="No local changes. The worktree matches HEAD."
       headerExtra={

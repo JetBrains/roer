@@ -60,6 +60,8 @@ export interface DiffPaneProps {
   headerExtra?: ReactNode;
   "data-testid"?: string;
   "aria-label"?: string;
+  /** The layout shown before the viewer picks one. @default "unified" */
+  defaultLayout?: "unified" | "split";
 }
 
 /** Where the selection is: a file, and which of its hunks. */
@@ -205,12 +207,13 @@ export function DiffPane({
   headerExtra,
   "data-testid": testId,
   "aria-label": ariaLabel,
+  defaultLayout = "unified",
 }: DiffPaneProps) {
   const [selection, setSelection] = useState<Selection | null>(null);
   const [diff, setDiff] = useState<{ path: string; text: string } | null>(null);
   const [diffError, setDiffError] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
-  const [layout, setLayout] = useState<Layout>("unified");
+  const [layout, setLayout] = useState<Layout>(defaultLayout);
 
   const rootRef = useRef<HTMLDivElement>(null);
   const hunkRefs = useRef<(HTMLDivElement | null)[]>([]);
