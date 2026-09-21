@@ -1172,6 +1172,10 @@ button.tab-x:hover {
   border: 1px solid var(--ide-border);
 }
 
+.file-markdown img {
+  max-width: 100%;
+}
+
 /* A row is one line: it must not wrap, or the window's arithmetic — every
    line the same height — stops being true. */
 .file-line {
