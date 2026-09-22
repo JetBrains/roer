@@ -191,15 +191,38 @@ code {
 .generative-panel {
   flex: 0 0 460px;
   min-width: 0;
+  max-width: 900px;
   overflow: hidden;
+  position: relative;
   background: var(--roer-bg);
   border-left: 1px solid var(--roer-border);
   transition: flex-basis 0.12s ease;
 }
 
+.generative-panel.resizing {
+  transition: none;
+}
+
 .generative-panel.collapsed {
   flex: 0 0 0;
   border-left: none;
+}
+
+/* A draggable strip over the panel's left border. Wider than the border
+   itself so it's easy to grab, but positioned so it doesn't eat into the
+   panel's own content. */
+.generative-resize-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -3px;
+  width: 6px;
+  cursor: col-resize;
+  z-index: 1;
+}
+
+.generative-resize-handle:hover {
+  background: var(--roer-border);
 }
 
 .generative-toggle {

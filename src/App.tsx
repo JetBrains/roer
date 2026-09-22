@@ -107,6 +107,38 @@ export function App() {
   // something to show, freshly each launch — a live message expands it
   // itself (see the `onPluginUi` listener), not a memory of last time.
   const [generativePanelCollapsed, setGenerativePanelCollapsed] = useState(true);
+  // The width itself is persisted, unlike the collapsed flag above — a
+  // deliberate drag is a preference worth keeping across launches.
+  const [generativePanelWidth, setGenerativePanelWidth] = useState(() => {
+    const stored = Number(localStorage.getItem("roer:generative-panel-width"));
+    return Number.isFinite(stored) && stored > 0 ? stored : 460;
+  });
+  useEffect(() => {
+    localStorage.setItem("roer:generative-panel-width", String(generativePanelWidth));
+  }, [generativePanelWidth]);
+  // Suppresses the panel's width transition while actively dragging, so the
+  // edge tracks the pointer instead of chasing it.
+  const [generativePanelResizing, setGenerativePanelResizing] = useState(false);
+  const handleGenerativePanelResizeStart = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      e.preventDefault();
+      const startX = e.clientX;
+      const startWidth = generativePanelWidth;
+      setGenerativePanelResizing(true);
+      const handleMove = (ev: PointerEvent) => {
+        const next = startWidth - (ev.clientX - startX);
+        setGenerativePanelWidth(Math.min(900, Math.max(280, next)));
+      };
+      const handleUp = () => {
+        setGenerativePanelResizing(false);
+        window.removeEventListener("pointermove", handleMove);
+        window.removeEventListener("pointerup", handleUp);
+      };
+      window.addEventListener("pointermove", handleMove);
+      window.addEventListener("pointerup", handleUp);
+    },
+    [generativePanelWidth],
+  );
 
   const target = targetOf(session);
 
@@ -694,9 +726,20 @@ export function App() {
         {everGenerativeUI ? (
           <aside
             className={
-              generativePanelCollapsed ? "generative-panel collapsed" : "generative-panel"
+              generativePanelCollapsed
+                ? "generative-panel collapsed"
+                : generativePanelResizing
+                  ? "generative-panel resizing"
+                  : "generative-panel"
             }
+            style={generativePanelCollapsed ? undefined : { flexBasis: generativePanelWidth }}
           >
+            {!generativePanelCollapsed ? (
+              <div
+                className="generative-resize-handle"
+                onPointerDown={handleGenerativePanelResizeStart}
+              />
+            ) : null}
             <GenerativeUITab
               state={generativeUi.state}
               surfaceId={generativeUi.surfaceId}
