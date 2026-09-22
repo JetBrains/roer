@@ -17,3 +17,8 @@ src-tauri/gen/
 
 # OS
 .DS_Store
+
+# A developer's own saved plugin-UI bundles from testing against this repo
+# itself — a real project using the feature commits its own bundles on
+# purpose, but roer's own checkout shouldn't pick up test data as noise.
+.roer/
