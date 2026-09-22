@@ -3,5 +3,10 @@
   "identifier": "default",
   "description": "Default capability set for the Roer main window.",
   "windows": ["main"],
-  "permissions": ["core:default", "dialog:allow-open", "dialog:allow-ask"]
+  "permissions": [
+    "core:default",
+    "core:window:allow-start-dragging",
+    "dialog:allow-open",
+    "dialog:allow-ask"
+  ]
 }
