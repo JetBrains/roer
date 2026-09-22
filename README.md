@@ -1,3 +1,5 @@
+<img src="src-tauri/icons/128x128@2x.png" width="64" height="64" alt="Roer icon">
+
 # roer
 
 Session host for agent terminals — a session moves freely between a terminal and the Roer app without restarting.
