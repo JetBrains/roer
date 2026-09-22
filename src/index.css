@@ -185,6 +185,40 @@ code {
   flex-direction: column;
 }
 
+/* A split-view column on the other edge of the stage, same collapse
+   mechanics as `.sidebar` — flex-basis to zero rather than unmounting, so
+   the panel keeps its state while out of the way. */
+.generative-panel {
+  flex: 0 0 460px;
+  min-width: 0;
+  overflow: hidden;
+  background: var(--roer-bg);
+  border-left: 1px solid var(--roer-border);
+  transition: flex-basis 0.12s ease;
+}
+
+.generative-panel.collapsed {
+  flex: 0 0 0;
+  border-left: none;
+}
+
+.generative-toggle {
+  margin-left: auto;
+  margin-right: 8px;
+  padding: 4px;
+  display: flex;
+  color: var(--roer-muted);
+  background: none;
+  border: none;
+  border-radius: 4px;
+}
+
+.generative-toggle:hover {
+  color: var(--roer-fg);
+  background: var(--roer-row-hover);
+  border-color: transparent;
+}
+
 /* The terminal sizes itself from this box, so it must be free to shrink. */
 .stage-body {
   flex: 1 1 auto;
@@ -313,6 +347,18 @@ button.tab:disabled {
     max-height: 45%;
     border-right: none;
     border-bottom: 1px solid var(--roer-border);
+  }
+
+  .generative-panel {
+    flex: 0 0 auto;
+    max-height: 45%;
+    border-left: none;
+    border-top: 1px solid var(--roer-border);
+  }
+
+  .generative-panel.collapsed {
+    max-height: 0;
+    border-top: none;
   }
 }
 
