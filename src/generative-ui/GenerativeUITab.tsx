@@ -20,6 +20,7 @@ import {
   writePluginUiBundle,
   type PluginUiBundleSummary,
 } from "../lib/pluginUi";
+import { resolveDir } from "../lib/session";
 import type { A2uiMessage, ComponentId, RenderState } from "./schema";
 import { writePath } from "./schema";
 
@@ -62,13 +63,31 @@ export function GenerativeUITab({
   const [saveName, setSaveName] = useState("");
   const [savePrompt, setSavePrompt] = useState("");
   const [bundleStatus, setBundleStatus] = useState<string | null>(null);
+  // Which of the two link-triggered panels is open, if either — never both,
+  // so picking one always replaces whatever the other was showing.
+  const [bundlePanel, setBundlePanel] = useState<"save" | "open" | null>(null);
+  // The terminal's own `cd` moves it to a new project without a remount, so
+  // `cwd` (the session's *opening* directory) is only a fallback — the same
+  // resolution `DiffBrowserView`/`GoToFile` use, so bundles always come from
+  // the project the pane is actually sitting in.
+  const [dir, setDir] = useState<string | undefined>(cwd);
 
   useEffect(() => {
-    if (!cwd) return;
-    listPluginUiBundles(cwd)
+    let cancelled = false;
+    void resolveDir(cwd, pane).then((next) => {
+      if (!cancelled) setDir(next || undefined);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [cwd, pane]);
+
+  useEffect(() => {
+    if (!dir) return;
+    listPluginUiBundles(dir)
       .then(setBundles)
       .catch((e: unknown) => console.error("roer: could not list plugin-ui bundles", e));
-  }, [cwd]);
+  }, [dir]);
 
   const surface = state.surfaces[surfaceId];
   const dataModel = state.dataModels[surfaceId] ?? {};
@@ -97,8 +116,10 @@ export function GenerativeUITab({
           ? `Approved: ${chosen.join(", ")}`
           : "Approved, but nothing was checked — nothing to apply.",
       );
-    } else {
+    } else if (action === "reject") {
       setResult("Cancelled. Nothing was applied.");
+    } else {
+      setResult(null);
     }
 
     if (pane) {
@@ -114,7 +135,7 @@ export function GenerativeUITab({
   };
 
   const handleSave = () => {
-    if (!cwd || !surface?.root) return;
+    if (!dir || !surface?.root) return;
     const name = saveName.trim();
     if (!name) return;
 
@@ -129,12 +150,13 @@ export function GenerativeUITab({
         ? ({ kind: "dataModelUpdate", surfaceId, patch: dataModel } as const)
         : undefined;
 
-    writePluginUiBundle(cwd, name, { prompt: savePrompt.trim(), surfaceUpdate, dataModelUpdate })
+    writePluginUiBundle(dir, name, { prompt: savePrompt.trim(), surfaceUpdate, dataModelUpdate })
       .then(() => {
         setBundleStatus(`Saved as "${name}".`);
         setSaveName("");
         setSavePrompt("");
-        return listPluginUiBundles(cwd).then(setBundles);
+        setBundlePanel(null);
+        return listPluginUiBundles(dir).then(setBundles);
       })
       .catch((e: unknown) => {
         console.error("roer: could not save a plugin-ui bundle", e);
@@ -143,8 +165,8 @@ export function GenerativeUITab({
   };
 
   const handleLoad = (name: string) => {
-    if (!cwd) return;
-    readPluginUiBundle(cwd, name)
+    if (!dir) return;
+    readPluginUiBundle(dir, name)
       .then((bundle) => {
         const messages: A2uiMessage[] = [bundle.surfaceUpdate];
         if (bundle.dataModelUpdate) messages.push(bundle.dataModelUpdate);
@@ -152,6 +174,7 @@ export function GenerativeUITab({
         onLoadBundle(bundle.surfaceUpdate.surfaceId, messages);
         setResult(null);
         setBundleStatus(`Loaded "${name}".`);
+        setBundlePanel(null);
       })
       .catch((e: unknown) => {
         console.error("roer: could not load a plugin-ui bundle", e);
@@ -176,13 +199,33 @@ export function GenerativeUITab({
 
       {result ? <p className="gen-result">{result}</p> : null}
 
-      {cwd ? (
+      {dir ? (
         <div className="gen-bundles">
-          {surface?.root ? (
+          <div className="gen-bundles-links">
+            {surface?.root ? (
+              <button
+                type="button"
+                className="link"
+                onClick={() => setBundlePanel((current) => (current === "save" ? null : "save"))}
+              >
+                {bundlePanel === "save" ? "Cancel" : "Save"}
+              </button>
+            ) : null}
+            <button
+              type="button"
+              className="link"
+              onClick={() => setBundlePanel((current) => (current === "open" ? null : "open"))}
+            >
+              {bundlePanel === "open" ? "Cancel" : "Open"}
+            </button>
+          </div>
+
+          {bundlePanel === "save" ? (
             <div className="gen-bundles-save">
               <input
                 className="gen-bundles-input"
                 placeholder="save as…"
+                autoFocus
                 value={saveName}
                 onChange={(e) => setSaveName(e.target.value)}
               />
@@ -198,20 +241,22 @@ export function GenerativeUITab({
             </div>
           ) : null}
 
-          {bundles.length > 0 ? (
-            <ul className="gen-bundles-list">
-              {bundles.map((bundle) => (
-                <li key={bundle.name}>
-                  <button className="gen-button" onClick={() => handleLoad(bundle.name)}>
-                    {bundle.name}
-                  </button>
-                  {bundle.prompt ? <span className="gen-text muted"> — {bundle.prompt}</span> : null}
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="gen-text muted">No saved generative UIs in this project yet.</p>
-          )}
+          {bundlePanel === "open" ? (
+            bundles.length > 0 ? (
+              <ul className="gen-bundles-list">
+                {bundles.map((bundle) => (
+                  <li key={bundle.name}>
+                    <button className="gen-button" onClick={() => handleLoad(bundle.name)}>
+                      {bundle.name}
+                    </button>
+                    {bundle.prompt ? <span className="gen-text muted"> — {bundle.prompt}</span> : null}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="gen-text muted">No saved generative UIs in this project yet.</p>
+            )
+          ) : null}
 
           {bundleStatus ? <p className="gen-text muted">{bundleStatus}</p> : null}
         </div>
