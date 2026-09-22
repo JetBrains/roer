@@ -53,7 +53,8 @@ describe("GenerativeUITab saved bundles", () => {
 
   it("hides the saved-bundles section without a cwd", () => {
     renderTab({ cwd: undefined });
-    expect(screen.queryByPlaceholderText("save as…")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Save" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Open" })).not.toBeInTheDocument();
   });
 
   it("lists saved bundles for the session's project", async () => {
@@ -61,6 +62,8 @@ describe("GenerativeUITab saved bundles", () => {
       { name: "test-runner", prompt: "Add a test runner" },
     ]);
     renderTab();
+
+    fireEvent.click(screen.getByRole("button", { name: "Open" }));
 
     expect(await screen.findByText("test-runner")).toBeInTheDocument();
     expect(screen.getByText(/Add a test runner/)).toBeInTheDocument();
@@ -71,6 +74,7 @@ describe("GenerativeUITab saved bundles", () => {
     vi.mocked(writePluginUiBundle).mockResolvedValue(undefined);
     renderTab();
 
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
     fireEvent.change(screen.getByPlaceholderText("save as…"), {
       target: { value: "test-runner" },
     });
@@ -96,6 +100,7 @@ describe("GenerativeUITab saved bundles", () => {
 
   it("disables Save until a name is typed", () => {
     renderTab();
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
     expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
   });
 
@@ -114,6 +119,7 @@ describe("GenerativeUITab saved bundles", () => {
     });
     const { onLoadBundle } = renderTab();
 
+    fireEvent.click(screen.getByRole("button", { name: "Open" }));
     fireEvent.click(await screen.findByRole("button", { name: "test-runner" }));
 
     await waitFor(() =>
