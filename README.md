@@ -14,6 +14,14 @@ The quarantine step is required — the app is killed on first launch without it
 
 ## Screenshots
 
+**Generative UI** — a plugin drafts a UI as A2UI-shaped JSON and shows it live in Roer's panel; save it as a project-local bundle to reload later.
+
+![Generative UI panel](docs/screenshots/Gen%20UI%20artifacts.png)
+
+**Go to File** (`⌘⇧O`) — blazing fast, fuzzy-matched jump to any changed file straight from the diff view.
+
+![Go to File](docs/screenshots/Go%20To%20File.png)
+
 **Teleported `claude` session** — a running session hands off from the terminal to the Roer app without restarting.
 
 ![Claude session in Roer](docs/screenshots/claude.png)
