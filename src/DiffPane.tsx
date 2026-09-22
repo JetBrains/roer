@@ -190,10 +190,10 @@ function Split({ hunk }: { hunk: Hunk }) {
  * A file tree on the left, the selected file's diff on the right, and the
  * arrow keys stepping through the changes themselves.
  *
- * Shared by `ChangesView` (the worktree against `HEAD`) and `BranchDiffView`
- * (one commit against its parent) — both are "here is a set of changed
- * files, and here is how to diff one of them", which is everything this
- * component needs to know.
+ * Shared by every slot `DiffBrowserView` can show — the worktree against
+ * `HEAD`, or one commit against its parent — each of which is "here is a set
+ * of changed files, and here is how to diff one of them", which is
+ * everything this component needs to know.
  */
 export function DiffPane({
   files,

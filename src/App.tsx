@@ -1,12 +1,10 @@
-import { PanelLeftClose, PanelLeftOpen } from "lucide-react";
+import { PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { BranchDiffView } from "./BranchDiffView";
-import { ChangesView } from "./ChangesView";
+import { DiffBrowserView } from "./DiffBrowserView";
 import { FileView } from "./FileView";
 import { GenerativeUITab } from "./generative-ui/GenerativeUITab";
 import { applyAll, applyMessage } from "./generative-ui/apply";
-import { approvalGateMessages, SURFACE_ID } from "./generative-ui/fixtures";
 import { emptyState, type A2uiMessage, type RenderState } from "./generative-ui/schema";
 import { GoToFile } from "./GoToFile";
 import { NewSessionButton } from "./NewSessionButton";
@@ -76,24 +74,20 @@ export function App() {
   // terminal and away again keeps the file that was selected. File tabs get
   // this for free: being open is being in `tabs.files`.
   const [everChanges, setEverChanges] = useState(false);
-  // Same reason, for the branch-diff tab.
-  const [everBranchDiff, setEverBranchDiff] = useState(false);
-  // Same reasoning as `everChanges`: mount once, keep it mounted, so flipping
-  // a checkbox and switching back to the terminal does not reset the demo.
-  const [everPluginUI, setEverPluginUI] = useState(false);
-  // The Plugin UI tab's state: the built-in fixture until a real message
-  // arrives from `roer plugin-ui`, at which point the fixture is dropped
-  // rather than merged with it — a live surface and a demo one sharing the
-  // tab would just be confusing.
-  const [pluginUi, setPluginUi] = useState<{
+  // Same reasoning as `everChanges`: mount once, keep it mounted, so
+  // collapsing the panel and reopening it does not lose a live surface.
+  const [everGenerativeUI, setEverGenerativeUI] = useState(false);
+  // The Generative UI panel's state: empty (a placeholder message) until a
+  // real message arrives from `roer plugin-ui`.
+  const [generativeUi, setGenerativeUi] = useState<{
     state: RenderState;
     surfaceId: string;
     log: readonly A2uiMessage[];
     live: boolean;
   }>(() => ({
-    state: applyAll(approvalGateMessages),
-    surfaceId: SURFACE_ID,
-    log: approvalGateMessages,
+    state: emptyState,
+    surfaceId: "",
+    log: [],
     live: false,
   }));
   // Acking twice would try to delete an already-deleted record.
@@ -108,6 +102,11 @@ export function App() {
       sidebarCollapsed ? "1" : "0",
     );
   }, [sidebarCollapsed]);
+  // Unlike `sidebarCollapsed`, this is never persisted: the panel is a side
+  // column now, not a tab, so it should only ever claim space when there is
+  // something to show, freshly each launch — a live message expands it
+  // itself (see the `onPluginUi` listener), not a memory of last time.
+  const [generativePanelCollapsed, setGenerativePanelCollapsed] = useState(true);
 
   const target = targetOf(session);
 
@@ -285,11 +284,11 @@ export function App() {
 
     void onPluginUi((record) => {
       // Scoped to this session's pane: a message tagged for a pane nobody is
-      // looking at would otherwise pop the tab open and overwrite whatever
+      // looking at would otherwise pop the panel open and overwrite whatever
       // is on screen for the session that *is*.
       if (!paneRef.current || record.pane !== paneRef.current) return;
 
-      setPluginUi((current) => ({
+      setGenerativeUi((current) => ({
         // The fixture and a live surface are dropped together, not merged —
         // the first real message starts the reducer over.
         state: applyMessage(current.live ? current.state : emptyState, record.message),
@@ -297,8 +296,8 @@ export function App() {
         log: current.live ? [...current.log, record.message] : [record.message],
         live: true,
       }));
-      setEverPluginUI(true);
-      setTabs((current) => activate(current, "plugin-ui"));
+      setEverGenerativeUI(true);
+      setGenerativePanelCollapsed(false);
     })
       .then((fn) => {
         if (cancelled) {
@@ -469,6 +468,25 @@ export function App() {
             <PanelLeftClose size={15} />
           )}
         </button>
+
+        <button
+          type="button"
+          className="generative-toggle"
+          aria-label={
+            generativePanelCollapsed ? "Show Generative UI panel" : "Hide Generative UI panel"
+          }
+          aria-pressed={!generativePanelCollapsed}
+          onClick={() => {
+            setEverGenerativeUI(true);
+            setGenerativePanelCollapsed((current) => !current);
+          }}
+        >
+          {generativePanelCollapsed ? (
+            <PanelRightOpen size={15} />
+          ) : (
+            <PanelRightClose size={15} />
+          )}
+        </button>
       </div>
       <main className="shell" aria-label="Roer session">
         <WorkspaceSidebar
@@ -527,32 +545,6 @@ export function App() {
               >
                 Changes
               </button>
-              <button
-                type="button"
-                role="tab"
-                aria-selected={tabs.active === "branchdiff"}
-                className={tabs.active === "branchdiff" ? "tab on" : "tab"}
-                disabled={!session}
-                onClick={() => {
-                  setEverBranchDiff(true);
-                  setTabs((current) => activate(current, "branchdiff"));
-                }}
-              >
-                Branch diff
-              </button>
-              <button
-                type="button"
-                role="tab"
-                aria-selected={tabs.active === "plugin-ui"}
-                className={tabs.active === "plugin-ui" ? "tab on" : "tab"}
-                onClick={() => {
-                  setEverPluginUI(true);
-                  setTabs((current) => activate(current, "plugin-ui"));
-                }}
-              >
-                Plugin UI
-              </button>
-
               {tabs.files.map((file) => {
                 const id = tabId(file);
                 const name = tabName(file);
@@ -657,36 +649,11 @@ export function App() {
               the diff is on top of it. */}
             {everChanges ? (
               <div className="overlay" hidden={tabs.active !== "changes"}>
-                <ChangesView
+                <DiffBrowserView
                   cwd={session?.cwd}
                   pane={session?.pane}
                   active={tabs.active === "changes"}
                   changed={changed}
-                />
-              </div>
-            ) : null}
-
-            {everBranchDiff ? (
-              <div className="overlay" hidden={tabs.active !== "branchdiff"}>
-                <BranchDiffView
-                  cwd={session?.cwd}
-                  pane={session?.pane}
-                  active={tabs.active === "branchdiff"}
-                />
-              </div>
-            ) : null}
-
-            {/* An A2UI-shaped surface: the built-in fixture until an agent in
-              this session's terminal pipes a real one to `roer plugin-ui` —
-              see src/generative-ui/ and .claude/skills/generative-ui/. */}
-            {everPluginUI ? (
-              <div className="overlay" hidden={tabs.active !== "plugin-ui"}>
-                <GenerativeUITab
-                  state={pluginUi.state}
-                  surfaceId={pluginUi.surfaceId}
-                  onChange={(state) => setPluginUi((current) => ({ ...current, state }))}
-                  log={pluginUi.log}
-                  live={pluginUi.live}
                 />
               </div>
             ) : null}
@@ -709,6 +676,34 @@ export function App() {
             })}
           </div>
         </section>
+
+        {/* A split-view column, not a tab: an A2UI-shaped surface stays
+          visible beside whatever the stage is showing, since an agent may
+          update it while you are looking at the terminal. Collapsed rather
+          than unmounted, same reasoning as the left sidebar. The built-in
+          fixture shows until an agent in this session's terminal pipes a
+          real one to `roer plugin-ui` — see src/generative-ui/ and
+          .claude/skills/generative-ui/. */}
+        {everGenerativeUI ? (
+          <aside
+            className={
+              generativePanelCollapsed ? "generative-panel collapsed" : "generative-panel"
+            }
+          >
+            <GenerativeUITab
+              state={generativeUi.state}
+              surfaceId={generativeUi.surfaceId}
+              onChange={(state) => setGenerativeUi((current) => ({ ...current, state }))}
+              log={generativeUi.log}
+              live={generativeUi.live}
+              pane={session?.pane}
+              cwd={session?.cwd}
+              onLoadBundle={(surfaceId, messages) =>
+                setGenerativeUi({ state: applyAll(messages), surfaceId, log: messages, live: true })
+              }
+            />
+          </aside>
+        ) : null}
 
         {finding ? (
           <GoToFile
