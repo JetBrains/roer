@@ -9,13 +9,72 @@
 
 export type ComponentId = string;
 
+export type Justify = "start" | "center" | "end" | "spaceBetween";
+export type Align = "start" | "center" | "end";
+export type TextFieldType = "shortText" | "longText" | "number" | "obscured" | "date";
+
 export type Component =
-  | { id: ComponentId; type: "Card"; children: ComponentId[] }
+  // Layout
+  | { id: ComponentId; type: "Row"; children: ComponentId[]; justify?: Justify; align?: Align }
+  | { id: ComponentId; type: "Column"; children: ComponentId[]; justify?: Justify; align?: Align }
+  | {
+      id: ComponentId;
+      type: "List";
+      children: ComponentId[];
+      direction?: "vertical" | "horizontal";
+    }
+  // Display
   | { id: ComponentId; type: "Text"; text: string; muted?: boolean }
+  | { id: ComponentId; type: "Image"; url: string; alt?: string }
+  | { id: ComponentId; type: "Icon"; name: string }
   | { id: ComponentId; type: "Divider" }
+  | {
+      id: ComponentId;
+      type: "Arrow";
+      direction?: "horizontal" | "vertical";
+      label?: string;
+    }
+  // Interactive
+  | { id: ComponentId; type: "Button"; label: string; action: string; primary?: boolean }
+  | {
+      id: ComponentId;
+      type: "TextField";
+      label: string;
+      valuePath: string;
+      textFieldType?: TextFieldType;
+    }
   | { id: ComponentId; type: "Checkbox"; label: string; checkedPath: string }
+  | { id: ComponentId; type: "Slider"; valuePath: string; minValue: number; maxValue: number }
+  | {
+      id: ComponentId;
+      type: "DateTimeInput";
+      valuePath: string;
+      enableDate?: boolean;
+      enableTime?: boolean;
+    }
+  | {
+      id: ComponentId;
+      type: "ChoicePicker";
+      options: { label: string; value: string }[];
+      selectionsPath: string;
+      maxAllowedSelections?: number;
+    }
+  // Container
+  | { id: ComponentId; type: "Card"; children: ComponentId[] }
   | { id: ComponentId; type: "ButtonRow"; children: ComponentId[] }
-  | { id: ComponentId; type: "Button"; label: string; action: string; primary?: boolean };
+  | { id: ComponentId; type: "Modal"; entryPointChild: ComponentId; contentChild: ComponentId }
+  | {
+      id: ComponentId;
+      type: "Expandable";
+      title: string;
+      child: ComponentId;
+      defaultExpanded?: boolean;
+    }
+  | {
+      id: ComponentId;
+      type: "Tabs";
+      tabItems: { title: string; child: ComponentId }[];
+    };
 
 export interface SurfaceState {
   root?: ComponentId;

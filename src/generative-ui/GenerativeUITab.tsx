@@ -9,11 +9,18 @@
  * This component owns only the one piece of state nothing outside it cares
  * about — the approve/cancel result banner.
  */
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { applyMessage } from "./apply";
 import { GenerativeSurface } from "./GenerativeSurface";
-import type { A2uiMessage, RenderState } from "./schema";
+import {
+  listPluginUiBundles,
+  readPluginUiBundle,
+  reportPluginUiAction,
+  writePluginUiBundle,
+  type PluginUiBundleSummary,
+} from "../lib/pluginUi";
+import type { A2uiMessage, ComponentId, RenderState } from "./schema";
 import { writePath } from "./schema";
 
 interface Props {
@@ -25,18 +32,51 @@ interface Props {
   /** False while showing the built-in fixture; true once a real message has
    * arrived over the bridge. */
   live: boolean;
+  /** The session's pane, so a button click can be reported back to whatever
+   * agent is watching it. Undefined (the fixture, or no session yet) means
+   * an action only updates local state — there's nowhere to report it. */
+  pane?: string;
+  /** The session's working directory, for locating the project's
+   * `.roer/plugin-ui/bundles`. Undefined (the fixture, or no session yet)
+   * means saving/loading bundles is unavailable — there's no project to
+   * scope them to. */
+  cwd?: string;
+  /** A saved bundle was loaded: replaces the whole surface, the same way a
+   * live message from `roer plugin-ui` does — the parent owns `surfaceId`
+   * and `log`, which `onChange` alone can't reach. */
+  onLoadBundle: (surfaceId: string, messages: A2uiMessage[]) => void;
 }
 
-export function GenerativeUITab({ state, surfaceId, onChange, log, live }: Props) {
+export function GenerativeUITab({
+  state,
+  surfaceId,
+  onChange,
+  log,
+  live,
+  pane,
+  cwd,
+  onLoadBundle,
+}: Props) {
   const [result, setResult] = useState<string | null>(null);
+  const [bundles, setBundles] = useState<PluginUiBundleSummary[]>([]);
+  const [saveName, setSaveName] = useState("");
+  const [savePrompt, setSavePrompt] = useState("");
+  const [bundleStatus, setBundleStatus] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!cwd) return;
+    listPluginUiBundles(cwd)
+      .then(setBundles)
+      .catch((e: unknown) => console.error("roer: could not list plugin-ui bundles", e));
+  }, [cwd]);
 
   const surface = state.surfaces[surfaceId];
   const dataModel = state.dataModels[surfaceId] ?? {};
 
-  const handleToggle = (path: string, value: boolean) => {
-    // A checkbox flip becomes the same message shape a server-authored
-    // update would send — proving the renderer only ever reacts to messages,
-    // never to a shortcut path around them.
+  const handleSetValue = (path: string, value: unknown) => {
+    // A field edit becomes the same message shape a server-authored update
+    // would send — proving the renderer only ever reacts to messages, never
+    // to a shortcut path around them.
     onChange(
       applyMessage(state, {
         kind: "dataModelUpdate",
@@ -47,7 +87,7 @@ export function GenerativeUITab({ state, surfaceId, onChange, log, live }: Props
     setResult(null);
   };
 
-  const handleAction = (action: string) => {
+  const handleAction = (action: string, sourceComponentId: ComponentId) => {
     if (action === "approve") {
       const chosen = Object.entries((dataModel.changes as Record<string, boolean>) ?? {})
         .filter(([, on]) => on)
@@ -60,29 +100,122 @@ export function GenerativeUITab({ state, surfaceId, onChange, log, live }: Props
     } else {
       setResult("Cancelled. Nothing was applied.");
     }
+
+    if (pane) {
+      reportPluginUiAction({
+        pane,
+        surfaceId,
+        name: action,
+        sourceComponentId,
+        timestamp: new Date().toISOString(),
+        context: dataModel,
+      }).catch((e: unknown) => console.error("roer: could not report a plugin-ui action", e));
+    }
+  };
+
+  const handleSave = () => {
+    if (!cwd || !surface?.root) return;
+    const name = saveName.trim();
+    if (!name) return;
+
+    const surfaceUpdate: Extract<A2uiMessage, { kind: "surfaceUpdate" }> = {
+      kind: "surfaceUpdate",
+      surfaceId,
+      root: surface.root,
+      components: Object.values(surface.components),
+    };
+    const dataModelUpdate =
+      Object.keys(dataModel).length > 0
+        ? ({ kind: "dataModelUpdate", surfaceId, patch: dataModel } as const)
+        : undefined;
+
+    writePluginUiBundle(cwd, name, { prompt: savePrompt.trim(), surfaceUpdate, dataModelUpdate })
+      .then(() => {
+        setBundleStatus(`Saved as "${name}".`);
+        setSaveName("");
+        setSavePrompt("");
+        return listPluginUiBundles(cwd).then(setBundles);
+      })
+      .catch((e: unknown) => {
+        console.error("roer: could not save a plugin-ui bundle", e);
+        setBundleStatus(`Could not save "${name}".`);
+      });
+  };
+
+  const handleLoad = (name: string) => {
+    if (!cwd) return;
+    readPluginUiBundle(cwd, name)
+      .then((bundle) => {
+        const messages: A2uiMessage[] = [bundle.surfaceUpdate];
+        if (bundle.dataModelUpdate) messages.push(bundle.dataModelUpdate);
+        messages.push({ kind: "beginRendering", surfaceId: bundle.surfaceUpdate.surfaceId });
+        onLoadBundle(bundle.surfaceUpdate.surfaceId, messages);
+        setResult(null);
+        setBundleStatus(`Loaded "${name}".`);
+      })
+      .catch((e: unknown) => {
+        console.error("roer: could not load a plugin-ui bundle", e);
+        setBundleStatus(`Could not load "${name}".`);
+      });
   };
 
   return (
     <div className="gen-tab">
-      {!live ? (
-        <p className="gen-text muted">
-          Showing the built-in fixture. Ask an agent in this session's terminal to build a plugin
-          UI to replace it live.
-        </p>
-      ) : null}
-
-      {surface ? (
+      {live && surface ? (
         <GenerativeSurface
           surface={surface}
           dataModel={dataModel}
-          onToggle={handleToggle}
+          onSetValue={handleSetValue}
           onAction={handleAction}
         />
       ) : (
-        <p className="gen-text muted">No surface yet.</p>
+        <p className="gen-text muted">
+          Canvas for <code>/generative-ui</code> skill
+        </p>
       )}
 
       {result ? <p className="gen-result">{result}</p> : null}
+
+      {cwd ? (
+        <div className="gen-bundles">
+          {surface?.root ? (
+            <div className="gen-bundles-save">
+              <input
+                className="gen-bundles-input"
+                placeholder="save as…"
+                value={saveName}
+                onChange={(e) => setSaveName(e.target.value)}
+              />
+              <input
+                className="gen-bundles-input"
+                placeholder="prompt that built this (optional)"
+                value={savePrompt}
+                onChange={(e) => setSavePrompt(e.target.value)}
+              />
+              <button className="gen-button" disabled={!saveName.trim()} onClick={handleSave}>
+                Save
+              </button>
+            </div>
+          ) : null}
+
+          {bundles.length > 0 ? (
+            <ul className="gen-bundles-list">
+              {bundles.map((bundle) => (
+                <li key={bundle.name}>
+                  <button className="gen-button" onClick={() => handleLoad(bundle.name)}>
+                    {bundle.name}
+                  </button>
+                  {bundle.prompt ? <span className="gen-text muted"> — {bundle.prompt}</span> : null}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="gen-text muted">No saved generative UIs in this project yet.</p>
+          )}
+
+          {bundleStatus ? <p className="gen-text muted">{bundleStatus}</p> : null}
+        </div>
+      ) : null}
 
       <details className="gen-wire">
         <summary>Raw A2UI-shaped messages behind this surface</summary>
