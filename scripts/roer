@@ -11,6 +11,7 @@ SOCKET=roer
 ROER_HOME="${ROER_HOME:-$HOME/.roer}"
 HANDOFFS="$ROER_HOME/handoffs"
 PLUGIN_UI="$ROER_HOME/plugin-ui"
+PLUGIN_UI_ACTIONS="$ROER_HOME/plugin-ui-actions"
 
 # Resolve this script's real directory through any symlinks, so installing is
 # just `ln -s .../scripts/roer ~/.local/bin/roer` while the config in the repo
@@ -127,6 +128,23 @@ usage:
   roer plugin-ui --pane <id>
                         same, tagged with a pane explicitly rather than the
                         one this shell is running in
+  roer plugin-ui-actions
+                        print any pending component actions for this
+                        session's pane, one JSON object per line, and
+                        consume them; prints nothing if none are waiting
+  roer plugin-ui-actions --pane <id>
+                        same, for an explicit pane
+  roer plugin-ui save <name> surfaceUpdate
+                        read a surfaceUpdate message from stdin and save it
+                        under <name> in this project's .roer/plugin-ui
+  roer plugin-ui save <name> dataModelUpdate
+                        same, for a dataModelUpdate message
+  roer plugin-ui save <name> prompt "<text>"
+                        record the request that produced <name>
+  roer plugin-ui load <name>
+                        re-show a saved plugin UI in this session's pane
+  roer plugin-ui load --pane <id> <name>
+                        same, for an explicit pane
 
 A session outlives every client, so it can move freely between terminal and
 app. Exactly one client holds it at a time.
@@ -427,10 +445,11 @@ cmd_handoff() {
     tmux detach-client 2>/dev/null || true
 }
 
-# Hands one A2UI-shaped JSON message (read from stdin) to the app's Plugin UI
-# tab, tagged with the pane it came from. Unlike a handoff, nothing is waiting
-# on this: it is fire-and-forget, so there is no claim, ack, or timeout.
-cmd_plugin_ui() {
+# Resolves the pane for a `--pane <id>` override or, absent that, the
+# current tmux pane on the roer socket — the same rule `roer handoff` uses.
+# Echoes the pane id on success; prints an error and returns non-zero
+# otherwise.
+resolve_pane() {
     if [ "${1:-}" = "--pane" ]; then
         pane=${2:-}
         case $pane in
@@ -455,6 +474,36 @@ cmd_plugin_ui() {
         esac
         pane=${TMUX_PANE:-$(tmux display-message -p '#{pane_id}')}
     fi
+    echo "$pane"
+}
+
+# Drops one A2UI-shaped JSON message into the app's Plugin UI watcher, tagged
+# with the pane it belongs to. Shared by `cmd_plugin_ui` (a fresh message from
+# an agent) and `cmd_plugin_ui_load` (a saved one, replayed): either way it is
+# fire-and-forget, so there is no claim, ack, or timeout.
+emit_plugin_ui() {
+    pane=$1
+    message=$2
+    mkdir -p "$PLUGIN_UI"
+    # The counter (not just date+pid) guards against two messages emitted by
+    # the same process in the same second — e.g. a `load`'s surfaceUpdate
+    # immediately followed by its dataModelUpdate — colliding on one
+    # filename. Incremented here rather than in a helper function, because a
+    # helper called as `$(helper)` runs in a subshell and any assignment
+    # inside it is invisible to this one.
+    _roer_emit_seq=$((${_roer_emit_seq:-0} + 1))
+    file="$PLUGIN_UI/$(date +%Y%m%dT%H%M%S)-$$-$_roer_emit_seq.json"
+    # Write under a .partial name and rename, so the app's watcher can never
+    # observe a half-written record — same reasoning as a handoff.
+    printf '{"pane": "%s", "message": %s}\n' "$(json_escape "$pane")" "$message" \
+        > "$file.partial"
+    mv "$file.partial" "$file"
+}
+
+# Hands one A2UI-shaped JSON message (read from stdin) to the app's Plugin UI
+# tab, tagged with the pane it came from.
+cmd_plugin_ui() {
+    pane=$(resolve_pane "$@") || return $?
 
     message=$(cat)
     [ -n "$message" ] || {
@@ -462,13 +511,116 @@ cmd_plugin_ui() {
         return 2
     }
 
-    mkdir -p "$PLUGIN_UI"
-    file="$PLUGIN_UI/$(date +%Y%m%dT%H%M%S)-$$.json"
-    # Write under a .partial name and rename, so the app's watcher can never
-    # observe a half-written record — same reasoning as a handoff.
-    printf '{"pane": "%s", "message": %s}\n' "$(json_escape "$pane")" "$message" \
-        > "$file.partial"
-    mv "$file.partial" "$file"
+    emit_plugin_ui "$pane" "$message"
+}
+
+# The project directory's own bundle store — a plugin UI worth keeping lives
+# with the project, not in $ROER_HOME, so it is versioned and shared the same
+# way the code that built it is. Falls back to $PWD outside a repo, same as
+# every other roer session assumption: it is opened at a project directory.
+project_root() {
+    git -C "$PWD" rev-parse --show-toplevel 2>/dev/null || printf '%s' "$PWD"
+}
+
+bundle_dir() {
+    printf '%s/.roer/plugin-ui/bundles/%s' "$(project_root)" "$1"
+}
+
+# A bundle name is a single path segment on disk; reject anything that could
+# escape bundle_dir's parent (an empty name, ".", "..", or a "/" in it).
+validate_bundle_name() {
+    case $1 in
+        ""|.|..|*/*)
+            echo "roer: invalid plugin-ui bundle name: $1" >&2
+            return 2
+            ;;
+    esac
+}
+
+# Saves one piece of a plugin UI bundle under this project's
+# .roer/plugin-ui/bundles/<name>/, so it can be shown again later with
+# `roer plugin-ui load <name>` — by this agent, a future one, or a person
+# picking it from Roer's own interface.
+cmd_plugin_ui_save() {
+    name=${1:-}
+    kind=${2:-}
+    validate_bundle_name "$name" || return $?
+
+    dir=$(bundle_dir "$name")
+    mkdir -p "$dir"
+    case $kind in
+        surfaceUpdate)
+            body=$(cat)
+            [ -n "$body" ] || { echo "roer: save surfaceUpdate needs JSON on stdin" >&2; return 2; }
+            printf '%s\n' "$body" > "$dir/surface-update.json.partial"
+            mv "$dir/surface-update.json.partial" "$dir/surface-update.json"
+            ;;
+        dataModelUpdate)
+            body=$(cat)
+            [ -n "$body" ] || { echo "roer: save dataModelUpdate needs JSON on stdin" >&2; return 2; }
+            printf '%s\n' "$body" > "$dir/data-model.json.partial"
+            mv "$dir/data-model.json.partial" "$dir/data-model.json"
+            ;;
+        prompt)
+            text=${3:-}
+            [ -n "$text" ] || { echo "roer: save prompt needs the request text as an argument" >&2; return 2; }
+            printf '%s\n' "$text" > "$dir/prompt.md.partial"
+            mv "$dir/prompt.md.partial" "$dir/prompt.md"
+            ;;
+        *)
+            echo "roer: save needs a kind: surfaceUpdate, dataModelUpdate, or prompt" >&2
+            return 2
+            ;;
+    esac
+}
+
+# Re-shows a saved plugin UI in this session's pane: the same three-message
+# sequence the skill sends live (surfaceUpdate, then dataModelUpdate if one
+# was saved, then beginRendering), read back from disk instead of stdin.
+#
+# Takes `<name>` or `--pane <id> <name>` — the bundle name is always last, so
+# this cannot reuse `resolve_pane "$@"` verbatim the way `cmd_plugin_ui` does.
+cmd_plugin_ui_load() {
+    if [ "${1:-}" = "--pane" ]; then
+        pane=$(resolve_pane "$1" "$2") || return $?
+        shift 2
+    else
+        pane=$(resolve_pane) || return $?
+    fi
+    name=${1:-}
+    validate_bundle_name "$name" || return $?
+
+    dir=$(bundle_dir "$name")
+    [ -f "$dir/surface-update.json" ] || {
+        echo "roer: no saved plugin UI named '$name' in $(project_root)/.roer/plugin-ui/bundles" >&2
+        return 3
+    }
+
+    emit_plugin_ui "$pane" "$(cat "$dir/surface-update.json")"
+    if [ -f "$dir/data-model.json" ]; then
+        emit_plugin_ui "$pane" "$(cat "$dir/data-model.json")"
+    fi
+    emit_plugin_ui "$pane" "{\"kind\": \"beginRendering\", \"surfaceId\": \"$(json_escape "$name")\"}"
+}
+
+# Prints any pending component actions for this pane, oldest first, one JSON
+# object per line, and consumes (deletes) them as it goes: the reverse of
+# `roer plugin-ui`, so a click is delivered to the terminal exactly once.
+# Filenames are nanosecond-stamped, so a plain sorted glob is already
+# chronological order.
+cmd_plugin_ui_actions() {
+    pane=$(resolve_pane "$@") || return $?
+
+    mkdir -p "$PLUGIN_UI_ACTIONS"
+    needle="\"pane\":\"$(json_escape "$pane")\""
+    for file in "$PLUGIN_UI_ACTIONS"/*.json; do
+        [ -e "$file" ] || continue
+        if grep -qF "$needle" "$file"; then
+            cat "$file"
+            echo
+            rm -f "$file"
+        fi
+    done
 }
 
 # No arguments means the app, which is where a session is meant to end up.
@@ -483,7 +635,14 @@ case $cmd in
     detach)         cmd_detach "$@" ;;
     resume)         cmd_resume "$@" ;;
     handoff)        cmd_handoff "$@" ;;
-    plugin-ui)      cmd_plugin_ui "$@" ;;
+    plugin-ui)
+        case ${1:-} in
+            save) shift; cmd_plugin_ui_save "$@" ;;
+            load) shift; cmd_plugin_ui_load "$@" ;;
+            *)    cmd_plugin_ui "$@" ;;
+        esac
+        ;;
+    plugin-ui-actions) cmd_plugin_ui_actions "$@" ;;
     help|-h|--help) usage ;;
     *)
         echo "roer: unknown command: $cmd" >&2
