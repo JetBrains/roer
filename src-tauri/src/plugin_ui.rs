@@ -240,7 +240,7 @@ fn read_json(path: &Path) -> Result<serde_json::Value, String> {
     serde_json::from_str(&raw).map_err(|e| e.to_string())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_plugin_ui_bundles(cwd: String) -> Vec<PluginUiBundleSummary> {
     let dir = bundles_dir(&cwd);
     let Ok(entries) = std::fs::read_dir(&dir) else {
@@ -259,7 +259,7 @@ pub fn list_plugin_ui_bundles(cwd: String) -> Vec<PluginUiBundleSummary> {
     bundles
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn read_plugin_ui_bundle(cwd: String, name: String) -> Result<PluginUiBundle, String> {
     validate_bundle_name(&name)?;
     let dir = bundles_dir(&cwd).join(&name);
@@ -273,7 +273,7 @@ pub fn read_plugin_ui_bundle(cwd: String, name: String) -> Result<PluginUiBundle
     })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn write_plugin_ui_bundle(
     cwd: String,
     name: String,

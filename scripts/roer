@@ -526,12 +526,13 @@ bundle_dir() {
     printf '%s/.roer/plugin-ui/bundles/%s' "$(project_root)" "$1"
 }
 
-# A bundle name is a single path segment on disk; reject anything that could
-# escape bundle_dir's parent (an empty name, ".", "..", or a "/" in it).
+# A bundle name is a single path segment on disk. Matches the Tauri side's
+# validator exactly (letters, digits, - and _ only) so a bundle saved from
+# one side can always be read from the other.
 validate_bundle_name() {
     case $1 in
-        ""|.|..|*/*)
-            echo "roer: invalid plugin-ui bundle name: $1" >&2
+        ""|*[!A-Za-z0-9_-]*)
+            echo "roer: invalid plugin-ui bundle name: $1 (use letters, digits, - and _ only)" >&2
             return 2
             ;;
     esac

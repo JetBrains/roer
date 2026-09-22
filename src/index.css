@@ -1603,10 +1603,15 @@ button.gen-button.primary {
   border-top: 1px solid var(--roer-border);
 }
 
+.gen-bundles-links {
+  display: flex;
+  gap: 14px;
+}
+
 .gen-bundles-save {
   display: flex;
   gap: 8px;
-  margin-bottom: 10px;
+  margin-top: 10px;
 }
 
 .gen-bundles-input {
@@ -1623,7 +1628,7 @@ button.gen-button.primary {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  margin: 0;
+  margin: 10px 0 0;
   padding: 0;
   list-style: none;
   font-size: 12.5px;

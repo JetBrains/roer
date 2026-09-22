@@ -9,15 +9,26 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
-import type { A2uiMessage } from "../generative-ui/schema";
+import { isA2uiMessage, type A2uiMessage } from "../generative-ui/schema";
 
 export interface PluginUiRecord {
   pane: string;
   message: A2uiMessage;
 }
 
+/** The generic on `listen` is a compile-time label, not a runtime check —
+ * the payload is raw JSON off a terminal pipe. Drop a record whose shape
+ * doesn't match rather than hand the reducer something it can't handle. */
+function isPluginUiRecord(value: unknown): value is PluginUiRecord {
+  if (typeof value !== "object" || value === null) return false;
+  const v = value as Record<string, unknown>;
+  return typeof v.pane === "string" && isA2uiMessage(v.message);
+}
+
 export const onPluginUi = (handler: (record: PluginUiRecord) => void): Promise<UnlistenFn> =>
-  listen<PluginUiRecord>("roer://plugin-ui", (event) => handler(event.payload));
+  listen<PluginUiRecord>("roer://plugin-ui", (event) => {
+    if (isPluginUiRecord(event.payload)) handler(event.payload);
+  });
 
 export interface PluginUiAction {
   pane: string;
