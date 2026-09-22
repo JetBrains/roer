@@ -67,7 +67,10 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
   const [assignments, setAssignments] = useState<Record<string, string>>({});
   // `null` is "All" — every session and conversation, same as before
   // Workspaces existed. Selecting a Workspace clears the Project filter and
-  // vice versa: one active filter at a time, not a combined query.
+  // vice versa: one active filter at a time, not a combined query. This
+  // always starts as "All" on launch — it's a view filter, not a memory of
+  // last time. `lastNewSessionCwd` below is what remembers where to put a
+  // new session; the two are deliberately independent.
   const [selectedWorkspaceId, setSelectedWorkspaceIdRaw] = useState<string | null>(null);
   const [selectedProjectId, setSelectedProjectIdRaw] = useState<string | null>(null);
   const [addingItem, setAddingItem] = useState(false);
@@ -369,6 +372,10 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
     openedRef.current += 1;
     const known = sessions.map((session) => session.pane);
     pendingAssignRef.current = workspace ? { known, workspaceId: workspace.id } : null;
+    // Remembered only so a later "All"-filtered `openNew` (below) has
+    // somewhere better than home to fall back to — not tied to the view
+    // filter, which always starts fresh as "All" on launch.
+    if (cwd) localStorage.setItem("roer:last-new-session-cwd", cwd);
     onOpen({
       args: ["new"],
       cwd,
@@ -381,9 +388,10 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
   // `new` rather than `shell`, because `shell` reuses the session for a
   // directory. A new session starts in the selected Project's directory when
   // one is selected directly (the Projects tab), otherwise in the selected
-  // Workspace's attached Project when it has exactly one, otherwise the home
-  // directory. A Workspace with several Projects asks which one, rather than
-  // guessing — `pickingProjectFor` holds the Workspace while that picker is up.
+  // Workspace's attached Project when it has exactly one, otherwise wherever
+  // the last new session was started, otherwise the home directory. A
+  // Workspace with several Projects asks which one, rather than guessing —
+  // `pickingProjectFor` holds the Workspace while that picker is up.
   const openNew = () => {
     if (selectedProject) {
       startNewSession(selectedProject.path, selectedWorkspace);
@@ -393,7 +401,12 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
       setPickingProjectFor(selectedWorkspace);
       return;
     }
-    startNewSession(selectedWorkspaceProjects[0]?.path ?? status?.home, selectedWorkspace);
+    startNewSession(
+      selectedWorkspaceProjects[0]?.path ??
+        localStorage.getItem("roer:last-new-session-cwd") ??
+        status?.home,
+      selectedWorkspace,
+    );
   };
 
   const cancelProjectPick = () => setPickingProjectFor(null);
