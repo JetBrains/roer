@@ -23,7 +23,7 @@ export function GenerativeSurface({ surface, dataModel, onSetValue, onAction }: 
   }
   return (
     <div className="gen-surface">
-      {renderNode(surface.root, surface.components, dataModel, onSetValue, onAction)}
+      {renderNode(surface.root, surface.components, dataModel, onSetValue, onAction, new Set())}
     </div>
   );
 }
@@ -34,12 +34,20 @@ function renderNode(
   dataModel: DataModel,
   onSetValue: Props["onSetValue"],
   onAction: Props["onAction"],
+  ancestors: ReadonlySet<ComponentId>,
 ): ReactNode {
   const node = components[id];
   if (!node) return <p key={id} className="gen-text muted">[missing component: {id}]</p>;
+  // Child ids are agent-provided; a self-referential Card/Row would recurse
+  // forever without this, so a cycle renders as a placeholder instead of
+  // overflowing the stack and taking the whole panel down.
+  if (ancestors.has(id)) {
+    return <p key={id} className="gen-text muted">[cyclic component: {id}]</p>;
+  }
+  const seen = new Set(ancestors).add(id);
 
   const child = (childId: ComponentId) =>
-    renderNode(childId, components, dataModel, onSetValue, onAction);
+    renderNode(childId, components, dataModel, onSetValue, onAction, seen);
   const children = (ids: ComponentId[]) => ids.map(child);
 
   switch (node.type) {
@@ -159,7 +167,10 @@ function renderNode(
     }
     case "DateTimeInput": {
       const value = String(readPath(dataModel, node.valuePath) ?? "");
-      const type = node.enableDate === false ? "time" : node.enableTime ? "datetime-local" : "date";
+      // Both flags default to enabled, per the catalog's contract — only an
+      // explicit `false` narrows the input.
+      const type =
+        node.enableDate === false ? "time" : node.enableTime === false ? "date" : "datetime-local";
       return (
         <input
           key={node.id}
@@ -177,7 +188,8 @@ function renderNode(
       const toggle = (value: string) => {
         const next = new Set(selected);
         if (next.has(value)) next.delete(value);
-        else next.add(value);
+        else if (node.maxAllowedSelections === undefined || next.size < node.maxAllowedSelections)
+          next.add(value);
         onSetValue(node.selectionsPath, Array.from(next));
       };
       return (

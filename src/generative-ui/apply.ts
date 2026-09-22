@@ -41,6 +41,11 @@ export function applyMessage(state: RenderState, message: A2uiMessage): RenderSt
         surfaces: { ...state.surfaces, [message.surfaceId]: { ...surface, rendering: true } },
       };
     }
+    default:
+      // `message.kind` is only compile-time-exhaustive — this is raw JSON off
+      // the wire (a watcher event, a bundle load), so an unrecognized kind is
+      // a real runtime possibility. Ignore it rather than crash the reducer.
+      return state;
   }
 }
 

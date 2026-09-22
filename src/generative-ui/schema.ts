@@ -97,6 +97,29 @@ export interface RenderState {
 
 export const emptyState: RenderState = { surfaces: {}, dataModels: {} };
 
+/**
+ * Runtime guard for a message read off the wire (a watcher event, a saved
+ * bundle) — `A2uiMessage` is only a compile-time promise about that data,
+ * never checked once it crosses an `invoke`/`listen`/JSON boundary. Checks
+ * just enough shape (`kind` plus the fields every consumer indexes into) to
+ * keep a malformed message from reaching the reducer or renderer.
+ */
+export function isA2uiMessage(value: unknown): value is A2uiMessage {
+  if (typeof value !== "object" || value === null) return false;
+  const v = value as Record<string, unknown>;
+  if (typeof v.surfaceId !== "string") return false;
+  switch (v.kind) {
+    case "surfaceUpdate":
+      return typeof v.root === "string" && Array.isArray(v.components);
+    case "dataModelUpdate":
+      return typeof v.patch === "object" && v.patch !== null;
+    case "beginRendering":
+      return true;
+    default:
+      return false;
+  }
+}
+
 /** Reads a dot path (`"files.0.include"`) out of a data model. */
 export function readPath(model: DataModel, path: string): unknown {
   return path.split(".").reduce<unknown>((value, key) => {

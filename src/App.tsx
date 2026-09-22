@@ -278,6 +278,13 @@ export function App() {
   // Read through a ref for the same reason as `targetRef`: the listener is
   // registered once and cannot close over a render's `session`.
   paneRef.current = session?.pane;
+  // The panel's state is global, not keyed by pane, so without this a
+  // surface built for pane A stays on screen — and its buttons keep
+  // reporting clicks — after the stage moves to pane B. Drop back to the
+  // fixture whenever the pane a click would be attributed to changes.
+  useEffect(() => {
+    setGenerativeUi({ state: emptyState, surfaceId: "", log: [], live: false });
+  }, [session?.pane]);
   useEffect(() => {
     let cancelled = false;
     let unlisten: (() => void) | undefined;

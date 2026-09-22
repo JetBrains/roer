@@ -100,10 +100,10 @@ design:
 | `Expandable` | `title`, `child: id`, `defaultExpanded?` | A collapsible section — click the title to toggle. Expanded/collapsed is client-only state, not a message. Nest these for a tree (each row's `child` is another `Expandable` or a `List`). |
 | `Tabs` | `tabItems: [{title, child: id}]` | Which tab is active is also client-only state. |
 
-Read [`src/generative-ui/schema.ts`](../../src/generative-ui/schema.ts) if you
-want the exact types, and
-[`src/generative-ui/fixtures.ts`](../../src/generative-ui/fixtures.ts) for a
-full worked example (an approval-gate surface) in the same shape.
+Read [`src/generative-ui/schema.ts`](../../../src/generative-ui/schema.ts) if
+you want the exact types, and
+[`src/generative-ui/fixtures.ts`](../../../src/generative-ui/fixtures.ts) for
+a full worked example (an approval-gate surface) in the same shape.
 
 ## Worked example: "add a GitHub issues monitor"
 
