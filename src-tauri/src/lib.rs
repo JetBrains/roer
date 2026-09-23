@@ -50,6 +50,8 @@ pub fn run() {
             gh::gh_pr_create,
             gh::gh_request_copilot_review,
             gh::gh_pr_review,
+            gh::gh_merge_methods,
+            gh::gh_pr_merge,
             gh::open_url,
             files::files_search,
             files::file_read,

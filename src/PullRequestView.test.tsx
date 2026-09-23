@@ -4,8 +4,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { POLL_MS, PullRequestView } from "./PullRequestView";
 import { gitBranches, gitCurrentBranch } from "./lib/git";
 import {
+  ghMergeMethods,
   ghPrCreate,
   ghPrForBranch,
+  ghPrMerge,
   ghPrReview,
   ghRequestCopilotReview,
   ghStatus,
@@ -19,6 +21,8 @@ import {
 vi.mock("./lib/github", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./lib/github")>()),
   ghStatus: vi.fn(),
+  ghMergeMethods: vi.fn(),
+  ghPrMerge: vi.fn(),
   ghPrForBranch: vi.fn(),
   ghPrCreate: vi.fn(),
   ghPrReview: vi.fn(),
@@ -45,6 +49,7 @@ const pr: PrSummary = {
   state: "OPEN",
   isDraft: false,
   headRefName: "feat",
+  headRefOid: "abc123",
   baseRefName: "main",
   reviewDecision: null,
 };
@@ -106,6 +111,8 @@ beforeEach(() => {
   vi.mocked(gitBranches).mockResolvedValue(["feat", "main"]);
   vi.mocked(gitCurrentBranch).mockResolvedValue("feat");
   vi.mocked(sendToSession).mockResolvedValue();
+  vi.mocked(ghMergeMethods).mockResolvedValue({ merge: true, squash: true, rebase: true });
+  localStorage.clear();
   vi.mocked(onPrDraft).mockImplementation(async (handler) => {
     draftListener = handler;
     return () => {
@@ -118,6 +125,11 @@ afterEach(() => {
   vi.useRealTimers();
   vi.clearAllMocks();
 });
+
+/** Radix opens a menu from the keyboard in jsdom; a click needs pointer
+ * events jsdom does not have. */
+const openMethods = () =>
+  fireEvent.keyDown(screen.getByRole("button", { name: "Choose merge method" }), { key: "Enter" });
 
 const view = (props: Partial<React.ComponentProps<typeof PullRequestView>> = {}) =>
   render(<PullRequestView cwd="/work/r" pane="%3" active {...props} />);
@@ -217,6 +229,105 @@ describe("PullRequestView", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Request Copilot review" }));
     await waitFor(() => expect(onReviewLanded).toHaveBeenCalledTimes(1));
     expect(screen.getByRole("button", { name: "Request Copilot review" })).toBeEnabled();
+  });
+
+  it("colours the code a thread is about", async () => {
+    vi.mocked(ghPrForBranch).mockResolvedValue(pr);
+    const hunk = "@@ -1,2 +1,2 @@\n const keep = 1;\n-const a = 1;\n+const a = 2;";
+    vi.mocked(ghPrReview).mockResolvedValue({
+      ...withThreads,
+      threads: [{ ...withThreads.threads[0], comments: [{ ...withThreads.threads[0].comments[0], diffHunk: hunk }] }],
+    });
+    view();
+
+    await screen.findByText("1 unresolved of 1");
+    const snippet = document.querySelector(".pr-hunk")!;
+    // The header is GitHub's bookkeeping, not code.
+    expect(snippet.textContent).not.toContain("@@");
+    const rows = [...snippet.children].map((row) => [row.className, row.textContent]);
+    expect(rows).toEqual([
+      ["", " const keep = 1;"],
+      ["del", "-const a = 1;"],
+      ["add", "+const a = 2;"],
+    ]);
+    // Coloured by the grammar (an inline colour) or, until it loads, by the
+    // fallback (a class): either way `const` is not plain text.
+    const keyword = [...snippet.querySelectorAll(".add span")].find((span) => span.textContent === "const")!;
+    expect(keyword.className === "t-keyword" || (keyword as HTMLElement).style.color !== "").toBe(true);
+  });
+
+  describe("merging", () => {
+    beforeEach(() => {
+      vi.mocked(ghPrForBranch).mockResolvedValue(pr);
+      vi.mocked(ghPrReview).mockResolvedValue(withThreads);
+    });
+
+    it("offers only what the repository allows and asks before merging", async () => {
+      vi.mocked(ghMergeMethods).mockResolvedValue({ merge: false, squash: true, rebase: true });
+      vi.mocked(ghPrMerge).mockResolvedValue({ ...pr, state: "MERGED" });
+      view();
+
+      // The split button's face is the first allowed method; its arrow opens
+      // the rest.
+      await screen.findByRole("button", { name: "Squash and merge" });
+      openMethods();
+      const options = screen.getAllByRole("menuitemradio");
+      expect(options.map((o) => o.querySelector("strong")?.textContent)).toEqual([
+        "Squash and merge",
+        "Rebase and merge",
+      ]);
+      expect(options[0]).toHaveAttribute("aria-checked", "true");
+      fireEvent.click(options[1]);
+      fireEvent.click(await screen.findByRole("button", { name: "Rebase and merge" }));
+      expect(ghPrMerge).not.toHaveBeenCalled();
+
+      expect(screen.getByRole("group", { name: "Confirm merge" })).toHaveTextContent(
+        "Rebase and merge #19 into main? This closes the pull request.",
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Confirm rebase and merge" }));
+
+      expect(await screen.findByText(/Merged into/)).toBeInTheDocument();
+      // Pinned to the head that was on screen.
+      expect(ghPrMerge).toHaveBeenCalledWith("/work/r", 19, "rebase", "abc123");
+      expect(localStorage.getItem("roer:merge-method")).toBe("rebase");
+    });
+
+    it("does nothing when the confirmation is cancelled", async () => {
+      view();
+      fireEvent.click(await screen.findByRole("button", { name: "Create a merge commit" }));
+      fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+      expect(ghPrMerge).not.toHaveBeenCalled();
+      expect(screen.getByRole("button", { name: "Create a merge commit" })).toBeInTheDocument();
+    });
+
+    it("starts from the method used last time", async () => {
+      localStorage.setItem("roer:merge-method", "squash");
+      view();
+      expect(await screen.findByRole("button", { name: "Squash and merge" })).toBeEnabled();
+    });
+
+    it("has no menu to open when only one method is allowed", async () => {
+      vi.mocked(ghMergeMethods).mockResolvedValue({ merge: false, squash: true, rebase: false });
+      view();
+      await screen.findByRole("button", { name: "Squash and merge" });
+      expect(screen.getByRole("button", { name: "Choose merge method" })).toBeDisabled();
+    });
+
+    it("shows GitHub's refusal and stays open", async () => {
+      vi.mocked(ghPrMerge).mockRejectedValue("Head branch was modified. Review and try the merge again.");
+      view();
+      fireEvent.click(await screen.findByRole("button", { name: "Create a merge commit" }));
+      fireEvent.click(screen.getByRole("button", { name: "Confirm create a merge commit" }));
+      expect(await screen.findByRole("alert")).toHaveTextContent("Head branch was modified");
+      expect(screen.getByRole("button", { name: "Create a merge commit" })).toBeInTheDocument();
+    });
+
+    it("will not merge a draft", async () => {
+      vi.mocked(ghPrForBranch).mockResolvedValue({ ...pr, isDraft: true });
+      view();
+      expect(await screen.findByText(/draft pull request cannot be merged/)).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Create a merge commit" })).toBeDisabled();
+    });
   });
 
   it("says when GitHub had more comments than were loaded", async () => {

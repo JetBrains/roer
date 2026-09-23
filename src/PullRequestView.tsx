@@ -1,27 +1,44 @@
+import { ChevronDown } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Spans } from "./CodeLine";
+import { parseDiff } from "./lib/diff";
 import { gitBranches, gitCurrentBranch } from "./lib/git";
 import {
   copilotPending,
   draftPrPrompt,
   fixThreadsPrompt,
+  ghMergeMethods,
   ghPrCreate,
   ghPrForBranch,
+  ghPrMerge,
   ghPrReview,
   ghRequestCopilotReview,
   ghStatus,
   isCopilot,
+  MERGE_METHODS,
   onPrDraft,
   openUrl,
   sendToSession,
   threadLine,
   type GhStatus,
+  type MergeMethod,
+  type MergeMethods,
   type PrReview,
   type PrSummary,
   type ReviewThread,
 } from "./lib/github";
+import { highlight, loadLang, paint, ready, toSpans } from "./lib/highlight";
+import { langFor } from "./lib/lang";
 import { resolveDir } from "./lib/session";
 
 /** How often a pending Copilot review is checked on, and for how long. */
@@ -62,6 +79,7 @@ export function PullRequestView({ cwd, pane, active, onSent, onReviewLanded }: P
   const [drafting, setDrafting] = useState(false);
 
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
+  const [methods, setMethods] = useState<MergeMethods | null>(null);
 
   // Waiting on Copilot: from the moment it was asked (or found pending) until
   // it has submitted one more review than it had then.
@@ -97,8 +115,17 @@ export function PullRequestView({ cwd, pane, active, onSent, onReviewLanded }: P
           names.find((name) => name !== on) ||
           "",
       );
-      const fetched = found ? await ghPrReview(at, found.number) : null;
-      if (current()) setReview(fetched);
+      const [fetched, allowed] = found
+        ? await Promise.all([
+            ghPrReview(at, found.number),
+            // Not knowing the settings is no reason to hide merging: offer all
+            // three and let GitHub refuse the one it does not allow.
+            ghMergeMethods(at).catch(() => ({ merge: true, squash: true, rebase: true })),
+          ])
+        : [null, null];
+      if (!current()) return;
+      setReview(fetched);
+      setMethods(allowed);
     } catch (cause) {
       if (current()) setError(String(cause));
     } finally {
@@ -114,6 +141,7 @@ export function PullRequestView({ cwd, pane, active, onSent, onReviewLanded }: P
     setPr(undefined);
     setReview(null);
     setSelected(new Set());
+    setMethods(null);
     setWaitingSince(null);
     setDrafting(false);
   }, [cwd, pane]);
@@ -223,6 +251,13 @@ export function PullRequestView({ cwd, pane, active, onSent, onReviewLanded }: P
       if (!current()) return;
       setReview(fresh);
       setWaitingSince(Date.now());
+    });
+
+  const merge = (method: MergeMethod) =>
+    run("merge", async (current) => {
+      if (!dir || !pr) return;
+      const merged = await ghPrMerge(dir, pr.number, method, pr.headRefOid);
+      if (current()) setPr(merged);
     });
 
   const refresh = () =>
@@ -401,9 +436,135 @@ export function PullRequestView({ cwd, pane, active, onSent, onReviewLanded }: P
               </section>
             ))
           )}
+
+          <MergeBox pr={pr} methods={methods} busy={busy} onMerge={merge} />
         </>
       )}
     </div>
+  );
+}
+
+const METHOD_KEY = "roer:merge-method";
+
+/** The last method used, remembered per viewer; storage may be unavailable. */
+function rememberedMethod(): MergeMethod | null {
+  try {
+    const stored = localStorage.getItem(METHOD_KEY);
+    return MERGE_METHODS.some((m) => m.method === stored) ? (stored as MergeMethod) : null;
+  } catch {
+    return null;
+  }
+}
+
+function rememberMethod(method: MergeMethod) {
+  try {
+    localStorage.setItem(METHOD_KEY, method);
+  } catch {
+    /* Only a convenience: next time starts from the default again. */
+  }
+}
+
+/**
+ * The end of a review: merge the pull request into its base, which closes
+ * it. Two steps — pick and press, then confirm — since it cannot be undone
+ * from here.
+ */
+function MergeBox({
+  pr,
+  methods,
+  busy,
+  onMerge,
+}: {
+  pr: PrSummary;
+  methods: MergeMethods | null;
+  busy: string | null;
+  onMerge: (method: MergeMethod) => Promise<void>;
+}) {
+  const allowed = MERGE_METHODS.filter((m) => methods?.[m.method]);
+  const [picked, setPicked] = useState<MergeMethod | null>(rememberedMethod);
+  const [confirming, setConfirming] = useState(false);
+  // What was picked, if the repository still allows it; else its first.
+  const method = allowed.find((m) => m.method === picked)?.method ?? allowed[0]?.method;
+  const label = MERGE_METHODS.find((m) => m.method === method)?.label ?? "Merge";
+
+  if (pr.state === "MERGED") {
+    return (
+      <section className="pr-merge">
+        <p className="notice">
+          Merged into <code>{pr.baseRefName}</code>.
+        </p>
+      </section>
+    );
+  }
+  if (pr.state !== "OPEN" || !methods) return null;
+
+  const blocked = pr.isDraft
+    ? "A draft pull request cannot be merged; mark it ready for review on GitHub first."
+    : allowed.length === 0
+      ? "This repository allows no merge method."
+      : null;
+
+  return (
+    <section className="pr-merge">
+      <h3>Merge</h3>
+      {blocked ? <p className="muted">{blocked}</p> : null}
+      {confirming && method ? (
+        <div className="pr-merge-row" role="group" aria-label="Confirm merge">
+          <span>
+            {label} <strong>#{pr.number}</strong> into <code>{pr.baseRefName}</code>? This closes the pull request.
+          </span>
+          <button
+            type="button"
+            className="primary"
+            disabled={busy !== null}
+            onClick={() => {
+              rememberMethod(method);
+              void onMerge(method).finally(() => setConfirming(false));
+            }}
+          >
+            {busy === "merge" ? "Merging…" : `Confirm ${label.toLowerCase()}`}
+          </button>
+          <button type="button" disabled={busy === "merge"} onClick={() => setConfirming(false)}>
+            Cancel
+          </button>
+        </div>
+      ) : (
+        <div className="pr-split">
+          <button
+            type="button"
+            className="primary"
+            disabled={Boolean(blocked) || busy !== null || !method}
+            onClick={() => setConfirming(true)}
+          >
+            {label}
+          </button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                className="primary pr-split-arrow"
+                aria-label="Choose merge method"
+                disabled={Boolean(blocked) || busy !== null || allowed.length < 2}
+              >
+                <ChevronDown size={14} aria-hidden="true" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="pr-merge-menu">
+              <DropdownMenuRadioGroup value={method} onValueChange={(next) => setPicked(next as MergeMethod)}>
+                {allowed.map((m) => (
+                  <DropdownMenuRadioItem key={m.method} value={m.method}>
+                    <span className="pr-merge-option">
+                      <strong>{m.label}</strong>
+                      <span className="muted">{m.description}</span>
+                    </span>
+                  </DropdownMenuRadioItem>
+                ))}
+              </DropdownMenuRadioGroup>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -473,7 +634,7 @@ function Thread({ thread, selected, onToggle }: { thread: ReviewThread; selected
         {thread.isOutdated ? <span className="pr-tag">outdated</span> : null}
         <span className="muted pr-first">{firstLine(thread.comments[0]?.body ?? "")}</span>
       </summary>
-      <Hunk text={thread.comments[0]?.diffHunk ?? ""} />
+      <Hunk text={thread.comments[0]?.diffHunk ?? ""} path={thread.path} />
       {thread.comments.map((comment) => (
         <div key={comment.url} className="pr-comment">
           <div className="pr-comment-head">
@@ -497,16 +658,46 @@ function firstLine(text: string): string {
  * last few lines are the context a reader needs. */
 const HUNK_LINES = 8;
 
-function Hunk({ text }: { text: string }) {
-  if (!text) return null;
-  const lines = text.split("\n").filter((l) => !l.startsWith("@@")).slice(-HUNK_LINES);
+/**
+ * The code a thread is about, coloured the way the Changes tab colours a
+ * diff: the grammar for the file's language once it has loaded, `paint`
+ * until then. The whole hunk goes to the grammar, not just the lines shown,
+ * so a string or comment opened above the cut still reads as one.
+ */
+function Hunk({ text, path }: { text: string; path: string }) {
+  const hunk = useMemo(() => (text ? parseDiff(text).hunks[0] : undefined), [text]);
+  const lang = useMemo(() => langFor(path), [path]);
+
+  const [grammars, setGrammars] = useState(0);
+  useEffect(() => {
+    if (!lang || ready(lang)) return;
+    let live = true;
+    void loadLang(lang).then(() => {
+      if (live) setGrammars((n) => n + 1);
+    });
+    return () => {
+      live = false;
+    };
+  }, [lang]);
+
+  const coloured = useMemo(
+    () => (hunk && lang && ready(lang) ? highlight([hunk], lang) : null),
+    // `grammars` is how a grammar arriving asks for this to be worked out again.
+    [hunk, lang, grammars],
+  );
+
+  if (!hunk) return null;
   return (
     <pre className="pr-hunk">
-      {lines.map((l, i) => (
-        <div key={i} className={l.startsWith("+") ? "add" : l.startsWith("-") ? "del" : undefined}>
-          {l || " "}
-        </div>
-      ))}
+      {hunk.lines.slice(-HUNK_LINES).map((line, i) => {
+        const tokens = coloured?.[line.kind === "del" ? "old" : "new"].get(line);
+        return (
+          <div key={i} className={line.kind === "context" ? undefined : line.kind}>
+            <span className="pr-mark">{line.kind === "add" ? "+" : line.kind === "del" ? "-" : " "}</span>
+            <Spans spans={tokens ? toSpans(tokens) : paint(line.text)} />
+          </div>
+        );
+      })}
     </pre>
   );
 }

@@ -154,13 +154,16 @@ pub struct PrSummary {
     pub state: String,
     pub is_draft: bool,
     pub head_ref_name: String,
+    /// The commit the branch is at, which a merge is pinned to.
+    #[serde(default)]
+    pub head_ref_oid: String,
     pub base_ref_name: String,
     /// `APPROVED`, `CHANGES_REQUESTED`, `REVIEW_REQUIRED`, or empty.
     #[serde(default)]
     pub review_decision: Option<String>,
 }
 
-const PR_FIELDS: &str = "number,title,url,state,isDraft,headRefName,baseRefName,reviewDecision";
+const PR_FIELDS: &str = "number,title,url,state,isDraft,headRefName,headRefOid,baseRefName,reviewDecision";
 
 /// The pull request for the branch checked out in `dir`, if there is one.
 #[tauri::command(async)]
@@ -230,6 +233,56 @@ pub fn gh_request_copilot_review(dir: String, number: u64) -> Result<(), String>
             .map_err(|second| format!("{first}\n{second}"))
         }
     }
+}
+
+/// Which ways of merging the repository's settings allow.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct MergeMethods {
+    #[serde(rename(deserialize = "mergeCommitAllowed"))]
+    pub merge: bool,
+    #[serde(rename(deserialize = "squashMergeAllowed"))]
+    pub squash: bool,
+    #[serde(rename(deserialize = "rebaseMergeAllowed"))]
+    pub rebase: bool,
+}
+
+#[tauri::command(async)]
+pub fn gh_merge_methods(dir: String) -> Result<MergeMethods, String> {
+    let json = gh(
+        &dir,
+        &["repo", "view", "--json", "mergeCommitAllowed,squashMergeAllowed,rebaseMergeAllowed"],
+        None,
+    )?;
+    serde_json::from_str(&json).map_err(|e| e.to_string())
+}
+
+/// `gh pr merge`'s flag for a method, and nothing for anything else: the
+/// method arrives from the webview and becomes an argument.
+fn merge_flag(method: &str) -> Option<&'static str> {
+    match method {
+        "merge" => Some("--merge"),
+        "squash" => Some("--squash"),
+        "rebase" => Some("--rebase"),
+        _ => None,
+    }
+}
+
+/// Merges the pull request into its base, which closes it.
+///
+/// Pinned to `head`, the commit the person was looking at when they
+/// confirmed: if anything was pushed since, GitHub refuses rather than
+/// merging code nobody on this screen has seen. The branch is left alone,
+/// here and on GitHub.
+#[tauri::command(async)]
+pub fn gh_pr_merge(dir: String, number: u64, method: String, head: String) -> Result<PrSummary, String> {
+    let flag = merge_flag(&method).ok_or_else(|| format!("unknown merge method: {method}"))?;
+    if head.is_empty() {
+        return Err("the pull request's head commit is unknown; refresh and try again".to_string());
+    }
+    let number = number.to_string();
+    gh(&dir, &["pr", "merge", &number, flag, "--match-head-commit", &head], None)?;
+    pr_view(&dir, Some(&number))?.ok_or_else(|| format!("merged #{number} but could not read it back"))
 }
 
 /// Opens a GitHub page in the person's browser. Only web links: this is
@@ -485,6 +538,25 @@ mod tests {
         assert_eq!(resolve(Some(String::new()), true, |_| true), "gh");
         assert_eq!(resolve(None, false, |p| p == "/usr/local/bin/gh"), "/usr/local/bin/gh");
         assert_eq!(resolve(None, false, |_| false), "gh");
+    }
+
+    #[test]
+    fn reads_the_merge_methods_a_repository_allows() {
+        let json = r#"{"mergeCommitAllowed":false,"rebaseMergeAllowed":true,"squashMergeAllowed":true}"#;
+        let methods: MergeMethods = serde_json::from_str(json).unwrap();
+        assert_eq!(methods, MergeMethods { merge: false, squash: true, rebase: true });
+        // And goes to the frontend under its own short names.
+        let out = serde_json::to_value(&methods).unwrap();
+        assert_eq!(out, serde_json::json!({"merge": false, "squash": true, "rebase": true}));
+    }
+
+    #[test]
+    fn only_the_three_merge_methods_become_flags() {
+        assert_eq!(merge_flag("squash"), Some("--squash"));
+        assert_eq!(merge_flag("merge"), Some("--merge"));
+        assert_eq!(merge_flag("rebase"), Some("--rebase"));
+        assert_eq!(merge_flag("--admin"), None);
+        assert_eq!(merge_flag(""), None);
     }
 
     #[test]

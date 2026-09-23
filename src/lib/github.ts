@@ -24,9 +24,35 @@ export interface PrSummary {
   state: "OPEN" | "CLOSED" | "MERGED" | string;
   isDraft: boolean;
   headRefName: string;
+  /** The commit the branch is at; a merge is pinned to it. */
+  headRefOid: string;
   baseRefName: string;
   reviewDecision: string | null;
 }
+
+export type MergeMethod = "merge" | "squash" | "rebase";
+
+/** Which methods the repository's settings allow. */
+export type MergeMethods = Record<MergeMethod, boolean>;
+
+/** GitHub's own names for them, in GitHub's order. */
+export const MERGE_METHODS: readonly { method: MergeMethod; label: string; description: string }[] = [
+  {
+    method: "merge",
+    label: "Create a merge commit",
+    description: "All commits from this branch will be added to the base branch via a merge commit.",
+  },
+  {
+    method: "squash",
+    label: "Squash and merge",
+    description: "The commits from this branch will be combined into one commit in the base branch.",
+  },
+  {
+    method: "rebase",
+    label: "Rebase and merge",
+    description: "The commits from this branch will be rebased and added to the base branch.",
+  },
+];
 
 export interface Review {
   author: string;
@@ -83,6 +109,12 @@ export const ghRequestCopilotReview = (dir: string, number: number): Promise<voi
 
 export const ghPrReview = (dir: string, number: number): Promise<PrReview> =>
   invoke("gh_pr_review", { dir, number });
+
+export const ghMergeMethods = (dir: string): Promise<MergeMethods> => invoke("gh_merge_methods", { dir });
+
+/** Merges and closes the pull request, only if its head is still `head`. */
+export const ghPrMerge = (dir: string, number: number, method: MergeMethod, head: string): Promise<PrSummary> =>
+  invoke("gh_pr_merge", { dir, number, method, head });
 
 export const gitUpstreamStatus = (cwd: string): Promise<Upstream> =>
   invoke("git_upstream_status", { cwd });

@@ -17,6 +17,7 @@ const pr: PrSummary = {
   state: "OPEN",
   isDraft: false,
   headRefName: "feat",
+  headRefOid: "abc123",
   baseRefName: "main",
   reviewDecision: null,
 };
