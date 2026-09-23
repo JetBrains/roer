@@ -96,6 +96,7 @@ const withThreads: PrReview = {
       ],
     },
   ],
+  truncated: false,
 };
 
 let draftListener: ((record: PrDraftRecord) => void) | null = null;
@@ -156,7 +157,7 @@ describe("PullRequestView", () => {
   it("creates the pull request against the chosen base", async () => {
     vi.mocked(ghPrForBranch).mockResolvedValue(null);
     vi.mocked(ghPrCreate).mockResolvedValue(pr);
-    vi.mocked(ghPrReview).mockResolvedValue({ pendingReviewers: [], reviews: [], threads: [] });
+    vi.mocked(ghPrReview).mockResolvedValue({ pendingReviewers: [], reviews: [], threads: [], truncated: false });
     view();
 
     fireEvent.change(await screen.findByLabelText("Title"), { target: { value: "Add a thing" } });
@@ -183,13 +184,55 @@ describe("PullRequestView", () => {
     expect(text).not.toContain("Already handled.");
   });
 
+  it("drops a base branch the new session's repository does not have", async () => {
+    vi.mocked(ghPrForBranch).mockResolvedValue(null);
+    const { rerender } = view();
+    expect(await screen.findByLabelText("Base branch")).toHaveValue("main");
+
+    vi.mocked(gitBranches).mockResolvedValue(["trunk", "topic"]);
+    vi.mocked(gitCurrentBranch).mockResolvedValue("topic");
+    rerender(<PullRequestView cwd="/work/other" pane="%4" active />);
+    await waitFor(() => expect(gitCurrentBranch).toHaveBeenLastCalledWith("/work/other"));
+
+    // What matters is what reaches `gh pr create`: a select shows its first
+    // option for a value it does not have, so the screen alone would pass.
+    vi.mocked(ghPrCreate).mockResolvedValue(pr);
+    vi.mocked(ghPrReview).mockResolvedValue(withThreads);
+    fireEvent.change(await screen.findByLabelText("Title"), { target: { value: "T" } });
+    fireEvent.click(screen.getByRole("button", { name: "Push and create pull request" }));
+    await waitFor(() =>
+      expect(ghPrCreate).toHaveBeenCalledWith("/work/other", { title: "T", body: "", base: "trunk", draft: false }),
+    );
+  });
+
+  it("reports a Copilot review that lands before the first fetch", async () => {
+    vi.mocked(ghPrForBranch).mockResolvedValue(pr);
+    vi.mocked(ghRequestCopilotReview).mockResolvedValue();
+    vi.mocked(ghPrReview)
+      .mockResolvedValueOnce({ pendingReviewers: [], reviews: [], threads: [], truncated: false })
+      .mockResolvedValue(withThreads);
+    const onReviewLanded = vi.fn();
+    view({ onReviewLanded });
+
+    fireEvent.click(await screen.findByRole("button", { name: "Request Copilot review" }));
+    await waitFor(() => expect(onReviewLanded).toHaveBeenCalledTimes(1));
+    expect(screen.getByRole("button", { name: "Request Copilot review" })).toBeEnabled();
+  });
+
+  it("says when GitHub had more comments than were loaded", async () => {
+    vi.mocked(ghPrForBranch).mockResolvedValue(pr);
+    vi.mocked(ghPrReview).mockResolvedValue({ ...withThreads, truncated: true });
+    view();
+    expect(await screen.findByText(/more review comments than Roer loads at once/)).toBeInTheDocument();
+  });
+
   it("polls a requested Copilot review until it lands", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     vi.mocked(ghPrForBranch).mockResolvedValue(pr);
     vi.mocked(ghRequestCopilotReview).mockResolvedValue();
-    const pending: PrReview = { pendingReviewers: ["copilot-pull-request-reviewer"], reviews: [], threads: [] };
+    const pending: PrReview = { pendingReviewers: ["copilot-pull-request-reviewer"], reviews: [], threads: [], truncated: false };
     vi.mocked(ghPrReview)
-      .mockResolvedValueOnce({ pendingReviewers: [], reviews: [], threads: [] })
+      .mockResolvedValueOnce({ pendingReviewers: [], reviews: [], threads: [], truncated: false })
       .mockResolvedValueOnce(pending)
       .mockResolvedValueOnce(pending)
       .mockResolvedValue(withThreads);

@@ -150,6 +150,11 @@ export function App() {
   );
 
   const target = targetOf(session);
+  // The dot is about the session that was on stage when its review landed;
+  // another session has no such review to announce.
+  useEffect(() => {
+    setPrBadge(false);
+  }, [target]);
 
   // What is on the stage, read synchronously. The handoff listener is
   // registered once and cannot close over a render's values, and a handoff
@@ -612,7 +617,12 @@ export function App() {
                 }}
               >
                 Pull Request
-                {prBadge ? <span className="tab-dot" aria-label="new review" /> : null}
+                {prBadge ? (
+                  <>
+                    <span className="tab-dot" aria-hidden="true" />
+                    <span className="sr-only"> (new review)</span>
+                  </>
+                ) : null}
               </button>
               {tabs.files.map((file) => {
                 const id = tabId(file);
