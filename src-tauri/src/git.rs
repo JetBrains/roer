@@ -284,6 +284,50 @@ pub fn git_current_branch(cwd: String) -> Result<String, String> {
     Ok(git(&root, &["branch", "--show-current"])?.trim().to_string())
 }
 
+/// Where the current branch stands against the branch it pushes to. `None`
+/// upstream means it has never been pushed, which is the usual state of a
+/// branch about to become a pull request.
+#[derive(Clone, Debug, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Upstream {
+    pub upstream: Option<String>,
+    /// Commits here that the upstream does not have yet.
+    pub ahead: u32,
+    pub behind: u32,
+}
+
+#[tauri::command(async)]
+pub fn git_upstream_status(cwd: String) -> Result<Upstream, String> {
+    let root = root(&cwd)?;
+    upstream_status(&root)
+}
+
+pub(crate) fn upstream_status(root: &str) -> Result<Upstream, String> {
+    let out = run(root, &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"])?;
+    if !out.status.success() {
+        return Ok(Upstream { upstream: None, ahead: 0, behind: 0 });
+    }
+    let upstream = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    // `@{u}...HEAD` with --left-right counts each side of the symmetric
+    // difference: behind on the left, ahead on the right.
+    let counts = git(root, &["rev-list", "--left-right", "--count", "@{u}...HEAD"])?;
+    let mut sides = counts.split_whitespace().map(|n| n.parse::<u32>().unwrap_or(0));
+    let behind = sides.next().unwrap_or(0);
+    let ahead = sides.next().unwrap_or(0);
+    Ok(Upstream { upstream: Some(upstream), ahead, behind })
+}
+
+/// Publishes the current branch to `origin` and makes it the upstream, if it
+/// is not already there. Nothing is forced: a rejected push is reported as
+/// git's own complaint, for the person to sort out.
+pub(crate) fn push_upstream(root: &str) -> Result<(), String> {
+    let status = upstream_status(root)?;
+    if status.upstream.is_some() && status.ahead == 0 {
+        return Ok(());
+    }
+    git(root, &["push", "--quiet", "-u", "origin", "HEAD"]).map(|_| ())
+}
+
 /// One commit, as much as the branch-diff view names it by.
 #[derive(Clone, Debug, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -725,7 +769,8 @@ fn count_lines(path: &Path) -> (Option<u32>, bool) {
 mod tests {
     use super::{
         branch_commits, branches, changes, commit_files, count_lines, git, git_commit_diff,
-        git_diff, git_root, numstat, parse_name_status, parse_status, root, Stat, MAX_DIFF_BYTES,
+        git_diff, git_root, numstat, parse_name_status, parse_status, push_upstream, root,
+        upstream_status, Stat, Upstream, MAX_DIFF_BYTES,
     };
     use crate::testing::{commit, init, must, scratch, write};
 
@@ -1160,5 +1205,42 @@ mod tests {
         assert_eq!(names, vec!["feature".to_string(), "main".to_string()]);
 
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn pushes_a_new_branch_and_tracks_its_upstream() {
+        let base = scratch("upstream");
+        let remote = base.join("remote.git");
+        let work = base.join("work");
+        std::fs::create_dir_all(&remote).unwrap();
+        std::fs::create_dir_all(&work).unwrap();
+        let (remote, work) = (remote.to_str().unwrap(), work.to_str().unwrap());
+        must(remote, &["init", "-q", "--bare"]);
+        init(work);
+        must(work, &["remote", "add", "origin", remote]);
+        write(std::path::Path::new(work), "a.txt", "one\n");
+        must(work, &["add", "a.txt"]);
+        commit(work, "first");
+
+        let before = upstream_status(work).unwrap();
+        assert_eq!(before, Upstream { upstream: None, ahead: 0, behind: 0 });
+
+        push_upstream(work).unwrap();
+        let pushed = upstream_status(work).unwrap();
+        assert_eq!(pushed.upstream.as_deref(), Some("origin/main"));
+        assert_eq!((pushed.ahead, pushed.behind), (0, 0));
+
+        write(std::path::Path::new(work), "a.txt", "two\n");
+        commit_all(work, "second");
+        assert_eq!(upstream_status(work).unwrap().ahead, 1);
+        push_upstream(work).unwrap();
+        assert_eq!(upstream_status(work).unwrap().ahead, 0);
+
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    fn commit_all(at: &str, message: &str) {
+        must(at, &["add", "-A"]);
+        commit(at, message);
     }
 }

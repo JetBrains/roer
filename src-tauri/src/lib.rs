@@ -1,9 +1,11 @@
 mod claude;
 mod files;
+mod gh;
 mod git;
 mod handoff;
 mod history;
 mod plugin_ui;
+mod pr_draft;
 mod projects;
 mod pty;
 mod roer;
@@ -42,11 +44,19 @@ pub fn run() {
             git::git_branch_commits,
             git::git_commit_files,
             git::git_commit_diff,
+            git::git_upstream_status,
+            gh::gh_status,
+            gh::gh_pr_for_branch,
+            gh::gh_pr_create,
+            gh::gh_request_copilot_review,
+            gh::gh_pr_review,
+            gh::open_url,
             files::files_search,
             files::file_read,
             roer::roer_sessions,
             roer::roer_past_sessions,
             roer::roer_status,
+            roer::roer_send,
             claude::roer_claude_threads,
             workspaces::workspaces_list,
             workspaces::workspace_create,
@@ -71,6 +81,7 @@ pub fn run() {
         .setup(|app| {
             handoff::watch(app.handle().clone())?;
             plugin_ui::watch(app.handle().clone())?;
+            pr_draft::watch(app.handle().clone())?;
             Ok(())
         })
         .run(tauri::generate_context!())

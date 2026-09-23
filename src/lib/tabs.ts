@@ -21,6 +21,7 @@ export const MAX_FILE_TABS = 8;
 export type StageTab =
   | { kind: "terminal" }
   | { kind: "changes" }
+  | { kind: "pullRequest" }
   | { kind: "file"; root: string; path: string; line?: number };
 
 export type FileTab = StageTab & { kind: "file" };

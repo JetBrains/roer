@@ -41,6 +41,7 @@ The quarantine step is required — the app is killed on first launch without it
 - **Session teleport (`M-h`)** — hand a running terminal session (`claude`, `vim`, a dev server) off to the Roer app mid-flight, and back again, with the process never restarting.
 - **New session launcher** — one button starts `roer new`; the launcher lists what's already running.
 - **Branch diff view** — browse a branch's commits against its base, step through them, and view each commit's file diff.
+- **Pull Request tab** — for the session's branch, through your own `gh` login: let Claude draft the title and description, push and open the PR, request a Copilot review (Roer polls until it lands), then pick review threads and send them to the session with **Fix with Claude**. Under the hood the tab uses `roer send` (type a prompt into a session) and `roer pr-draft` (the agent hands a draft back).
 - **tmux-backed sessions** — sessions live in tmux on a private socket, a swappable detail behind the `roer` CLI.
 - **Go-to-file** — jump straight to any changed file from the diff view.
 - **Keyboard-friendly** — arrow keys and Cmd+arrows step through commits and files without touching the mouse.
