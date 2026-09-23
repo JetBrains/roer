@@ -240,11 +240,15 @@ pub fn open_url(url: String) -> Result<(), String> {
     if !is_web_link(&url) {
         return Err(format!("not a web link: {url}"));
     }
-    Command::new("/usr/bin/open")
+    let status = Command::new("/usr/bin/open")
         .arg(&url)
         .status()
-        .map_err(|e| format!("could not open {url}: {e}"))
-        .map(|_| ())
+        .map_err(|e| format!("could not open {url}: {e}"))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("could not open {url}: `open` exited with {status}"))
+    }
 }
 
 fn is_web_link(url: &str) -> bool {
@@ -259,6 +263,9 @@ pub struct PrReview {
     pub pending_reviewers: Vec<String>,
     pub reviews: Vec<Review>,
     pub threads: Vec<ReviewThread>,
+    /// GitHub had more threads, or more comments in a thread, than one query
+    /// fetches: what is shown (and what "select all" picks) is not all of it.
+    pub truncated: bool,
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq)]
@@ -309,9 +316,10 @@ query($owner: String!, $name: String!, $number: Int!) {
         nodes { author { login } state body submittedAt url }
       }
       reviewThreads(first: 100) {
+        pageInfo { hasNextPage }
         nodes {
           id isResolved isOutdated path line originalLine
-          comments(first: 50) { nodes { author { login } body createdAt url diffHunk } }
+          comments(first: 50) { pageInfo { hasNextPage } nodes { author { login } body createdAt url diffHunk } }
         }
       }
     }
@@ -336,6 +344,14 @@ pub fn gh_pr_review(dir: String, number: u64) -> Result<PrReview, String> {
 #[derive(Deserialize)]
 struct Nodes<T> {
     nodes: Vec<T>,
+    #[serde(default, rename = "pageInfo")]
+    page_info: PageInfo,
+}
+
+#[derive(Default, Deserialize)]
+struct PageInfo {
+    #[serde(default, rename = "hasNextPage")]
+    has_next_page: bool,
 }
 
 #[derive(Deserialize)]
@@ -407,6 +423,8 @@ fn parse_review(json: &str) -> Result<PrReview, String> {
         .filter(|pr| !pr.is_null())
         .ok_or("no such pull request")?;
     let pr: RawPullRequest = serde_json::from_value(pr.clone()).map_err(|e| e.to_string())?;
+    let truncated = pr.review_threads.page_info.has_next_page
+        || pr.review_threads.nodes.iter().any(|t| t.comments.page_info.has_next_page);
 
     Ok(PrReview {
         pending_reviewers: pr
@@ -453,6 +471,7 @@ fn parse_review(json: &str) -> Result<PrReview, String> {
                     .collect(),
             })
             .collect(),
+        truncated,
     })
 }
 
@@ -498,7 +517,7 @@ mod tests {
             "reviewRequests":{"nodes":[{"requestedReviewer":{"__typename":"Bot","login":"copilot-pull-request-reviewer"}},
                                         {"requestedReviewer":{"__typename":"Team","name":"core"}}]},
             "reviews":{"nodes":[{"author":null,"state":"COMMENTED","body":"Looks fine","submittedAt":"2026-09-01T00:00:00Z","url":"u1"}]},
-            "reviewThreads":{"nodes":[{"id":"T1","isResolved":false,"isOutdated":true,"path":"src/a.ts",
+            "reviewThreads":{"pageInfo":{"hasNextPage":false},"nodes":[{"id":"T1","isResolved":false,"isOutdated":true,"path":"src/a.ts",
                 "line":null,"originalLine":12,
                 "comments":{"nodes":[{"author":{"login":"copilot-pull-request-reviewer"},"body":"Off by one",
                     "createdAt":"2026-09-01T00:00:00Z","url":"u2","diffHunk":"@@ -1 +1 @@\n-a\n+b"}]}}]}
@@ -510,6 +529,24 @@ mod tests {
         assert_eq!((thread.line, thread.original_line), (None, Some(12)));
         assert!(thread.is_outdated);
         assert_eq!(thread.comments[0].body, "Off by one");
+        assert!(!review.truncated);
+    }
+
+    #[test]
+    fn says_when_github_had_more_than_one_query_fetched() {
+        let json = |threads: bool, comments: bool| {
+            format!(
+                r#"{{"data":{{"repository":{{"pullRequest":{{
+                "reviewRequests":{{"nodes":[]}}, "reviews":{{"nodes":[]}},
+                "reviewThreads":{{"pageInfo":{{"hasNextPage":{threads}}},"nodes":[{{"id":"T1","isResolved":false,
+                    "isOutdated":false,"path":"a","line":1,"originalLine":1,
+                    "comments":{{"pageInfo":{{"hasNextPage":{comments}}},"nodes":[]}}}}]}}
+            }}}}}}}}"#
+            )
+        };
+        assert!(!parse_review(&json(false, false)).unwrap().truncated);
+        assert!(parse_review(&json(true, false)).unwrap().truncated);
+        assert!(parse_review(&json(false, true)).unwrap().truncated);
     }
 
     #[test]

@@ -88,14 +88,17 @@ export function PullRequestView({ cwd, pane, active, onSent, onReviewLanded }: P
       setPr(found);
       setBranches(names);
       setBranch(on);
+      // A base picked earlier is kept only while it is still a branch here and
+      // not the one the pull request would come from.
       setBase(
         (existing) =>
-          existing ||
+          (existing && existing !== on && names.includes(existing) ? existing : "") ||
           ["main", "master"].find((name) => names.includes(name) && name !== on) ||
           names.find((name) => name !== on) ||
           "",
       );
-      setReview(found ? await ghPrReview(at, found.number) : null);
+      const fetched = found ? await ghPrReview(at, found.number) : null;
+      if (current()) setReview(fetched);
     } catch (cause) {
       if (current()) setError(String(cause));
     } finally {
@@ -152,54 +155,72 @@ export function PullRequestView({ cwd, pane, active, onSent, onReviewLanded }: P
 
   useEffect(() => {
     if (waitingSince === null || !dir || !pr) return;
+    // Clearing the timer does not stop a poll already in flight; this does.
+    let stopped = false;
     const timer = setInterval(() => {
       if (Date.now() - waitingSince > POLL_FOR_MS) {
         setWaitingSince(null);
         return;
       }
       void ghPrReview(dir, pr.number)
-        .then(setReview)
+        .then((fresh) => {
+          if (!stopped) setReview(fresh);
+        })
         .catch(() => {
           /* A missed poll is retried on the next tick. */
         });
     }, POLL_MS);
-    return () => clearInterval(timer);
+    return () => {
+      stopped = true;
+      clearInterval(timer);
+    };
   }, [waitingSince, dir, pr]);
 
-  const run = async (what: string, job: () => Promise<void>) => {
+  /** Runs an action; `current()` says whether the view is still about the
+   * session it started on, which a job checks after each await. */
+  const run = async (what: string, job: (current: () => boolean) => Promise<void>) => {
+    const mine = generation.current;
+    const current = () => mine === generation.current;
     setBusy(what);
     setError(null);
     try {
-      await job();
+      await job(current);
     } catch (cause) {
-      setError(String(cause));
+      if (current()) setError(String(cause));
     } finally {
       setBusy(null);
     }
   };
 
   const askForDraft = () =>
-    run("draft", async () => {
+    run("draft", async (current) => {
       if (!pane) return;
       await sendToSession(pane, draftPrPrompt(pane, branch, base));
+      if (!current()) return;
       setDrafting(true);
       onSent?.();
     });
 
   const create = () =>
-    run("create", async () => {
+    run("create", async (current) => {
       if (!dir) return;
       const made = await ghPrCreate(dir, { title: title.trim(), body, base, draft });
+      if (!current()) return;
       setPr(made);
-      setReview(await ghPrReview(dir, made.number));
+      const fetched = await ghPrReview(dir, made.number);
+      if (current()) setReview(fetched);
     });
 
   const requestCopilot = () =>
-    run("copilot", async () => {
+    run("copilot", async (current) => {
       if (!dir || !pr) return;
+      // Counted before asking, so a review that lands before the fetch below
+      // is the one that was asked for, not the baseline to wait past. The
+      // landing effect sees it on the very first fetch.
+      copilotBaseline.current = copilotReviews(review);
       await ghRequestCopilotReview(dir, pr.number);
       const fresh = await ghPrReview(dir, pr.number);
-      copilotBaseline.current = copilotReviews(fresh);
+      if (!current()) return;
       setReview(fresh);
       setWaitingSince(Date.now());
     });
@@ -350,6 +371,16 @@ export function PullRequestView({ cwd, pane, active, onSent, onReviewLanded }: P
               Fix with Claude ({picked.length})
             </button>
           </div>
+
+          {review?.truncated ? (
+            <p className="notice">
+              This pull request has more review comments than Roer loads at once; some are not shown here or picked by
+              “Select all unresolved”.{" "}
+              <button type="button" className="link" onClick={() => void openUrl(pr.url)}>
+                See all on GitHub
+              </button>
+            </p>
+          ) : null}
 
           {threads.length === 0 ? (
             <p className="muted">No review comments yet.</p>
