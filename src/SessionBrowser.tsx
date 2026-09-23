@@ -44,12 +44,60 @@ function shorten(cwd: string, home: string | undefined): string {
 }
 
 /**
- * Just the directory's own name, not its whole path — the group heading
- * above a row already names the repository it's in, so the row itself only
- * needs to tell rows within the same group apart.
+ * The shortest trailing slice of each path that no other path in the list
+ * shares, so two checkouts both called `roer` read as `IdeaProjects/roer`
+ * and `worktrees/roer` instead of two identical headings.
  */
-function folderName(cwd: string): string {
-  return cwd.replace(/\/+$/, "").split("/").pop() ?? cwd;
+export function distinctLabels(paths: string[]): Map<string, string> {
+  const parts = new Map(paths.map((path) => [path, path.replace(/\/+$/, "").split("/")]));
+  const tail = (of: string[], n: number) => of.slice(-n).join("/");
+  const labels = new Map<string, string>();
+  for (const [path, segments] of parts) {
+    let depth = 1;
+    while (
+      depth < segments.length &&
+      [...parts].some(
+        ([other, theirs]) => other !== path && tail(theirs, depth) === tail(segments, depth),
+      )
+    ) {
+      depth += 1;
+    }
+    labels.set(path, tail(segments, depth) || path);
+  }
+  return labels;
+}
+
+/**
+ * The session name without the shim's path hash: `roer-daf2-2` is `roer-2`.
+ * The hash only keeps same-named directories apart in tmux, and the group
+ * heading already does that here.
+ */
+export function shortSessionName(name: string): string {
+  return name.replace(/^(.+)-[0-9a-f]{4}(?=-|$)/, "$1");
+}
+
+/**
+ * The pane's title as a label, or "" when it says nothing the row doesn't.
+ * Claude Code prefixes it with a spinner glyph that changes as it works.
+ */
+export function paneLabel(title: string | undefined, command: string): string {
+  const text = (title ?? "").replace(/^[^\p{L}\p{N}]+/u, "").trim();
+  return text === command ? "" : text;
+}
+
+/** A live row's name: what the agent says it is doing, when it says, with
+ * the session's own name beside it; otherwise just the session's name. */
+function LiveName({ session }: { session: SessionInfo }) {
+  const label = paneLabel(session.title, session.command);
+  const name = shortSessionName(session.session);
+  return label ? (
+    <>
+      <strong>{label}</strong>
+      <span className="muted">{name}</span>
+    </>
+  ) : (
+    <strong>{name}</strong>
+  );
 }
 
 /** How long ago a Claude conversation was last updated, roughly. */
@@ -216,6 +264,8 @@ export function SessionBrowser({
     ...visibleSessions.map((session): SessionEntry => ({ kind: "live", session })),
     ...visibleClaudeSessions.map((session): SessionEntry => ({ kind: "resume", session })),
   ];
+  const groups = groupByRoot(entries, (entry: SessionEntry) => entry.session.cwd, roots);
+  const headings = distinctLabels(groups.flatMap((group) => (group.root ? [group.root] : [])));
 
   return (
     <nav className="sessions-view" aria-label="Sessions">
@@ -238,11 +288,11 @@ export function SessionBrowser({
           )}
         </p>
       ) : (
-        groupByRoot(entries, (entry: SessionEntry) => entry.session.cwd, roots).map((group) => (
+        groups.map((group) => (
           <div key={group.root ?? "sessions"}>
             {group.root ? (
               <h3 className="group" title={shorten(group.root, status?.home)}>
-                {folderName(group.root)}
+                {headings.get(group.root)}
               </h3>
             ) : null}
             <ul>
@@ -260,6 +310,7 @@ export function SessionBrowser({
                           type="button"
                           className={entry.session.pane === activePane ? "row active" : "row"}
                           aria-current={entry.session.pane === activePane ? "true" : undefined}
+                          title={`${entry.session.session} — ${shorten(entry.session.cwd, status?.home)}`}
                           onClick={() =>
                             onOpen({
                               args: ["attach", entry.session.pane],
@@ -269,7 +320,7 @@ export function SessionBrowser({
                             })
                           }
                         >
-                          <strong>{entry.session.session}</strong>
+                          <LiveName session={entry.session} />
                           {/* Named exactly as the terminal would show it: the
                               command running in the pane. */}
                           <span className="muted">{entry.session.command}</span>

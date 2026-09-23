@@ -114,7 +114,7 @@ usage:
   roer attach [name]    take a session back, detaching whoever holds it;
                         with no name, lists sessions
   roer list             list sessions as TSV:
-                        id<TAB>session<TAB>pane<TAB>attached|detached<TAB>cwd<TAB>command
+                        id<TAB>session<TAB>pane<TAB>attached|detached<TAB>cwd<TAB>command<TAB>title
   roer detach [name]    release the session; it keeps running with no client
   roer resume <id>      resume a Claude conversation inside a new session
   roer handoff          teleport this session into the Roer app (used by the skill)
@@ -216,8 +216,13 @@ cmd_list() {
     for sess in $(tm list-sessions -F '#{session_name}' 2>/dev/null); do
         ensure_id "$sess" >/dev/null
     done
+    # The title is whatever the program in the pane last set with OSC 2 —
+    # Claude Code keeps a summary of the task there. tmux defaults it to the
+    # hostname, which says nothing, so that case prints as empty. It goes last
+    # because it is free text: a tab inside it must not shift the columns
+    # before it.
     tm list-panes -a -F \
-'#{@roer_id}	#{session_name}	#{pane_id}	#{?session_attached,attached,detached}	#{pane_current_path}	#{pane_current_command}' \
+'#{@roer_id}	#{session_name}	#{pane_id}	#{?session_attached,attached,detached}	#{pane_current_path}	#{pane_current_command}	#{?#{||:#{==:#{pane_title},#{host}},#{==:#{pane_title},#{host_short}}},,#{pane_title}}' \
         2>/dev/null || true
 }
 

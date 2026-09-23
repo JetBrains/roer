@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { gitRoot } from "./lib/git";
@@ -6,7 +6,7 @@ import { listClaudeSessions, listPastSessions, listSessions, roerStatus } from "
 import { useSessionBrowser } from "./lib/useSessionBrowser";
 import { assignSession, listWorkspaces, unassignSession, workspaceAssignments } from "./lib/workspaces";
 import { NewSessionButton } from "./NewSessionButton";
-import { SessionBrowser, type OpenRequest } from "./SessionBrowser";
+import { paneLabel, SessionBrowser, shortSessionName, type OpenRequest } from "./SessionBrowser";
 import { WorkspaceSidebar } from "./WorkspaceSidebar";
 
 vi.mock("./lib/pty", () => ({
@@ -239,6 +239,76 @@ describe("grouping by git root", () => {
 
     await screen.findByRole("button", { name: /roer-a/i });
     expect(screen.queryByRole("heading", { level: 3 })).not.toBeInTheDocument();
+  });
+});
+
+describe("naming a session", () => {
+  it("leads with the task the agent has titled its pane", async () => {
+    vi.mocked(listSessions).mockResolvedValue([
+      {
+        id: "1",
+        session: "roer-daf2-3",
+        pane: "%0",
+        attached: true,
+        cwd: "/Users/test/project",
+        command: "claude",
+        title: "\u2733 github-pr-tab-integration",
+      },
+    ]);
+    renderList();
+
+    const row = await screen.findByRole("button", { name: /^github-pr-tab-integration/ });
+    expect(row).toHaveTextContent("roer-3");
+    expect(row).not.toHaveTextContent("daf2");
+    expect(row).toHaveAttribute("title", expect.stringContaining("roer-daf2-3"));
+  });
+
+  it("falls back to the session name without its path hash", async () => {
+    vi.mocked(listSessions).mockResolvedValue([
+      {
+        id: "1",
+        session: "roer-daf2",
+        pane: "%0",
+        attached: true,
+        cwd: "/Users/test/project",
+        command: "zsh",
+        title: "",
+      },
+    ]);
+    renderList();
+
+    const row = await screen.findByRole("button", { name: /^roerzsh/ });
+    expect(row).not.toHaveTextContent("daf2");
+  });
+
+  it("tells same-named repositories apart by their parent directory", async () => {
+    vi.mocked(listSessions).mockResolvedValue([
+      { id: "1", session: "roer-daf2", pane: "%0", attached: true, cwd: "/work/roer", command: "zsh" },
+      { id: "2", session: "roer-1b3c", pane: "%1", attached: true, cwd: "/trees/roer", command: "zsh" },
+      { id: "3", session: "api-0a0a", pane: "%2", attached: true, cwd: "/work/api", command: "zsh" },
+    ]);
+    vi.mocked(gitRoot).mockImplementation(async (cwd: string) => cwd);
+    renderList();
+
+    await waitFor(async () => {
+      const groups = await screen.findAllByRole("heading", { level: 3 });
+      expect(groups.map((h) => h.textContent)).toEqual(["work/roer", "trees/roer", "api"]);
+    });
+  });
+});
+
+describe("session labels", () => {
+  it("strips only the four-hex path hash", () => {
+    expect(shortSessionName("roer-daf2")).toBe("roer");
+    expect(shortSessionName("roer-daf2-2")).toBe("roer-2");
+    expect(shortSessionName("my-cafe-1a2b-resume")).toBe("my-cafe-resume");
+    expect(shortSessionName("roer-a")).toBe("roer-a");
+  });
+
+  it("drops spinner glyphs and titles that just repeat the command", () => {
+    expect(paneLabel("\u2802 fixing tests", "claude")).toBe("fixing tests");
+    expect(paneLabel("zsh", "zsh")).toBe("");
+    expect(paneLabel(undefined, "zsh")).toBe("");
   });
 });
 

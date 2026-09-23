@@ -478,7 +478,7 @@ describe("App", () => {
 
     fireEvent.click(screen.getByRole("tab", { name: "Sessions" }));
     const open = await screen.findByRole("button", { current: true });
-    expect(open).toHaveTextContent("test-1a2b");
+    expect(open).toHaveAttribute("title", expect.stringContaining("test-1a2b"));
     expect(open).toHaveTextContent("open here");
   });
 
