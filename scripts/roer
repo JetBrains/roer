@@ -110,7 +110,10 @@ usage:
   roer shell [name]     attach this directory's session to this terminal,
                         detaching any other client (terminal or app)
   roer new [name]       create a session that is always a new one, suffixing
-                        the name until it is free
+                        the name until it is free, with `claude` started in
+                        its shell
+  roer new --shell [name]
+                        same, with just the shell
   roer attach [name]    take a session back, detaching whoever holds it;
                         with no name, lists sessions
   roer list             list sessions as TSV:
@@ -204,8 +207,27 @@ cmd_shell() {
 # Always a fresh session, which is what a launcher means by "new": `shell`
 # reuses the session for a directory on purpose, so clicking New session twice
 # there would hand back the first one, scrollback and all.
+#
+# An agent session is what roer is for, so `new` starts one unless --shell
+# asks otherwise. `claude` is typed into the new shell rather than made the
+# pane's command: the agent then starts with everything the interactive shell
+# sets up (a server started by the app has only Finder's PATH), and quitting
+# it leaves a shell behind instead of ending the session.
 cmd_new() {
+    agent=claude
+    if [ "${1:-}" = "--shell" ]; then
+        agent=
+        shift
+    fi
     name=$(free_name "${1:-$(session_name)}")
+    if [ -n "$agent" ]; then
+        # Created detached so the keys can go in before anyone attaches; the
+        # shell reads them once it is up. "=name:" is the session's active
+        # pane, for the reason ensure_id spells out.
+        tm new-session -d -s "$name" -c "$PWD" || return 1
+        tm send-keys -t "=$name:" "$agent" Enter
+        tm_exec attach -t "=$name"
+    fi
     # No -A: the name is free, and a surprise attach is the bug this avoids.
     tm_exec new-session -s "$name" -c "$PWD"
 }
