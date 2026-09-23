@@ -1833,3 +1833,221 @@ button.gen-button.primary {
   padding-right: 16px;
   color: var(--ide-text);
 }
+
+/* Pull Request tab --------------------------------------------------------- */
+
+/* A review landed while the tab was not on top. */
+.tab-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-left: 6px;
+  border-radius: 50%;
+  background: var(--roer-accent);
+  vertical-align: middle;
+}
+
+.pr-view {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: auto;
+  padding: 14px 18px 24px;
+  font-size: 13px;
+}
+
+.pr-view code {
+  font-family: var(--ide-mono);
+  font-size: 12px;
+}
+
+.pr-head,
+.pr-threads-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.pr-head h2,
+.pr-threads-head h3,
+.pr-reviews h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.pr-spacer {
+  flex: 1;
+}
+
+button.link.pr-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--roer-fg);
+  text-align: left;
+}
+
+button.link.pr-title:hover {
+  color: var(--roer-accent);
+}
+
+.pr-state,
+.pr-tag {
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 2px 7px;
+  border-radius: 10px;
+  border: 1px solid var(--roer-border);
+  color: var(--roer-muted);
+}
+
+.pr-state.open {
+  color: var(--ide-add-sign);
+  border-color: var(--ide-add-sign);
+}
+
+.pr-state.merged {
+  color: #a371f7;
+  border-color: #a371f7;
+}
+
+.pr-create {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: 860px;
+}
+
+.pr-create input:not([type="checkbox"]),
+.pr-create textarea,
+.pr-head select {
+  font: inherit;
+  font-size: 13px;
+  color: var(--roer-fg);
+  background: var(--roer-panel);
+  border: 1px solid var(--roer-border);
+  border-radius: 6px;
+  padding: 6px 9px;
+}
+
+.pr-create textarea {
+  font-family: var(--ide-mono);
+  font-size: 12px;
+  resize: vertical;
+}
+
+.pr-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.pr-reviews {
+  margin-bottom: 18px;
+}
+
+.pr-reviews h3 {
+  margin-bottom: 8px;
+}
+
+.pr-review,
+.pr-thread {
+  border: 1px solid var(--roer-border);
+  border-radius: 8px;
+  background: var(--roer-panel);
+  margin-bottom: 8px;
+}
+
+.pr-review summary,
+.pr-thread summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  cursor: pointer;
+  min-width: 0;
+}
+
+.pr-verdict.approved {
+  color: var(--ide-add-sign);
+}
+
+.pr-verdict.changes_requested {
+  color: var(--roer-warn);
+}
+
+.pr-thread.settled {
+  opacity: 0.7;
+}
+
+.pr-where {
+  font-family: var(--ide-mono);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.pr-first {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.pr-file h4 {
+  margin: 14px 0 6px;
+  font-weight: 500;
+}
+
+.pr-hunk {
+  margin: 0;
+  padding: 6px 0;
+  overflow-x: auto;
+  font-family: var(--ide-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  background: var(--ide-editor);
+  color: var(--ide-text);
+  border-top: 1px solid var(--ide-border);
+  border-bottom: 1px solid var(--ide-border);
+}
+
+.pr-hunk > div {
+  padding: 0 10px;
+  white-space: pre;
+}
+
+.pr-hunk .add {
+  background: var(--ide-add);
+}
+
+.pr-hunk .del {
+  background: var(--ide-del);
+}
+
+.pr-comment {
+  padding: 8px 10px;
+}
+
+.pr-comment + .pr-comment {
+  border-top: 1px solid var(--roer-border);
+}
+
+.pr-comment-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 12px;
+}
+
+/* The markdown rules come from .file-markdown; a comment is not a page. */
+.file-markdown.pr-md {
+  flex: none;
+  overflow: visible;
+  padding: 4px 0 0;
+}
+
+.pr-review .file-markdown.pr-md {
+  padding: 0 10px 10px;
+}

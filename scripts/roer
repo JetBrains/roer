@@ -12,6 +12,7 @@ ROER_HOME="${ROER_HOME:-$HOME/.roer}"
 HANDOFFS="$ROER_HOME/handoffs"
 PLUGIN_UI="$ROER_HOME/plugin-ui"
 PLUGIN_UI_ACTIONS="$ROER_HOME/plugin-ui-actions"
+PR_DRAFTS="$ROER_HOME/pr-draft"
 
 # Resolve this script's real directory through any symlinks, so installing is
 # just `ln -s .../scripts/roer ~/.local/bin/roer` while the config in the repo
@@ -145,6 +146,12 @@ usage:
                         re-show a saved plugin UI in this session's pane
   roer plugin-ui load --pane <id> <name>
                         same, for an explicit pane
+  roer send [--pane <id>]
+                        read text from stdin and submit it as a prompt to
+                        the program running in the session's pane
+  roer pr-draft [--pane <id>]
+                        read {"title": ..., "body": ...} JSON from stdin and
+                        fill it into the app's Pull Request form
 
 A session outlives every client, so it can move freely between terminal and
 app. Exactly one client holds it at a time.
@@ -624,6 +631,47 @@ cmd_plugin_ui_actions() {
     done
 }
 
+# Types stdin into a pane as one prompt and submits it: how the app hands an
+# agent a request (draft a PR, fix review comments) without owning the
+# terminal. Bracketed paste (-p) keeps a multi-line prompt from being submitted
+# line by line; the Enter is sent separately, after the paste has landed.
+cmd_send() {
+    pane=$(resolve_pane "$@") || return $?
+
+    text=$(cat)
+    [ -n "$text" ] || {
+        echo "roer: send needs the text on stdin" >&2
+        return 2
+    }
+
+    buffer="roer-send-$$"
+    printf '%s' "$text" | tm load-buffer -b "$buffer" -
+    tm paste-buffer -p -d -b "$buffer" -t "$pane"
+    # Give the program a moment to take the paste in before submitting it;
+    # an Enter that arrives inside the paste is just another newline.
+    sleep 0.2
+    tm send-keys -t "$pane" Enter
+}
+
+# Hands a drafted PR title and body (JSON on stdin) to the app's Pull Request
+# form, tagged with the pane it came from. Same fire-and-forget,
+# write-then-rename shape as `emit_plugin_ui`.
+cmd_pr_draft() {
+    pane=$(resolve_pane "$@") || return $?
+
+    draft=$(cat)
+    [ -n "$draft" ] || {
+        echo "roer: pr-draft needs {\"title\": ..., \"body\": ...} JSON on stdin" >&2
+        return 2
+    }
+
+    mkdir -p "$PR_DRAFTS"
+    file="$PR_DRAFTS/$(date +%Y%m%dT%H%M%S)-$$.json"
+    printf '{"pane": "%s", "draft": %s}\n' "$(json_escape "$pane")" "$draft" \
+        > "$file.partial"
+    mv "$file.partial" "$file"
+}
+
 # No arguments means the app, which is where a session is meant to end up.
 cmd=${1:-app}
 if [ $# -gt 0 ]; then shift; fi
@@ -644,6 +692,8 @@ case $cmd in
         esac
         ;;
     plugin-ui-actions) cmd_plugin_ui_actions "$@" ;;
+    send)           cmd_send "$@" ;;
+    pr-draft)       cmd_pr_draft "$@" ;;
     help|-h|--help) usage ;;
     *)
         echo "roer: unknown command: $cmd" >&2

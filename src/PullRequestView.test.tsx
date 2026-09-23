@@ -1,0 +1,210 @@
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import { POLL_MS, PullRequestView } from "./PullRequestView";
+import { gitBranches, gitCurrentBranch } from "./lib/git";
+import {
+  ghPrCreate,
+  ghPrForBranch,
+  ghPrReview,
+  ghRequestCopilotReview,
+  ghStatus,
+  onPrDraft,
+  sendToSession,
+  type PrDraftRecord,
+  type PrReview,
+  type PrSummary,
+} from "./lib/github";
+
+vi.mock("./lib/github", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./lib/github")>()),
+  ghStatus: vi.fn(),
+  ghPrForBranch: vi.fn(),
+  ghPrCreate: vi.fn(),
+  ghPrReview: vi.fn(),
+  ghRequestCopilotReview: vi.fn(),
+  onPrDraft: vi.fn(),
+  openUrl: vi.fn(),
+  sendToSession: vi.fn(),
+}));
+
+vi.mock("./lib/git", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./lib/git")>()),
+  gitBranches: vi.fn(),
+  gitCurrentBranch: vi.fn(),
+}));
+
+vi.mock("./lib/session", () => ({
+  resolveDir: vi.fn(async (cwd?: string) => cwd ?? ""),
+}));
+
+const pr: PrSummary = {
+  number: 19,
+  title: "Add a thing",
+  url: "https://github.com/o/r/pull/19",
+  state: "OPEN",
+  isDraft: false,
+  headRefName: "feat",
+  baseRefName: "main",
+  reviewDecision: null,
+};
+
+const copilotReview = {
+  author: "copilot-pull-request-reviewer",
+  state: "COMMENTED",
+  body: "Copilot reviewed 3 files.",
+  submittedAt: "2026-09-01T00:00:00Z",
+  url: "https://github.com/o/r/pull/19#review-1",
+};
+
+const withThreads: PrReview = {
+  pendingReviewers: [],
+  reviews: [copilotReview],
+  threads: [
+    {
+      id: "T1",
+      isResolved: false,
+      isOutdated: false,
+      path: "src/a.ts",
+      line: 12,
+      originalLine: 12,
+      comments: [
+        {
+          author: "copilot-pull-request-reviewer",
+          body: "Off by one here.",
+          createdAt: "2026-09-01T00:00:00Z",
+          url: "https://github.com/o/r/pull/19#discussion_r1",
+          diffHunk: "@@ -1 +1 @@\n-a\n+b",
+        },
+      ],
+    },
+    {
+      id: "T2",
+      isResolved: true,
+      isOutdated: false,
+      path: "src/b.ts",
+      line: 3,
+      originalLine: 3,
+      comments: [
+        {
+          author: "octocat",
+          body: "Already handled.",
+          createdAt: "2026-09-01T00:00:00Z",
+          url: "https://github.com/o/r/pull/19#discussion_r2",
+          diffHunk: "",
+        },
+      ],
+    },
+  ],
+};
+
+let draftListener: ((record: PrDraftRecord) => void) | null = null;
+
+beforeEach(() => {
+  vi.mocked(ghStatus).mockResolvedValue({ installed: true, authenticated: true, repo: "o/r", message: null });
+  vi.mocked(gitBranches).mockResolvedValue(["feat", "main"]);
+  vi.mocked(gitCurrentBranch).mockResolvedValue("feat");
+  vi.mocked(sendToSession).mockResolvedValue();
+  vi.mocked(onPrDraft).mockImplementation(async (handler) => {
+    draftListener = handler;
+    return () => {
+      draftListener = null;
+    };
+  });
+});
+
+afterEach(() => {
+  vi.useRealTimers();
+  vi.clearAllMocks();
+});
+
+const view = (props: Partial<React.ComponentProps<typeof PullRequestView>> = {}) =>
+  render(<PullRequestView cwd="/work/r" pane="%3" active {...props} />);
+
+describe("PullRequestView", () => {
+  it("explains a missing login instead of offering anything", async () => {
+    vi.mocked(ghStatus).mockResolvedValue({
+      installed: true,
+      authenticated: false,
+      repo: null,
+      message: "gh is not logged in. Run `gh auth login` in a terminal.",
+    });
+    view();
+    expect(await screen.findByText(/gh auth login/)).toBeInTheDocument();
+    expect(ghPrForBranch).not.toHaveBeenCalled();
+  });
+
+  it("asks Claude for a draft and fills the form from its answer", async () => {
+    vi.mocked(ghPrForBranch).mockResolvedValue(null);
+    const onSent = vi.fn();
+    view({ onSent });
+
+    fireEvent.click(await screen.findByRole("button", { name: "Draft with Claude" }));
+    await waitFor(() => expect(sendToSession).toHaveBeenCalled());
+    const [pane, text] = vi.mocked(sendToSession).mock.calls[0];
+    expect(pane).toBe("%3");
+    expect(text).toContain("`feat` against `main`");
+    expect(onSent).toHaveBeenCalled();
+
+    act(() => draftListener?.({ pane: "%9", draft: { title: "someone else's", body: "" } }));
+    expect(screen.getByLabelText("Title")).toHaveValue("");
+    act(() => draftListener?.({ pane: "%3", draft: { title: "Add a thing", body: "Why and what." } }));
+    expect(screen.getByLabelText("Title")).toHaveValue("Add a thing");
+    expect(screen.getByLabelText("Description")).toHaveValue("Why and what.");
+  });
+
+  it("creates the pull request against the chosen base", async () => {
+    vi.mocked(ghPrForBranch).mockResolvedValue(null);
+    vi.mocked(ghPrCreate).mockResolvedValue(pr);
+    vi.mocked(ghPrReview).mockResolvedValue({ pendingReviewers: [], reviews: [], threads: [] });
+    view();
+
+    fireEvent.change(await screen.findByLabelText("Title"), { target: { value: "Add a thing" } });
+    fireEvent.click(screen.getByRole("button", { name: "Push and create pull request" }));
+    expect(await screen.findByText("#19 Add a thing")).toBeInTheDocument();
+    expect(ghPrCreate).toHaveBeenCalledWith("/work/r", { title: "Add a thing", body: "", base: "main", draft: false });
+  });
+
+  it("sends the selected unresolved threads to Claude", async () => {
+    vi.mocked(ghPrForBranch).mockResolvedValue(pr);
+    vi.mocked(ghPrReview).mockResolvedValue(withThreads);
+    view();
+
+    expect(await screen.findByText("1 unresolved of 2")).toBeInTheDocument();
+    // A resolved thread cannot be picked.
+    expect(screen.queryByLabelText("Select src/b.ts:3")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText("Select src/a.ts:12"));
+    fireEvent.click(screen.getByRole("button", { name: "Fix with Claude (1)" }));
+
+    await waitFor(() => expect(sendToSession).toHaveBeenCalled());
+    const [, text] = vi.mocked(sendToSession).mock.calls[0];
+    expect(text).toContain("## 1. src/a.ts:12");
+    expect(text).toContain("Off by one here.");
+    expect(text).not.toContain("Already handled.");
+  });
+
+  it("polls a requested Copilot review until it lands", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.mocked(ghPrForBranch).mockResolvedValue(pr);
+    vi.mocked(ghRequestCopilotReview).mockResolvedValue();
+    const pending: PrReview = { pendingReviewers: ["copilot-pull-request-reviewer"], reviews: [], threads: [] };
+    vi.mocked(ghPrReview)
+      .mockResolvedValueOnce({ pendingReviewers: [], reviews: [], threads: [] })
+      .mockResolvedValueOnce(pending)
+      .mockResolvedValueOnce(pending)
+      .mockResolvedValue(withThreads);
+    const onReviewLanded = vi.fn();
+    view({ onReviewLanded });
+
+    fireEvent.click(await screen.findByRole("button", { name: "Request Copilot review" }));
+    expect(await screen.findByRole("button", { name: "Copilot is reviewing…" })).toBeDisabled();
+    expect(ghRequestCopilotReview).toHaveBeenCalledWith("/work/r", 19);
+
+    await act(() => vi.advanceTimersByTimeAsync(POLL_MS));
+    expect(onReviewLanded).not.toHaveBeenCalled();
+    await act(() => vi.advanceTimersByTimeAsync(POLL_MS));
+    await waitFor(() => expect(onReviewLanded).toHaveBeenCalledTimes(1));
+    expect(screen.getByRole("button", { name: "Request Copilot review" })).toBeEnabled();
+    expect(screen.getByText("1 unresolved of 2")).toBeInTheDocument();
+  });
+});

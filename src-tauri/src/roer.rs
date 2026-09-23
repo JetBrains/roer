@@ -44,7 +44,7 @@ pub fn home() -> Option<PathBuf> {
 }
 
 /// Whether a bare name resolves through `PATH`, without running it.
-fn on_path(name: &str) -> bool {
+pub(crate) fn on_path(name: &str) -> bool {
     std::env::var_os("PATH")
         .map(|path| {
             std::env::split_paths(&path).any(|dir| {
@@ -109,6 +109,37 @@ pub fn roer_status() -> Status {
         home: home()
             .map(|home| home.to_string_lossy().into_owned())
             .unwrap_or_default(),
+    }
+}
+
+/// Submits `text` as a prompt to whatever runs in `pane` — how the Pull
+/// Request tab hands the session's agent a request. The shim does the
+/// typing, since only it knows the engine underneath.
+#[tauri::command(async)]
+pub fn roer_send(pane: String, text: String) -> Result<(), String> {
+    use std::io::Write;
+    use std::process::Stdio;
+
+    let mut child = std::process::Command::new(bin())
+        .args(["send", "--pane", &pane])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("could not run `{} send`: {e}", bin()))?;
+    child
+        .stdin
+        .take()
+        .expect("stdin is a pipe")
+        .write_all(text.as_bytes())
+        .map_err(|e| format!("could not write to `roer send`: {e}"))?;
+    let out = child
+        .wait_with_output()
+        .map_err(|e| format!("could not wait for `roer send`: {e}"))?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
     }
 }
 

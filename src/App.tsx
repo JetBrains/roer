@@ -8,6 +8,7 @@ import { applyAll, applyMessage } from "./generative-ui/apply";
 import { emptyState, type A2uiMessage, type RenderState } from "./generative-ui/schema";
 import { GoToFile } from "./GoToFile";
 import { NewSessionButton } from "./NewSessionButton";
+import { PullRequestView } from "./PullRequestView";
 import { SessionBrowser, type OpenRequest } from "./SessionBrowser";
 import { TerminalView } from "./TerminalView";
 import { WorkspaceSidebar } from "./WorkspaceSidebar";
@@ -74,6 +75,14 @@ export function App() {
   // terminal and away again keeps the file that was selected. File tabs get
   // this for free: being open is being in `tabs.files`.
   const [everChanges, setEverChanges] = useState(false);
+  // Same for the pull request, which also keeps polling a pending review
+  // while you are away in the terminal — which is when it would land.
+  const [everPr, setEverPr] = useState(false);
+  // A review Roer was waiting on landed while the tab was not on top.
+  const [prBadge, setPrBadge] = useState(false);
+  useEffect(() => {
+    if (prBadge && tabs.active === "pullRequest") setPrBadge(false);
+  }, [prBadge, tabs.active]);
   // Same reasoning as `everChanges`: mount once, keep it mounted, so
   // collapsing the panel and reopening it does not lose a live surface.
   const [everGenerativeUI, setEverGenerativeUI] = useState(false);
@@ -367,6 +376,13 @@ export function App() {
     }
   }, [staged]);
 
+  /** A prompt went into the session: show it arriving. */
+  const showTerminal = useCallback(() => {
+    setTabs((current) => activate(current, "terminal"));
+  }, []);
+
+  const markReviewLanded = useCallback(() => setPrBadge(true), []);
+
   /** Opens a file from Go to File, in a tab of its own. */
   const openInTab = useCallback((root: string, path: string, line?: number) => {
     setTabs((current) =>
@@ -584,6 +600,20 @@ export function App() {
               >
                 Changes
               </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={tabs.active === "pullRequest"}
+                className={tabs.active === "pullRequest" ? "tab on" : "tab"}
+                disabled={!session}
+                onClick={() => {
+                  setEverPr(true);
+                  setTabs((current) => activate(current, "pullRequest"));
+                }}
+              >
+                Pull Request
+                {prBadge ? <span className="tab-dot" aria-label="new review" /> : null}
+              </button>
               {tabs.files.map((file) => {
                 const id = tabId(file);
                 const name = tabName(file);
@@ -693,6 +723,18 @@ export function App() {
                   pane={session?.pane}
                   active={tabs.active === "changes"}
                   changed={changed}
+                />
+              </div>
+            ) : null}
+
+            {everPr ? (
+              <div className="overlay" hidden={tabs.active !== "pullRequest"}>
+                <PullRequestView
+                  cwd={session?.cwd}
+                  pane={session?.pane}
+                  active={tabs.active === "pullRequest"}
+                  onSent={showTerminal}
+                  onReviewLanded={markReviewLanded}
                 />
               </div>
             ) : null}

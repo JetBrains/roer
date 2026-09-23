@@ -23,6 +23,7 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use notify::{EventKind, RecursiveMode, Watcher};
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter};
 
@@ -117,7 +118,17 @@ fn is_record(path: &Path) -> bool {
 /// a plugin's UI is only ever generated while a session is on screen and an
 /// agent is being asked for it, so the app is already up by construction.
 pub fn watch(app: AppHandle) -> notify::Result<()> {
-    let dir = plugin_ui_dir();
+    watch_records::<PluginUiRecord>(app, plugin_ui_dir(), PLUGIN_UI_EVENT)
+}
+
+/// Watch `dir` for fire-and-forget records the shim drops there, emit each
+/// one to the frontend as `event`, and consume the file. Shared by every
+/// terminal → app channel with this shape (plugin UI, PR drafts): only the
+/// record type and the directory differ.
+pub fn watch_records<R>(app: AppHandle, dir: PathBuf, event: &'static str) -> notify::Result<()>
+where
+    R: DeserializeOwned + Serialize + Clone,
+{
     if let Err(e) = std::fs::create_dir_all(&dir) {
         eprintln!("roer: cannot create {}: {e}", dir.display());
         return Ok(());
@@ -128,7 +139,7 @@ pub fn watch(app: AppHandle) -> notify::Result<()> {
         let mut watcher = match notify::recommended_watcher(tx) {
             Ok(watcher) => watcher,
             Err(e) => {
-                eprintln!("roer: could not start the plugin-ui watcher: {e}");
+                eprintln!("roer: could not start the {event} watcher: {e}");
                 return;
             }
         };
@@ -141,14 +152,14 @@ pub fn watch(app: AppHandle) -> notify::Result<()> {
         // once. Entries for files that are gone are dropped first, which both
         // bounds the set and lets a recycled filename through.
         let mut seen: HashSet<PathBuf> = HashSet::new();
-        for event in rx.into_iter().flatten() {
-            if !matches!(event.kind, EventKind::Create(_) | EventKind::Modify(_)) {
+        for change in rx.into_iter().flatten() {
+            if !matches!(change.kind, EventKind::Create(_) | EventKind::Modify(_)) {
                 continue;
             }
             seen.retain(|path| path.exists());
-            for path in event.paths {
+            for path in change.paths {
                 if is_record(&path) && path.exists() && seen.insert(path.clone()) {
-                    deliver(&app, &path);
+                    deliver::<R>(&app, &path, event);
                 }
             }
         }
@@ -157,11 +168,14 @@ pub fn watch(app: AppHandle) -> notify::Result<()> {
     Ok(())
 }
 
-fn deliver(app: &AppHandle, path: &Path) {
-    match read(path) {
+fn deliver<R>(app: &AppHandle, path: &Path, event: &str)
+where
+    R: DeserializeOwned + Serialize + Clone,
+{
+    match read::<R>(path) {
         Ok(record) => {
-            if let Err(e) = app.emit(PLUGIN_UI_EVENT, record) {
-                eprintln!("roer: could not deliver a plugin-ui message: {e}");
+            if let Err(e) = app.emit(event, record) {
+                eprintln!("roer: could not deliver a {event} record: {e}");
             }
         }
         // A malformed record must not take the watcher down with it.
@@ -174,7 +188,7 @@ fn deliver(app: &AppHandle, path: &Path) {
     let _ = std::fs::remove_file(path);
 }
 
-fn read(path: &Path) -> Result<PluginUiRecord, String> {
+fn read<R: DeserializeOwned>(path: &Path) -> Result<R, String> {
     let raw = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
     serde_json::from_str(&raw).map_err(|e| e.to_string())
 }
@@ -323,7 +337,7 @@ mod tests {
         )
         .expect("write record");
 
-        let got = read(&path).expect("parse");
+        let got = read::<PluginUiRecord>(&path).expect("parse");
         assert_eq!(got.pane, "%3");
         assert_eq!(got.message["kind"], "beginRendering");
         assert_eq!(got.message["surfaceId"], "s");
@@ -337,7 +351,7 @@ mod tests {
         std::fs::create_dir_all(&dir).expect("temp dir");
         let path = dir.join("bad.json");
         std::fs::write(&path, "{ not json").expect("write");
-        assert!(read(&path).is_err());
+        assert!(read::<PluginUiRecord>(&path).is_err());
         std::fs::remove_dir_all(&dir).ok();
     }
 
