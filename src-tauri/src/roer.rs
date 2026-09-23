@@ -77,6 +77,9 @@ pub struct SessionInfo {
     pub attached: bool,
     pub cwd: String,
     pub command: String,
+    /// What the program in the pane last titled it — Claude Code's summary of
+    /// the task. Empty when nothing has, or when the shim predates the column.
+    pub title: String,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -174,9 +177,10 @@ fn live_sessions() -> Result<Vec<SessionInfo>, String> {
         .collect())
 }
 
-/// One TSV row: id, session, pane, attached|detached, cwd, command.
+/// One TSV row: id, session, pane, attached|detached, cwd, command, title.
 fn parse_line(line: &str) -> Option<SessionInfo> {
-    let mut f = line.split('\t');
+    // The title is free text and comes last, so it keeps any tab it contains.
+    let mut f = line.splitn(7, '\t');
     let info = SessionInfo {
         id: f.next()?.to_string(),
         session: f.next()?.to_string(),
@@ -184,6 +188,7 @@ fn parse_line(line: &str) -> Option<SessionInfo> {
         attached: f.next()? == "attached",
         cwd: f.next().unwrap_or_default().to_string(),
         command: f.next().unwrap_or_default().to_string(),
+        title: f.next().unwrap_or_default().to_string(),
     };
     (!info.session.is_empty()).then_some(info)
 }
@@ -268,5 +273,18 @@ mod tests {
     fn tolerates_a_cwd_containing_spaces() {
         let got = parse_line("id\ts\t%0\tdetached\t/tmp/my project\tzsh").expect("row");
         assert_eq!(got.cwd, "/tmp/my project");
+    }
+
+    #[test]
+    fn reads_the_pane_title_and_keeps_its_tabs() {
+        let got = parse_line("id\ts\t%0\tattached\t/tmp\tclaude\t\u{2733} fix\tit").expect("row");
+        assert_eq!(got.command, "claude");
+        assert_eq!(got.title, "\u{2733} fix\tit");
+    }
+
+    #[test]
+    fn an_older_shim_without_a_title_column_parses_with_an_empty_title() {
+        let got = parse_line("id\ts\t%0\tattached\t/tmp\tclaude").expect("row");
+        assert_eq!(got.title, "");
     }
 }

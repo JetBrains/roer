@@ -18,6 +18,9 @@ export interface SessionInfo {
   attached: boolean;
   cwd: string;
   command: string;
+  /** What the program in the pane last titled it — Claude Code keeps a
+   * summary of the task there. Empty when nothing has. */
+  title?: string;
 }
 
 /**
