@@ -187,10 +187,25 @@ fn parse_line(line: &str) -> Option<SessionInfo> {
         pane: f.next()?.to_string(),
         attached: f.next()? == "attached",
         cwd: f.next().unwrap_or_default().to_string(),
-        command: f.next().unwrap_or_default().to_string(),
+        command: command_name(f.next().unwrap_or_default()),
         title: f.next().unwrap_or_default().to_string(),
     };
     (!info.session.is_empty()).then_some(info)
+}
+
+/// What to call the program in a pane. Claude Code sets its process title to
+/// its own version, so tmux reports `2.1.280` where the terminal user typed
+/// `claude`; a bare dotted version is taken to be that.
+fn command_name(command: &str) -> String {
+    let is_version = command.contains('.')
+        && command
+            .split('.')
+            .all(|part| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit()));
+    if is_version {
+        "claude".to_string()
+    } else {
+        command.to_string()
+    }
 }
 
 #[cfg(test)]
@@ -280,6 +295,20 @@ mod tests {
         let got = parse_line("id\ts\t%0\tattached\t/tmp\tclaude\t\u{2733} fix\tit").expect("row");
         assert_eq!(got.command, "claude");
         assert_eq!(got.title, "\u{2733} fix\tit");
+    }
+
+    #[test]
+    fn names_claude_code_by_its_command_rather_than_its_version() {
+        let got = parse_line("id\ts\t%0\tattached\t/tmp\t2.1.280\t").expect("row");
+        assert_eq!(got.command, "claude");
+    }
+
+    #[test]
+    fn leaves_other_commands_alone() {
+        for command in ["zsh", "node", "python3.12", "1", "2.", ".1", ""] {
+            let line = format!("id\ts\t%0\tattached\t/tmp\t{command}");
+            assert_eq!(parse_line(&line).expect("row").command, command);
+        }
     }
 
     #[test]
