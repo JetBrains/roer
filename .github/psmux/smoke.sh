@@ -93,7 +93,9 @@ has "  ...and tags the record with it" "$(cat "$HOME_U"/plugin-ui/*.json 2>/dev/
 
 # shell: roer attaches in a terminal, here a pane of a second psmux server.
 cat > "$RUNNER_TEMP/shell.ps1" <<PS1
-\$env:TMUX = \$null; \$env:TMUX_PANE = \$null
+# A terminal of its own, not a pane: psmux refuses to nest while any of
+# these say otherwise.
+\$env:TMUX = \$null; \$env:TMUX_PANE = \$null; \$env:PSMUX_SESSION = \$null
 \$env:ROER_SOCKET = 'smoke'; \$env:ROER_HOME = '$ROER_HOME'
 Set-Location '$(cygpath -w "$PROJECT")'
 & '$ROER' shell 2> '$T\\shell.txt'
