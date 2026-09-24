@@ -112,8 +112,11 @@ jobs:
           $cli = Join-Path $dir 'roer'
           $path = [Environment]::GetEnvironmentVariable('Path', 'User') -split ';'
           if ($path -notcontains $cli) { throw "installer did not put $cli on the user PATH: $($path -join ';')" }
-          & (Join-Path $cli 'roer.exe') help | Select-Object -First 1
-          if ($LASTEXITCODE -ne 0) { throw "roer help failed from $cli" }
+          # All of it, then the exit code: `| Select-Object -First 1` stops a
+          # native program early, and that alone makes its exit code non-zero.
+          $help = & (Join-Path $cli 'roer.exe') help
+          if ($LASTEXITCODE -ne 0) { throw "roer help failed from $cli (exit $LASTEXITCODE)" }
+          $help[0]
           Start-Process (Join-Path $dir 'uninstall.exe') -ArgumentList '/S' -Wait
           Start-Sleep 5
           $path = [Environment]::GetEnvironmentVariable('Path', 'User') -split ';'
