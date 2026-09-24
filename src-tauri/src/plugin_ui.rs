@@ -27,6 +27,8 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter};
 
+use crate::history::roer_home;
+
 pub const PLUGIN_UI_EVENT: &str = "roer://plugin-ui";
 
 /// One A2UI-shaped message, tagged with the pane that sent it.
@@ -48,13 +50,6 @@ pub fn plugin_ui_dir() -> PathBuf {
 /// Where a reported action waits for `roer plugin-ui-actions` to collect it.
 pub fn plugin_ui_actions_dir() -> PathBuf {
     roer_home().join("plugin-ui-actions")
-}
-
-fn roer_home() -> PathBuf {
-    match std::env::var("ROER_HOME") {
-        Ok(dir) if !dir.is_empty() => PathBuf::from(dir),
-        _ => PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".roer"),
-    }
 }
 
 /// A component's action, in the same shape A2UI's own client-to-server

@@ -20,7 +20,7 @@ const VERSION: u32 = 1;
 pub(crate) fn roer_home() -> PathBuf {
     match std::env::var("ROER_HOME") {
         Ok(dir) if !dir.is_empty() => PathBuf::from(dir),
-        _ => PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".roer"),
+        _ => crate::roer::home().unwrap_or_default().join(".roer"),
     }
 }
 

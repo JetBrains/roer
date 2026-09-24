@@ -6,6 +6,7 @@ mod handoff;
 mod history;
 mod plugin_ui;
 mod pr_draft;
+mod process;
 mod projects;
 mod pty;
 mod roer;

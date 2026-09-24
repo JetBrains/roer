@@ -1742,6 +1742,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)] // Creating a symlink on Windows needs developer mode or admin.
     fn refuses_to_read_outside_the_repository() {
         let dir = scratch("escape");
         let at = dir.to_string_lossy().to_string();

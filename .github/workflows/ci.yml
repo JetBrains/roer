@@ -19,11 +19,19 @@ jobs:
   checks:
     name: Checks (${{ matrix.os }})
     strategy:
-      # One platform failing says nothing about the other; let both finish.
+      # One platform failing says nothing about the others; let all finish.
       fail-fast: false
       matrix:
-        os: [macos-26, ubuntu-latest]
+        os: [macos-26, ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    # Windows builds and opens but runs no sessions yet (there is no tmux),
+    # and this suite has never passed there: report it without gating on it
+    # until it does.
+    continue-on-error: ${{ matrix.os == 'windows-latest' }}
+    defaults:
+      run:
+        # The steps below are POSIX shell; on Windows that is Git's bash.
+        shell: bash
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
