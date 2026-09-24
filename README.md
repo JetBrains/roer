@@ -24,6 +24,10 @@ Linux builds are not published to releases yet; the `roer-linux` artifact of a [
 
 Shortcuts use `Ctrl+Shift` instead of `⌘` (`Ctrl+Shift+T` new session, `Ctrl+Shift+O` Go to File) and `Alt+←`/`Alt+→` to step through commits, leaving plain `Ctrl` keys to the terminal.
 
+### Windows
+
+Not usable yet: the app builds and opens (the `roer-windows` artifact of a [Nightly bundles](../../actions/workflows/nightly-bundles.yml) run has an installer), but sessions need tmux, which Windows does not have. Shortcuts are as on Linux.
+
 ## Screenshots
 
 **Generative UI** — a plugin drafts a UI as A2UI-shaped JSON and shows it live in Roer's panel; save it as a project-local bundle to reload later.

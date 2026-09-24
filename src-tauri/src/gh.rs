@@ -14,13 +14,22 @@ use serde::{Deserialize, Serialize};
 /// Where `gh` usually lives when it is not on the inherited `PATH`, which for
 /// an app opened from Finder is only `/usr/bin:/bin:/usr/sbin:/sbin`.
 #[cfg(target_os = "macos")]
-const INSTALL_DIRS: [&str; 2] = ["/opt/homebrew/bin", "/usr/local/bin"];
+const INSTALL_DIRS: &[&str] = &["/opt/homebrew/bin", "/usr/local/bin"];
 
 /// Linux's package managers put `gh` in `/usr/bin`, which a desktop launcher's
 /// `PATH` already reaches; what it misses is Homebrew on Linux and a manual
 /// install.
-#[cfg(not(target_os = "macos"))]
-const INSTALL_DIRS: [&str; 2] = ["/home/linuxbrew/.linuxbrew/bin", "/usr/local/bin"];
+#[cfg(not(any(target_os = "macos", windows)))]
+const INSTALL_DIRS: &[&str] = &["/home/linuxbrew/.linuxbrew/bin", "/usr/local/bin"];
+
+/// Where GitHub's own installer, and winget with it, puts `gh`.
+#[cfg(windows)]
+const INSTALL_DIRS: &[&str] = &[r"C:\Program Files\GitHub CLI"];
+
+#[cfg(windows)]
+const GH_FILE: &str = "gh.exe";
+#[cfg(not(windows))]
+const GH_FILE: &str = "gh";
 
 /// Path to `gh`: `ROER_GH` first, then `PATH`, then the usual install
 /// locations — the same order [`crate::roer::bin`] uses for the shim.
@@ -41,7 +50,7 @@ fn resolve(explicit: Option<String>, on_path: bool, exists: impl Fn(&str) -> boo
     }
     INSTALL_DIRS
         .iter()
-        .map(|dir| format!("{dir}/gh"))
+        .map(|dir| std::path::Path::new(dir).join(GH_FILE).to_string_lossy().into_owned())
         .find(|path| exists(path))
         // Nothing found: the plain name, so the error names what is missing.
         .unwrap_or_else(|| "gh".to_string())
@@ -56,12 +65,12 @@ fn command(dir: &str, args: &[&str]) -> Command {
     if let Some(parent) = std::path::Path::new(&bin).parent().filter(|p| !p.as_os_str().is_empty()) {
         path.push(parent.to_path_buf());
     }
-    path.extend(INSTALL_DIRS.map(PathBuf::from));
+    path.extend(INSTALL_DIRS.iter().map(PathBuf::from));
     if let Some(inherited) = std::env::var_os("PATH") {
         path.extend(std::env::split_paths(&inherited));
     }
 
-    let mut gh = Command::new(&bin);
+    let mut gh = crate::process::command(&bin);
     gh.current_dir(dir)
         .args(args)
         .env("GH_PROMPT_DISABLED", "1")
@@ -292,12 +301,16 @@ pub fn gh_pr_merge(dir: String, number: u64, method: String, head: String) -> Re
     pr_view(&dir, Some(&number))?.ok_or_else(|| format!("merged #{number} but could not read it back"))
 }
 
-/// The system's own "open this" command: `open` on macOS, the freedesktop
-/// `xdg-open` elsewhere, which hands the link to the default browser.
+/// The system's own "open this" command, and the arguments that go before
+/// the link: `open` on macOS, the freedesktop `xdg-open` on Linux, and on
+/// Windows the URL handler `start` would reach — called directly, because
+/// `cmd /c start` would read the `&` in a query string as a second command.
 #[cfg(target_os = "macos")]
-const OPENER: &str = "/usr/bin/open";
-#[cfg(not(target_os = "macos"))]
-const OPENER: &str = "xdg-open";
+const OPENER: (&str, &[&str]) = ("/usr/bin/open", &[]);
+#[cfg(windows)]
+const OPENER: (&str, &[&str]) = ("rundll32", &["url.dll,FileProtocolHandler"]);
+#[cfg(not(any(target_os = "macos", windows)))]
+const OPENER: (&str, &[&str]) = ("xdg-open", &[]);
 
 /// Opens a GitHub page in the person's browser. Only web links: this is
 /// handed URLs that came back from GitHub, and nothing else should reach
@@ -307,14 +320,16 @@ pub fn open_url(url: String) -> Result<(), String> {
     if !is_web_link(&url) {
         return Err(format!("not a web link: {url}"));
     }
-    let status = Command::new(OPENER)
+    let (opener, before) = OPENER;
+    let status = crate::process::command(opener)
+        .args(before)
         .arg(&url)
         .status()
         .map_err(|e| format!("could not open {url}: {e}"))?;
     if status.success() {
         Ok(())
     } else {
-        Err(format!("could not open {url}: `{OPENER}` exited with {status}"))
+        Err(format!("could not open {url}: `{opener}` exited with {status}"))
     }
 }
 
@@ -550,7 +565,9 @@ mod tests {
     fn prefers_an_explicit_gh_then_path_then_an_install_location() {
         assert_eq!(resolve(Some("/x/gh".into()), true, |_| true), "/x/gh");
         assert_eq!(resolve(Some(String::new()), true, |_| true), "gh");
-        assert_eq!(resolve(None, false, |p| p == "/usr/local/bin/gh"), "/usr/local/bin/gh");
+        let installed = std::path::Path::new(INSTALL_DIRS[INSTALL_DIRS.len() - 1]).join(GH_FILE);
+        let installed = installed.to_string_lossy();
+        assert_eq!(resolve(None, false, |p| p == installed), installed);
         assert_eq!(resolve(None, false, |_| false), "gh");
     }
 
