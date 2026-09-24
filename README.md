@@ -14,6 +14,16 @@ Latest build: [v0.3.0](https://github.com/JetBrains/roer/releases/tag/v0.3.0).
 
 The quarantine step is required — the app is killed on first launch without it. Use the tarball, not the loose binary: release assets carry no mode bits, and `roer` must be executable.
 
+### Linux
+
+Linux builds are not published to releases yet; the `roer-linux` artifact of a CI run has a `.deb`, `.rpm` and `.AppImage`.
+
+1. Install the `.deb` or `.rpm` (it pulls in `tmux`), or install `tmux` yourself and use the `.AppImage`.
+2. Unpack the CLI tarball and symlink `roer` onto your `PATH`, as on macOS.
+3. Using the AppImage: `export ROER_APP=/path/to/Roer.AppImage`, so `roer handoff` can start the app. The packages install it as `roer-app`, which the shim finds on its own.
+
+Shortcuts use `Ctrl+Shift` instead of `⌘` (`Ctrl+Shift+T` new session, `Ctrl+Shift+O` Go to File) and `Alt+←`/`Alt+→` to step through commits, leaving plain `Ctrl` keys to the terminal.
+
 ## Screenshots
 
 **Generative UI** — a plugin drafts a UI as A2UI-shaped JSON and shows it live in Roer's panel; save it as a project-local bundle to reload later.

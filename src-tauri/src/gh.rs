@@ -13,7 +13,14 @@ use serde::{Deserialize, Serialize};
 
 /// Where `gh` usually lives when it is not on the inherited `PATH`, which for
 /// an app opened from Finder is only `/usr/bin:/bin:/usr/sbin:/sbin`.
-const INSTALL_PATHS: [&str; 2] = ["/opt/homebrew/bin/gh", "/usr/local/bin/gh"];
+#[cfg(target_os = "macos")]
+const INSTALL_DIRS: [&str; 2] = ["/opt/homebrew/bin", "/usr/local/bin"];
+
+/// Linux's package managers put `gh` in `/usr/bin`, which a desktop launcher's
+/// `PATH` already reaches; what it misses is Homebrew on Linux and a manual
+/// install.
+#[cfg(not(target_os = "macos"))]
+const INSTALL_DIRS: [&str; 2] = ["/home/linuxbrew/.linuxbrew/bin", "/usr/local/bin"];
 
 /// Path to `gh`: `ROER_GH` first, then `PATH`, then the usual install
 /// locations — the same order [`crate::roer::bin`] uses for the shim.
@@ -32,10 +39,10 @@ fn resolve(explicit: Option<String>, on_path: bool, exists: impl Fn(&str) -> boo
     if on_path {
         return "gh".to_string();
     }
-    INSTALL_PATHS
+    INSTALL_DIRS
         .iter()
+        .map(|dir| format!("{dir}/gh"))
         .find(|path| exists(path))
-        .map(|path| path.to_string())
         // Nothing found: the plain name, so the error names what is missing.
         .unwrap_or_else(|| "gh".to_string())
 }
@@ -49,7 +56,7 @@ fn command(dir: &str, args: &[&str]) -> Command {
     if let Some(parent) = std::path::Path::new(&bin).parent().filter(|p| !p.as_os_str().is_empty()) {
         path.push(parent.to_path_buf());
     }
-    path.extend(["/opt/homebrew/bin", "/usr/local/bin"].map(PathBuf::from));
+    path.extend(INSTALL_DIRS.map(PathBuf::from));
     if let Some(inherited) = std::env::var_os("PATH") {
         path.extend(std::env::split_paths(&inherited));
     }
@@ -285,22 +292,29 @@ pub fn gh_pr_merge(dir: String, number: u64, method: String, head: String) -> Re
     pr_view(&dir, Some(&number))?.ok_or_else(|| format!("merged #{number} but could not read it back"))
 }
 
+/// The system's own "open this" command: `open` on macOS, the freedesktop
+/// `xdg-open` elsewhere, which hands the link to the default browser.
+#[cfg(target_os = "macos")]
+const OPENER: &str = "/usr/bin/open";
+#[cfg(not(target_os = "macos"))]
+const OPENER: &str = "xdg-open";
+
 /// Opens a GitHub page in the person's browser. Only web links: this is
 /// handed URLs that came back from GitHub, and nothing else should reach
-/// `open`, which would just as happily launch a file or an app.
+/// the opener, which would just as happily launch a file or an app.
 #[tauri::command(async)]
 pub fn open_url(url: String) -> Result<(), String> {
     if !is_web_link(&url) {
         return Err(format!("not a web link: {url}"));
     }
-    let status = Command::new("/usr/bin/open")
+    let status = Command::new(OPENER)
         .arg(&url)
         .status()
         .map_err(|e| format!("could not open {url}: {e}"))?;
     if status.success() {
         Ok(())
     } else {
-        Err(format!("could not open {url}: `open` exited with {status}"))
+        Err(format!("could not open {url}: `{OPENER}` exited with {status}"))
     }
 }
 

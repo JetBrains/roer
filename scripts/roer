@@ -37,6 +37,23 @@ CONF="$SCRIPT_DIR/roer-tmux.conf"
 tm() { tmux -L "$SOCKET" -f "$CONF" "$@"; }
 tm_exec() { exec tmux -L "$SOCKET" -f "$CONF" "$@"; }
 
+# Start the Roer app, or bring forward the one already running. On Linux
+# there is no LaunchServices to ask: the app binary is started directly, and
+# a second start is handed to the running instance by its single-instance
+# plugin, which focuses the window and exits. ROER_APP overrides it on either
+# system — a bundle path on macOS, an executable (an AppImage, say) on Linux.
+launch_app() {
+    if [ "$(uname -s)" = Darwin ]; then
+        open -a "${ROER_APP:-Roer}" 2>/dev/null || true
+        return
+    fi
+    app=${ROER_APP:-roer-app}
+    command -v "$app" >/dev/null 2>&1 || return 0
+    # Detached, so the app outlives this shell and never writes into the
+    # terminal the session is leaving.
+    nohup "$app" >/dev/null 2>&1 &
+}
+
 json_escape() { printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'; }
 
 # Distinguishes two directories that share a basename. cksum is POSIX and
@@ -351,7 +368,7 @@ EOF
     # checkout, where `tauri dev` builds a bare executable that LaunchServices
     # cannot address at all. Failure is not fatal: a running instance is
     # watching this directory either way, and it asks for attention itself.
-    open -a "${ROER_APP:-Roer}" 2>/dev/null || true
+    launch_app
 
     # Phase 1: wait for Roer to claim the record.
     waited=0

@@ -1,0 +1,15 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "mainBinaryName": "roer-app",
+  "bundle": {
+    "targets": ["deb", "rpm", "appimage"],
+    "linux": {
+      "deb": {
+        "depends": ["tmux"]
+      },
+      "rpm": {
+        "depends": ["tmux"]
+      }
+    }
+  }
+}
