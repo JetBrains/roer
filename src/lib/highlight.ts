@@ -20,7 +20,7 @@ import type { HighlighterCore, ThemedToken } from "@shikijs/types";
 
 import type { DiffLine, Hunk } from "./diff";
 import { LOADERS, type Lang } from "./lang";
-import { darcula, DEFAULT_FG } from "./theme-darcula";
+import { DEFAULT_FG, syntax, THEME_NAME } from "./theme-syntax";
 
 export type TokenKind = "plain" | "keyword" | "string" | "number" | "comment";
 
@@ -203,7 +203,7 @@ const arriving = new Map<Lang, Promise<void>>();
  */
 function highlighter(): Promise<HighlighterCore> {
   engine ??= createHighlighterCore({
-    themes: [darcula],
+    themes: [syntax],
     langs: [],
     // Oniguruma compiled to WebAssembly is the other option, and half a
     // megabyte of it. Native RegExp covers every grammar we carry.
@@ -280,7 +280,7 @@ export function highlight(hunks: Hunk[], lang: Lang): Colouring {
 
       const { tokens } = core.codeToTokens(lines.map((line) => line.text).join("\n"), {
         lang,
-        theme: "darcula",
+        theme: THEME_NAME,
       });
 
       let at = 0;
@@ -311,7 +311,7 @@ export function highlightText(text: string, lang: Lang): ThemedToken[][] {
   if (!core || !loaded.has(lang)) return [];
 
   const lines = text.split("\n");
-  const { tokens } = core.codeToTokens(text, { lang, theme: "darcula" });
+  const { tokens } = core.codeToTokens(text, { lang, theme: THEME_NAME });
 
   // Offsets index the whole document; a line is drawn against its own text.
   let at = 0;
