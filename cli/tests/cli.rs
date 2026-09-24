@@ -61,9 +61,21 @@ impl Env {
     }
 
     /// tmux on this test's server, directly, for arranging and inspecting.
+    ///
+    /// With the test's ROER_SOCKET and ROER_HOME: a server started here hands
+    /// them to everything it runs, M-h's `roer handoff` included, and without
+    /// them that roer would look up panes on the real `roer` server and hand
+    /// them to the real app.
     fn tmux(&self, args: &[&str]) -> String {
         let conf = concat!(env!("CARGO_MANIFEST_DIR"), "/../scripts/roer-tmux.conf");
-        let out = Command::new("tmux").args(["-L", &self.socket, "-f", conf]).args(args).output().unwrap();
+        let out = Command::new("tmux")
+            .args(["-L", &self.socket, "-f", conf])
+            .args(args)
+            .env("ROER_SOCKET", &self.socket)
+            .env("ROER_HOME", &self.home)
+            .env("ROER_APP", "/nonexistent/roer-test-app")
+            .output()
+            .unwrap();
         String::from_utf8_lossy(&out.stdout).trim_end().to_string()
     }
 
@@ -159,6 +171,12 @@ fn shim_name(dir: &Path) -> String {
     format!("{}-{}", dir.file_name().unwrap().to_string_lossy(), String::from_utf8_lossy(&out.stdout))
 }
 
+/// What M-h is bound to on this test's server. Filtered here: `list-keys`
+/// with a key argument prints nothing on some tmux versions.
+fn m_h(env: &Env) -> String {
+    env.tmux(&["list-keys", "-T", "root"]).lines().filter(|line| line.contains(" M-h ")).collect()
+}
+
 /// The pane of a detached session started on this test's server for the
 /// purpose, running `command`.
 fn pane(env: &Env, session: &str, command: &str) -> String {
@@ -194,7 +212,7 @@ fn app_opens_this_directorys_session_and_hands_it_over() {
     assert_eq!(row[3], "detached");
     assert_eq!(row[4], env.dir.to_string_lossy());
     let bin = std::fs::canonicalize(env!("CARGO_BIN_EXE_roer")).unwrap();
-    assert_eq!(env.tmux(&["show-options", "-gv", "@roer_bin"]), bin.to_string_lossy());
+    assert!(m_h(&env).contains(&*bin.to_string_lossy()), "M-h runs this binary");
 
     // A second `roer` is the same session, not another one.
     assert_eq!(code(&env.run(&[])), 0);
@@ -382,8 +400,13 @@ fn a_missing_config_is_reported() {
 /// test's own server. Returns once that server shows the session `wait_for`
 /// with a client attached.
 fn in_a_terminal(env: &Env, args: &[&str], wait_for: &str) {
+    in_a_terminal_with(env, Path::new(env!("CARGO_BIN_EXE_roer")), args, wait_for);
+}
+
+/// `in_a_terminal`, running a given copy of roer.
+fn in_a_terminal_with(env: &Env, bin: &Path, args: &[&str], wait_for: &str) {
     let outer = format!("{}-outer", env.socket);
-    let bin = env!("CARGO_BIN_EXE_roer");
+    let bin = bin.display();
     // env -u TMUX: the outer pane is itself inside tmux, and a client started
     // there refuses to nest.
     let command = format!(
@@ -419,7 +442,10 @@ fn shell_attaches_this_directorys_session_to_the_terminal() {
     let name = shim_name(&env.dir);
     in_a_terminal(&env, &["shell"], &name);
     let bin = std::fs::canonicalize(env!("CARGO_BIN_EXE_roer")).unwrap();
-    assert_eq!(env.tmux(&["show-options", "-gv", "@roer_bin"]), bin.to_string_lossy(), "announced on exec too");
+    assert!(
+        m_h(&env).contains(&*bin.to_string_lossy()),
+        "bound on exec too"
+    );
     kill_outer(&env);
 }
 
@@ -453,31 +479,31 @@ fn attach_takes_a_named_session_back() {
     kill_outer(&env);
 }
 
-/// M-h's command is pasted together by tmux and then read by sh, so the path
-/// it runs must arrive as one word whatever it contains. Taken from the
-/// config itself, expanded by tmux in a pane, and run by sh as run-shell does.
+/// M-h pressed for real, with roer installed somewhere whose path sh would
+/// expand or split: roer copied into such a directory, attached through by a
+/// real client, and the key sent through that client's key table.
 #[test]
-fn the_m_h_binding_calls_a_path_with_shell_characters_in_it() {
+fn m_h_hands_over_from_a_path_with_shell_characters_in_it() {
     let env = Env::new("quoting");
-    let odd = env.dir.join("we ird $HOME `touch pwned` \"q\"");
+    let app = FakeApp::start(&env, true);
+    let odd = env.dir.join("we ird $HOME `touch pwned` \"q\" #{host}");
     std::fs::create_dir_all(&odd).unwrap();
-    let marker = env.dir.join("called");
-    let script = odd.join("roer");
-    std::fs::write(&script, format!("#!/bin/sh\necho \"$@\" > '{}'\n", marker.display())).unwrap();
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let roer = odd.join("roer");
+    std::fs::copy(env!("CARGO_BIN_EXE_roer"), &roer).unwrap();
 
     let pane = pane(&env, "work", "sh");
-    env.tmux(&["set-option", "-t", "=work:", "@roer_bin", &script.to_string_lossy()]);
+    in_a_terminal_with(&env, &roer, &["attach", "work"], "work");
+    let client = env.tmux(&["list-clients", "-F", "#{client_name}"]);
+    // -K: through the client's key table, as a keypress, not into the pane.
+    env.tmux(&["send-keys", "-K", "-c", client.lines().next().unwrap(), "M-h"]);
 
-    // The binding as the config writes it: run-shell -b '<command>'.
-    let conf = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../scripts/roer-tmux.conf")).unwrap();
-    let line = conf.lines().find(|line| line.starts_with("bind -n M-h ")).unwrap();
-    let command = line.split_once("run-shell -b '").unwrap().1.strip_suffix('\'').unwrap();
-    let expanded = env.tmux(&["display-message", "-p", "-t", &pane, command]);
-
-    let status = Command::new("sh").arg("-c").arg(&expanded).current_dir(&env.dir).status().unwrap();
-    assert!(status.success(), "{expanded}");
-    assert_eq!(std::fs::read_to_string(&marker).unwrap(), format!("handoff --pane {pane}\n"));
-    assert!(!env.dir.join("pwned").exists(), "nothing in the path was run: {expanded}");
+    for _ in 0..100 {
+        if !app.seen().is_empty() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let seen = app.seen();
+    assert_eq!(seen.first().map(|r| r["args"].clone()), Some(serde_json::json!(["attach", pane])), "{}", m_h(&env));
+    assert!(!env.dir.join("pwned").exists(), "nothing in the path was run");
 }

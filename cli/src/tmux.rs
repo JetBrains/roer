@@ -17,13 +17,14 @@ pub fn socket() -> String {
 pub struct Tmux {
     socket: String,
     conf: PathBuf,
-    /// This binary, which the config's M-h binding runs; see `announce`.
-    bin: String,
+    /// What M-h runs: this binary, handing over the pane; see `announce`.
+    handoff: String,
 }
 
 impl Tmux {
     pub fn new(conf: PathBuf, bin: String) -> Self {
-        Tmux { socket: socket(), conf, bin }
+        let handoff = format!("{} handoff --pane #{{pane_id}}", sh_word(&bin).replace('#', "##"));
+        Tmux { socket: socket(), conf, handoff }
     }
 
     fn command(&self) -> Command {
@@ -73,28 +74,30 @@ impl Tmux {
     /// terminal and tmux. Returns only if tmux could not be started.
     ///
     /// `announce` rides along as a second command in the same invocation, so
-    /// whatever server this starts learns where the M-h binding should point.
+    /// whatever server this starts binds M-h to this binary.
     pub fn exec(&self, args: &[&str]) -> String {
         let mut tmux = self.command();
         tmux.args(args).args(self.announce_args());
         replace_with(tmux)
     }
 
-    /// Sets `@roer_bin`, the path the config's M-h binding runs, on a server
-    /// already started by `args` in the same invocation.
+    /// Binds M-h to this binary, on a server already started by `args` in
+    /// the same invocation.
     ///
-    /// Why not "next to the config": a checkout's binary lives in
-    /// `cli/target`, its config in `scripts/`, and the binding must reach the
-    /// binary that is actually in use rather than whichever one sits beside
-    /// the config file.
-    pub fn announce_args(&self) -> [&str; 5] {
-        [";", "set-option", "-g", "@roer_bin", &self.bin]
+    /// Why not the config's binding: a checkout's binary lives in
+    /// `cli/target`, its config in `scripts/`, and M-h must reach the binary
+    /// actually in use rather than whichever one sits beside the config file.
+    /// And roer quotes its own path rather than leaving it to `#{q:...}`,
+    /// whose escaping differs between tmux versions: 3.4 turns `$` into `\\$`,
+    /// which sh reads as a backslash and then an expansion.
+    pub fn announce_args(&self) -> [&str; 7] {
+        [";", "bind-key", "-n", "M-h", "run-shell", "-b", &self.handoff]
     }
 
     /// `announce` for a server this process did not start by exec.
     pub fn announce(&self) {
-        let [_, set, global, key, value] = self.announce_args();
-        self.ok(&[set, global, key, value]);
+        let [_, rest @ ..] = self.announce_args();
+        self.ok(&rest);
     }
 
     /// The pane of `session` that a client attaching to it would land on.
@@ -166,4 +169,28 @@ pub fn inside(args: &[&str]) -> Option<String> {
     out.status
         .success()
         .then(|| String::from_utf8_lossy(&out.stdout).trim_end_matches('\n').to_string())
+}
+
+/// `word` as one sh word, whatever is in it: single quotes, inside which sh
+/// expands nothing, with any single quote closed, escaped and reopened.
+fn sh_word(word: &str) -> String {
+    format!("'{}'", word.replace('\'', r"'\''"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sh_word;
+
+    #[test]
+    fn quotes_a_path_as_one_sh_word() {
+        assert_eq!(sh_word("/a b/roer"), "'/a b/roer'");
+        assert_eq!(sh_word("/it's/roer"), r"'/it'\''s/roer'");
+        let odd = "/we ird $HOME `id` \"q\" back\\slash 'x'/roer";
+        let out = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(format!("printf %s {}", sh_word(odd)))
+            .output()
+            .unwrap();
+        assert_eq!(String::from_utf8_lossy(&out.stdout), odd);
+    }
 }
