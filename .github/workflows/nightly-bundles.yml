@@ -1,0 +1,62 @@
+name: Nightly bundles
+
+# Packaging is slow — a Linux debug build plus deb, rpm and AppImage is a
+# quarter of an hour — and only matters for a release, so it runs here rather
+# than on every pull request. Nightly catches a packaging break within a day
+# of the commit that caused it; dispatch runs it on demand, e.g. before
+# tagging, or on a branch that touches tauri.*.conf.json.
+
+on:
+  schedule:
+    # 03:17 UTC: off the top of the hour, when scheduled runs queue longest.
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: nightly-bundles-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  linux-bundle:
+    name: Linux bundles
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # As in CI's Checks, plus `file`, which the AppImage tooling shells out to.
+      - name: Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev libssl-dev librsvg2-dev file
+
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: src-tauri -> target
+          key: linux-bundle
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+
+      # Debug, like `npm run assemble`: this proves tauri.linux.conf.json
+      # packages, and gives a build to try, without a release-profile compile
+      # on every pull request.
+      - name: Bundle
+        run: npx tauri build --debug --bundles deb,rpm,appimage
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: roer-linux
+          path: |
+            src-tauri/target/debug/bundle/deb/*.deb
+            src-tauri/target/debug/bundle/rpm/*.rpm
+            src-tauri/target/debug/bundle/appimage/*.AppImage
+          if-no-files-found: error
