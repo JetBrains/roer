@@ -28,6 +28,8 @@ const mocks = vi.hoisted(() => ({
   // The onEvent callback the component handed to spawnPty, so a test can
   // push PTY output through it.
   emit: { current: undefined as undefined | ((event: unknown) => void) },
+  // The last terminal made, so a test can see what it was told to look like.
+  terminal: { current: undefined as undefined | { options: { theme?: { background?: string } } } },
 }));
 
 // xterm.js measures real glyphs, which jsdom cannot do, so the terminal
@@ -36,6 +38,11 @@ vi.mock("@xterm/xterm", () => ({
   Terminal: class {
     cols = 80;
     rows = 24;
+    options: { theme?: unknown };
+    constructor(options: { theme?: unknown }) {
+      this.options = { ...options };
+      mocks.terminal.current = this as never;
+    }
     loadAddon = vi.fn();
     open = vi.fn();
     write = vi.fn();
@@ -164,6 +171,8 @@ beforeEach(() => {
   mocks.handoffHandlers.length = 0;
   mocks.changedHandlers.length = 0;
   mocks.emit.current = undefined;
+  mocks.terminal.current = undefined;
+  delete document.documentElement.dataset.theme;
   // The sidebar's collapsed state persists here across renders on purpose;
   // it must not persist across tests too.
   localStorage.clear();
@@ -183,6 +192,26 @@ describe("App", () => {
     fireEvent.click(screen.getByRole("button", { name: "Show sidebar" }));
     expect(screen.getByLabelText("Workspaces")).not.toHaveClass("collapsed");
     expect(localStorage.getItem("roer:sidebar-collapsed")).toBe("0");
+  });
+
+  it("steps the theme from the title bar, remembering it and repainting the terminal", async () => {
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /new session/i }));
+    expect(mocks.terminal.current?.options.theme?.background).toBe("#1e1e1e");
+
+    fireEvent.click(screen.getByRole("button", { name: "Theme: system" }));
+    expect(document.documentElement.dataset.theme).toBe("light");
+    expect(localStorage.getItem("roer:theme")).toBe("light");
+    expect(mocks.terminal.current?.options.theme?.background).toBe("#ffffff");
+
+    fireEvent.click(screen.getByRole("button", { name: "Theme: light" }));
+    expect(document.documentElement.dataset.theme).toBe("dark");
+    expect(mocks.terminal.current?.options.theme?.background).toBe("#1e1e1e");
+
+    // Back to the system, which jsdom cannot ask, so dark.
+    fireEvent.click(screen.getByRole("button", { name: "Theme: dark" }));
+    expect(screen.getByRole("button", { name: "Theme: system" })).toBeInTheDocument();
+    expect(localStorage.getItem("roer:theme")).toBe("system");
   });
 
   it("opens on the launcher rather than a terminal", async () => {
