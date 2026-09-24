@@ -54,11 +54,7 @@ pub struct Handoff {
 
 /// Mirrors the shim's own resolution, `ROER_HOME` included.
 pub fn handoffs_dir() -> PathBuf {
-    let home = match std::env::var("ROER_HOME") {
-        Ok(dir) if !dir.is_empty() => PathBuf::from(dir),
-        _ => PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".roer"),
-    };
-    home.join("handoffs")
+    crate::history::roer_home().join("handoffs")
 }
 
 fn is_record(path: &Path) -> bool {

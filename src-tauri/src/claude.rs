@@ -42,7 +42,7 @@ pub struct ClaudeThread {
 fn claude_home() -> PathBuf {
     match std::env::var("CLAUDE_CONFIG_DIR") {
         Ok(dir) if !dir.is_empty() => PathBuf::from(dir),
-        _ => PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".claude"),
+        _ => crate::roer::home().unwrap_or_default().join(".claude"),
     }
 }
 
@@ -85,11 +85,24 @@ fn live_session_ids(home: &Path) -> HashSet<String> {
     ids
 }
 
+#[cfg(not(windows))]
 fn process_alive(pid: u64) -> bool {
-    std::process::Command::new("ps")
+    crate::process::command("ps")
         .args(["-p", &pid.to_string()])
         .output()
         .map(|out| out.status.success())
+        .unwrap_or(false)
+}
+
+/// Windows has no `ps`. `tasklist` filtered to one pid prints its row, or
+/// an "INFO: No tasks" line — and exits 0 either way, so the answer is in
+/// what it prints: the pid as a quoted CSV field.
+#[cfg(windows)]
+fn process_alive(pid: u64) -> bool {
+    crate::process::command("tasklist")
+        .args(["/FI", &format!("PID eq {pid}"), "/NH", "/FO", "CSV"])
+        .output()
+        .map(|out| String::from_utf8_lossy(&out.stdout).contains(&format!("\"{pid}\"")))
         .unwrap_or(false)
 }
 

@@ -1,10 +1,11 @@
 name: Nightly bundles
 
 # Packaging is slow — a Linux debug build plus deb, rpm and AppImage is a
-# quarter of an hour — and only matters for a release, so it runs here rather
-# than on every pull request. Nightly catches a packaging break within a day
-# of the commit that caused it; dispatch runs it on demand, e.g. before
-# tagging, or on a branch that touches tauri.*.conf.json.
+# quarter of an hour, Windows' nsis and msi about as long — and only matters
+# for a release, so it runs here rather than on every pull request. Nightly
+# catches a packaging break within a day of the commit that caused it;
+# dispatch runs it on demand, e.g. before tagging, or on a branch that touches
+# tauri.*.conf.json.
 
 on:
   schedule:
@@ -59,4 +60,40 @@ jobs:
             src-tauri/target/debug/bundle/deb/*.deb
             src-tauri/target/debug/bundle/rpm/*.rpm
             src-tauri/target/debug/bundle/appimage/*.AppImage
+          if-no-files-found: error
+
+  windows-bundle:
+    name: Windows bundles
+    runs-on: windows-latest
+    # Allowed to fail, like the Windows checks in CI: Windows runs no
+    # sessions yet, so a broken installer blocks nothing.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: src-tauri -> target
+          key: windows-bundle
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+
+      # Debug, as for Linux: proves tauri.windows.conf.json packages, and
+      # gives an installer to try.
+      - name: Bundle
+        run: npx tauri build --debug --bundles nsis,msi
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: roer-windows
+          path: |
+            src-tauri/target/debug/bundle/nsis/*.exe
+            src-tauri/target/debug/bundle/msi/*.msi
           if-no-files-found: error

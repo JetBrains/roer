@@ -73,7 +73,7 @@ pub struct Changes {
 /// type, and the optional index refresh takes a lock that a terminal session
 /// in the same repo may be holding.
 pub(crate) fn command(dir: &str, args: &[&str]) -> Command {
-    let mut git = Command::new("git");
+    let mut git = crate::process::command("git");
     git.arg("-C")
         .arg(dir)
         // Without this git escapes any non-ASCII path, and the escaped name
@@ -935,6 +935,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)] // Creating a symlink on Windows needs developer mode or admin.
     fn reads_the_names_git_actually_gave_the_files() {
         let dir = scratch("odd");
         let at = dir.to_string_lossy().to_string();
@@ -1069,6 +1070,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)] // Creating a symlink on Windows needs developer mode or admin.
     fn gives_no_count_where_there_is_none_to_give() {
         let dir = scratch("nocount");
 
