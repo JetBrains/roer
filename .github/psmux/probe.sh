@@ -55,15 +55,31 @@ check "config: M-d detach"                      'M-d'  m list-keys
 check "config: status off"                      off    m show-options -g status
 check "config: history-limit 100000"            100000 m show-options -g history-limit
 check "config: prefix None"                     None   m show-options -g prefix
-check "socket_path"                             probe  m display-message -p '#{socket_path}'
-check "config_files names our config"           roer-tmux m display-message -p '#{config_files}'
+# In a pane's context, as M-h's run-shell expands them.
+check "socket_path (-t pane)"                   probe  m display-message -p -t "$PANE" '#{socket_path}'
+echo "      socket_path -t pane=$(m display-message -p -t "$PANE" '#{socket_path}' 2>&1)  no target=$(m display-message -p '#{socket_path}' 2>&1)"
+check "config_files (-t pane)"                  roer-tmux m display-message -p -t "$PANE" '#{config_files}'
+check "M-h format expands @roer_bin (-t pane)"  'roer.exe' m display-message -p -t "$PANE" '#{?@roer_bin,#{@roer_bin},fallback}'
 echo "      M-h: $(m list-keys 2>&1 | grep M-h)"
-echo "      socket_path=$(m display-message -p '#{socket_path}' 2>&1)"
-check "M-h format expands @roer_bin"            'roer.exe' m display-message -p '#{?@roer_bin,#{@roer_bin},fallback}'
+check "the chained session exists"              s3     m list-sessions -F '#{session_name}'
+echo "      @chained=[$(m show-options -gv @chained 2>&1)] sessions=[$(m list-sessions -F '#{session_name}' 2>&1 | tr '\n' ' ')]"
+# Which shell run-shell hands M-h's command to: roer's binding quotes a path
+# in double quotes and passes %N, which cmd, pwsh and sh all take differently.
+check "run-shell runs a quoted exe with args"   hello  m run-shell -t "$PANE" '"C:\Windows\System32\cmd.exe" /c echo hello'
+echo "      run-shell 'echo %COMSPEC% \$PSVersionTable \$0': $(m run-shell -t "$PANE" 'echo %COMSPEC% $PSVersionTable $0' 2>&1 | head -2 | tr '\n' '|')"
 # TMUX and TMUX_PANE, as roer inside a pane would see them.
-m send-keys -t "$PANE" 'echo "T=$env:TMUX P=$env:TMUX_PANE"' Enter; sleep 2
-check "pane sees TMUX"                          'T=' m capture-pane -p -t "$PANE"
-echo "      $(m capture-pane -p -t "$PANE" 2>&1 | grep 'T=' | tail -1)"
+m send-keys -t "$PANE" 'Write-Output "T=[$env:TMUX] P=[$env:TMUX_PANE]"' Enter; sleep 3
+check "pane sees TMUX"                          'T=[' m capture-pane -p -t "$PANE"
+echo "      pane shows: $(m capture-pane -p -t "$PANE" 2>&1 | grep -v '^\s*$' | tail -4 | tr '\n' '|')"
+# Pane titles: roer lists what the program set with OSC 2.
+m set-option -g allow-set-title on >/dev/null 2>&1
+m send-keys -t "$PANE" 'Write-Host -NoNewline "$([char]27)]2;roer-title$([char]7)"' Enter; sleep 2
+check "pane_title from OSC 2 (allow-set-title)"  roer-title m display-message -p -t "$PANE" '#{pane_title}'
+echo "      pane_title=[$(m display-message -p -t "$PANE" '#{pane_title}' 2>&1)] host=[$(m display-message -p -t "$PANE" '#{host}' 2>&1)]"
+# A prefix that is effectively none, if None itself is not accepted.
+m set-option -g prefix None >/dev/null 2>&1; echo "      set prefix None: $(m show-options -g prefix 2>&1)"
+m set-option -g prefix F24 >/dev/null 2>&1;  echo "      set prefix F24: $(m show-options -g prefix 2>&1)"
+m unbind-key C-b >/dev/null 2>&1;            echo "      after unbind C-b: $(m list-keys 2>&1 | grep -c 'C-b') bindings mention C-b"
 check "kill-server"                             -      m kill-server
 
 # Without -f, for comparison: does psmux need it, or read ~/.tmux.conf?
