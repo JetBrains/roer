@@ -71,7 +71,7 @@ impl Tmux {
             .output()
             .ok()
             .filter(|out| out.status.success())
-            .map(|out| String::from_utf8_lossy(&out.stdout).trim_end_matches('\n').to_string())
+            .map(|out| lines(&out.stdout))
             .unwrap_or_default()
     }
 
@@ -109,11 +109,18 @@ impl Tmux {
     /// On psmux this is also where the prefix goes out of the way: it refuses
     /// the config's `prefix None`, and a prefix left on C-b would take that key
     /// from every program in the session.
+    ///
+    /// psmux also runs `run-shell` through PowerShell, where the config's
+    /// `"path" handoff ...` is a parse error, so there roer binds M-h itself,
+    /// calling this binary with `&`.
     pub fn announce(&self, target: &str) {
         self.ok(&["set-option", "-t", target, "@roer_bin", &self.bin]);
         if is_psmux(&self.program) {
             self.ok(&["set-option", "-g", "prefix", "M-F12"]);
             self.ok(&["unbind-key", "C-b"]);
+            let quoted = self.bin.replace('\'', "''");
+            let handoff = format!("& '{quoted}' handoff --pane #{{pane_id}}");
+            self.ok(&["bind-key", "-n", "M-h", "run-shell", "-b", &handoff]);
         }
     }
 
@@ -214,7 +221,24 @@ fn replace_with(mut command: Command, program: &str) -> String {
 /// Asks the tmux this process is inside, via `$TMUX` rather than our socket.
 fn inside(args: &[&str]) -> Option<String> {
     let out = Command::new("tmux").args(args).stderr(Stdio::null()).output().ok()?;
-    out.status
-        .success()
-        .then(|| String::from_utf8_lossy(&out.stdout).trim_end_matches('\n').to_string())
+    out.status.success().then(|| lines(&out.stdout))
+}
+
+/// A command's output as lines joined by `\n`, without the last one's end.
+/// psmux ends its lines with `\r\n`, and a stray `\r` would make `%1\r` a
+/// different pane from `%1` and trail every column `roer list` prints.
+fn lines(stdout: &[u8]) -> String {
+    String::from_utf8_lossy(stdout).replace("\r\n", "\n").trim_end_matches('\n').to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::lines;
+
+    #[test]
+    fn output_lines_lose_crlf() {
+        assert_eq!(lines(b"%1\r\n"), "%1");
+        assert_eq!(lines(b"a\tb\r\nc\r\n"), "a\tb\nc");
+        assert_eq!(lines(b"%1\n"), "%1");
+    }
 }

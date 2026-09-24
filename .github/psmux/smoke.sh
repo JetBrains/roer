@@ -41,10 +41,13 @@ out=$("$ROER" handoff --pane "$PANE" 2>&1); code=$?
 [ $code -eq 0 ] && ok "roer handoff --pane exits 0" || bad "roer handoff --pane (got $code)" "$out"
 has "  ...its record names the pane" "$(seen)" "\"$PANE\""
 
-# What M-h runs: the binding's format, expanded in the pane, via run-shell.
+# What M-h runs: the binding roer set, with the pane filled in, via run-shell.
 rm -f "$RUNNER_TEMP"/seen/*.json
-BIN=$(m display-message -p -t "$PANE" '#{?@roer_bin,#{@roer_bin},fallback}')
-rs=$(m run-shell -t "$PANE" "\"$BIN\" handoff --pane $PANE" 2>&1); echo "      run-shell exit=$? out=[$(printf '%s' "$rs" | tr '\n' '|')]"
+MH=$(m list-keys 2>&1 | grep 'M-h'); echo "      M-h: $MH"
+has "roer bound M-h for PowerShell" "$MH" "& '"
+CMD=$(printf '%s' "$MH" | sed -e "s/.*run-shell -b //" -e "s/^[\"']//" -e "s/[\"']\$//" -e "s/#{pane_id}/$PANE/")
+echo "      runs: $CMD"
+rs=$(m run-shell -t "$PANE" "$CMD" 2>&1); echo "      run-shell exit=$? out=[$(printf '%s' "$rs" | tr '\n' '|')]"
 echo "      run-shell env: [$(m run-shell -t "$PANE" 'cmd /c echo ROER_SOCKET=%ROER_SOCKET% ROER_HOME=%ROER_HOME%' 2>&1 | tr '\n' '|')]"
 sleep 3
 has "M-h's command hands the pane over" "$(seen)" "\"$PANE\""
@@ -73,6 +76,7 @@ has "  ...and tags the record with it" "$(cat "$HOME_U"/plugin-ui/*.json 2>/dev/
 # shell: roer attaches in a terminal, here a pane of a second psmux server.
 psmux -L smoke-outer new-session -d "pwsh -NoLogo -NoProfile -Command \"\$env:TMUX=\$null; \$env:TMUX_PANE=\$null; \$env:ROER_SOCKET='smoke'; \$env:ROER_HOME='$ROER_HOME'; Set-Location '$(cygpath -w "$PROJECT")'; & '$ROER' shell\"" >/dev/null 2>&1
 sleep 5
+echo "      outer pane: $(psmux -L smoke-outer capture-pane -p 2>&1 | grep -v '^\s*$' | tail -6 | tr '\n' '|')"
 has "roer shell attached a client" "$(m list-sessions -F '#{session_name} #{session_attached}')" " 1"
 echo "      sessions: $(m list-sessions -F '#{session_name} #{session_attached}' 2>&1 | tr '\n' '|')"
 
