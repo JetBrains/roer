@@ -13,6 +13,7 @@ dist/
 
 # Rust / Tauri
 src-tauri/target/
+cli/target/
 src-tauri/gen/
 
 # OS

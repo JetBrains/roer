@@ -1,0 +1,18 @@
+[package]
+name = "roer-cli"
+# No version of its own: it ships inside a release and is that release's
+# version. A second copy here would be one scripts/check-version never reads.
+description = "The roer command: the session contract between terminals and the Roer app"
+edition = "2021"
+publish = false
+
+# `roer`, not `roer-cli`: it is what people type, what the app runs and what
+# the tmux config binds M-h to.
+[[bin]]
+name = "roer"
+path = "src/main.rs"
+
+# Deliberately small. This is a command a terminal runs on every keypress of
+# M-h, and it builds on any runner without the app's GTK/WebKit stack.
+[dependencies]
+serde_json = "1.0.151"

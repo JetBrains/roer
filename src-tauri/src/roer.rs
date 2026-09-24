@@ -236,11 +236,11 @@ mod tests {
     #[test]
     fn prefers_an_explicit_binary_over_everything() {
         let picked = resolve(
-            Some("/checkout/scripts/roer".to_string()),
+            Some("/checkout/cli/target/debug/roer".to_string()),
             true,
             Some(PathBuf::from("/home/someone")),
         );
-        assert_eq!(picked, "/checkout/scripts/roer");
+        assert_eq!(picked, "/checkout/cli/target/debug/roer");
     }
 
     #[test]

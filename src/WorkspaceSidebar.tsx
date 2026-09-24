@@ -110,9 +110,10 @@ export function WorkspaceSidebar({
 
       {status && !status.available ? (
         <p className="error">
-          The <code>roer</code> shim was not found (looked for <code>{status.bin}</code>). Link it
-          with <code>ln -s $PWD/scripts/roer ~/.local/bin/roer</code>, or point{" "}
-          <code>ROER_BIN</code> at it.
+          The <code>roer</code> command was not found (looked for <code>{status.bin}</code>).
+          Install it from a release&apos;s CLI tarball into <code>~/.local/bin</code>, or point{" "}
+          <code>ROER_BIN</code> at a build: <code>cargo build --manifest-path cli/Cargo.toml</code>{" "}
+          makes <code>cli/target/debug/roer</code>.
         </p>
       ) : null}
     </nav>

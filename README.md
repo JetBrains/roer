@@ -12,15 +12,19 @@ Latest build: [v0.3.0](https://github.com/JetBrains/roer/releases/tag/v0.3.0).
 3. `brew install tmux`.
 4. Unpack the CLI tarball and symlink `roer` onto your `PATH`.
 
-The quarantine step is required — the app is killed on first launch without it. Use the tarball, not the loose binary: release assets carry no mode bits, and `roer` must be executable.
+The quarantine step is required — the app is killed on first launch without it. Keep `roer` and `roer-tmux.conf` together in the directory you unpack them into: `roer` finds its config beside itself.
+
+### From a checkout
+
+`cargo build --manifest-path cli/Cargo.toml` builds `roer` into `cli/target/debug/roer`; a debug build finds `scripts/roer-tmux.conf` on its own. `export ROER_BIN=$PWD/cli/target/debug/roer` points `npm run tauri dev` at it.
 
 ### Linux
 
-Linux builds are not published to releases yet; the `roer-linux` artifact of a [Nightly bundles](../../actions/workflows/nightly-bundles.yml) run has a `.deb`, `.rpm` and `.AppImage`.
+The Linux app is not published to releases yet (the `roer` command is); the `roer-linux` artifact of a [Nightly bundles](../../actions/workflows/nightly-bundles.yml) run has a `.deb`, `.rpm` and `.AppImage`.
 
 1. Install the `.deb` or `.rpm` (it pulls in `tmux`), or install `tmux` yourself and use the `.AppImage`.
-2. Unpack the CLI tarball and symlink `roer` onto your `PATH`, as on macOS.
-3. Using the AppImage: `export ROER_APP=/path/to/Roer.AppImage`, so `roer handoff` can start the app. The packages install it as `roer-app`, which the shim finds on its own.
+2. Unpack `roer-cli-<version>-linux-x86_64.tar.gz` and symlink `roer` onto your `PATH`, as on macOS.
+3. Using the AppImage: `export ROER_APP=/path/to/Roer.AppImage`, so `roer handoff` can start the app. The packages install it as `roer-app`, which `roer` finds on its own.
 
 Shortcuts use `Ctrl+Shift` instead of `⌘` (`Ctrl+Shift+T` new session, `Ctrl+Shift+O` Go to File) and `Alt+←`/`Alt+→` to step through commits, leaving plain `Ctrl` keys to the terminal.
 

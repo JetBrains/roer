@@ -7,7 +7,8 @@ name: Release
 #   validate-version  ubuntu-latest   tag agrees with the version records
 #   bundle-macos      macos-26        universal Roer.app.tar.gz
 #   codesign          sre-eqx-kata    Developer ID + hardened runtime
-#   package           macos-26        verify, hdiutil .dmg, shim, checksums
+#   cli-linux         ubuntu-latest   the roer command for Linux
+#   package           macos-26        verify, hdiutil .dmg, roer CLI, checksums
 #   publish           ubuntu-latest   draft prerelease
 #
 # Until the CodeSign service account lands, set no CODESIGN_ENABLED variable and
@@ -84,6 +85,45 @@ jobs:
       # gating it on `release` would only stop it running from a branch. Only
       # `codesign` and `publish` touch credentials.
 
+  # The roer command on Linux. It is a small crate with no Tauri in it, so this
+  # is a minute of cargo rather than a bundle; the macOS one is built in
+  # `package`, beside the .dmg it ships with.
+  cli-linux:
+    name: CLI (Linux)
+    needs: validate-version
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.validate-version.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: cli -> target
+          key: cli-linux
+
+      - name: Build and stage
+        run: |
+          set -euo pipefail
+          cargo build --release --locked --manifest-path cli/Cargo.toml
+          mkdir -p shim dist
+          install -m 755 cli/target/release/roer shim/roer
+          install -m 644 scripts/roer-tmux.conf shim/roer-tmux.conf
+          # A release build has no checkout to fall back on, so this proves it
+          # finds the config beside itself, as it will once installed.
+          shim/roer help > /dev/null
+          tar -czf "dist/roer-cli-${VERSION}-linux-x86_64.tar.gz" -C shim roer roer-tmux.conf
+          tar -tvzf "dist/roer-cli-${VERSION}-linux-x86_64.tar.gz"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: cli-linux
+          path: dist/*.tar.gz
+          compression-level: 0
+          if-no-files-found: error
+
   codesign:
     name: CodeSign
     needs: bundle-macos
@@ -147,13 +187,14 @@ jobs:
 
   package:
     name: Package
-    needs: [validate-version, bundle-macos, codesign]
+    needs: [validate-version, bundle-macos, codesign, cli-linux]
     # codesign is skipped, not failed, when CODESIGN_ENABLED is unset — so this
     # job must run on 'skipped' but not on 'failure'. This `if` is the whole of
     # the "works before signing access lands" mechanism.
     if: |
       always()
       && needs.bundle-macos.result == 'success'
+      && needs.cli-linux.result == 'success'
       && needs.codesign.result != 'failure'
       && needs.codesign.result != 'cancelled'
     runs-on: macos-26
@@ -245,26 +286,46 @@ jobs:
           hdiutil create -volname Roer -srcfolder stage -ov -format UDZO \
             "dist/Roer_${VERSION}_universal.dmg"
 
-      - name: Stage the CLI shim
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Build and stage the roer command
         run: |
           set -euo pipefail
+          # One universal binary, like the app: both slices built on this arm64
+          # runner and joined with lipo.
+          for target in aarch64-apple-darwin x86_64-apple-darwin; do
+            cargo build --release --locked --manifest-path cli/Cargo.toml --target "$target"
+          done
           mkdir -p shim
-          # The pair must land in one directory and roer must be executable:
-          # scripts/roer hard-exits without $SCRIPT_DIR/roer-tmux.conf, and
-          # roer-tmux.conf binds M-h to "$(dirname "#{config_files}")/roer".
-          install -m 755 scripts/roer shim/roer
+          lipo -create -output shim/roer \
+            cli/target/aarch64-apple-darwin/release/roer \
+            cli/target/x86_64-apple-darwin/release/roer
+          chmod 755 shim/roer
+          ARCHS="$(lipo -archs shim/roer)"
+          [ "$ARCHS" = "x86_64 arm64" ] || [ "$ARCHS" = "arm64 x86_64" ] || {
+            echo "roer is not universal: $ARCHS" >&2
+            exit 1
+          }
+          # The pair must land in one directory: roer looks for
+          # roer-tmux.conf beside itself, and a release build has no checkout
+          # to fall back on. `roer help` succeeding is the proof.
           install -m 644 scripts/roer-tmux.conf shim/roer-tmux.conf
+          shim/roer help > /dev/null
           tar -czf "dist/roer-cli-${VERSION}.tar.gz" -C shim roer roer-tmux.conf
-          # Also attached loose, for reading before you run them. Release assets
-          # carry no mode bits, hence the chmod note in the release notes.
-          cp shim/roer shim/roer-tmux.conf dist/
           tar -tvzf "dist/roer-cli-${VERSION}.tar.gz"
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: cli-linux
+          path: dist
 
       - name: Checksums
         working-directory: dist
         run: |
           set -euo pipefail
-          shasum -a 256 -- *.dmg *.tar.gz roer roer-tmux.conf > SHA256SUMS.txt
+          shasum -a 256 -- *.dmg *.tar.gz > SHA256SUMS.txt
           cat SHA256SUMS.txt
 
       - name: Release notes
@@ -306,7 +367,7 @@ jobs:
     #
     # The tag check keeps a workflow_dispatch run from publishing: a dispatch
     # exercises the whole pipeline — build, cache, tarball, codesign skip,
-    # hdiutil, shim, checksums — and creates no release and no tag.
+    # hdiutil, CLI, checksums — and creates no release and no tag.
     if: |
       !cancelled()
       && needs.validate-version.result == 'success'
@@ -371,8 +432,7 @@ jobs:
             --notes-file notes.md \
             "Roer_${VERSION}_universal.dmg" \
             "roer-cli-${VERSION}.tar.gz" \
-            roer \
-            roer-tmux.conf \
+            "roer-cli-${VERSION}-linux-x86_64.tar.gz" \
             SHA256SUMS.txt
           echo "Draft release created. Review, smoke-test, then publish it."
 
