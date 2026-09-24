@@ -1,8 +1,10 @@
 @import "tailwindcss";
 
-/* This app has one theme, always dark — there is no `.dark` class to flip,
-   so shadcn/ui's `dark:` variants are inert and every token below is just
-   this theme, not a light default. */
+/* Two themes, dark and light, as two sets of the tokens below. Dark is the
+   default on `:root`; `data-theme="light"` on <html> (set by `lib/theme`)
+   swaps in the light one. Rules below only ever name tokens, never colours,
+   so a theme is just this block. shadcn/ui's `dark:` variants stay inert —
+   there is no `.dark` class — since the tokens already carry the theme. */
 @custom-variant dark (&:is(.dark *));
 
 :root {
@@ -11,14 +13,29 @@
   --roer-panel: #252526;
   --roer-border: #3a3a3c;
   --roer-muted: #8c8c92;
+  --roer-disabled: #5a5a5f;
   --roer-accent: #4ea1ff;
   --roer-warn: #f0a04b;
+  --roer-merged: #a371f7;
+  --roer-plus: #6fbf73;
+  --roer-minus: #d6636b;
 
   /* A row's own surface, one step up from the page behind it — without this
      a row's border is the only thing separating it from its neighbours, and
      on a near-black background that reads as no separation at all. */
   --roer-row: #2e2e33;
   --roer-row-hover: #3a3a41;
+
+  /* Controls, and the states a list or a segmented control can be in. */
+  --roer-control: #333336;
+  --roer-control-border: var(--roer-border);
+  --roer-hover: #2e2e32;
+  --roer-selected: #2c3a4a;
+  --roer-tree-selected: #233558;
+  --roer-tree-selected-ring: #2e4d89;
+  --roer-subtle-hover: #ffffff1a;
+  --roer-scrim: #00000059;
+  --roer-shadow: #00000073;
 
   /* JetBrains New UI dark, for the diff: an IntelliJ diff's own colours. */
   --ide-editor: #191a1c;
@@ -28,21 +45,39 @@
   --ide-text: #d1d3d9;
   --ide-gutter: #4c4f56;
   --ide-accent: #3871e1;
+  --ide-kind: #33353b;
+  --ide-gap: #00000026;
   --ide-add: #57965c26;
   --ide-del: #f57e841f;
   --ide-add-ink: #57965c4d;
   --ide-del-ink: #f57e8440;
   --ide-add-sign: #57965c;
   --ide-del-sign: #f57e84;
+  /* The chosen row of a popup list, and what sits on it. */
+  --ide-hit: var(--ide-accent);
+  --ide-hit-text: var(--ide-text);
+  --ide-hit-dir: #d5e1f5;
+  --ide-hit-match: #fff;
   --ide-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* Darcula. `lib/theme-syntax` colours grammar tokens with these. */
   --t-keyword: #cf8e6d;
   --t-string: #6aab73;
   --t-number: #2aacb8;
   --t-comment: #7a7e85;
+  --t-function: #56a8f5;
+  --t-field: #c77dbb;
+  --t-annotation: #b3ae60;
+  --t-escape: #cf8e6d;
+  --t-tag: #e8bf6a;
+  --t-attribute: #bababa;
+  --t-invalid: #f57e84;
+  --t-heading: #56a8f5;
+  --t-link: #548af7;
   color-scheme: dark;
 
   /* shadcn/ui's semantic tokens, aliased onto this app's own palette above
-     rather than shadcn's default one — one theme, not two to keep in sync. */
+     rather than shadcn's default one, so they follow the theme with it. */
   --radius: 0.5rem;
   --background: var(--roer-bg);
   --foreground: var(--roer-fg);
@@ -56,12 +91,80 @@
   --secondary-foreground: var(--roer-fg);
   --muted: var(--roer-panel);
   --muted-foreground: var(--roer-muted);
-  --accent: #333336;
+  --accent: var(--roer-control);
   --accent-foreground: var(--roer-fg);
   --destructive: var(--roer-warn);
   --border: var(--roer-border);
   --input: var(--roer-border);
   --ring: var(--roer-accent);
+}
+
+/* JetBrains New UI light (Int UI Light): white editor, #F7F8FA tool windows,
+   the #EBECF0/#DFE1E5 greys for lines and controls, #3574F0 blue, #D4E2FF
+   selection — and IntelliJ Light's syntax colours in the editor. */
+:root[data-theme="light"] {
+  --roer-bg: #ffffff;
+  --roer-fg: #000000;
+  --roer-panel: #f7f8fa;
+  --roer-border: #ebecf0;
+  --roer-muted: #6c707e;
+  --roer-disabled: #a8adbd;
+  --roer-accent: #3574f0;
+  --roer-warn: #c25d00;
+  --roer-merged: #8250df;
+  --roer-plus: #208a3c;
+  --roer-minus: #db3b4b;
+
+  --roer-row: #ffffff;
+  --roer-row-hover: #ebecf0;
+
+  --roer-control: #ffffff;
+  --roer-control-border: #dfe1e5;
+  --roer-hover: #ebecf0;
+  --roer-selected: #d4e2ff;
+  --roer-tree-selected: #d4e2ff;
+  --roer-tree-selected-ring: #d4e2ff;
+  --roer-subtle-hover: #0000000f;
+  --roer-scrim: #0000001f;
+  --roer-shadow: #0000002e;
+
+  --ide-editor: #ffffff;
+  --ide-row: #f5f8fe;
+  --ide-head: #f7f8fa;
+  --ide-border: #ebecf0;
+  --ide-text: #080808;
+  --ide-gutter: #aeb3c2;
+  --ide-accent: #3574f0;
+  --ide-kind: #ebecf0;
+  --ide-gap: #0000000a;
+  --ide-add: #55a76a26;
+  --ide-del: #e5575726;
+  --ide-add-ink: #55a76a59;
+  --ide-del-ink: #e557574d;
+  --ide-add-sign: #208a3c;
+  --ide-del-sign: #db3b4b;
+  --ide-hit: #d4e2ff;
+  --ide-hit-text: #000000;
+  --ide-hit-dir: #494b57;
+  --ide-hit-match: #3574f0;
+
+  --t-keyword: #0033b3;
+  --t-string: #067d17;
+  --t-number: #1750eb;
+  --t-comment: #8c8c8c;
+  --t-function: #00627a;
+  --t-field: #871094;
+  --t-annotation: #9e880d;
+  --t-escape: #0037a6;
+  --t-tag: #0033b3;
+  --t-attribute: #174ad4;
+  --t-invalid: #f50000;
+  --t-heading: #0033b3;
+  --t-link: #006dcc;
+  color-scheme: light;
+
+  --primary-foreground: #ffffff;
+  --accent: var(--roer-selected);
 }
 
 @theme inline {
@@ -229,8 +332,13 @@ code {
   background: var(--roer-border);
 }
 
-.generative-toggle {
+/* Sits at the far end of the title bar, just before the panel toggle. */
+.theme-toggle {
   margin-left: auto;
+}
+
+.theme-toggle,
+.generative-toggle {
   margin-right: 8px;
   padding: 4px;
   display: flex;
@@ -240,6 +348,7 @@ code {
   border-radius: 4px;
 }
 
+.theme-toggle:hover,
 .generative-toggle:hover {
   color: var(--roer-fg);
   background: var(--roer-row-hover);
@@ -343,7 +452,7 @@ button.tab.on {
 }
 
 button.tab:disabled {
-  color: #5a5a5f;
+  color: var(--roer-disabled);
   cursor: default;
   border-color: transparent;
 }
@@ -524,8 +633,8 @@ button {
   font: inherit;
   font-size: 13px;
   color: var(--roer-fg);
-  background: #333336;
-  border: 1px solid var(--roer-border);
+  background: var(--roer-control);
+  border: 1px solid var(--roer-control-border);
   border-radius: 6px;
   padding: 7px 12px;
   cursor: pointer;
@@ -548,7 +657,7 @@ button.primary {
 }
 
 button.primary:hover {
-  background: #2c3a4a;
+  background: var(--roer-selected);
 }
 
 .hotkey {
@@ -622,7 +731,7 @@ button.row.wrap .muted {
 }
 
 button.row.active {
-  background: #2c3a4a;
+  background: var(--roer-selected);
   border-color: var(--roer-accent);
 }
 
@@ -730,11 +839,11 @@ button.row.active {
 }
 
 .seg button:hover {
-  background: #2e2e32;
+  background: var(--roer-hover);
 }
 
 .seg button.on {
-  background: #2c3a4a;
+  background: var(--roer-selected);
   color: var(--roer-fg);
 }
 
@@ -824,13 +933,13 @@ button.tree-row {
 }
 
 button.tree-row:hover {
-  background: #2e2e32;
+  background: var(--roer-hover);
   border-color: transparent;
 }
 
 button.tree-row.selected {
-  background: #233558;
-  box-shadow: inset 0 0 0 1px #2e4d89;
+  background: var(--roer-tree-selected);
+  box-shadow: inset 0 0 0 1px var(--roer-tree-selected-ring);
 }
 
 .tree-row .caret {
@@ -871,11 +980,11 @@ button.tree-row.selected {
 }
 
 .plus {
-  color: #6fbf73;
+  color: var(--roer-plus);
 }
 
 .minus {
-  color: #d6636b;
+  color: var(--roer-minus);
 }
 
 /* The diff surface, IntelliJ's style */
@@ -910,7 +1019,7 @@ button.tree-row.selected {
 .diff-head .kind {
   padding: 0 6px;
   border-radius: 4px;
-  background: #33353b;
+  background: var(--ide-kind);
   color: var(--ide-text);
   font-size: 10px;
   line-height: 16px;
@@ -1066,10 +1175,10 @@ button.tree-row.selected {
 
 /* Nothing on this side of an edit — not an empty line, an absent one. */
 .side.gap {
-  background: #00000026;
+  background: var(--ide-gap);
 }
 
-/* Editor token colours (Darcula), and the edited run inside a changed line. */
+/* Editor token colours, and the edited run inside a changed line. */
 .t-keyword {
   color: var(--t-keyword);
 }
@@ -1127,7 +1236,7 @@ button.tree-row.selected {
   /* Near the top, where IntelliJ puts it: the list grows downwards and the
      input stays where the eye already is. */
   padding-top: 12vh;
-  background: #00000059;
+  background: var(--roer-scrim);
 }
 
 .popup {
@@ -1139,7 +1248,7 @@ button.tree-row.selected {
   background: var(--ide-head);
   border: 1px solid var(--ide-border);
   border-radius: 10px;
-  box-shadow: 0 12px 32px #00000073;
+  box-shadow: 0 12px 32px var(--roer-shadow);
 }
 
 .popup-input {
@@ -1189,7 +1298,8 @@ button.tree-row.selected {
 }
 
 .hit.on {
-  background: var(--ide-accent);
+  color: var(--ide-hit-text);
+  background: var(--ide-hit);
 }
 
 /* The file name leads, and the directory trails it dimmed — IntelliJ's row,
@@ -1206,7 +1316,7 @@ button.tree-row.selected {
 }
 
 .hit.on .hit-dir {
-  color: #d5e1f5;
+  color: var(--ide-hit-dir);
 }
 
 /* The characters the query matched. */
@@ -1216,7 +1326,7 @@ button.tree-row.selected {
 }
 
 .hit.on b {
-  color: #fff;
+  color: var(--ide-hit-match);
 }
 
 /* A file tab: its label and its close button inside one tab-shaped box. */
@@ -1257,7 +1367,7 @@ button.tab-x {
 }
 
 button.tab-x:hover {
-  background: #ffffff1a;
+  background: var(--roer-subtle-hover);
   color: var(--roer-fg);
 }
 
@@ -1766,7 +1876,7 @@ button.gen-button.primary {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(0, 0, 0, 0.45);
+  background: var(--roer-scrim);
   z-index: 100;
 }
 
@@ -1913,8 +2023,8 @@ button.link.pr-title:hover {
 }
 
 .pr-state.merged {
-  color: #a371f7;
-  border-color: #a371f7;
+  color: var(--roer-merged);
+  border-color: var(--roer-merged);
 }
 
 .pr-create {

@@ -4,6 +4,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 
 import { closePty, decodeOutput, resizePty, spawnPty, writePty } from "./lib/pty";
+import { currentTheme, onThemeChange, terminalTheme } from "./lib/theme";
 
 /**
  * How long output has to keep flowing before the session counts as attached.
@@ -55,7 +56,10 @@ export function TerminalView({ args, cwd, onAttached, onExit }: TerminalViewProp
       cursorBlink: true,
       fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
       fontSize: 13,
-      theme: { background: "#1e1e1e", foreground: "#d4d4d4" },
+      theme: terminalTheme(currentTheme()),
+    });
+    const unfollowTheme = onThemeChange((theme) => {
+      terminal.options.theme = terminalTheme(theme);
     });
     const fitAddon = new FitAddon();
     terminal.loadAddon(fitAddon);
@@ -149,6 +153,7 @@ export function TerminalView({ args, cwd, onAttached, onExit }: TerminalViewProp
       clearTimeout(starting);
       if (attaching !== null) clearTimeout(attaching);
       observer.disconnect();
+      unfollowTheme();
       dataSub.dispose();
       resizeSub.dispose();
       // Ends Roer's client only. The session behind it keeps running with no
