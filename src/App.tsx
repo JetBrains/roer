@@ -1,4 +1,12 @@
-import { PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen } from "lucide-react";
+import {
+  Monitor,
+  Moon,
+  PanelLeftClose,
+  PanelLeftOpen,
+  PanelRightClose,
+  PanelRightOpen,
+  Sun,
+} from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { DiffBrowserView } from "./DiffBrowserView";
@@ -14,6 +22,7 @@ import { TerminalView } from "./TerminalView";
 import { WorkspaceSidebar } from "./WorkspaceSidebar";
 import { onFilesChanged, type FilesChanged } from "./lib/files";
 import { isGoToFile, isMac, isNewSession, useHotkey } from "./lib/keys";
+import { nextChoice, useThemeChoice } from "./lib/theme";
 import { useSessionBrowser } from "./lib/useSessionBrowser";
 import {
   activate,
@@ -111,6 +120,7 @@ export function App() {
       sidebarCollapsed ? "1" : "0",
     );
   }, [sidebarCollapsed]);
+  const [themeChoice, setThemeChoice] = useThemeChoice();
   // Unlike `sidebarCollapsed`, this is never persisted: the panel is a side
   // column now, not a tab, so it should only ever claim space when there is
   // something to show, freshly each launch — a live message expands it
@@ -527,6 +537,22 @@ export function App() {
             <PanelLeftOpen size={15} />
           ) : (
             <PanelLeftClose size={15} />
+          )}
+        </button>
+
+        <button
+          type="button"
+          className="theme-toggle"
+          aria-label={`Theme: ${themeChoice}`}
+          title={`Theme: ${themeChoice === "system" ? "match system" : themeChoice}`}
+          onClick={() => setThemeChoice(nextChoice(themeChoice))}
+        >
+          {themeChoice === "system" ? (
+            <Monitor size={15} />
+          ) : themeChoice === "light" ? (
+            <Sun size={15} />
+          ) : (
+            <Moon size={15} />
           )}
         </button>
 
