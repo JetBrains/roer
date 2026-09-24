@@ -37,22 +37,42 @@ fn resolve(explicit: Option<String>, on_path: bool, home: Option<PathBuf>) -> St
         .unwrap_or_else(|| "roer".to_string())
 }
 
+/// The person's home directory: `$HOME` on Unix, the profile directory
+/// (`USERPROFILE`) on Windows, which has no `HOME` of its own.
 pub fn home() -> Option<PathBuf> {
-    std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .filter(|h| !h.as_os_str().is_empty())
+    // Deprecated for a Windows quirk fixed in Rust 1.85, and since undeprecated.
+    #[allow(deprecated)]
+    let home = std::env::home_dir();
+    home.filter(|h| !h.as_os_str().is_empty())
 }
 
 /// Whether a bare name resolves through `PATH`, without running it.
 pub(crate) fn on_path(name: &str) -> bool {
-    std::env::var_os("PATH")
-        .map(|path| {
-            std::env::split_paths(&path).any(|dir| {
-                let candidate = dir.join(name);
-                candidate.is_file() && is_executable(&candidate)
-            })
+    let Some(path) = std::env::var_os("PATH") else {
+        return false;
+    };
+    let pathext = if cfg!(windows) {
+        Some(std::env::var("PATHEXT").unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".to_string()))
+    } else {
+        None
+    };
+    let names = file_names(name, pathext.as_deref());
+    std::env::split_paths(&path).any(|dir| {
+        names.iter().any(|file| {
+            let candidate = dir.join(file);
+            candidate.is_file() && is_executable(&candidate)
         })
-        .unwrap_or(false)
+    })
+}
+
+/// The file names a program called `name` may have on disk. Windows finds
+/// one by extension — `gh` is `gh.exe` — trying each `PATHEXT` lists in turn.
+fn file_names(name: &str, pathext: Option<&str>) -> Vec<String> {
+    let mut names = vec![name.to_string()];
+    if let Some(pathext) = pathext {
+        names.extend(pathext.split(';').filter(|ext| !ext.is_empty()).map(|ext| format!("{name}{ext}")));
+    }
+    names
 }
 
 #[cfg(unix)]
@@ -102,7 +122,7 @@ pub struct Status {
 #[tauri::command(async)]
 pub fn roer_status() -> Status {
     let bin = bin();
-    let available = std::process::Command::new(&bin)
+    let available = crate::process::command(&bin)
         .arg("help")
         .output()
         .is_ok();
@@ -123,7 +143,7 @@ pub fn roer_send(pane: String, text: String) -> Result<(), String> {
     use std::io::Write;
     use std::process::Stdio;
 
-    let mut child = std::process::Command::new(bin())
+    let mut child = crate::process::command(bin())
         .args(["send", "--pane", &pane])
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
@@ -164,7 +184,7 @@ pub fn roer_past_sessions() -> Result<Vec<PastSession>, String> {
 }
 
 fn live_sessions() -> Result<Vec<SessionInfo>, String> {
-    let out = std::process::Command::new(bin())
+    let out = crate::process::command(bin())
         .arg("list")
         .output()
         .map_err(|e| format!("could not run `{} list`: {e}", bin()))?;
@@ -210,7 +230,7 @@ fn command_name(command: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::resolve;
+    use super::{file_names, resolve};
     use std::path::PathBuf;
 
     #[test]
@@ -315,5 +335,11 @@ mod tests {
     fn an_older_shim_without_a_title_column_parses_with_an_empty_title() {
         let got = parse_line("id\ts\t%0\tattached\t/tmp\tclaude").expect("row");
         assert_eq!(got.title, "");
+    }
+
+    #[test]
+    fn a_program_is_found_by_each_extension_pathext_lists() {
+        assert_eq!(file_names("gh", None), ["gh"]);
+        assert_eq!(file_names("gh", Some(".COM;.EXE;")), ["gh", "gh.COM", "gh.EXE"]);
     }
 }

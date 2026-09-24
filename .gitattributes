@@ -1,0 +1,3 @@
+# The shim and its tmux config run under sh and tmux, which reject CRLF; keep
+# them LF on a Windows checkout too.
+scripts/* text eol=lf
