@@ -1008,14 +1008,8 @@ mod tests {
         let at = dir.to_string_lossy().to_string();
         init(&at);
 
-        // git resolves symlinks in its answer (macOS's `/tmp` is one, into
-        // `/private/tmp`), so the expectation is canonicalized too.
-        let canonical = std::fs::canonicalize(&dir)
-            .unwrap()
-            .to_string_lossy()
-            .to_string();
         let from_sub = dir.join("src").to_string_lossy().to_string();
-        assert_eq!(git_root(from_sub), Some(canonical));
+        assert_eq!(git_root(from_sub), Some(crate::testing::canonical(&dir)));
 
         std::fs::remove_dir_all(&dir).unwrap();
     }

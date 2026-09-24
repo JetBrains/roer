@@ -166,7 +166,7 @@ pub fn project_delete(id: String) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::{init, scratch};
+    use crate::testing::{canonical, init, scratch};
 
     fn temp_file() -> PathBuf {
         static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -174,11 +174,12 @@ mod tests {
         std::env::temp_dir().join(format!("roer-projects-{}-{n}.json", std::process::id()))
     }
 
-    /// A repository whose canonical path this test can assert against.
+    /// A repository, by the path git reports for it, which is what a project
+    /// stores and so what a test asserts against.
     fn repo(name: &str) -> String {
         let dir = scratch(name);
         init(&dir.to_string_lossy());
-        std::fs::canonicalize(&dir).unwrap().to_string_lossy().to_string()
+        canonical(&dir)
     }
 
     #[test]
