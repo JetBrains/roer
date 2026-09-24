@@ -14,6 +14,20 @@ pub(crate) fn scratch(name: &str) -> PathBuf {
     dir
 }
 
+/// `dir` as `git rev-parse --show-toplevel` reports it, for a test to assert
+/// against: symlinks resolved (macOS's `/tmp` is one, into `/private/tmp`)
+/// and, on Windows, without the `\\?\` prefix `canonicalize` adds and with
+/// forward slashes, as git writes it.
+pub(crate) fn canonical(dir: &std::path::Path) -> String {
+    let full = std::fs::canonicalize(dir).unwrap().to_string_lossy().to_string();
+    if cfg!(windows) {
+        let bare = full.strip_prefix(r"\\?\").unwrap_or(&full);
+        bare.replace('\\', "/")
+    } else {
+        full
+    }
+}
+
 /// Runs git and fails the test with git's own complaint if it refuses.
 pub(crate) fn must(at: &str, args: &[&str]) {
     let out = crate::git::run(at, args).unwrap();
