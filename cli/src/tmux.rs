@@ -21,11 +21,22 @@ pub fn socket() -> String {
 }
 
 /// The engine: tmux, or psmux on Windows, unless `ROER_MUX` names another.
-pub fn program() -> String {
-    std::env::var("ROER_MUX")
-        .ok()
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| if cfg!(windows) { "psmux" } else { "tmux" }.into())
+///
+/// On Windows a `psmux.exe` beside this binary comes first, so the two can
+/// ship as a pair: a psmux pane starts with the machine's PATH, not the one
+/// of the shell that installed it, and roer runs inside those panes too.
+pub fn program(bin: &Path) -> String {
+    if let Some(program) = std::env::var("ROER_MUX").ok().filter(|s| !s.is_empty()) {
+        return program;
+    }
+    if cfg!(windows) {
+        let beside = bin.with_file_name("psmux.exe");
+        if beside.is_file() {
+            return beside.to_string_lossy().into_owned();
+        }
+        return "psmux".into();
+    }
+    "tmux".into()
 }
 
 /// Whether the engine is psmux, which needs the few workarounds below.
@@ -43,7 +54,7 @@ pub struct Tmux {
 
 impl Tmux {
     pub fn new(conf: PathBuf, bin: String) -> Self {
-        Tmux { program: program(), socket: socket(), conf, bin }
+        Tmux { program: program(Path::new(&bin)), socket: socket(), conf, bin }
     }
 
     fn command(&self) -> Command {

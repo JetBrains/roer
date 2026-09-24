@@ -47,8 +47,12 @@ jobs:
           workspaces: cli -> target
           key: psmux-spike
 
+      # psmux beside roer, as the Windows CLI would ship: panes start with the
+      # machine's PATH, which does not have this job's psmux on it.
       - name: Build roer
-        run: cargo build --manifest-path cli/Cargo.toml
+        run: |
+          cargo build --manifest-path cli/Cargo.toml
+          cp "$RUNNER_TEMP/psmux/psmux.exe" cli/target/debug/
 
       - name: Smoke-test roer on psmux
         run: bash .github/psmux/smoke.sh
