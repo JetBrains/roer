@@ -23,3 +23,6 @@ src-tauri/gen/
 # itself — a real project using the feature commits its own bundles on
 # purpose, but roer's own checkout shouldn't pick up test data as noise.
 .roer/
+
+# The Windows CLI staged for the installer (.github/windows/stage-cli.sh).
+src-tauri/windows-cli/

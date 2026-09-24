@@ -187,10 +187,16 @@ fn launch_app() {
         return;
     }
     if cfg!(windows) {
-        // The installer puts the app under the user's local app data. Started
-        // directly: a Windows child outlives its parent anyway, and a second
-        // start is handed to the running instance like on Linux.
-        let app = app.map(PathBuf::from).or_else(|| {
+        // The installer puts roer in the app's own folder, as `roer\roer.exe`,
+        // so the app is one level up wherever it was installed; a roer from
+        // the separate CLI zip falls back to the per-user install location.
+        // Started directly: a Windows child outlives its parent anyway, and a
+        // second start is handed to the running instance like on Linux.
+        let beside = std::env::current_exe()
+            .ok()
+            .and_then(|exe| Some(exe.parent()?.parent()?.join("roer-app.exe")))
+            .filter(|app| app.is_file());
+        let app = app.map(PathBuf::from).or(beside).or_else(|| {
             std::env::var_os("LOCALAPPDATA").map(|dir| PathBuf::from(dir).join("Roer").join("roer-app.exe"))
         });
         if let Some(app) = app.filter(|app| app.is_file()) {

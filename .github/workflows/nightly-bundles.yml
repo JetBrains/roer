@@ -90,19 +90,17 @@ jobs:
 
       - run: npm ci
 
-      # Debug, as for Linux: proves tauri.windows.conf.json packages, and
-      # gives an installer to try.
-      - name: Bundle
-        run: npx tauri build --debug --bundles nsis,msi
+      # The installers carry roer and psmux beside the app, as a release's do.
+      - name: Stage the roer command
+        run: bash .github/windows/prepare-installer.sh
 
-      # The app alone runs no sessions: roer and the psmux it drives come as a
-      # zip beside the installers, as a release ships them.
-      - name: The roer command
-        run: |
-          set -euo pipefail
-          cargo build --release --locked --manifest-path cli/Cargo.toml
-          bash .github/windows/fetch-psmux.sh "$RUNNER_TEMP/psmux"
-          bash .github/windows/package-cli.sh cli/target/release/roer.exe "$RUNNER_TEMP/psmux" roer-cli-windows-x64.zip
+      # Debug, as for Linux: proves the Windows config packages, and gives an
+      # installer to try.
+      - name: Bundle
+        run: npx tauri build --debug --bundles nsis,msi --config src-tauri/tauri.windows-cli.conf.json
+
+      - name: The roer command as a zip
+        run: bash .github/windows/package-cli.sh cli/target/release/roer.exe "$RUNNER_TEMP/psmux" roer-cli-windows-x64.zip
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

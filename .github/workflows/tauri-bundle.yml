@@ -35,6 +35,11 @@ on:
       artifact_paths:
         required: true
         type: string
+      prepare_script:
+        description: A script to run from the repo root before building, e.g. to stage resources the tauri config ships.
+        required: false
+        type: string
+        default: ""
       retention_days:
         required: false
         type: number
@@ -76,6 +81,13 @@ jobs:
           cache: npm
 
       - run: npm ci
+
+      - name: Prepare
+        if: inputs.prepare_script != ''
+        shell: bash
+        env:
+          PREPARE_SCRIPT: ${{ inputs.prepare_script }}
+        run: bash "$PREPARE_SCRIPT"
 
       # No tagName/releaseName, so tauri-action builds and creates nothing.
       # beforeBuildCommand (npm run build) produces dist/, which
