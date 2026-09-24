@@ -30,7 +30,13 @@ Shortcuts use `Ctrl+Shift` instead of `⌘` (`Ctrl+Shift+T` new session, `Ctrl+S
 
 ### Windows
 
-Not usable yet: the app builds and opens (the `roer-windows` artifact of a [Nightly bundles](../../actions/workflows/nightly-bundles.yml) run has an installer), but sessions need tmux, which Windows does not have. Shortcuts are as on Linux.
+A preview, natively in PowerShell (no WSL). Sessions run on [psmux](https://github.com/psmux/psmux), a tmux reimplementation on ConPTY, which ships inside the CLI zip. The builds are unsigned, so SmartScreen warns on install.
+
+1. Run `Roer_<version>_x64-setup.exe` (or the `.msi`).
+2. Unzip `roer-cli-<version>-windows-x64.zip` into a folder of its own, e.g. `%USERPROFILE%\.roer\bin`, and add that folder to your user `PATH`. Keep the four files together: `roer.exe` finds `roer-tmux.conf` and `psmux.exe` beside itself.
+3. In a new terminal: `roer shell`, then `M-h` to hand the session to the app.
+
+Shortcuts are as on Linux. Not there yet on Windows: session titles (psmux reports the console's title rather than the one Claude Code sets), and `C-b` is taken off psmux's prefix but not yet checked with real keypresses. Between releases, the `roer-windows` artifact of a [Nightly bundles](../../actions/workflows/nightly-bundles.yml) run has the installers and the CLI zip.
 
 ## Screenshots
 

@@ -444,7 +444,7 @@ fn shell_attaches_this_directorys_session_to_the_terminal() {
     let bin = std::fs::canonicalize(env!("CARGO_BIN_EXE_roer")).unwrap();
     assert!(
         m_h(&env).contains(&*bin.to_string_lossy()),
-        "bound on exec too"
+        "bound before the attach too"
     );
     kill_outer(&env);
 }

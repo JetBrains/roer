@@ -96,6 +96,37 @@ jobs:
       - name: Shell syntax
         run: sh -n scripts/check-version
 
+  # roer on native Windows: its session engine there is psmux, a tmux
+  # reimplementation on ConPTY, and this drives the real roer.exe against it
+  # the way the app and a terminal do. The Unix counterpart is the CLI tests
+  # in Checks.
+  windows-cli:
+    name: Windows CLI on psmux
+    runs-on: windows-latest
+    # Reported, not gating, like the Windows checks: Windows is a preview.
+    continue-on-error: true
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: cli -> target
+          key: windows-cli
+
+      # psmux beside roer.exe, as the Windows CLI ships them.
+      - name: Build roer and fetch psmux
+        run: |
+          cargo build --locked --manifest-path cli/Cargo.toml
+          bash .github/windows/fetch-psmux.sh cli/target/debug
+
+      - name: Smoke-test roer on psmux
+        run: bash .github/windows/smoke.sh cli/target/debug
+
   workflows:
     name: Workflows
     runs-on: ubuntu-latest
@@ -140,7 +171,7 @@ jobs:
 
   check:
     name: Full gate
-    needs: [checks, workflows]
+    needs: [checks, windows-cli, workflows]
     if: always()
     runs-on: ubuntu-latest
     steps:
