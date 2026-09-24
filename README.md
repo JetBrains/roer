@@ -16,7 +16,7 @@ The quarantine step is required — the app is killed on first launch without it
 
 ### Linux
 
-Linux builds are not published to releases yet; the `roer-linux` artifact of a CI run has a `.deb`, `.rpm` and `.AppImage`.
+Linux builds are not published to releases yet; the `roer-linux` artifact of a [Nightly bundles](../../actions/workflows/nightly-bundles.yml) run has a `.deb`, `.rpm` and `.AppImage`.
 
 1. Install the `.deb` or `.rpm` (it pulls in `tmux`), or install `tmux` yourself and use the `.AppImage`.
 2. Unpack the CLI tarball and symlink `roer` onto your `PATH`, as on macOS.
