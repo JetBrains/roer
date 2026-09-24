@@ -452,3 +452,32 @@ fn attach_takes_a_named_session_back() {
     in_a_terminal(&env, &["attach", "held"], "held");
     kill_outer(&env);
 }
+
+/// M-h's command is pasted together by tmux and then read by sh, so the path
+/// it runs must arrive as one word whatever it contains. Taken from the
+/// config itself, expanded by tmux in a pane, and run by sh as run-shell does.
+#[test]
+fn the_m_h_binding_calls_a_path_with_shell_characters_in_it() {
+    let env = Env::new("quoting");
+    let odd = env.dir.join("we ird $HOME `touch pwned` \"q\"");
+    std::fs::create_dir_all(&odd).unwrap();
+    let marker = env.dir.join("called");
+    let script = odd.join("roer");
+    std::fs::write(&script, format!("#!/bin/sh\necho \"$@\" > '{}'\n", marker.display())).unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let pane = pane(&env, "work", "sh");
+    env.tmux(&["set-option", "-t", "=work:", "@roer_bin", &script.to_string_lossy()]);
+
+    // The binding as the config writes it: run-shell -b '<command>'.
+    let conf = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../scripts/roer-tmux.conf")).unwrap();
+    let line = conf.lines().find(|line| line.starts_with("bind -n M-h ")).unwrap();
+    let command = line.split_once("run-shell -b '").unwrap().1.strip_suffix('\'').unwrap();
+    let expanded = env.tmux(&["display-message", "-p", "-t", &pane, command]);
+
+    let status = Command::new("sh").arg("-c").arg(&expanded).current_dir(&env.dir).status().unwrap();
+    assert!(status.success(), "{expanded}");
+    assert_eq!(std::fs::read_to_string(&marker).unwrap(), format!("handoff --pane {pane}\n"));
+    assert!(!env.dir.join("pwned").exists(), "nothing in the path was run: {expanded}");
+}
