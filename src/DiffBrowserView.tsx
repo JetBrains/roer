@@ -14,7 +14,7 @@ import {
   type Changes,
   type Commit,
 } from "./lib/git";
-import { isNextCommit, isPrevCommit, useHotkey } from "./lib/keys";
+import { isNextCommit, isPrevCommit, shortcutLabel, useHotkey } from "./lib/keys";
 import { resolveDir } from "./lib/session";
 
 export interface DiffBrowserViewProps {
@@ -276,7 +276,7 @@ export function DiffBrowserView({ cwd, pane, active, changed }: DiffBrowserViewP
     return `${commit.subject} — ${commit.short} by ${commit.author}, ${when(commit.date)}`;
   }, [isLocalSelected, localChanges, commit]);
 
-  // `Cmd+Left`/`Cmd+Right` step through the whole list — local changes, when
+  // `Cmd+Left`/`Cmd+Right` (`Alt` off macOS) step through the whole list — local changes, when
   // it's there, followed by commits — the same way the Prev/Next buttons do.
   // Gated on `active` in the match itself, not just the handler:
   // this view stays mounted on other tabs, and a match that ignored `active`
@@ -331,11 +331,11 @@ export function DiffBrowserView({ cwd, pane, active, changed }: DiffBrowserViewP
             <button
               type="button"
               aria-label="Previous commit"
-              title="Previous commit (⌘←)"
+              title={`Previous commit (${shortcutLabel.prevCommit()})`}
               disabled={index <= 0}
               onClick={() => setIndex((i) => Math.max(0, i - 1))}
             >
-              ⌘←
+              {shortcutLabel.prevCommit()}
             </button>
             {isLocalSelected ? (
               <span className="badge here">Local changes</span>
@@ -347,11 +347,11 @@ export function DiffBrowserView({ cwd, pane, active, changed }: DiffBrowserViewP
             <button
               type="button"
               aria-label="Next commit"
-              title="Next commit (⌘→)"
+              title={`Next commit (${shortcutLabel.nextCommit()})`}
               disabled={index >= count - 1}
               onClick={() => setIndex((i) => Math.min(count - 1, i + 1))}
             >
-              ⌘→
+              {shortcutLabel.nextCommit()}
             </button>
           </div>
         ) : null}

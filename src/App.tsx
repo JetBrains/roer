@@ -13,7 +13,7 @@ import { SessionBrowser, type OpenRequest } from "./SessionBrowser";
 import { TerminalView } from "./TerminalView";
 import { WorkspaceSidebar } from "./WorkspaceSidebar";
 import { onFilesChanged, type FilesChanged } from "./lib/files";
-import { isGoToFile, isNewSession, useHotkey } from "./lib/keys";
+import { isGoToFile, isMac, isNewSession, useHotkey } from "./lib/keys";
 import { useSessionBrowser } from "./lib/useSessionBrowser";
 import {
   activate,
@@ -478,7 +478,7 @@ export function App() {
     onOpen: show,
   });
 
-  // Cmd+T for a new session, the same key a browser binds to a new tab. Read
+  // Cmd+T (Ctrl+Shift+T off macOS) for a new session, the same key a browser binds to a new tab. Read
   // through a ref for the same reason as Go to File: the listener is
   // registered once, so it must not close over a stale `openNew`.
   const openNewRef = useRef(browser.openNew);
@@ -513,8 +513,9 @@ export function App() {
     <div className="app-frame">
       {/* macOS draws its native traffic lights over this; a button placed
           inside a drag region stays clickable since only the exact element
-          carrying the attribute drags the window. */}
-      <div className="titlebar" data-tauri-drag-region="">
+          carrying the attribute drags the window. Elsewhere the system draws
+          its own title bar above it, and nothing needs clearing. */}
+      <div className={isMac() ? "titlebar mac" : "titlebar"} data-tauri-drag-region="">
         <button
           type="button"
           className="sidebar-toggle"

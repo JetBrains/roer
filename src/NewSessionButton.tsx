@@ -6,6 +6,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { shortcutLabel } from "./lib/keys";
 import type { Project } from "./lib/projects";
 import type { SessionBrowserState } from "./lib/useSessionBrowser";
 
@@ -61,10 +62,10 @@ export function NewSessionButton({
         <button
           type="button"
           className="primary new-session"
-          title="New session (⌘T)"
+          title={`New session (${shortcutLabel.newSession()})`}
           onClick={openNew}
         >
-          New session <span className="hotkey">⌘T</span>
+          New session <span className="hotkey">{shortcutLabel.newSession()}</span>
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
