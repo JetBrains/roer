@@ -36,12 +36,17 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # What Tauri links against on Linux: WebKitGTK for the webview, and the
-      # rest of its GTK stack. macOS has all of it in the system.
+      # rest of its GTK stack. macOS has all of it in the system. tmux is for
+      # the CLI tests, which drive a real server.
       - name: Linux build dependencies
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev libssl-dev librsvg2-dev
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev libssl-dev librsvg2-dev tmux
+
+      - name: tmux, for the CLI tests
+        if: runner.os == 'macOS'
+        run: command -v tmux || brew install tmux
 
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
 
@@ -49,7 +54,9 @@ jobs:
         with:
           # No Cargo.toml at the repo root, so the action's default `. -> target`
           # finds no workspace and caches nothing.
-          workspaces: src-tauri -> target
+          workspaces: |
+            src-tauri -> target
+            cli -> target
           # Distinct from the release key: this job builds the `test` profile,
           # release builds `release`. Sharing one key makes them evict each other.
           key: checks
@@ -80,9 +87,14 @@ jobs:
       - name: Rust tests
         run: cargo test --manifest-path src-tauri/Cargo.toml
 
-      # The shim is a shipped artifact with no compiler behind it.
+      # The `roer` command, against a real tmux on a socket of its own. On
+      # Windows only the unit tests exist: there is no tmux to drive.
+      - name: CLI tests
+        run: cargo test --manifest-path cli/Cargo.toml
+
+      # The release guard is shell with no compiler behind it.
       - name: Shell syntax
-        run: sh -n scripts/roer && sh -n scripts/check-version
+        run: sh -n scripts/check-version
 
   workflows:
     name: Workflows

@@ -36,19 +36,17 @@ ln -sf ~/.roer/bin/roer ~/.local/bin/roer
 roer help
 ```
 
-Take the tarball rather than the loose files: `tar` preserves the executable bit
-and keeps `roer` and `roer-tmux.conf` in one directory, and `curl` does not set
-the quarantine flag a browser download would. The two files find each other by
-directory, so they cannot be split up — `roer help` succeeding is what proves
-`roer-tmux.conf` was found beside the shim.
+`tar` keeps `roer` and `roer-tmux.conf` in one directory, and `curl` does not
+set the quarantine flag a browser download would. `roer` looks for
+`roer-tmux.conf` beside itself, so the two cannot be split up — `roer help`
+succeeding is what proves the config was found.
 
 `~/.local/bin` is not just about `PATH`. An app launched from Finder inherits
-only `/usr/bin:/bin:/usr/sbin:/sbin`, so Roer looks for the shim at
+only `/usr/bin:/bin:/usr/sbin:/sbin`, so Roer looks for `roer` at
 `~/.local/bin/roer` and `~/bin/roer` when it is not on the inherited `PATH`.
 
-The loose `roer` and `roer-tmux.conf` are attached for reading. Release assets
-carry no mode bits, so if you install those instead, `chmod 755 roer` yourself —
-otherwise `M-h` fails at the point where `roer-tmux.conf` invokes the shim.
+On Linux, take `roer-cli-__VERSION__-linux-x86_64.tar.gz` instead; the steps
+are the same.
 
 ## Verify the downloads
 

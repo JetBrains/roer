@@ -6,7 +6,7 @@ name: Tauri Bundle
 #
 # Adding a platform is a new caller in release.yml, not a change here. Before
 # one can be added, the app needs work first:
-#   linux   — an activation path to replace `open -a` in scripts/roer
+#   linux   — a caller that installs WebKitGTK first (see Nightly bundles)
 #   windows — a ConPTY session engine: tmux needs POSIX ptys and unix sockets,
 #             and only builds under Cygwin/MSYS2/WSL, which breaks roer's
 #             "the same shell you are working in" premise
