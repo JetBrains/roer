@@ -200,7 +200,7 @@ impl Roer {
         // Already inside a roer session: the session to open is this one, and
         // letting go of it is the handoff's job. Being inside somebody else's
         // tmux is not this case and falls through.
-        if tmux::inside_roer().is_ok() {
+        if self.tmux.inside_roer().is_ok() {
             return self.handoff(&[]);
         }
         let name = name.map_or_else(|| session_name(&self.cwd), str::to_string);
@@ -208,12 +208,9 @@ impl Roer {
         // Created detached: this terminal must not become a client, because
         // the app is about to be one and a session only ever has the one.
         if !self.tmux.has_session(&name) {
-            let status = self.tmux.run(&["new-session", "-d", "-s", &name, "-c", &self.cwd])?;
-            if !status.success() {
-                return Err(Fail::new(1, ""));
-            }
+            self.create_detached(&name, None)?;
         }
-        self.tmux.announce();
+        self.tmux.announce_session(&name);
         self.ensure_id(&name);
         let pane = self.tmux.active_pane(&name);
         if pane.is_empty() {
@@ -229,10 +226,39 @@ impl Roer {
 
     fn shell(&self, name: Option<&str>) -> Outcome {
         let name = name.map_or_else(|| session_name(&self.cwd), str::to_string);
-        // No shell-command argument: tmux falls back to default-shell as a
-        // login shell. -A attaches when the session exists, -D evicts the
-        // other client.
-        Err(Fail::new(1, self.tmux.exec(&["new-session", "-A", "-D", "-s", &name, "-c", &self.cwd])))
+        // What `new-session -A -D` does, spelled out so the announce can go in
+        // between: create the session if it is not running, then attach and
+        // evict whichever client holds it.
+        if !self.tmux.has_session(&name) {
+            self.create_detached(&name, None)?;
+        }
+        self.attach_session(&name, true)
+    }
+
+    /// Starts a session with no client. With no command tmux runs its
+    /// default-shell as a login shell.
+    fn create_detached(&self, name: &str, command: Option<&str>) -> Outcome {
+        let mut args = vec!["new-session", "-d", "-s", name, "-c", &self.cwd];
+        args.extend(command);
+        if self.tmux.run(&args)?.success() {
+            Ok(())
+        } else {
+            Err(Fail::new(1, ""))
+        }
+    }
+
+    /// Becomes the client of a session: announces this binary to it first,
+    /// since once tmux has this process there is no running anything after.
+    /// `evict` detaches whoever held it.
+    fn attach_session(&self, name: &str, evict: bool) -> Outcome {
+        self.tmux.announce_session(name);
+        let target = format!("={name}");
+        let mut args = vec!["attach"];
+        if evict {
+            args.push("-d");
+        }
+        args.extend(["-t", &target]);
+        Err(Fail::new(1, self.tmux.exec(&args)))
     }
 
     /// Always a fresh session, which is what a launcher means by "new":
@@ -251,18 +277,14 @@ impl Roer {
         let base = args.first().map_or_else(|| session_name(&self.cwd), |name| (*name).to_string());
         let name = self.free_name(&base);
 
+        // Created detached so the keys can go in before anyone attaches; the
+        // shell reads them once it is up. The name is free, so this is always
+        // a new session, never a surprise attach to an old one.
+        self.create_detached(&name, None)?;
         if let Some(agent) = agent {
-            // Created detached so the keys can go in before anyone attaches;
-            // the shell reads them once it is up.
-            let status = self.tmux.run(&["new-session", "-d", "-s", &name, "-c", &self.cwd])?;
-            if !status.success() {
-                return Err(Fail::new(1, ""));
-            }
             self.tmux.ok(&["send-keys", "-t", &format!("={name}:"), agent, "Enter"]);
-            return Err(Fail::new(1, self.tmux.exec(&["attach", "-t", &format!("={name}")])));
         }
-        // No -A: the name is free, and a surprise attach is the bug this avoids.
-        Err(Fail::new(1, self.tmux.exec(&["new-session", "-s", &name, "-c", &self.cwd])))
+        self.attach_session(&name, false)
     }
 
     fn list(&self) -> Outcome {
@@ -293,13 +315,20 @@ impl Roer {
     fn attach(&self, name: Option<&str>) -> Outcome {
         match name {
             None => self.list(),
-            Some(name) => Err(Fail::new(1, self.tmux.exec(&["attach", "-d", "-t", name]))),
+            Some(name) => {
+                // A name or a pane, as the caller gave it, so not "=name".
+                self.tmux.announce(name);
+                Err(Fail::new(1, self.tmux.exec(&["attach", "-d", "-t", name])))
+            }
         }
     }
 
     fn detach(&self, name: Option<&str>) -> Outcome {
-        let ok = if std::env::var_os("TMUX").is_some_and(|v| !v.is_empty()) {
-            tmux::inside(&["detach-client"]).is_some()
+        let ok = if let Ok(pane) = self.tmux.inside_roer() {
+            // Only tmux can name this terminal's own client; psmux can release
+            // the session only as a whole.
+            self.tmux.detach_self()
+                || self.tmux.run(&["detach-client", "-s", &self.tmux.session_of(&pane)])?.success()
         } else if let Some(name) = name {
             self.tmux.run(&["detach-client", "-s", name])?.success()
         } else {
@@ -326,7 +355,8 @@ impl Roer {
         // attached instead, and tmux discards the command that comes with it.
         let name = self.free_name(&format!("{}-resume", session_name(&self.cwd)));
         let command = format!("claude --resume {agent} --permission-mode manual");
-        Err(Fail::new(1, self.tmux.exec(&["new-session", "-s", &name, "-c", &self.cwd, &command])))
+        self.create_detached(&name, Some(&command))?;
+        self.attach_session(&name, false)
     }
 
     fn handoff(&self, args: &[&str]) -> Outcome {
@@ -394,20 +424,19 @@ impl Roer {
 
     /// Run inside the session itself, by the skill.
     fn handoff_here(&self) -> Outcome {
-        tmux::inside_roer()?;
-        let pane = current_pane();
-        let session = tmux::inside(&["display-message", "-p", "#{session_name}"]).unwrap_or_default();
+        let pane = self.tmux.inside_roer()?;
+        let session = self.tmux.session_of(&pane);
         self.ensure_id(&session);
 
         publish(&["attach", &pane], &session, &self.cwd)?;
         // Best effort: Roer attaches with `attach -d`, which has usually
         // evicted this client already. The session has moved either way.
-        tmux::inside(&["detach-client"]);
+        self.tmux.detach_self();
         Ok(())
     }
 
     fn plugin_ui(&self, args: &[&str]) -> Outcome {
-        let pane = resolve_pane(args)?;
+        let pane = resolve_pane(&self.tmux, args)?;
         let message = read_json_stdin("plugin-ui needs a JSON message on stdin")?;
         emit_plugin_ui(&pane, message, 1)
     }
@@ -445,8 +474,8 @@ impl Roer {
     /// sends live, read back from disk instead of stdin.
     fn plugin_ui_load(&self, args: &[&str]) -> Outcome {
         let (pane, name) = match args {
-            ["--pane", pane, rest @ ..] => (resolve_pane(&["--pane", pane])?, rest.first().copied()),
-            _ => (resolve_pane(&[])?, args.first().copied()),
+            ["--pane", pane, rest @ ..] => (resolve_pane(&self.tmux, &["--pane", pane])?, rest.first().copied()),
+            _ => (resolve_pane(&self.tmux, &[])?, args.first().copied()),
         };
         let name = name.unwrap_or_default();
         check_bundle_name(name)?;
@@ -475,7 +504,7 @@ impl Roer {
     /// exactly once. The app stamps filenames in nanoseconds, so sorted by name
     /// is chronological.
     fn plugin_ui_actions(&self, args: &[&str]) -> Outcome {
-        let pane = resolve_pane(args)?;
+        let pane = resolve_pane(&self.tmux, args)?;
         let dir = records::home().join("plugin-ui-actions");
         std::fs::create_dir_all(&dir)
             .map_err(|e| Fail::new(1, format!("could not create {}: {e}", dir.display())))?;
@@ -504,7 +533,7 @@ impl Roer {
     /// keeps a multi-line prompt from being submitted line by line; the Enter
     /// goes separately, after the paste has landed.
     fn send(&self, args: &[&str]) -> Outcome {
-        let pane = resolve_pane(args)?;
+        let pane = resolve_pane(&self.tmux, args)?;
         let text = read_stdin("send needs the text on stdin")?;
 
         let buffer = format!("roer-send-{}", std::process::id());
@@ -525,7 +554,7 @@ impl Roer {
     }
 
     fn pr_draft(&self, args: &[&str]) -> Outcome {
-        let pane = resolve_pane(args)?;
+        let pane = resolve_pane(&self.tmux, args)?;
         let draft = read_json_stdin("pr-draft needs {\"title\": ..., \"body\": ...} JSON on stdin")?;
         emit_pr_draft(&pane, draft)
     }
@@ -552,7 +581,7 @@ impl Roer {
 
 /// The pane a `--pane <id>` names or, without one, the pane this shell is in
 /// on Roer's server — the same rule `roer handoff` uses.
-fn resolve_pane(args: &[&str]) -> Result<String, Fail> {
+fn resolve_pane(tmux: &Tmux, args: &[&str]) -> Result<String, Fail> {
     if let ["--pane", rest @ ..] = args {
         let pane = rest.first().copied().unwrap_or_default();
         // Written into a record, so held to the shape tmux produces.
@@ -561,16 +590,7 @@ fn resolve_pane(args: &[&str]) -> Result<String, Fail> {
         }
         return Ok(pane.to_string());
     }
-    tmux::inside_roer()?;
-    Ok(current_pane())
-}
-
-fn current_pane() -> String {
-    std::env::var("TMUX_PANE")
-        .ok()
-        .filter(|pane| !pane.is_empty())
-        .or_else(|| tmux::inside(&["display-message", "-p", "#{pane_id}"]))
-        .unwrap_or_default()
+    tmux.inside_roer()
 }
 
 fn check_bundle_name(name: &str) -> Outcome {

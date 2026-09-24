@@ -39,3 +39,19 @@ jobs:
 
       - name: Probe the tmux commands roer uses
         run: bash .github/psmux/probe.sh
+
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: cli -> target
+          key: psmux-spike
+
+      - name: Build roer
+        run: cargo build --manifest-path cli/Cargo.toml
+
+      - name: Smoke-test roer on psmux
+        run: bash .github/psmux/smoke.sh
+
+      - name: CLI unit tests on Windows
+        run: cargo test --manifest-path cli/Cargo.toml

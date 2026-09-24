@@ -171,7 +171,8 @@ fn wait_while(path: &Path, limit: Duration) {
 /// from a checkout set ROER_APP to one — `tauri dev` builds a bare executable
 /// that LaunchServices cannot address. On Linux there is no LaunchServices:
 /// the app binary is started directly, and a second start is handed to the
-/// running instance by its single-instance plugin. Failure is never fatal: a
+/// running instance by its single-instance plugin, and Windows does the same
+/// with the installed `roer-app.exe`. Failure is never fatal: a
 /// running instance is watching the handoff directory either way.
 fn launch_app() {
     use std::process::{Command, Stdio};
@@ -183,6 +184,18 @@ fn launch_app() {
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .status();
+        return;
+    }
+    if cfg!(windows) {
+        // The installer puts the app under the user's local app data. Started
+        // directly: a Windows child outlives its parent anyway, and a second
+        // start is handed to the running instance like on Linux.
+        let app = app.map(PathBuf::from).or_else(|| {
+            std::env::var_os("LOCALAPPDATA").map(|dir| PathBuf::from(dir).join("Roer").join("roer-app.exe"))
+        });
+        if let Some(app) = app.filter(|app| app.is_file()) {
+            let _ = Command::new(app).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn();
+        }
         return;
     }
     // Detached through nohup, so the app outlives this shell and never writes

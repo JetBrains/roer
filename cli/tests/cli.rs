@@ -194,7 +194,7 @@ fn app_opens_this_directorys_session_and_hands_it_over() {
     assert_eq!(row[3], "detached");
     assert_eq!(row[4], env.dir.to_string_lossy());
     let bin = std::fs::canonicalize(env!("CARGO_BIN_EXE_roer")).unwrap();
-    assert_eq!(env.tmux(&["show-options", "-gv", "@roer_bin"]), bin.to_string_lossy());
+    assert_eq!(env.tmux(&["show-options", "-t", &format!("={name}:"), "-v", "@roer_bin"]), bin.to_string_lossy());
 
     // A second `roer` is the same session, not another one.
     assert_eq!(code(&env.run(&[])), 0);
@@ -419,7 +419,11 @@ fn shell_attaches_this_directorys_session_to_the_terminal() {
     let name = shim_name(&env.dir);
     in_a_terminal(&env, &["shell"], &name);
     let bin = std::fs::canonicalize(env!("CARGO_BIN_EXE_roer")).unwrap();
-    assert_eq!(env.tmux(&["show-options", "-gv", "@roer_bin"]), bin.to_string_lossy(), "announced on exec too");
+    assert_eq!(
+        env.tmux(&["show-options", "-t", &format!("={name}:"), "-v", "@roer_bin"]),
+        bin.to_string_lossy(),
+        "announced before the attach too"
+    );
     kill_outer(&env);
 }
 
