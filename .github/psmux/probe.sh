@@ -82,6 +82,42 @@ m set-option -g prefix F24 >/dev/null 2>&1;  echo "      set prefix F24: $(m sho
 m unbind-key C-b >/dev/null 2>&1;            echo "      after unbind C-b: $(m list-keys 2>&1 | grep -c 'C-b') bindings mention C-b"
 check "kill-server"                             -      m kill-server
 
+echo "== round 3"
+m new-session -d -s r3 -c "$DIR" >/dev/null 2>&1
+P3=$(m list-panes -t =r3 -F '#{pane_id}' 2>&1 | head -1)
+# Does -L really give a separate server?
+check "-L isolates: probe sees r3"             r3     m list-sessions -F '#{session_name}'
+echo "      other server lists: [$("$MUX" -L probe-other list-sessions -F '#{session_name}' 2>&1 | tr '\n' ' ')]"
+"$MUX" -L probe-other kill-server >/dev/null 2>&1
+# @roer_bin per session rather than global: formats may only see those.
+m set-option -t =r3: @roer_bin 'C:\x\roer.exe' >/dev/null 2>&1
+check "per-session @roer_bin expands in -t pane" 'roer.exe' m display-message -p -t "$P3" '#{?@roer_bin,#{@roer_bin},fallback}'
+echo "      direct #{@roer_bin}=[$(m display-message -p -t "$P3" '#{@roer_bin}' 2>&1)]"
+# Chaining with the other spellings tmux accepts.
+m new-session -d -s c1 -c "$DIR" '\;' set-option -g @c1 yes >/dev/null 2>&1
+echo "      chain '\\;': sessions=[$(m list-sessions -F '#{session_name}' 2>&1 | tr '\n' ' ')] @c1=[$(m show-options -gv @c1 2>&1)]"
+m set-option -g @c2 a ';' set-option -g @c3 b >/dev/null 2>&1
+echo "      chain two set-options: @c2=[$(m show-options -gv @c2 2>&1)] @c3=[$(m show-options -gv @c3 2>&1)]"
+# The environment of a pane, written to a file rather than read off screen.
+ENVF="$DIR\\probe-env.txt"
+m new-session -d -s envs -c "$DIR" "pwsh -NoLogo -NoProfile -Command \"Set-Content -Path '$ENVF' -Value ('T=[' + \$env:TMUX + '] P=[' + \$env:TMUX_PANE + '] PS=[' + \$env:PSMUX + ']'); Start-Sleep 20\"" >/dev/null 2>&1
+sleep 4
+echo "      pane env: $(cat probe-env.txt 2>&1)"
+check "pane has TMUX_PANE"                      'P=[%' cat probe-env.txt
+# Titles, with allow-set-title on before the pane starts.
+m set-option -g allow-set-title on >/dev/null 2>&1
+m new-session -d -s titled -c "$DIR" "pwsh -NoLogo -NoProfile -Command \"\$Host.UI.RawUI.WindowTitle = 'roer-rawui'; Start-Sleep 20\"" >/dev/null 2>&1
+m new-session -d -s osc -c "$DIR" "pwsh -NoLogo -NoProfile -Command \"Write-Host -NoNewline ([char]27 + ']2;roer-osc' + [char]7); Start-Sleep 20\"" >/dev/null 2>&1
+sleep 4
+echo "      titles: rawui=[$(m display-message -p -t =titled: '#{pane_title}' 2>&1)] osc=[$(m display-message -p -t =osc: '#{pane_title}' 2>&1)]"
+check "OSC 2 title reaches pane_title"          roer-osc m display-message -p -t =osc: '#{pane_title}'
+# Which prefixes psmux accepts.
+for key in C-Space M-F12 F12 'C-]' 'C-\\'; do
+    m set-option -g prefix "$key" >/dev/null 2>&1
+    echo "      set prefix $key -> $(m show-options -g prefix 2>&1)"
+done
+m kill-server >/dev/null 2>&1
+
 # Without -f, for comparison: does psmux need it, or read ~/.tmux.conf?
 "$MUX" -L probe2 new-session -d -s x >/dev/null 2>&1
 echo "      without -f, prefix=$("$MUX" -L probe2 show-options -g prefix 2>&1)"
