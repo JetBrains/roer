@@ -99,6 +99,27 @@ jobs:
       - name: Bundle
         run: npx tauri build --debug --bundles nsis,msi --config src-tauri/tauri.windows-cli.conf.json
 
+      # The one part of the installer nothing else runs: its PATH hook. Into a
+      # folder with an apostrophe in it, since that is what a quoting mistake
+      # in the hook would trip on.
+      - name: Install, check PATH, uninstall
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $setup = Get-ChildItem src-tauri/target/debug/bundle/nsis/*-setup.exe | Select-Object -First 1
+          $dir = Join-Path $env:RUNNER_TEMP "O'Brien Roer"
+          Start-Process $setup.FullName -ArgumentList '/S', "/D=$dir" -Wait
+          $cli = Join-Path $dir 'roer'
+          $path = [Environment]::GetEnvironmentVariable('Path', 'User') -split ';'
+          if ($path -notcontains $cli) { throw "installer did not put $cli on the user PATH: $($path -join ';')" }
+          & (Join-Path $cli 'roer.exe') help | Select-Object -First 1
+          if ($LASTEXITCODE -ne 0) { throw "roer help failed from $cli" }
+          Start-Process (Join-Path $dir 'uninstall.exe') -ArgumentList '/S' -Wait
+          Start-Sleep 5
+          $path = [Environment]::GetEnvironmentVariable('Path', 'User') -split ';'
+          if ($path -contains $cli) { throw "uninstaller left $cli on the user PATH" }
+          "installed to $dir, PATH set and cleared"
+
       - name: The roer command as a zip
         run: bash .github/windows/package-cli.sh cli/target/release/roer.exe "$RUNNER_TEMP/psmux" roer-cli-windows-x64.zip
 

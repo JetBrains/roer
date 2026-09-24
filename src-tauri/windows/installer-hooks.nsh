@@ -4,13 +4,18 @@
 ; edits the user PATH as a list, never truncating it, and SetEnvironmentVariable
 ; tells running programs, Explorer included, that it changed.
 ;
-; Backticks delimit the NSIS strings so PowerShell's own quotes can sit inside
-; them; $$ is a literal $ for PowerShell, $INSTDIR is NSIS's.
+; The folder reaches PowerShell as the environment variable ROER_CLI_DIR, set
+; with NSIS's own System plugin, rather than pasted into the command: any
+; character a folder name may hold, an apostrophe included, then arrives as
+; data and never as PowerShell syntax. $$ is a literal $ for PowerShell;
+; backticks delimit the NSIS strings so PowerShell's quotes can sit inside.
 
 !macro NSIS_HOOK_POSTINSTALL
-  nsExec::ExecToLog `powershell -NoProfile -ExecutionPolicy Bypass -Command "$$d = '$INSTDIR\roer'; $$p = [Environment]::GetEnvironmentVariable('Path', 'User'); $$parts = @($$p -split ';' | Where-Object { $$_ }); if ($$parts -notcontains $$d) { [Environment]::SetEnvironmentVariable('Path', (@($$d) + $$parts) -join ';', 'User') }"`
+  System::Call 'Kernel32::SetEnvironmentVariable(t "ROER_CLI_DIR", t "$INSTDIR\roer")i'
+  nsExec::ExecToLog `powershell -NoProfile -ExecutionPolicy Bypass -Command "$$d = $$env:ROER_CLI_DIR; $$p = [Environment]::GetEnvironmentVariable('Path', 'User'); $$parts = @($$p -split ';' | Where-Object { $$_ }); if ($$parts -notcontains $$d) { [Environment]::SetEnvironmentVariable('Path', (@($$d) + $$parts) -join ';', 'User') }"`
 !macroend
 
 !macro NSIS_HOOK_POSTUNINSTALL
-  nsExec::ExecToLog `powershell -NoProfile -ExecutionPolicy Bypass -Command "$$d = '$INSTDIR\roer'; $$p = [Environment]::GetEnvironmentVariable('Path', 'User'); $$parts = @($$p -split ';' | Where-Object { $$_ -and $$_ -ne $$d }); [Environment]::SetEnvironmentVariable('Path', $$parts -join ';', 'User')"`
+  System::Call 'Kernel32::SetEnvironmentVariable(t "ROER_CLI_DIR", t "$INSTDIR\roer")i'
+  nsExec::ExecToLog `powershell -NoProfile -ExecutionPolicy Bypass -Command "$$d = $$env:ROER_CLI_DIR; $$p = [Environment]::GetEnvironmentVariable('Path', 'User'); $$parts = @($$p -split ';' | Where-Object { $$_ -and $$_ -ne $$d }); [Environment]::SetEnvironmentVariable('Path', $$parts -join ';', 'User')"`
 !macroend

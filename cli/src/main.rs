@@ -652,9 +652,33 @@ fn here() -> String {
 fn self_path() -> PathBuf {
     let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("roer"));
     let real = std::fs::canonicalize(&exe).unwrap_or(exe);
-    match real.to_str().and_then(|path| path.strip_prefix(r"\\?\")) {
-        Some(bare) if cfg!(windows) => PathBuf::from(bare),
+    match real.to_str() {
+        Some(path) if cfg!(windows) => PathBuf::from(without_long_prefix(path)),
         _ => real,
+    }
+}
+
+/// A Windows path without its `\\?\` long-path prefix. A network share keeps
+/// the `\\` it is addressed by: `\\?\UNC\server\share` is `\\server\share`,
+/// where dropping the prefix alone would leave `UNC\server\share`, a relative
+/// path.
+fn without_long_prefix(path: &str) -> String {
+    if let Some(share) = path.strip_prefix(r"\\?\UNC\") {
+        return format!(r"\\{share}");
+    }
+    path.strip_prefix(r"\\?\").unwrap_or(path).to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::without_long_prefix;
+
+    #[test]
+    fn drops_the_long_path_prefix_but_keeps_a_share_absolute() {
+        assert_eq!(without_long_prefix(r"\\?\C:\Roer\roer\roer.exe"), r"C:\Roer\roer\roer.exe");
+        assert_eq!(without_long_prefix(r"\\?\UNC\server\share\roer.exe"), r"\\server\share\roer.exe");
+        assert_eq!(without_long_prefix(r"C:\Roer\roer.exe"), r"C:\Roer\roer.exe");
+        assert_eq!(without_long_prefix(r"\\server\share\roer.exe"), r"\\server\share\roer.exe");
     }
 }
 
