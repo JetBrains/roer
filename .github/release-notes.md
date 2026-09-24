@@ -48,11 +48,33 @@ only `/usr/bin:/bin:/usr/sbin:/sbin`, so Roer looks for `roer` at
 On Linux, take `roer-cli-__VERSION__-linux-x86_64.tar.gz` instead; the steps
 are the same.
 
+## Windows (preview)
+
+Native, in PowerShell: sessions run on [psmux](https://github.com/psmux/psmux),
+a tmux reimplementation on ConPTY, which ships inside the CLI zip. Both
+downloads are **unsigned**, so SmartScreen warns before installing.
+
+1. Run `Roer___VERSION___x64-setup.exe` (or `Roer___VERSION___x64_en-US.msi`).
+2. Unzip `roer-cli-__VERSION__-windows-x64.zip` into a folder of its own and
+   add that folder to your user `PATH`:
+
+   ```powershell
+   $bin = "$env:USERPROFILE\.roer\bin"
+   Expand-Archive roer-cli-__VERSION__-windows-x64.zip -DestinationPath $bin -Force
+   [Environment]::SetEnvironmentVariable('Path', "$bin;" + [Environment]::GetEnvironmentVariable('Path', 'User'), 'User')
+   ```
+
+   Keep the files together: `roer.exe` finds `roer-tmux.conf` and `psmux.exe`
+   beside itself.
+3. In a new terminal, `roer help`, then `roer shell` and `M-h`.
+
 ## Verify the downloads
 
 ```sh
 shasum -a 256 -c SHA256SUMS.txt
 ```
+
+On Windows, compare `Get-FileHash <file>` with its line in `SHA256SUMS.txt`.
 
 ## Try it
 

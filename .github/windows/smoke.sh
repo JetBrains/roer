@@ -1,12 +1,18 @@
 #!/usr/bin/env bash
-# Drives the real roer.exe against psmux, as the app and a terminal would, with
-# a stand-in for the app that claims handoffs. Spike tooling, like probe.sh.
+# Drives the real roer.exe against psmux on Windows, as the app and a terminal
+# would, with a stand-in for the app that claims handoffs. The Unix
+# counterpart is cli/tests/cli.rs; this is shell because half of what it
+# checks happens in PowerShell inside a pane.
+#
+# usage: smoke.sh <directory holding roer.exe and psmux.exe>
 set -u
-ROER=$(cygpath -w "$PWD/cli/target/debug/roer.exe")
+BIN_DIR=$(cd "${1:?directory with roer.exe and psmux.exe}" && pwd)
+ROER=$(cygpath -w "$BIN_DIR/roer.exe")
+PSMUX="$BIN_DIR/psmux.exe"
 export ROER_SOCKET=smoke ROER_HOME="$RUNNER_TEMP\\roer-home" ROER_APP='C:\nonexistent\roer-app.exe'
 HOME_U=$(cygpath -u "$ROER_HOME")
 PROJECT="$RUNNER_TEMP/project"; mkdir -p "$PROJECT"; cd "$PROJECT"
-m() { psmux -L smoke "$@"; }
+m() { "$PSMUX" -L smoke "$@"; }
 PASS=0 FAIL=0
 ok()   { PASS=$((PASS+1)); printf 'PASS  %s\n' "$1"; }
 bad()  { FAIL=$((FAIL+1)); printf 'FAIL  %s\n      %s\n' "$1" "$(printf '%s' "${2:-}" | head -8 | tr '\n' '|')"; }
@@ -68,24 +74,7 @@ has "a pane has TMUX_PANE" "$(cat "$RUNNER_TEMP/env.txt" 2>&1)" "PANE=[%"
 # The test's own variables, set in the pane explicitly: real use needs none.
 m send-keys -t "$PANE" "\$env:ROER_SOCKET='smoke'; \$env:ROER_HOME='$ROER_HOME'; '{\"kind\":\"inside\"}' | & '$ROER' plugin-ui; \"exit=\$LASTEXITCODE\" | Set-Content -Path '$RUNNER_TEMP\\inside.txt'" Enter
 sleep 5
-# Is psmux itself refusing to run inside a pane, with TMUX set? Scripts,
-# not one-liners: three layers of quoting (bash, psmux, pwsh) are not a test.
 T=$(cygpath -w "$RUNNER_TEMP")
-cat > "$RUNNER_TEMP/inside.ps1" <<PS1
-\$out = "$T\\why.txt"
-"TMUX=[\$env:TMUX] PANE=[\$env:TMUX_PANE]" | Set-Content \$out
-"-- psmux with TMUX set:" | Add-Content \$out
-psmux -L smoke display-message -p -t \$env:TMUX_PANE '#{pane_id}' *>> \$out; "exit=\$LASTEXITCODE" | Add-Content \$out
-"-- psmux with TMUX unset:" | Add-Content \$out
-\$t = \$env:TMUX; \$env:TMUX = \$null
-psmux -L smoke display-message -p -t \$env:TMUX_PANE '#{pane_id}' *>> \$out; "exit=\$LASTEXITCODE" | Add-Content \$out
-\$env:TMUX = \$t
-"-- roer:" | Add-Content \$out
-'{"kind":"why"}' | & '$ROER' plugin-ui *>> \$out; "exit=\$LASTEXITCODE" | Add-Content \$out
-PS1
-m send-keys -t "$PANE" "& '$T\\inside.ps1'" Enter
-sleep 6
-echo "      inside a pane: $(cat "$RUNNER_TEMP/why.txt" 2>&1 | tr '\n' '|')"
 inside=$(cat "$RUNNER_TEMP/inside.txt" 2>&1)
 echo "      inside: $(printf '%s' "$inside" | tr '\n' '|')"
 has "roer inside a pane finds its own pane" "$inside" "exit=0"
@@ -102,13 +91,14 @@ Set-Location '$(cygpath -w "$PROJECT")'
 "exit=\$LASTEXITCODE" | Add-Content '$T\\shell.txt'
 Start-Sleep 30
 PS1
-psmux -L smoke-outer new-session -d "pwsh -NoLogo -NoProfile -File $T\\shell.ps1" >/dev/null 2>&1
+"$PSMUX" -L smoke-outer new-session -d "pwsh -NoLogo -NoProfile -File $T\\shell.ps1" >/dev/null 2>&1
 sleep 6
 has "roer shell attached a client" "$(m list-sessions -F '#{session_name} #{session_attached}')" " 1"
 echo "      sessions: $(m list-sessions -F '#{session_name} #{session_attached}' 2>&1 | tr '\n' '|')"
 echo "      roer shell wrote: $(cat "$RUNNER_TEMP/shell.txt" 2>&1 | tr '\n' '|')"
-echo "      outer pane: $(psmux -L smoke-outer capture-pane -p 2>&1 | grep -v '^\s*$' | tail -6 | tr '\n' '|')"
+echo "      outer pane: $("$PSMUX" -L smoke-outer capture-pane -p 2>&1 | grep -v '^\s*$' | tail -6 | tr '\n' '|')"
 
 kill $APP 2>/dev/null
-psmux -L smoke-outer kill-server >/dev/null 2>&1; m kill-server >/dev/null 2>&1
+"$PSMUX" -L smoke-outer kill-server >/dev/null 2>&1; m kill-server >/dev/null 2>&1
 echo "== $PASS passed, $FAIL failed"
+[ "$FAIL" -eq 0 ]

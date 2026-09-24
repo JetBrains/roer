@@ -8,6 +8,8 @@ name: Release
 #   bundle-macos      macos-26        universal Roer.app.tar.gz
 #   codesign          sre-eqx-kata    Developer ID + hardened runtime
 #   cli-linux         ubuntu-latest   the roer command for Linux
+#   bundle-windows    windows-latest  unsigned nsis and msi installers
+#   cli-windows       windows-latest  roer.exe with the psmux it drives
 #   package           macos-26        verify, hdiutil .dmg, roer CLI, checksums
 #   publish           ubuntu-latest   draft prerelease
 #
@@ -124,6 +126,60 @@ jobs:
           compression-level: 0
           if-no-files-found: error
 
+  # Windows is a preview: unsigned, so SmartScreen warns on install, and it
+  # runs sessions on psmux rather than tmux.
+  bundle-windows:
+    name: Bundle (Windows)
+    needs: validate-version
+    uses: ./.github/workflows/tauri-bundle.yml
+    with:
+      runner: windows-latest
+      rust_targets: x86_64-pc-windows-msvc
+      tauri_args: --bundles nsis,msi
+      bundle_dir: src-tauri/target/release/bundle
+      artifact_name: unsigned-windows
+      cache_key: windows
+      artifact_paths: |
+        src-tauri/target/release/bundle/nsis/*.exe
+        src-tauri/target/release/bundle/msi/*.msi
+
+  # The installers carry the app; sessions need roer and psmux, which ship
+  # together as a zip, the way the macOS and Linux CLIs ship as tarballs.
+  cli-windows:
+    name: CLI (Windows)
+    needs: validate-version
+    runs-on: windows-latest
+    env:
+      VERSION: ${{ needs.validate-version.outputs.version }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: cli -> target
+          key: cli-windows
+
+      - name: Build and package
+        run: |
+          set -euo pipefail
+          cargo build --release --locked --manifest-path cli/Cargo.toml
+          bash .github/windows/fetch-psmux.sh "$RUNNER_TEMP/psmux"
+          mkdir -p dist
+          bash .github/windows/package-cli.sh cli/target/release/roer.exe "$RUNNER_TEMP/psmux" \
+            "dist/roer-cli-${VERSION}-windows-x64.zip"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: cli-windows
+          path: dist/*.zip
+          compression-level: 0
+          if-no-files-found: error
+
   codesign:
     name: CodeSign
     needs: bundle-macos
@@ -187,7 +243,7 @@ jobs:
 
   package:
     name: Package
-    needs: [validate-version, bundle-macos, codesign, cli-linux]
+    needs: [validate-version, bundle-macos, codesign, cli-linux, bundle-windows, cli-windows]
     # codesign is skipped, not failed, when CODESIGN_ENABLED is unset — so this
     # job must run on 'skipped' but not on 'failure'. This `if` is the whole of
     # the "works before signing access lands" mechanism.
@@ -195,6 +251,8 @@ jobs:
       always()
       && needs.bundle-macos.result == 'success'
       && needs.cli-linux.result == 'success'
+      && needs.bundle-windows.result == 'success'
+      && needs.cli-windows.result == 'success'
       && needs.codesign.result != 'failure'
       && needs.codesign.result != 'cancelled'
     runs-on: macos-26
@@ -321,11 +379,28 @@ jobs:
           name: cli-linux
           path: dist
 
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: unsigned-windows
+          path: dist
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: cli-windows
+          path: dist
+
+      # Tauri names the installers itself; the release lists them by name, so
+      # a rename upstream fails here rather than as a missing asset.
+      - name: Check the Windows installers
+        run: |
+          set -euo pipefail
+          ls -l "dist/Roer_${VERSION}_x64-setup.exe" "dist/Roer_${VERSION}_x64_en-US.msi"
+
       - name: Checksums
         working-directory: dist
         run: |
           set -euo pipefail
-          shasum -a 256 -- *.dmg *.tar.gz > SHA256SUMS.txt
+          shasum -a 256 -- *.dmg *.tar.gz *.exe *.msi *.zip > SHA256SUMS.txt
           cat SHA256SUMS.txt
 
       - name: Release notes
@@ -433,6 +508,9 @@ jobs:
             "Roer_${VERSION}_universal.dmg" \
             "roer-cli-${VERSION}.tar.gz" \
             "roer-cli-${VERSION}-linux-x86_64.tar.gz" \
+            "Roer_${VERSION}_x64-setup.exe" \
+            "Roer_${VERSION}_x64_en-US.msi" \
+            "roer-cli-${VERSION}-windows-x64.zip" \
             SHA256SUMS.txt
           echo "Draft release created. Review, smoke-test, then publish it."
 
