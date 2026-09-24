@@ -17,14 +17,29 @@ use crate::history::{self, PastSession};
 const INSTALL_PATHS: [&str; 2] = [".local/bin/roer", "bin/roer"];
 
 /// Path to the shim: `ROER_BIN` first, so a checkout can point at its own
-/// copy, then `PATH`, then the usual install locations under `$HOME`.
+/// copy; then the one installed with the app; then `PATH`, then the usual
+/// install locations under `$HOME`.
 pub fn bin() -> String {
-    resolve(std::env::var("ROER_BIN").ok(), on_path("roer"), home())
+    resolve(std::env::var("ROER_BIN").ok(), bundled(), on_path("roer"), home())
 }
 
-fn resolve(explicit: Option<String>, on_path: bool, home: Option<PathBuf>) -> String {
+/// The `roer` the Windows installer puts beside the app, in `roer\`, with the
+/// psmux it drives. Preferred over `PATH` so the app always talks to the
+/// version it shipped with. macOS and Linux install the CLI separately.
+fn bundled() -> Option<PathBuf> {
+    if !cfg!(windows) {
+        return None;
+    }
+    let exe = std::env::current_exe().ok()?;
+    Some(exe.parent()?.join("roer").join("roer.exe")).filter(|path| path.is_file())
+}
+
+fn resolve(explicit: Option<String>, bundled: Option<PathBuf>, on_path: bool, home: Option<PathBuf>) -> String {
     if let Some(explicit) = explicit.filter(|value| !value.is_empty()) {
         return explicit;
+    }
+    if let Some(bundled) = bundled {
+        return bundled.to_string_lossy().into_owned();
     }
     if on_path {
         return "roer".to_string();
@@ -237,6 +252,7 @@ mod tests {
     fn prefers_an_explicit_binary_over_everything() {
         let picked = resolve(
             Some("/checkout/cli/target/debug/roer".to_string()),
+            Some(PathBuf::from("C:/Program Files/Roer/roer/roer.exe")),
             true,
             Some(PathBuf::from("/home/someone")),
         );
@@ -244,9 +260,18 @@ mod tests {
     }
 
     #[test]
+    fn prefers_the_roer_installed_with_the_app_over_path() {
+        let bundled = PathBuf::from("C:/Program Files/Roer/roer/roer.exe");
+        assert_eq!(
+            resolve(None, Some(bundled.clone()), true, Some(PathBuf::from("/home/someone"))),
+            bundled.to_string_lossy()
+        );
+    }
+
+    #[test]
     fn uses_the_bare_name_when_path_has_it() {
         assert_eq!(
-            resolve(None, true, Some(PathBuf::from("/home/someone"))),
+            resolve(None, None, true, Some(PathBuf::from("/home/someone"))),
             "roer"
         );
     }
@@ -256,7 +281,7 @@ mod tests {
         // A window opened from Finder has a minimal PATH and no install, so
         // the error the user sees should name `roer`, not a guessed path.
         assert_eq!(
-            resolve(None, false, Some(PathBuf::from("/nowhere"))),
+            resolve(None, None, false, Some(PathBuf::from("/nowhere"))),
             "roer"
         );
     }
@@ -269,7 +294,7 @@ mod tests {
         std::fs::write(&installed, "#!/bin/sh\n").unwrap();
 
         assert_eq!(
-            resolve(None, false, Some(dir.clone())),
+            resolve(None, None, false, Some(dir.clone())),
             installed.to_string_lossy()
         );
 

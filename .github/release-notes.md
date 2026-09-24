@@ -51,22 +51,18 @@ are the same.
 ## Windows (preview)
 
 Native, in PowerShell: sessions run on [psmux](https://github.com/psmux/psmux),
-a tmux reimplementation on ConPTY, which ships inside the CLI zip. Both
-downloads are **unsigned**, so SmartScreen warns before installing.
+a tmux reimplementation on ConPTY. The downloads are **unsigned**, so
+SmartScreen warns before installing.
 
-1. Run `Roer___VERSION___x64-setup.exe` (or `Roer___VERSION___x64_en-US.msi`).
-2. Unzip `roer-cli-__VERSION__-windows-x64.zip` into a folder of its own and
-   add that folder to your user `PATH`:
+1. Run `Roer___VERSION___x64-setup.exe`. It installs the app and the `roer`
+   command together, and adds the command's folder to your user `PATH`.
+2. In a new terminal, `roer help`, then `roer shell` and `M-h`.
 
-   ```powershell
-   $bin = "$env:USERPROFILE\.roer\bin"
-   Expand-Archive roer-cli-__VERSION__-windows-x64.zip -DestinationPath $bin -Force
-   [Environment]::SetEnvironmentVariable('Path', "$bin;" + [Environment]::GetEnvironmentVariable('Path', 'User'), 'User')
-   ```
-
-   Keep the files together: `roer.exe` finds `roer-tmux.conf` and `psmux.exe`
-   beside itself.
-3. In a new terminal, `roer help`, then `roer shell` and `M-h`.
+`Roer___VERSION___x64_en-US.msi` installs the same files but leaves `PATH`
+alone: add `<install folder>\roer` yourself.
+`roer-cli-__VERSION__-windows-x64.zip` is the command without the app; keep
+its files together, since `roer.exe` finds `roer-tmux.conf` and `psmux.exe`
+beside itself.
 
 ## Verify the downloads
 
