@@ -4,12 +4,9 @@ name: Tauri Bundle
 # creates a release: `release.yml` owns that, because the .dmg cannot be built
 # until after the .app has been signed, on a different runner.
 #
-# Adding a platform is a new caller in release.yml, not a change here. Before
-# one can be added, the app needs work first:
-#   linux   — a caller that installs WebKitGTK first (see Nightly bundles)
-#   windows — a ConPTY session engine: tmux needs POSIX ptys and unix sockets,
-#             and only builds under Cygwin/MSYS2/WSL, which breaks roer's
-#             "the same shell you are working in" premise
+# Adding a platform is a new caller in release.yml, not a change here. macOS
+# and Windows call it today; Linux still needs one that installs WebKitGTK
+# first (see Nightly bundles).
 
 on:
   workflow_call:

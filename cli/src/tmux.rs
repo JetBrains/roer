@@ -1,6 +1,12 @@
-//! tmux, as the engine underneath. It is an implementation detail: every call
-//! is pinned to Roer's private socket and Roer's own config, so the user's own
-//! tmux server, sessions and key bindings are never touched.
+//! tmux, as the engine underneath — or on Windows psmux, a reimplementation of
+//! tmux on ConPTY that takes the same commands. It is an implementation
+//! detail: every call is pinned to Roer's private socket and Roer's own config,
+//! so the user's own server, sessions and key bindings are never touched.
+//!
+//! What psmux does differently, and so what this file never relies on:
+//! chained commands (`a ; b`) are dropped without an error, a *global* user
+//! option is invisible to formats, `#{socket_path}` names psmux's default
+//! server whatever `-L` says, and `prefix None` is refused.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -14,7 +20,32 @@ pub fn socket() -> String {
     std::env::var("ROER_SOCKET").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "roer".into())
 }
 
+/// The engine: tmux, or psmux on Windows, unless `ROER_MUX` names another.
+///
+/// On Windows a `psmux.exe` beside this binary comes first, so the two can
+/// ship as a pair: a psmux pane starts with the machine's PATH, not the one
+/// of the shell that installed it, and roer runs inside those panes too.
+pub fn program(bin: &Path) -> String {
+    if let Some(program) = std::env::var("ROER_MUX").ok().filter(|s| !s.is_empty()) {
+        return program;
+    }
+    if cfg!(windows) {
+        let beside = bin.with_file_name("psmux.exe");
+        if beside.is_file() {
+            return beside.to_string_lossy().into_owned();
+        }
+        return "psmux".into();
+    }
+    "tmux".into()
+}
+
+/// Whether the engine is psmux, which needs the few workarounds below.
+fn is_psmux(program: &str) -> bool {
+    Path::new(program).file_stem().is_some_and(|stem| stem.eq_ignore_ascii_case("psmux"))
+}
+
 pub struct Tmux {
+    program: String,
     socket: String,
     conf: PathBuf,
     /// What M-h runs: this binary, handing over the pane; see `announce`.
@@ -23,12 +54,23 @@ pub struct Tmux {
 
 impl Tmux {
     pub fn new(conf: PathBuf, bin: String) -> Self {
-        let handoff = format!("{} handoff --pane #{{pane_id}}", sh_word(&bin).replace('#', "##"));
-        Tmux { socket: socket(), conf, handoff }
+        let program = program(Path::new(&bin));
+        // What M-h runs, in the language of whatever runs it: sh under tmux,
+        // PowerShell under psmux. Either way the path is quoted here rather
+        // than by `#{q:...}`, whose escaping differs between tmux versions
+        // (3.4 turns `$` into `\$`, which sh reads as a backslash and then an
+        // expansion), and `#` is doubled so tmux reads none of it as a format.
+        let call = if is_psmux(&program) {
+            format!("& '{}'", bin.replace('\'', "''"))
+        } else {
+            sh_word(&bin)
+        };
+        let handoff = format!("{} handoff --pane #{{pane_id}}", call.replace('#', "##"));
+        Tmux { program, socket: socket(), conf, handoff }
     }
 
     fn command(&self) -> Command {
-        let mut tmux = Command::new("tmux");
+        let mut tmux = Command::new(&self.program);
         tmux.arg("-L").arg(&self.socket).arg("-f").arg(&self.conf);
         tmux
     }
@@ -52,13 +94,13 @@ impl Tmux {
             .output()
             .ok()
             .filter(|out| out.status.success())
-            .map(|out| String::from_utf8_lossy(&out.stdout).trim_end_matches('\n').to_string())
+            .map(|out| lines(&out.stdout))
             .unwrap_or_default()
     }
 
     /// Runs one tmux command with its output left on this terminal.
     pub fn run(&self, args: &[&str]) -> Result<ExitStatus, Fail> {
-        self.command().args(args).status().map_err(|e| Fail::new(1, format!("could not run tmux: {e}")))
+        self.command().args(args).status().map_err(|e| Fail::new(1, format!("could not run {}: {e}", self.program)))
     }
 
     /// Feeds `input` to a tmux command's stdin: `load-buffer -`.
@@ -72,32 +114,78 @@ impl Tmux {
 
     /// Becomes tmux: the attach, with this process gone from between the
     /// terminal and tmux. Returns only if tmux could not be started.
-    ///
-    /// `announce` rides along as a second command in the same invocation, so
-    /// whatever server this starts binds M-h to this binary.
     pub fn exec(&self, args: &[&str]) -> String {
         let mut tmux = self.command();
-        tmux.args(args).args(self.announce_args());
-        replace_with(tmux)
+        tmux.args(args);
+        replace_with(tmux, &self.program)
     }
 
-    /// Binds M-h to this binary, on a server already started by `args` in
-    /// the same invocation.
+    /// Binds M-h to this binary. Called whenever roer starts or attaches a
+    /// session, as a command of its own: psmux drops commands chained onto
+    /// another one.
     ///
     /// Why not the config's binding: a checkout's binary lives in
     /// `cli/target`, its config in `scripts/`, and M-h must reach the binary
     /// actually in use rather than whichever one sits beside the config file.
-    /// And roer quotes its own path rather than leaving it to `#{q:...}`,
-    /// whose escaping differs between tmux versions: 3.4 turns `$` into `\\$`,
-    /// which sh reads as a backslash and then an expansion.
-    pub fn announce_args(&self) -> [&str; 7] {
-        [";", "bind-key", "-n", "M-h", "run-shell", "-b", &self.handoff]
+    /// psmux also runs `run-shell` through PowerShell, where the config's
+    /// sh-flavoured command is a parse error.
+    ///
+    /// On psmux this is also where the prefix goes out of the way: it refuses
+    /// the config's `prefix None`, and a prefix left on C-b would take that key
+    /// from every program in the session.
+    pub fn announce(&self) {
+        self.ok(&["bind-key", "-n", "M-h", "run-shell", "-b", &self.handoff]);
+        if is_psmux(&self.program) {
+            self.ok(&["set-option", "-g", "prefix", "M-F12"]);
+            self.ok(&["unbind-key", "C-b"]);
+        }
     }
 
-    /// `announce` for a server this process did not start by exec.
-    pub fn announce(&self) {
-        let [_, rest @ ..] = self.announce_args();
-        self.ok(&rest);
+    /// Whether this process is running in a pane of Roer's own server, not
+    /// merely inside somebody's tmux; the pane it is in, if so.
+    pub fn inside_roer(&self) -> Result<String, Fail> {
+        if std::env::var_os("TMUX").is_none_or(|v| v.is_empty()) {
+            return Err(Fail::new(2, "not inside a session - start one with `roer` first"));
+        }
+        if is_psmux(&self.program) {
+            // No trustworthy socket_path, so ask our own server about the pane
+            // this shell says it is in. A pane of some other server is either
+            // unknown here or, by chance, a different pane with the same id.
+            let pane = std::env::var("TMUX_PANE").unwrap_or_default();
+            let known = !pane.is_empty() && self.read(&["display-message", "-p", "-t", &pane, "#{pane_id}"]) == pane;
+            return if known {
+                Ok(pane)
+            } else {
+                Err(Fail::new(3, "inside a psmux session that is not on the roer socket"))
+            };
+        }
+        // A bare `tmux` goes to whichever server `$TMUX` names, which is
+        // exactly the one to ask.
+        let sock = inside(&["display-message", "-p", "#{socket_path}"]).unwrap_or_default();
+        let ours = Path::new(&sock).file_name().is_some_and(|name| name == self.socket.as_str());
+        if !ours {
+            return Err(Fail::new(3, format!("inside tmux on {sock}, which is not the roer socket")));
+        }
+        Ok(std::env::var("TMUX_PANE")
+            .ok()
+            .filter(|pane| !pane.is_empty())
+            .or_else(|| inside(&["display-message", "-p", "#{pane_id}"]))
+            .unwrap_or_default())
+    }
+
+    /// The session a pane of this server belongs to.
+    pub fn session_of(&self, pane: &str) -> String {
+        self.read(&["display-message", "-p", "-t", pane, "#{session_name}"])
+    }
+
+    /// Detaches the client this process is running under, from inside it.
+    ///
+    /// Only tmux can say which client that is. psmux has no current client to
+    /// name, and detaching the session's every client instead would throw out
+    /// the app that has just taken it over, so there it is left undone: the
+    /// app's own `attach -d` has already evicted this terminal.
+    pub fn detach_self(&self) -> bool {
+        !is_psmux(&self.program) && inside(&["detach-client"]).is_some()
     }
 
     /// The pane of `session` that a client attaching to it would land on.
@@ -127,48 +215,32 @@ impl Tmux {
 }
 
 #[cfg(unix)]
-fn replace_with(mut command: Command) -> String {
+fn replace_with(mut command: Command, program: &str) -> String {
     use std::os::unix::process::CommandExt;
-    format!("could not run tmux: {}", command.exec())
+    format!("could not run {program}: {}", command.exec())
 }
 
-/// Nothing replaces a process on Windows, and tmux does not run there anyway;
-/// this keeps the crate building until a session engine that does exists.
+/// Nothing replaces a process on Windows: roer waits for the client instead
+/// and exits with its code, so the terminal sees the same outcome.
 #[cfg(not(unix))]
-fn replace_with(mut command: Command) -> String {
+fn replace_with(mut command: Command, program: &str) -> String {
     match command.status() {
         Ok(status) => std::process::exit(status.code().unwrap_or(1)),
-        Err(e) => format!("could not run tmux: {e}"),
+        Err(e) => format!("could not run {program}: {e}"),
     }
-}
-
-/// Whether this process is running inside a pane of Roer's own server, and
-/// not merely inside somebody's tmux. A bare `tmux` here goes to whichever
-/// server `$TMUX` names, which is exactly the one to ask.
-pub fn inside_roer() -> Result<(), Fail> {
-    if std::env::var_os("TMUX").is_none_or(|v| v.is_empty()) {
-        return Err(Fail::new(2, "not inside a session - start one with `roer` first"));
-    }
-    let sock = inside_socket().unwrap_or_default();
-    let ours = Path::new(&sock).file_name().is_some_and(|name| name == socket().as_str());
-    if ours {
-        Ok(())
-    } else {
-        Err(Fail::new(3, format!("inside tmux on {sock}, which is not the roer socket")))
-    }
-}
-
-/// The socket of the tmux this process is inside, if any.
-pub fn inside_socket() -> Option<String> {
-    inside(&["display-message", "-p", "#{socket_path}"])
 }
 
 /// Asks the tmux this process is inside, via `$TMUX` rather than our socket.
-pub fn inside(args: &[&str]) -> Option<String> {
+fn inside(args: &[&str]) -> Option<String> {
     let out = Command::new("tmux").args(args).stderr(Stdio::null()).output().ok()?;
-    out.status
-        .success()
-        .then(|| String::from_utf8_lossy(&out.stdout).trim_end_matches('\n').to_string())
+    out.status.success().then(|| lines(&out.stdout))
+}
+
+/// A command's output as lines joined by `\n`, without the last one's end.
+/// psmux ends its lines with `\r\n`, and a stray `\r` would make `%1\r` a
+/// different pane from `%1` and trail every column `roer list` prints.
+fn lines(stdout: &[u8]) -> String {
+    String::from_utf8_lossy(stdout).replace("\r\n", "\n").trim_end_matches('\n').to_string()
 }
 
 /// `word` as one sh word, whatever is in it: single quotes, inside which sh
@@ -179,9 +251,17 @@ fn sh_word(word: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::sh_word;
+    use super::{lines, sh_word};
 
     #[test]
+    fn output_lines_lose_crlf() {
+        assert_eq!(lines(b"%1\r\n"), "%1");
+        assert_eq!(lines(b"a\tb\r\nc\r\n"), "a\tb\nc");
+        assert_eq!(lines(b"%1\n"), "%1");
+    }
+
+    #[test]
+    #[cfg(unix)]
     fn quotes_a_path_as_one_sh_word() {
         assert_eq!(sh_word("/a b/roer"), "'/a b/roer'");
         assert_eq!(sh_word("/it's/roer"), r"'/it'\''s/roer'");
