@@ -647,9 +647,16 @@ fn here() -> String {
 
 /// This binary, with symlinks resolved: installing is `ln -s` onto `PATH`,
 /// and the config sits beside the real file, not the link.
+///
+/// On Windows canonicalizing adds the `\\?\` long-path prefix, which then
+/// shows in every M-h binding and trips up tools that do not expect it.
 fn self_path() -> PathBuf {
     let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("roer"));
-    std::fs::canonicalize(&exe).unwrap_or(exe)
+    let real = std::fs::canonicalize(&exe).unwrap_or(exe);
+    match real.to_str().and_then(|path| path.strip_prefix(r"\\?\")) {
+        Some(bare) if cfg!(windows) => PathBuf::from(bare),
+        _ => real,
+    }
 }
 
 /// roer-tmux.conf: beside the binary, as a release ships them; else

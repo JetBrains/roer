@@ -44,7 +44,7 @@ has "  ...its record names the pane" "$(seen)" "\"$PANE\""
 # What M-h runs: the binding roer set, with the pane filled in, via run-shell.
 rm -f "$RUNNER_TEMP"/seen/*.json
 MH=$(m list-keys 2>&1 | grep 'M-h'); echo "      M-h: $MH"
-has "roer bound M-h for PowerShell" "$MH" "& '"
+has "roer bound M-h for PowerShell" "$MH" "run-shell -b &"
 CMD=$(printf '%s' "$MH" | sed -e "s/.*run-shell -b //" -e "s/^[\"']//" -e "s/[\"']\$//" -e "s/#{pane_id}/$PANE/")
 echo "      runs: $CMD"
 rs=$(m run-shell -t "$PANE" "$CMD" 2>&1); echo "      run-shell exit=$? out=[$(printf '%s' "$rs" | tr '\n' '|')]"
@@ -68,17 +68,44 @@ has "a pane has TMUX_PANE" "$(cat "$RUNNER_TEMP/env.txt" 2>&1)" "PANE=[%"
 # The test's own variables, set in the pane explicitly: real use needs none.
 m send-keys -t "$PANE" "\$env:ROER_SOCKET='smoke'; \$env:ROER_HOME='$ROER_HOME'; '{\"kind\":\"inside\"}' | & '$ROER' plugin-ui; \"exit=\$LASTEXITCODE\" | Set-Content -Path '$RUNNER_TEMP\\inside.txt'" Enter
 sleep 5
+# Is psmux itself refusing to run inside a pane, with TMUX set? Scripts,
+# not one-liners: three layers of quoting (bash, psmux, pwsh) are not a test.
+T=$(cygpath -w "$RUNNER_TEMP")
+cat > "$RUNNER_TEMP/inside.ps1" <<PS1
+\$out = "$T\\why.txt"
+"TMUX=[\$env:TMUX] PANE=[\$env:TMUX_PANE]" | Set-Content \$out
+"-- psmux with TMUX set:" | Add-Content \$out
+psmux -L smoke display-message -p -t \$env:TMUX_PANE '#{pane_id}' *>> \$out; "exit=\$LASTEXITCODE" | Add-Content \$out
+"-- psmux with TMUX unset:" | Add-Content \$out
+\$t = \$env:TMUX; \$env:TMUX = \$null
+psmux -L smoke display-message -p -t \$env:TMUX_PANE '#{pane_id}' *>> \$out; "exit=\$LASTEXITCODE" | Add-Content \$out
+\$env:TMUX = \$t
+"-- roer:" | Add-Content \$out
+'{"kind":"why"}' | & '$ROER' plugin-ui *>> \$out; "exit=\$LASTEXITCODE" | Add-Content \$out
+PS1
+m send-keys -t "$PANE" "& '$T\\inside.ps1'" Enter
+sleep 6
+echo "      inside a pane: $(cat "$RUNNER_TEMP/why.txt" 2>&1 | tr '\n' '|')"
 inside=$(cat "$RUNNER_TEMP/inside.txt" 2>&1)
 echo "      inside: $(printf '%s' "$inside" | tr '\n' '|')"
 has "roer inside a pane finds its own pane" "$inside" "exit=0"
 has "  ...and tags the record with it" "$(cat "$HOME_U"/plugin-ui/*.json 2>/dev/null)" '"inside"'
 
 # shell: roer attaches in a terminal, here a pane of a second psmux server.
-psmux -L smoke-outer new-session -d "pwsh -NoLogo -NoProfile -Command \"\$env:TMUX=\$null; \$env:TMUX_PANE=\$null; \$env:ROER_SOCKET='smoke'; \$env:ROER_HOME='$ROER_HOME'; Set-Location '$(cygpath -w "$PROJECT")'; & '$ROER' shell\"" >/dev/null 2>&1
-sleep 5
-echo "      outer pane: $(psmux -L smoke-outer capture-pane -p 2>&1 | grep -v '^\s*$' | tail -6 | tr '\n' '|')"
+cat > "$RUNNER_TEMP/shell.ps1" <<PS1
+\$env:TMUX = \$null; \$env:TMUX_PANE = \$null
+\$env:ROER_SOCKET = 'smoke'; \$env:ROER_HOME = '$ROER_HOME'
+Set-Location '$(cygpath -w "$PROJECT")'
+& '$ROER' shell 2> '$T\\shell.txt'
+"exit=\$LASTEXITCODE" | Add-Content '$T\\shell.txt'
+Start-Sleep 30
+PS1
+psmux -L smoke-outer new-session -d "pwsh -NoLogo -NoProfile -File $T\\shell.ps1" >/dev/null 2>&1
+sleep 6
 has "roer shell attached a client" "$(m list-sessions -F '#{session_name} #{session_attached}')" " 1"
 echo "      sessions: $(m list-sessions -F '#{session_name} #{session_attached}' 2>&1 | tr '\n' '|')"
+echo "      roer shell wrote: $(cat "$RUNNER_TEMP/shell.txt" 2>&1 | tr '\n' '|')"
+echo "      outer pane: $(psmux -L smoke-outer capture-pane -p 2>&1 | grep -v '^\s*$' | tail -6 | tr '\n' '|')"
 
 kill $APP 2>/dev/null
 psmux -L smoke-outer kill-server >/dev/null 2>&1; m kill-server >/dev/null 2>&1
