@@ -4,9 +4,9 @@
 //   node site/build.mjs            # release data from the GitHub API
 //   node site/build.mjs --offline  # no network: links point at the releases page
 //
-// The download buttons follow the newest *published* release. Every release is
-// a prerelease, so GitHub's /releases/latest (which skips prereleases) would
-// 404; the version has to be looked up here instead. The changelog is the
+// The download buttons follow the newest *published* release, looked up here
+// rather than through GitHub's /releases/latest, which skips prereleases (as
+// 0.1.0 to 0.3.0 are) and so can lag behind a new one. The changelog is the
 // commit subjects between release tags, since release notes carry install
 // steps rather than changes. Needs full git history and tags.
 
