@@ -302,7 +302,6 @@ h3 { font-size: 1.125rem; font-weight: 700; line-height: 1.3; letter-spacing: -0
 .gc-check:hover { background: var(--accent-soft); }
 .gc-check input { margin: 3px 0 0; accent-color: var(--accent); width: 15px; height: 15px; flex: none; }
 .gc-check code { color: var(--ink); }
-.surface[data-live="0"] .gc-check, .surface[data-live="0"] .gc-btn { pointer-events: none; }
 .gc-buttons { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
 .gc-btn {
   height: 32px; padding: 0 14px; border-radius: 6px; cursor: pointer;
