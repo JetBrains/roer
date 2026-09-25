@@ -141,6 +141,8 @@ async function main() {
   mkdirSync(join(OUT, "screenshots"), { recursive: true });
   writeFileSync(join(OUT, "index.html"), html);
   for (const f of ["styles.css", "main.js"]) cpSync(join(SITE, f), join(OUT, f));
+  // Placeholder until the first articles land; plain HTML, no template values.
+  cpSync(join(SITE, "blog"), join(OUT, "blog"), { recursive: true });
   cpSync(join(ROOT, "src-tauri/icons/128x128@2x.png"), join(OUT, "assets/roer.png"));
   cpSync(join(ROOT, "src-tauri/icons/64x64.png"), join(OUT, "assets/favicon.png"));
   const shots = { "diff.png": "diff.png", "Go To File.png": "go-to-file.png", "markdown.png": "markdown.png" };
