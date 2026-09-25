@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Roer</title>
+<meta name="description" content="Roer is a desktop home for terminal agents. Your agent draws UI live beside the session, you review its diff and ship the PR, and the session moves between terminal and app without restarting.">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" type="image/png" href="assets/favicon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,400;0,500;0,700;0,800;1,400&display=swap">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header class="top">
+  <div class="wrap top-row">
+    <a class="brand" href="#top" aria-label="Roer home">
+      <img class="brand-mark" src="assets/roer.png" width="28" height="28" alt="">
+      <span class="brand-name">roer</span>
+      <span class="pill pill-preview">Preview</span>
+    </a>
+    <nav class="nav" aria-label="Sections">
+      <a href="#review">Review</a>
+      <a href="#teleport">Teleport</a>
+      <a href="#install">Install</a>
+      <a href="#changelog">Changelog</a>
+      <a href="{{blogUrl}}">Blog</a>
+    </nav>
+    <a class="btn btn-primary btn-sm" href="#install">Download</a>
+  </div>
+</header>
+
+<main id="top">
+
+  <!-- Hero: the agent drafts a panel, Roer renders it -->
+  <section class="hero">
+    <div class="beam" aria-hidden="true"></div>
+    <div class="wrap hero-copy">
+      <p class="eyebrow">Generative UI for terminal agents</p>
+      <h1>Your agent writes the code.<br><span class="lit">Now it draws the UI.</span></h1>
+      <p class="lede">Ask Claude for a checklist, a monitor or an approval gate, and Roer draws it live beside the session. Then read the diff and ship the pull request from the same window.</p>
+      <div class="cta-row">
+        <a class="btn btn-primary" href="{{release.url}}">Download Roer {{release.version}}</a>
+        <a class="btn btn-ghost" href="{{blogUrl}}">Read the blog</a>
+      </div>
+      <p class="meta">macOS 14+ &nbsp;·&nbsp; Linux &nbsp;·&nbsp; Windows preview &nbsp;·&nbsp; released {{release.date}}</p>
+    </div>
+
+    <div class="wrap">
+      <figure class="app" id="demo" aria-label="Animated demo: an agent in the terminal sends UI messages and Roer renders an approval panel">
+        <div class="app-chrome">
+          <span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>
+          <span class="app-title">Roer — ~/IdeaProjects/roer</span>
+          <button class="replay" type="button" id="replay" aria-label="Replay the demo">Replay</button>
+        </div>
+        <div class="app-body">
+          <div class="term">
+            <div class="tabs" aria-hidden="true">
+              <span>Sessions</span><span class="on">Terminal</span><span>Changes</span>
+            </div>
+            <ol class="term-lines" id="term" aria-live="polite"></ol>
+          </div>
+          <div class="panel">
+            <div class="panel-head">
+              <span>Generative UI</span>
+              <span class="status" id="status" data-state="idle">Waiting</span>
+            </div>
+            <div class="surface" id="surface">
+              <div class="gc gc-card" data-id="card">
+                <p class="gc gc-text gc-heading" data-id="heading">Apply 3 pending changes?</p>
+                <p class="gc gc-text gc-muted" data-id="sub">The agent is ready to run <code>cargo fmt</code>, then commit. Uncheck anything to leave it out.</p>
+                <hr class="gc gc-divider" data-id="divider">
+                <div class="gc-list">
+                  <label class="gc gc-check" data-id="c1"><input type="checkbox" id="chg-watch" data-name="watch.rs"><span><code>src-tauri/src/watch.rs</code> batch window widened to 300ms</span></label>
+                  <label class="gc gc-check" data-id="c2"><input type="checkbox" id="chg-tabs" data-name="tabs.ts"><span><code>src/lib/tabs.ts</code> evict least-recently-used file tab</span></label>
+                  <label class="gc gc-check" data-id="c3"><input type="checkbox" id="chg-readme" data-name="README.md"><span><code>README.md</code> document the new eviction rule</span></label>
+                </div>
+                <div class="gc gc-buttons" data-id="row">
+                  <button type="button" class="gc-btn" id="gate-cancel">Cancel</button>
+                  <button type="button" class="gc-btn gc-btn-primary" id="gate-apply">Apply selected</button>
+                </div>
+              </div>
+            </div>
+            <p class="panel-foot">Drawn from Roer's own components. No agent-written code runs here.</p>
+          </div>
+        </div>
+      </figure>
+    </div>
+
+    <div class="wrap points">
+      <div class="point">
+        <h3>Ask in plain words</h3>
+        <p>Describe the panel you want. The agent drafts it and Roer opens it next to the terminal while the work keeps going.</p>
+      </div>
+      <div class="point">
+        <h3>Trusted by design</h3>
+        <p>Panels are assembled from a fixed set of Roer components: text, checkboxes, buttons, rows. The agent never ships markup or scripts.</p>
+      </div>
+      <div class="point">
+        <h3>Keep the good ones</h3>
+        <p>Save a panel with the project and reopen it next time, so a one-off dashboard can become part of how the repo works.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Review: diff, Go to File, Markdown, PR -->
+  <section class="section" id="review">
+    <div class="wrap split">
+      <div class="split-copy">
+        <p class="eyebrow">Review</p>
+        <h2>Read every change before it ships.</h2>
+        <p class="body">The agent works on a branch. Roer shows you that branch as a reviewer would see it, one commit at a time.</p>
+        <ul class="shots" role="tablist" aria-label="Review features">
+          <li><button type="button" role="tab" id="tab-diff" aria-selected="true" aria-controls="shot" data-src="screenshots/diff.png" data-alt="Branch diff view stepping through commits">
+            <strong>Commit by commit</strong><span>Step through the branch against its base with the arrow keys.</span></button></li>
+          <li><button type="button" role="tab" id="tab-goto" aria-selected="false" aria-controls="shot" data-src="screenshots/go-to-file.png" data-alt="Go to File popup with fuzzy matches">
+            <strong>Go to File <kbd>⌘⇧O</kbd></strong><span>Fuzzy-jump to any changed file in a keystroke.</span></button></li>
+          <li><button type="button" role="tab" id="tab-md" aria-selected="false" aria-controls="shot" data-src="screenshots/markdown.png" data-alt="Rendered Markdown preview of a changed file">
+            <strong>Markdown, rendered</strong><span>Read docs the way they will look, right from the diff.</span></button></li>
+        </ul>
+      </div>
+      <figure class="shot-frame">
+        <img id="shot" role="tabpanel" src="screenshots/diff.png" alt="Branch diff view stepping through commits" width="3022" height="1892" loading="lazy">
+      </figure>
+    </div>
+
+    <div class="wrap pr">
+      <div class="pr-copy">
+        <h3>Then open the pull request. Same window.</h3>
+        <p>The Pull Request tab uses your own GitHub login. Review comments go straight back into the running session.</p>
+      </div>
+      <ol class="flow">
+        <li><b>Draft</b><span>Claude writes the title and description.</span></li>
+        <li><b>Push</b><span>Roer pushes the branch and opens the PR.</span></li>
+        <li><b>Review</b><span>Request a Copilot review. Roer waits for it.</span></li>
+        <li><b>Fix</b><span>Pick threads and hit <em>Fix with Claude</em>.</span></li>
+      </ol>
+    </div>
+  </section>
+
+  <!-- Teleport -->
+  <section class="section section-alt" id="teleport">
+    <div class="wrap split split-rev">
+      <div class="split-copy">
+        <p class="eyebrow">Session teleport</p>
+        <h2>Leave the terminal. Keep the session.</h2>
+        <p class="body">Start in any terminal with <code>roer shell</code>. Press <kbd>M-h</kbd> and the live session moves into Roer, mid-thought. Same process, same scrollback, nothing restarts. Press it again to take it back.</p>
+        <p class="body dim">Works for anything that runs in a terminal: Claude Code, vim, a dev server.</p>
+      </div>
+      <div class="hop" aria-label="Animation: a running session moves from a terminal window into the Roer app and back">
+        <div class="hop-win hop-term"><span class="hop-label">Terminal</span></div>
+        <div class="hop-key"><kbd>M-h</kbd></div>
+        <div class="hop-win hop-app"><span class="hop-label">Roer</span></div>
+        <div class="hop-session" aria-hidden="true">
+          <span class="hs-line"><b>claude</b> · running</span>
+          <span class="hs-line dim">⏺ Updating tabs.ts…</span>
+          <span class="hs-bar"></span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Install -->
+  <section class="section" id="install">
+    <div class="wrap">
+      <p class="eyebrow">Install</p>
+      <h2>Up and running in four steps.</h2>
+      <p class="body">Roer {{release.version}} · released {{release.date}}. The builds are unsigned while Roer is in preview.</p>
+
+      <div class="os-tabs" role="tablist" aria-label="Operating system">
+        <button type="button" role="tab" id="os-mac" aria-controls="pane-mac" aria-selected="true">macOS</button>
+        <button type="button" role="tab" id="os-linux" aria-controls="pane-linux" aria-selected="false">Linux</button>
+        <button type="button" role="tab" id="os-win" aria-controls="pane-win" aria-selected="false">Windows <span class="pill">Preview</span></button>
+      </div>
+
+      <div class="os-pane" role="tabpanel" id="pane-mac" aria-labelledby="os-mac">
+        <ol class="steps">
+          <li><p>Download the app and the <code>roer</code> command. One universal build for Apple silicon and Intel.</p>
+            <div class="dl-row">
+              <a class="btn btn-primary btn-sm" href="{{dl.mac.app}}">{{dl.mac.appName}}</a>
+              <a class="btn btn-ghost btn-sm" href="{{dl.mac.cli}}">{{dl.mac.cliName}}</a>
+            </div></li>
+          <li><p>Drag Roer to Applications, then clear the quarantine flag. Without it, macOS stops the app on first launch.</p>
+            <pre class="cmd"><code>xattr -dr com.apple.quarantine /Applications/Roer.app</code><button type="button" class="copy">Copy</button></pre></li>
+          <li><p>Install tmux, which keeps sessions alive.</p>
+            <pre class="cmd"><code>brew install tmux</code><button type="button" class="copy">Copy</button></pre></li>
+          <li><p>Unpack the CLI, put <code>roer</code> on your <code>PATH</code>, and start a session.</p>
+            <pre class="cmd"><code>roer shell</code><button type="button" class="copy">Copy</button></pre></li>
+        </ol>
+      </div>
+
+      <div class="os-pane" role="tabpanel" id="pane-linux" aria-labelledby="os-linux" hidden>
+        <ol class="steps">
+          <li><p>Get the <code>.deb</code>, <code>.rpm</code> or <code>.AppImage</code> and the Linux CLI tarball.</p>
+            <div class="dl-row"><a class="btn btn-primary btn-sm" href="{{dl.linux.href}}">{{dl.linux.label}}</a></div></li>
+          <li><p>Install the <code>.deb</code> or <code>.rpm</code>. It pulls in tmux for you. Using the AppImage? Install tmux yourself.</p></li>
+          <li><p>Unpack the CLI, put <code>roer</code> on your <code>PATH</code>, and start a session.</p>
+            <pre class="cmd"><code>roer shell</code><button type="button" class="copy">Copy</button></pre></li>
+        </ol>
+        <p class="note">Shortcuts use <kbd>Ctrl</kbd><kbd>Shift</kbd> in place of <kbd>⌘</kbd>, leaving plain <kbd>Ctrl</kbd> keys to the terminal.</p>
+      </div>
+
+      <div class="os-pane" role="tabpanel" id="pane-win" aria-labelledby="os-win" hidden>
+        <ol class="steps">
+          <li><p>Run <code>Roer_&lt;version&gt;_x64-setup.exe</code>. It installs the app and <code>roer</code> together and adds it to your <code>PATH</code>. SmartScreen will warn, because preview builds are unsigned.</p>
+            <div class="dl-row"><a class="btn btn-primary btn-sm" href="{{dl.win.href}}">{{dl.win.label}}</a></div></li>
+          <li><p>Open a new PowerShell window and start a session. No WSL needed.</p>
+            <pre class="cmd"><code>roer shell</code><button type="button" class="copy">Copy</button></pre></li>
+        </ol>
+        <p class="note">Session titles are not shown on Windows yet.</p>
+      </div>
+
+      <p class="more">Building from source or need the details? <a href="https://github.com/JetBrains/roer#install">Read the full install guide</a>.</p>
+    </div>
+  </section>
+
+  <!-- Changelog, generated at deploy time from git tags -->
+  <section class="section section-alt" id="changelog">
+    <div class="wrap">
+      <p class="eyebrow">Changelog</p>
+      <h2>Shipping every few days.</h2>
+      <div class="releases">
+{{changelog}}
+      </div>
+      <p class="more"><a href="https://github.com/JetBrains/roer/releases">All releases on GitHub</a></p>
+    </div>
+  </section>
+
+  <!-- Feedback -->
+  <section class="section feedback">
+    <div class="wrap feedback-row">
+      <div>
+        <h2>Roer is early. Tell us what breaks.</h2>
+        <p class="body">Bugs, rough edges and ideas all go to GitHub issues. We read every one.</p>
+      </div>
+      <a class="btn btn-primary" href="https://github.com/JetBrains/roer/issues/new">Open an issue</a>
+    </div>
+  </section>
+
+</main>
+
+<footer class="foot">
+  <div class="wrap foot-row">
+    <span class="brand">
+      <img class="brand-mark" src="assets/roer.png" width="20" height="20" alt="">
+      <span class="brand-name">roer</span>
+    </span>
+    <nav class="foot-links" aria-label="Footer">
+      <a href="https://github.com/JetBrains/roer">GitHub</a>
+      <a href="https://github.com/JetBrains/roer/releases">Releases</a>
+      <a href="{{blogUrl}}">Blog</a>
+      <a href="https://github.com/JetBrains/roer/issues">Issues</a>
+    </nav>
+    <span class="foot-note">An internal JetBrains preview</span>
+  </div>
+</footer>
+
+<script src="main.js"></script>
+</body>
+</html>
