@@ -64,7 +64,6 @@ function pick(release, pattern) {
 function downloads(release) {
   const page = release?.html_url ?? RELEASES_URL;
   const dmg = pick(release, /_universal\.dmg$/);
-  const cli = pick(release, /^roer-cli-[\d.]+\.tar\.gz$/);
   // Only the app packages count: a release carrying just the Linux CLI tarball
   // has nothing to install the app from, so Nightly stays the place to get it.
   const linux = pick(release, /\.(deb|rpm|AppImage)$/);
@@ -73,8 +72,6 @@ function downloads(release) {
   return {
     "dl.mac.app": dmg?.browser_download_url ?? page,
     "dl.mac.appName": dmg?.name ?? "Roer .dmg",
-    "dl.mac.cli": cli?.browser_download_url ?? page,
-    "dl.mac.cliName": cli?.name ?? "roer CLI .tar.gz",
     "dl.linux.href": linux ? page : NIGHTLY_URL,
     "dl.linux.label": linux ? `Get Roer ${v} for Linux` : "Get the latest Nightly build",
     "dl.win.href": win ? page : NIGHTLY_URL,

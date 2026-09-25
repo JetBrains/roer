@@ -23,15 +23,27 @@ pub fn bin() -> String {
     resolve(std::env::var("ROER_BIN").ok(), bundled(), on_path("roer"), home())
 }
 
-/// The `roer` the Windows installer puts beside the app, in `roer\`, with the
-/// psmux it drives. Preferred over `PATH` so the app always talks to the
-/// version it shipped with. macOS and Linux install the CLI separately.
-fn bundled() -> Option<PathBuf> {
-    if !cfg!(windows) {
-        return None;
-    }
+/// The `roer` installed with the app, with the engine it drives: the Windows
+/// installer puts it beside the app in `roer\`, and Roer.app carries it in
+/// `Contents/MacOS` with its tmux. Preferred over `PATH` so the app always
+/// talks to the version it shipped with. Linux installs the CLI separately.
+pub(crate) fn bundled() -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
-    Some(exe.parent()?.join("roer").join("roer.exe")).filter(|path| path.is_file())
+    bundled_beside(&exe).filter(|path| path.is_file())
+}
+
+/// Where the installed `roer` is, for an app running from `exe`. On macOS
+/// only from inside a bundle: `tauri dev` runs the app from
+/// `target/debug/roer`, where a `roer` beside it would be the app itself.
+fn bundled_beside(exe: &std::path::Path) -> Option<PathBuf> {
+    let dir = exe.parent()?;
+    if cfg!(windows) {
+        Some(dir.join("roer").join("roer.exe"))
+    } else if cfg!(target_os = "macos") && dir.ends_with("Contents/MacOS") {
+        Some(dir.join("roer"))
+    } else {
+        None
+    }
 }
 
 fn resolve(explicit: Option<String>, bundled: Option<PathBuf>, on_path: bool, home: Option<PathBuf>) -> String {
@@ -247,6 +259,18 @@ fn command_name(command: &str) -> String {
 mod tests {
     use super::{file_names, resolve};
     use std::path::PathBuf;
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn the_app_bundle_carries_roer_but_a_dev_build_does_not() {
+        use super::bundled_beside;
+        use std::path::Path;
+        assert_eq!(
+            bundled_beside(Path::new("/Applications/Roer.app/Contents/MacOS/roer-app")),
+            Some(PathBuf::from("/Applications/Roer.app/Contents/MacOS/roer"))
+        );
+        assert_eq!(bundled_beside(Path::new("/checkout/src-tauri/target/debug/roer")), None);
+    }
 
     #[test]
     fn prefers_an_explicit_binary_over_everything() {

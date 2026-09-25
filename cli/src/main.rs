@@ -671,7 +671,18 @@ fn without_long_prefix(path: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::path::{Path, PathBuf};
+
     use super::without_long_prefix;
+
+    #[test]
+    fn finds_the_config_in_the_app_bundle_only_from_inside_one() {
+        assert_eq!(
+            super::bundle_conf(Path::new("/Applications/Roer.app/Contents/MacOS/roer")),
+            Some(PathBuf::from("/Applications/Roer.app/Contents/Resources/roer-tmux.conf"))
+        );
+        assert_eq!(super::bundle_conf(Path::new("/Users/me/.roer/bin/roer")), None);
+    }
 
     #[test]
     fn drops_the_long_path_prefix_but_keeps_a_share_absolute() {
@@ -682,13 +693,17 @@ mod tests {
     }
 }
 
-/// roer-tmux.conf: beside the binary, as a release ships them; else
+/// roer-tmux.conf: beside the binary, as the CLI archives ship them; else in
+/// the app bundle's Resources, when this is the roer inside Roer.app; else
 /// `ROER_TMUX_CONF`; else, in a debug build, the checkout's own copy, since
 /// `cli/target/debug/roer` sits nowhere near `scripts/`.
 fn find_conf(bin: &std::path::Path) -> Result<PathBuf, Fail> {
     let beside = bin.with_file_name("roer-tmux.conf");
     if beside.is_file() {
         return Ok(beside);
+    }
+    if let Some(bundled) = bundle_conf(bin).filter(|conf| conf.is_file()) {
+        return Ok(bundled);
     }
     if let Some(conf) = std::env::var_os("ROER_TMUX_CONF").filter(|v| !v.is_empty()).map(PathBuf::from) {
         return if conf.is_file() {
@@ -704,6 +719,14 @@ fn find_conf(bin: &std::path::Path) -> Result<PathBuf, Fail> {
         }
     }
     Err(Fail::new(1, format!("missing config at {}", beside.display())))
+}
+
+/// Where Roer.app keeps the config for the roer it carries in
+/// `Contents/MacOS`: in `Contents/Resources`, since a signed bundle holds only
+/// code in `MacOS`. None for a binary anywhere else.
+fn bundle_conf(bin: &std::path::Path) -> Option<PathBuf> {
+    let macos = bin.parent().filter(|dir| dir.ends_with("Contents/MacOS"))?;
+    Some(macos.parent()?.join("Resources").join("roer-tmux.conf"))
 }
 
 /// A random, lowercase UUID v4, as `uuidgen | tr A-Z a-z` gave. The standard

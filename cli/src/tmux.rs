@@ -22,21 +22,20 @@ pub fn socket() -> String {
 
 /// The engine: tmux, or psmux on Windows, unless `ROER_MUX` names another.
 ///
-/// On Windows a `psmux.exe` beside this binary comes first, so the two can
-/// ship as a pair: a psmux pane starts with the machine's PATH, not the one
-/// of the shell that installed it, and roer runs inside those panes too.
+/// One beside this binary comes first, so the two can ship as a pair:
+/// Roer.app carries its own tmux, and the Windows installer its psmux. Then
+/// the version tested is the one that runs, and it is found without `PATH`,
+/// which an app started from Finder, and so the server it starts, barely has.
 pub fn program(bin: &Path) -> String {
     if let Some(program) = std::env::var("ROER_MUX").ok().filter(|s| !s.is_empty()) {
         return program;
     }
-    if cfg!(windows) {
-        let beside = bin.with_file_name("psmux.exe");
-        if beside.is_file() {
-            return beside.to_string_lossy().into_owned();
-        }
-        return "psmux".into();
+    let name = if cfg!(windows) { "psmux" } else { "tmux" };
+    let beside = bin.with_file_name(if cfg!(windows) { "psmux.exe" } else { "tmux" });
+    if beside.is_file() {
+        return beside.to_string_lossy().into_owned();
     }
-    "tmux".into()
+    name.into()
 }
 
 /// Whether the engine is psmux, which needs the few workarounds below.

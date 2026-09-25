@@ -11,7 +11,7 @@
     "test:watch": "vitest",
     "tauri": "tauri",
     "assemble": "tauri build --debug --bundles app",
-    "release:local": "tauri build --target universal-apple-darwin --bundles app"
+    "release:local": "bash .github/macos/prepare-bundle.sh && tauri build --target universal-apple-darwin --bundles app --config src-tauri/tauri.macos-cli.conf.json"
   },
   "dependencies": {
     "@shikijs/core": "^4.4.3",

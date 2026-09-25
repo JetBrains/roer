@@ -27,5 +27,8 @@ src-tauri/gen/
 # The Windows CLI staged for the installer (.github/windows/stage-cli.sh).
 src-tauri/windows-cli/
 
+# The macOS CLI and tmux staged for the app bundle (.github/macos/prepare-bundle.sh).
+src-tauri/macos-cli/
+
 # The landing page as built by site/build.mjs.
 _site/

@@ -1,4 +1,5 @@
 mod claude;
+mod cli_link;
 mod files;
 mod gh;
 mod git;
@@ -82,6 +83,7 @@ pub fn run() {
             projects::project_delete,
         ])
         .setup(|app| {
+            cli_link::install();
             handoff::watch(app.handle().clone())?;
             plugin_ui::watch(app.handle().clone())?;
             pr_draft::watch(app.handle().clone())?;
