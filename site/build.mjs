@@ -65,7 +65,9 @@ function downloads(release) {
   const page = release?.html_url ?? RELEASES_URL;
   const dmg = pick(release, /_universal\.dmg$/);
   const cli = pick(release, /^roer-cli-[\d.]+\.tar\.gz$/);
-  const linux = pick(release, /\.(deb|rpm|AppImage)$/) || pick(release, /linux.*\.tar\.gz$/);
+  // Only the app packages count: a release carrying just the Linux CLI tarball
+  // has nothing to install the app from, so Nightly stays the place to get it.
+  const linux = pick(release, /\.(deb|rpm|AppImage)$/);
   const win = pick(release, /_x64-setup\.exe$/);
   const v = release ? release.tag_name.replace(/^v/, "") : null;
   return {
@@ -114,7 +116,11 @@ ${shown.map((s) => `            <li>${esc(s)}</li>`).join("\n")}
 async function main() {
   let published = [];
   if (!offline) {
-    published = (await fetchReleases()).filter((r) => !r.draft && r.published_at);
+    // The API orders by creation, so a draft published after a newer one would
+    // otherwise not come first.
+    published = (await fetchReleases())
+      .filter((r) => !r.draft && r.published_at)
+      .sort((a, b) => b.published_at.localeCompare(a.published_at));
     if (!published.length) throw new Error("No published release found.");
   }
   const latest = published[0];

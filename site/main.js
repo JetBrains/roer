@@ -63,6 +63,7 @@ const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").match
 
   function goLive() {
     surface.dataset.live = "1";
+    surface.inert = false;
     setStatus("live", "Live");
   }
 
@@ -72,6 +73,8 @@ const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").match
     done = false;
     term.innerHTML = "";
     surface.dataset.live = "0";
+    // Not just unclickable: inert also keeps keyboard focus off the drafts.
+    surface.inert = true;
     Object.values(parts).forEach((el) => (el.dataset.shown = "0"));
     boxes.forEach((b) => (b.checked = false));
     apply.disabled = cancel.disabled = false;
