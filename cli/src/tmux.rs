@@ -160,7 +160,7 @@ impl Tmux {
         }
         // A bare `tmux` goes to whichever server `$TMUX` names, which is
         // exactly the one to ask.
-        let sock = inside(&["display-message", "-p", "#{socket_path}"]).unwrap_or_default();
+        let sock = inside(&self.program, &["display-message", "-p", "#{socket_path}"]).unwrap_or_default();
         let ours = Path::new(&sock).file_name().is_some_and(|name| name == self.socket.as_str());
         if !ours {
             return Err(Fail::new(3, format!("inside tmux on {sock}, which is not the roer socket")));
@@ -168,7 +168,7 @@ impl Tmux {
         Ok(std::env::var("TMUX_PANE")
             .ok()
             .filter(|pane| !pane.is_empty())
-            .or_else(|| inside(&["display-message", "-p", "#{pane_id}"]))
+            .or_else(|| inside(&self.program, &["display-message", "-p", "#{pane_id}"]))
             .unwrap_or_default())
     }
 
@@ -184,7 +184,7 @@ impl Tmux {
     /// the app that has just taken it over, so there it is left undone: the
     /// app's own `attach -d` has already evicted this terminal.
     pub fn detach_self(&self) -> bool {
-        !is_psmux(&self.program) && inside(&["detach-client"]).is_some()
+        !is_psmux(&self.program) && inside(&self.program, &["detach-client"]).is_some()
     }
 
     /// The pane of `session` that a client attaching to it would land on.
@@ -230,8 +230,10 @@ fn replace_with(mut command: Command, program: &str) -> String {
 }
 
 /// Asks the tmux this process is inside, via `$TMUX` rather than our socket.
-fn inside(args: &[&str]) -> Option<String> {
-    let out = Command::new("tmux").args(args).stderr(Stdio::null()).output().ok()?;
+/// With `program`, not whatever `tmux` is on `PATH`: Roer.app's tmux is not
+/// on it, and a Mac with only the app installed has no other.
+fn inside(program: &str, args: &[&str]) -> Option<String> {
+    let out = Command::new(program).args(args).stderr(Stdio::null()).output().ok()?;
     out.status.success().then(|| lines(&out.stdout))
 }
 
