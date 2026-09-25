@@ -7,6 +7,12 @@
 //! `PATH` already. Only when a login shell still cannot find `roer` does the
 //! app ask, once, for an administrator's password to link it into
 //! `/usr/local/bin`, which every Mac has on `PATH`.
+//!
+//! It also has that `roer` install the skills it carries for Claude Code, and
+//! register itself as an MCP server with Claude Code, so
+//! sessions in any project know how to hand themselves over and show a UI.
+//! `roer skills` and `roer mcp` own what that means, including staying out
+//! once the person removes them.
 
 use std::io::ErrorKind;
 use std::path::Path;
@@ -45,6 +51,8 @@ fn link() -> std::io::Result<()> {
         return Ok(());
     };
     link_user(&cli, &home.join(".local/bin/roer"))?;
+    install_auto(&cli, "skills");
+    install_auto(&cli, "mcp");
 
     if shell_finds_roer() != Some(false) || taken(Path::new(SYSTEM_LINK), &cli) {
         return Ok(());
@@ -59,6 +67,17 @@ fn link() -> std::io::Result<()> {
         std::fs::write(&declined, "")?;
     }
     Ok(())
+}
+
+/// `roer <what> install --auto`: what is new installed, what is there kept
+/// pointing at this app, nothing the person removed brought back.
+fn install_auto(cli: &Path, what: &str) {
+    let out = command(cli).args([what, "install", "--auto"]).stdin(Stdio::null()).output();
+    match out {
+        Ok(out) if out.status.success() && out.stderr.is_empty() => {}
+        Ok(out) => eprintln!("roer: {what} install: {}", String::from_utf8_lossy(&out.stderr).trim()),
+        Err(err) => eprintln!("roer: could not run {what} install: {err}"),
+    }
 }
 
 /// `link` pointing at `cli`, replacing a link that points elsewhere: an older

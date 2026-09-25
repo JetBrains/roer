@@ -117,10 +117,11 @@ jobs:
           mkdir -p shim dist
           install -m 755 cli/target/release/roer shim/roer
           install -m 644 scripts/roer-tmux.conf shim/roer-tmux.conf
+          cp -R .claude/skills shim/skills
           # A release build has no checkout to fall back on, so this proves it
           # finds the config beside itself, as it will once installed.
           shim/roer help > /dev/null
-          tar -czf "dist/roer-cli-${VERSION}-linux-x86_64.tar.gz" -C shim roer roer-tmux.conf
+          tar -czf "dist/roer-cli-${VERSION}-linux-x86_64.tar.gz" -C shim roer roer-tmux.conf skills
           tar -tvzf "dist/roer-cli-${VERSION}-linux-x86_64.tar.gz"
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -348,6 +349,7 @@ jobs:
           # Resources and its tmux beside it, with no checkout and no Homebrew
           # to fall back on. `roer help` fails without the config.
           test -f "$APP/Contents/Resources/roer-tmux.conf"
+          test -f "$APP/Contents/Resources/skills/roer-handoff/SKILL.md"
           "$APP/Contents/MacOS/roer" help > /dev/null
           "$APP/Contents/MacOS/tmux" -V
           MIN="$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$APP/Contents/Info.plist")"

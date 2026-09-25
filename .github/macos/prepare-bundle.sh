@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Stages what Roer.app carries besides itself where tauri.macos-cli.conf.json
 # expects it: the roer command and the tmux it drives, both universal, the
-# config, and the licences of what is linked into tmux. With them in the
+# config, the skills, and the licences of what is linked into tmux. With them in the
 # bundle, installing the .dmg is the whole install, and the app puts roer on
 # PATH itself (src-tauri/src/cli_link.rs). Run from the repository root before
 # `tauri build`.
@@ -23,6 +23,16 @@ chmod 755 "$stage/roer"
 
 bash .github/macos/fetch-tmux.sh "$stage"
 cp scripts/roer-tmux.conf "$stage/roer-tmux.conf"
+cp -R .claude/skills "$stage/skills"
+
+# tauri.macos-cli.conf.json names each file it bundles, so a skill, or a file
+# of one, added without a line there would be left out of the app unnoticed.
+(cd "$stage" && find skills -type f) | while read -r file; do
+    grep -qF "\"Resources/$file\"" src-tauri/tauri.macos-cli.conf.json || {
+        echo "$file is not in src-tauri/tauri.macos-cli.conf.json" >&2
+        exit 1
+    }
+done
 
 # Ad hoc, as tauri.conf.json signs the app: the linker signs only arm64
 # slices, and a bundle holding code with no signature at all cannot be sealed.
@@ -35,8 +45,12 @@ codesign --force --sign - --options runtime "$stage/roer" "$stage/tmux"
 layout=$(mktemp -d)/Roer.app/Contents
 mkdir -p "$layout/MacOS" "$layout/Resources"
 cp "$stage/roer" "$stage/tmux" "$layout/MacOS/"
-cp "$stage/roer-tmux.conf" "$layout/Resources/"
+cp -R "$stage/roer-tmux.conf" "$stage/skills" "$layout/Resources/"
 "$layout/MacOS/roer" help > /dev/null
+# The skills the app links for Claude Code are found in Resources too.
+mkdir -p "$(dirname "$layout")/claude"
+CLAUDE_CONFIG_DIR="$(dirname "$layout")/claude" ROER_HOME="$(dirname "$layout")/home" \
+    "$layout/MacOS/roer" skills install
 ROER_SOCKET="prepare-$$" ROER_HOME="$(dirname "$layout")/home" PATH=/usr/bin:/bin "$layout/MacOS/roer" list
 rm -rf "$(dirname "$(dirname "$layout")")"
 ls -l "$stage"

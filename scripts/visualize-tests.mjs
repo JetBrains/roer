@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // Shows the vitest suite as a Generative UI surface in Roer's Plugin UI tab,
 // with a "Run tests" button that actually re-runs vitest and refreshes the
-// surface with the new results. See .claude/skills/generative-ui/SKILL.md
-// for the message shapes and the plugin-ui-actions read-back protocol.
+// surface with the new results. See cli/src/mcp-guide.md for the message
+// shapes and the plugin-ui-actions read-back protocol.
 
 import { mkdirSync, readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";

@@ -15,4 +15,6 @@ path = "src/main.rs"
 # Deliberately small. This is a command a terminal runs on every keypress of
 # M-h, and it builds on any runner without the app's GTK/WebKit stack.
 [dependencies]
-serde_json = "1.0.151"
+# preserve_order: `roer mcp install` rewrites the Claude app's config and keeps
+# its keys in the order the person, or the app, left them.
+serde_json = { version = "1.0.151", features = ["preserve_order"] }

@@ -17,7 +17,7 @@ pub fn home() -> PathBuf {
     user_home().join(".roer")
 }
 
-fn user_home() -> PathBuf {
+pub fn user_home() -> PathBuf {
     let var = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
     std::env::var_os(var).map(PathBuf::from).unwrap_or_default()
 }
@@ -71,10 +71,15 @@ fn ensure_dir(dir: &Path) -> Result<(), Fail> {
 /// the pane it belongs to. Fire and forget: no claim, ack or timeout. `seq`
 /// keeps two messages from one process in one second — a `load`'s
 /// surfaceUpdate and its dataModelUpdate — from sharing a filename.
+/// `seq` orders one command's messages; the count keeps apart the records of
+/// a process that sends several in the same second, as `roer mcp` does, where
+/// the stamp alone would have a later one overwrite one not yet delivered.
 pub fn emit_plugin_ui(pane: &str, message: Value, seq: u32) -> Result<(), Fail> {
+    static SENT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    let count = SENT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let dir = home().join("plugin-ui");
     ensure_dir(&dir)?;
-    let file = dir.join(format!("{}-{seq}.json", stamp()));
+    let file = dir.join(format!("{}-{count}-{seq}.json", stamp()));
     write_atomic(&file, &format!("{}\n", json!({ "pane": pane, "message": message })))
 }
 

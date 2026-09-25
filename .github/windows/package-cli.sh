@@ -12,6 +12,6 @@ out="$(cd "$(dirname "$out")" && pwd)/$(basename "$out")"
 stage=$(mktemp -d)
 bash "$(dirname "$0")/stage-cli.sh" "$roer" "$psmux" "$stage"
 rm -f "$out"
-(cd "$stage" && 7z a -tzip -bso0 -bsp0 "$(cygpath -w "$out")" roer.exe psmux.exe psmux-LICENSE.txt roer-tmux.conf)
+(cd "$stage" && 7z a -tzip -bso0 -bsp0 "$(cygpath -w "$out")" roer.exe psmux.exe psmux-LICENSE.txt roer-tmux.conf skills)
 7z l "$out" | tail -8
 rm -rf "$stage"

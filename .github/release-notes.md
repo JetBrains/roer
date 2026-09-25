@@ -24,6 +24,13 @@ install, Homebrew included. It links `roer` into `~/.local/bin`, where Claude
 Code's installer puts `claude`; if your shell cannot find it there, the app
 asks once for your password and links it into `/usr/local/bin` instead.
 
+It also links Roer's Claude Code skills into `~/.claude/skills`, so a session
+in any project can hand itself over, and registers `roer mcp`, Roer's MCP
+server, with Claude Code, so an agent in a Roer session can show a UI in its
+session's Generative UI panel. `roer skills` and `roer mcp status` say what is
+installed, and `roer skills uninstall` and `roer mcp uninstall` remove it for
+good.
+
 ## Linux
 
 The `roer` command alone, with tmux 3.3 or later installed yourself:
@@ -34,10 +41,12 @@ curl -fsSL https://github.com/JetBrains/roer/releases/download/__TAG__/roer-cli-
   | tar -xzf - -C ~/.roer/bin
 ln -sf ~/.roer/bin/roer ~/.local/bin/roer
 roer help
+roer skills install   # optional: Roer's skills for Claude Code
+roer mcp install      # optional: Roer's MCP server for Claude Code
 ```
 
-`roer` looks for `roer-tmux.conf` beside itself, so the two cannot be split
-up — `roer help` succeeding is what proves the config was found.
+`roer` looks for `roer-tmux.conf` and `skills/` beside itself, so they cannot
+be split up — `roer help` succeeding is what proves the config was found.
 
 ## Windows (preview)
 

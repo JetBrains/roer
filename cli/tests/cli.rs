@@ -560,3 +560,326 @@ fn m_h_hands_over_from_a_path_with_shell_characters_in_it() {
     assert_eq!(seen.first().map(|r| r["args"].clone()), Some(serde_json::json!(["attach", pane])), "{}", m_h(&env));
     assert!(!env.dir.join("pwned").exists(), "nothing in the path was run");
 }
+
+/// `roer skills` against a Claude config directory of the test's own.
+fn skills(env: &Env, args: &[&str]) -> Output {
+    let mut all = vec!["skills"];
+    all.extend_from_slice(args);
+    let out = env.roer(&all).env("CLAUDE_CONFIG_DIR", claude_dir(env)).stdin(Stdio::null()).output().unwrap();
+    assert!(out.status.success(), "roer {all:?}: {}", String::from_utf8_lossy(&out.stderr));
+    out
+}
+
+fn claude_dir(env: &Env) -> PathBuf {
+    env.dir.join("claude")
+}
+
+fn linked(env: &Env, name: &str) -> bool {
+    claude_dir(env).join("skills").join(name).join("SKILL.md").is_file()
+}
+
+#[test]
+fn skills_install_links_every_skill_and_uninstall_keeps_them_away() {
+    let env = Env::new("skills");
+    skills(&env, &["install"]);
+    assert!(linked(&env, "roer-handoff"));
+
+    skills(&env, &["uninstall"]);
+    assert!(!linked(&env, "roer-handoff"));
+    skills(&env, &["install", "--auto"]);
+    assert!(!linked(&env, "roer-handoff"), "the app's launch does not undo an uninstall");
+
+    skills(&env, &["install"]);
+    assert!(linked(&env, "roer-handoff"), "an explicit install takes the uninstall back");
+}
+
+#[test]
+fn skills_the_app_installs_stay_removed_once_the_person_removes_them() {
+    let env = Env::new("skills-auto");
+    skills(&env, &["install", "--auto"]);
+    assert!(!claude_dir(&env).exists(), "no Claude directory is made for a Mac without Claude Code");
+
+    std::fs::create_dir_all(claude_dir(&env)).unwrap();
+    skills(&env, &["install", "--auto"]);
+    assert!(linked(&env, "roer-handoff"));
+
+    std::fs::remove_file(claude_dir(&env).join("skills/roer-handoff")).unwrap();
+    skills(&env, &["install", "--auto"]);
+    assert!(!linked(&env, "roer-handoff"), "a deleted link is not brought back");
+    let list = String::from_utf8_lossy(&skills(&env, &["list"]).stdout).into_owned();
+    assert!(list.contains("roer-handoff\tremoved\t"), "{list}");
+}
+
+/// generative-ui was a skill until `roer mcp` took it over: a Mac that had
+/// it linked loses the link once the new roer runs.
+#[test]
+fn skills_roer_no_longer_carries_are_taken_away() {
+    let env = Env::new("skills-gone");
+    let gone = env.dir.join("old-app/skills/generative-ui");
+    std::fs::create_dir_all(&gone).unwrap();
+    std::fs::write(gone.join("SKILL.md"), "old").unwrap();
+    std::fs::create_dir_all(claude_dir(&env).join("skills")).unwrap();
+    std::os::unix::fs::symlink(&gone, claude_dir(&env).join("skills/generative-ui")).unwrap();
+    std::fs::create_dir_all(env.home.join("skills")).unwrap();
+    std::fs::write(env.home.join("skills/claude-installed"), "generative-ui\n").unwrap();
+
+    skills(&env, &["install", "--auto"]);
+    assert!(std::fs::symlink_metadata(claude_dir(&env).join("skills/generative-ui")).is_err());
+    assert!(linked(&env, "roer-handoff"));
+}
+
+#[test]
+fn skills_never_touch_a_skill_of_the_same_name_the_person_made() {
+    let env = Env::new("skills-own");
+    let own = claude_dir(&env).join("skills/roer-handoff");
+    std::fs::create_dir_all(&own).unwrap();
+    std::fs::write(own.join("SKILL.md"), "mine").unwrap();
+
+    skills(&env, &["install"]);
+    skills(&env, &["uninstall"]);
+    assert_eq!(std::fs::read_to_string(own.join("SKILL.md")).unwrap(), "mine");
+}
+
+/// `roer mcp` fed `requests` on stdin, with `vars` set; its replies, by id.
+fn mcp(env: &Env, vars: &[(&str, &str)], requests: &[Value]) -> Vec<Value> {
+    let mut roer = env.roer(&["mcp"]);
+    roer.envs(vars.iter().copied()).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = roer.spawn().unwrap();
+    let mut input = String::new();
+    for (n, request) in requests.iter().enumerate() {
+        let mut request = request.clone();
+        request["jsonrpc"] = "2.0".into();
+        request["id"] = (n + 1).into();
+        input.push_str(&format!("{request}\n"));
+    }
+    child.stdin.take().unwrap().write_all(input.as_bytes()).unwrap();
+    let out = child.wait_with_output().unwrap();
+    String::from_utf8_lossy(&out.stdout).lines().map(|line| serde_json::from_str(line).unwrap()).collect()
+}
+
+fn call(name: &str, arguments: Value) -> Value {
+    serde_json::json!({ "method": "tools/call", "params": { "name": name, "arguments": arguments } })
+}
+
+fn tool_names(reply: &Value) -> Vec<String> {
+    reply["result"]["tools"].as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap().to_string()).collect()
+}
+
+/// `$TMUX` and `$TMUX_PANE` as a shell in `pane` of this test's server has them.
+fn in_pane(env: &Env, pane: &str) -> [(&'static str, String); 2] {
+    let socket = env.tmux(&["display-message", "-p", "#{socket_path}"]);
+    [("TMUX", format!("{socket},1,0")), ("TMUX_PANE", pane.to_string())]
+}
+
+#[test]
+fn mcp_offers_the_session_tools_only_inside_a_roer_session() {
+    let env = Env::new("mcp-scope");
+    let here = pane(&env, "work", "sh");
+    let list = serde_json::json!({ "method": "tools/list" });
+
+    let outside = mcp(&env, &[], std::slice::from_ref(&list));
+    assert_eq!(tool_names(&outside[0]), ["show_ui", "read_ui_actions"]);
+    assert_eq!(outside[0]["result"]["tools"][0]["inputSchema"]["required"], serde_json::json!(["messages", "session"]));
+
+    let vars = in_pane(&env, &here);
+    let vars: Vec<(&str, &str)> = vars.iter().map(|(k, v)| (*k, v.as_str())).collect();
+    let inside = mcp(&env, &vars, &[list]);
+    assert_eq!(tool_names(&inside[0]), ["show_ui", "read_ui_actions", "save_ui", "load_ui"]);
+}
+
+/// Claude Code in a plain terminal gets nothing from Roer, not even the
+/// instructions; any other client, like the Claude app, and Claude Code in a
+/// Roer session, do.
+#[test]
+fn mcp_offers_claude_code_nothing_outside_a_roer_session() {
+    let env = Env::new("mcp-idle");
+    let here = pane(&env, "work", "sh");
+    let init = |client: &str| {
+        serde_json::json!({ "method": "initialize", "params": {
+            "protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": { "name": client, "version": "1" },
+        }})
+    };
+    let list = serde_json::json!({ "method": "tools/list" });
+    let show = call("show_ui", serde_json::json!({ "session": "work", "messages": [{ "kind": "beginRendering", "surfaceId": "s" }] }));
+
+    let code = mcp(&env, &[], &[init("claude-code"), list.clone(), show.clone()]);
+    assert!(code[0]["result"]["instructions"].is_null());
+    assert!(tool_names(&code[1]).is_empty());
+    assert_eq!(code[2]["result"]["isError"], true);
+
+    let app = mcp(&env, &[], &[init("some-other-client"), list.clone()]);
+    assert!(app[0]["result"]["instructions"].is_string());
+    assert_eq!(tool_names(&app[1]), ["show_ui", "read_ui_actions"]);
+
+    let vars = in_pane(&env, &here);
+    let vars: Vec<(&str, &str)> = vars.iter().map(|(k, v)| (*k, v.as_str())).collect();
+    let inside = mcp(&env, &vars, &[init("claude-code"), list]);
+    assert_eq!(tool_names(&inside[1]), ["show_ui", "read_ui_actions", "save_ui", "load_ui"]);
+}
+
+#[test]
+fn mcp_shows_ui_in_its_own_session_or_a_named_one() {
+    let env = Env::new("mcp-show");
+    let here = pane(&env, "work", "sh");
+    let other = pane(&env, "other", "sh");
+    let messages = serde_json::json!([
+        { "kind": "surfaceUpdate", "surfaceId": "s", "root": "t", "components": [{ "id": "t", "type": "Text", "text": "hi" }] },
+        { "kind": "beginRendering", "surfaceId": "s" },
+    ]);
+
+    let replies = mcp(&env, &[], &[call("show_ui", serde_json::json!({ "messages": messages }))]);
+    assert_eq!(replies[0]["result"]["isError"], true, "outside a session it needs one named");
+
+    let vars = in_pane(&env, &here);
+    let vars: Vec<(&str, &str)> = vars.iter().map(|(k, v)| (*k, v.as_str())).collect();
+    let replies = mcp(&env, &vars, &[
+        call("show_ui", serde_json::json!({ "messages": messages })),
+        call("show_ui", serde_json::json!({ "messages": messages, "session": "other" })),
+    ]);
+    assert!(replies.iter().all(|r| r["result"]["isError"] == false), "{replies:?}");
+    let panes: Vec<Value> = env.records("plugin-ui").iter().map(|r| r["pane"].clone()).collect();
+    assert_eq!(panes, [here.as_str(), here.as_str(), other.as_str(), other.as_str()]);
+}
+
+#[test]
+fn mcp_saves_loads_and_reads_clicks_back() {
+    let env = Env::new("mcp-bundle");
+    let here = pane(&env, "work", "sh");
+    let vars = in_pane(&env, &here);
+    let vars: Vec<(&str, &str)> = vars.iter().map(|(k, v)| (*k, v.as_str())).collect();
+
+    let actions = env.home.join("plugin-ui-actions");
+    std::fs::create_dir_all(&actions).unwrap();
+    std::fs::write(actions.join("1.json"), format!(r#"{{"pane":"{here}","name":"refresh"}}"#)).unwrap();
+    std::fs::write(actions.join("2.json"), r#"{"pane":"%999","name":"elsewhere"}"#).unwrap();
+
+    let replies = mcp(&env, &vars, &[
+        call("save_ui", serde_json::json!({
+            "name": "issues",
+            "surfaceUpdate": { "kind": "surfaceUpdate", "surfaceId": "issues" },
+            "prompt": "show open issues",
+        })),
+        call("load_ui", serde_json::json!({ "name": "issues" })),
+        call("read_ui_actions", serde_json::json!({})),
+        call("read_ui_actions", serde_json::json!({})),
+    ]);
+    assert!(replies.iter().all(|r| r["result"]["isError"] == false), "{replies:?}");
+    let bundle = env.dir.join(".roer/plugin-ui/bundles/issues");
+    assert!(bundle.join("surface-update.json").is_file() && bundle.join("prompt.md").is_file());
+    let kinds: Vec<Value> = env.records("plugin-ui").iter().map(|r| r["message"]["kind"].clone()).collect();
+    assert_eq!(kinds, ["surfaceUpdate", "beginRendering"]);
+    assert!(replies[2]["result"]["content"][0]["text"].as_str().unwrap().contains("refresh"));
+    assert_eq!(replies[3]["result"]["content"][0]["text"], "", "a click is read once");
+    assert!(actions.join("2.json").exists(), "another pane's click is left for it");
+}
+
+/// `roer mcp` registration with a stand-in `claude` on `PATH` that keeps its
+/// user-scope servers in `$CLAUDE_CONFIG_DIR/.claude.json` the way the real
+/// one does, and a `HOME` of the test's own for the Claude app's config.
+struct Clients {
+    home: PathBuf,
+    claude: PathBuf,
+    path: String,
+}
+
+impl Clients {
+    fn new(env: &Env) -> Clients {
+        let home = env.dir.join("user");
+        let claude = home.join(".claude");
+        let bin = home.join("bin");
+        std::fs::create_dir_all(&claude).unwrap();
+        std::fs::create_dir_all(&bin).unwrap();
+        std::fs::create_dir_all(home.join("Library/Application Support/Claude")).unwrap();
+        let fake = bin.join("claude");
+        std::fs::write(&fake, "#!/bin/sh\n\
+            case \"$2\" in\n\
+              add-json) printf '{\"mcpServers\":{\"roer\":%s}}' \"$6\" > \"$CLAUDE_CONFIG_DIR/.claude.json\" ;;\n\
+              remove) printf '{\"mcpServers\":{}}' > \"$CLAUDE_CONFIG_DIR/.claude.json\" ;;\n\
+            esac\n").unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+        Clients { path: format!("{}:/usr/bin:/bin", bin.display()), home, claude }
+    }
+
+    fn run(&self, env: &Env, args: &[&str]) -> Output {
+        let mut all = vec!["mcp"];
+        all.extend_from_slice(args);
+        let out = env.roer(&all)
+            .env("HOME", &self.home)
+            .env("CLAUDE_CONFIG_DIR", &self.claude)
+            .env("PATH", &self.path)
+            .stdin(Stdio::null())
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "roer {all:?}: {}", String::from_utf8_lossy(&out.stderr));
+        out
+    }
+
+    fn code_entry(&self) -> Value {
+        let text = std::fs::read_to_string(self.claude.join(".claude.json")).unwrap_or_else(|_| "{}".into());
+        serde_json::from_str::<Value>(&text).unwrap()["mcpServers"]["roer"].clone()
+    }
+
+    fn desktop_file(&self) -> PathBuf {
+        self.home.join("Library/Application Support/Claude/claude_desktop_config.json")
+    }
+}
+
+#[test]
+fn mcp_install_registers_roer_and_uninstall_keeps_it_away() {
+    let env = Env::new("mcp-install");
+    let clients = Clients::new(&env);
+    clients.run(&env, &["install", "--auto"]);
+    let entry = clients.code_entry();
+    assert_eq!(entry["args"], serde_json::json!(["mcp"]));
+    assert!(entry["command"].as_str().unwrap().ends_with("/roer"), "{entry}");
+
+    clients.run(&env, &["uninstall"]);
+    assert!(clients.code_entry().is_null());
+    clients.run(&env, &["install", "--auto"]);
+    assert!(clients.code_entry().is_null(), "the app's launch does not undo an uninstall");
+    clients.run(&env, &["install"]);
+    assert!(!clients.code_entry().is_null(), "an explicit install takes it back");
+
+    // Removed by the person in Claude Code itself: stays removed.
+    std::fs::write(clients.claude.join(".claude.json"), r#"{"mcpServers":{}}"#).unwrap();
+    clients.run(&env, &["install", "--auto"]);
+    assert!(clients.code_entry().is_null());
+}
+
+#[test]
+fn mcp_install_leaves_a_roer_entry_the_person_wrote_alone() {
+    let env = Env::new("mcp-own");
+    let clients = Clients::new(&env);
+    let own = r#"{"mcpServers":{"roer":{"type":"stdio","command":"/my/roer","args":["mcp","--debug"]}}}"#;
+    std::fs::write(clients.claude.join(".claude.json"), own).unwrap();
+    clients.run(&env, &["install"]);
+    clients.run(&env, &["uninstall"]);
+    assert_eq!(std::fs::read_to_string(clients.claude.join(".claude.json")).unwrap(), own);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn mcp_install_leaves_the_claude_app_alone_unless_asked_and_keeps_its_config() {
+    let env = Env::new("mcp-desktop");
+    let clients = Clients::new(&env);
+    let before = r#"{"zeta":1,"mcpServers":{"other":{"command":"x"}},"alpha":2}"#;
+    std::fs::write(clients.desktop_file(), before).unwrap();
+
+    // Not offered in the Claude app yet: only asking for it by name adds it.
+    clients.run(&env, &["install", "--auto"]);
+    clients.run(&env, &["install"]);
+    assert_eq!(std::fs::read_to_string(clients.desktop_file()).unwrap(), before);
+
+    clients.run(&env, &["install", "--client", "claude-desktop"]);
+    let text = std::fs::read_to_string(clients.desktop_file()).unwrap();
+    let config: Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(config["mcpServers"]["roer"]["args"], serde_json::json!(["mcp"]));
+    assert_eq!(config["mcpServers"]["other"]["command"], "x");
+    assert!(text.find("zeta").unwrap() < text.find("alpha").unwrap(), "keys keep their order: {text}");
+
+    clients.run(&env, &["uninstall", "--client", "claude-desktop"]);
+    let config: Value = serde_json::from_str(&std::fs::read_to_string(clients.desktop_file()).unwrap()).unwrap();
+    assert!(config["mcpServers"]["roer"].is_null());
+    assert_eq!(config["mcpServers"]["other"]["command"], "x");
+}

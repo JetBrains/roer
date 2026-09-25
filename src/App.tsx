@@ -800,8 +800,8 @@ export function App() {
           update it while you are looking at the terminal. Collapsed rather
           than unmounted, same reasoning as the left sidebar. The built-in
           fixture shows until an agent in this session's terminal pipes a
-          real one to `roer plugin-ui` — see src/generative-ui/ and
-          .claude/skills/generative-ui/. */}
+          real one through `roer plugin-ui` or the `roer mcp` server — see
+          src/generative-ui/ and cli/src/mcp-guide.md. */}
         {everGenerativeUI ? (
           <aside
             className={

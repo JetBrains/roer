@@ -13,6 +13,30 @@ Latest build: [v0.4.3](https://github.com/JetBrains/roer/releases/tag/v0.4.3).
 
 The quarantine step is required — the app is killed on first launch without it. Nothing else to install: the app carries `roer` and the tmux it drives. On launch it links `roer` into `~/.local/bin`, where Claude Code's installer puts `claude`. If your shell cannot find it there, the app asks once for your password and links it into `/usr/local/bin` instead. A `roer` you installed yourself as a regular file is left alone.
 
+### MCP server
+
+`roer mcp` is Roer's MCP server, on stdio. Its tools show a UI in a session's Generative UI panel and read back the clicks on it:
+
+- **In a Roer session** (Claude Code run in a Roer terminal): `show_ui` and `read_ui_actions` act on that session, and `save_ui`/`load_ui` keep UIs with the project.
+- **Any other MCP client** it is added to by hand: `show_ui` and `read_ui_actions` only, each naming the session to act on.
+- **Claude Code in a plain terminal**: nothing. The server connects but offers no tools and no instructions, so that session carries none of Roer in its context.
+
+On launch the app registers it with Claude Code (`claude mcp add-json --scope user`), if Claude Code is installed. It leaves the Claude app alone; `roer mcp install --client claude-desktop` adds it there (restart the Claude app to pick it up).
+
+- `roer mcp status` says where it is registered.
+- `roer mcp install` registers it yourself, or after an uninstall.
+- `roer mcp uninstall` removes roer's entries and keeps the app from adding them back. Removing the entry in the client itself also sticks.
+
+### Skills
+
+Roer's Claude Code skill `roer-handoff` (in `.claude/skills`) ships with `roer`. On launch the app links it into `~/.claude/skills`, so a session in any project can hand itself over; it does nothing if you have no `~/.claude`. The link points into the app, so updating Roer updates it.
+
+- `roer skills` lists them and whether each is installed.
+- `roer skills install` installs them yourself: from the Linux or Windows CLI, or after an uninstall.
+- `roer skills uninstall` removes them and keeps the app from putting them back. Deleting one link by hand also sticks: the app never reinstalls a skill you removed.
+
+A skill of the same name that you made yourself is never replaced or removed, and neither is a `roer` MCP entry you wrote yourself. Before deleting Roer.app, run `roer skills uninstall` and `roer mcp uninstall`; afterwards, `rm ~/.claude/skills/roer-handoff` and `claude mcp remove --scope user roer`.
+
 ### From a checkout
 
 `cargo build --manifest-path cli/Cargo.toml` builds `roer` into `cli/target/debug/roer`; a debug build finds `scripts/roer-tmux.conf` on its own. `export ROER_BIN=$PWD/cli/target/debug/roer` points `npm run tauri dev` at it.
@@ -22,7 +46,7 @@ The quarantine step is required — the app is killed on first launch without it
 The Linux app is not published to releases yet (the `roer` command is); the `roer-linux` artifact of a [Nightly bundles](../../actions/workflows/nightly-bundles.yml) run has a `.deb`, `.rpm` and `.AppImage`.
 
 1. Install the `.deb` or `.rpm` (it pulls in `tmux`), or install `tmux` yourself and use the `.AppImage`.
-2. Unpack `roer-cli-<version>-linux-x86_64.tar.gz` and symlink `roer` onto your `PATH`. Keep `roer` and `roer-tmux.conf` together in the directory you unpack them into: `roer` finds its config beside itself.
+2. Unpack `roer-cli-<version>-linux-x86_64.tar.gz` and symlink `roer` onto your `PATH`. Keep `roer`, `roer-tmux.conf` and `skills/` together in the directory you unpack them into: `roer` finds them beside itself. `roer skills install` then links the skills for Claude Code, and `roer mcp install` registers the MCP server with it.
 3. Using the AppImage: `export ROER_APP=/path/to/Roer.AppImage`, so `roer handoff` can start the app. The packages install it as `roer-app`, which `roer` finds on its own.
 
 Shortcuts use `Ctrl+Shift` instead of `⌘` (`Ctrl+Shift+T` new session, `Ctrl+Shift+O` Go to File) and `Alt+←`/`Alt+→` to step through commits, leaving plain `Ctrl` keys to the terminal.

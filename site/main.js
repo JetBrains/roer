@@ -3,8 +3,8 @@
 const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 /* ---- Hero demo -------------------------------------------------------------
-   Replays what the generative-ui skill does: each message is piped to
-   `roer plugin-ui`. surfaceUpdates merge into one tree, dataModelUpdate seeds
+   Replays what an agent does through `roer mcp`'s show_ui, or by piping each
+   message to `roer plugin-ui`. surfaceUpdates merge into one tree, dataModelUpdate seeds
    the checkboxes, and nothing is live until beginRendering arrives. */
 (function demo() {
   const term = document.getElementById("term");

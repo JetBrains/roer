@@ -6,8 +6,11 @@
 //! exit code is the one the shell shim had; the app, the skills and the M-h
 //! binding all depend on them.
 
+mod mcp;
+mod mcp_install;
 mod names;
 mod records;
+mod skills;
 mod tmux;
 
 use std::io::Read;
@@ -66,7 +69,8 @@ usage:
                         hand a conversation over when this terminal is not a
                         roer session and so cannot be attached
   roer plugin-ui        read one A2UI-shaped JSON message from stdin and show
-                        it in the app's Plugin UI tab, for this session's pane
+                        it in the app's Generative UI panel, for this
+                        session's pane
   roer plugin-ui --pane <id>
                         same, tagged with a pane explicitly rather than the
                         one this shell is running in
@@ -93,6 +97,21 @@ usage:
   roer pr-draft [--pane <id>]
                         read {\"title\": ..., \"body\": ...} JSON from stdin and
                         fill it into the app's Pull Request form
+  roer skills [list]    the skills that drive roer, and whether each is
+                        installed for Claude Code (~/.claude/skills)
+  roer skills install   link them there, so sessions in any project have
+                        them; the app does this itself on launch
+  roer skills uninstall remove the ones roer installed, and keep the app
+                        from installing them again
+                        (each takes --agent <name>; claude is the only one yet)
+  roer mcp              serve Roer's MCP tools on stdio: showing a UI in a
+                        session's Generative UI panel and reading its clicks
+  roer mcp status       whether roer is registered with Claude Code
+  roer mcp install      register it there; the app does this on launch
+  roer mcp uninstall    unregister roer's own entry, and keep the app from
+                        registering it again
+                        (each takes --client claude-desktop to act on the
+                        Claude app instead, which is left alone otherwise)
 
 A session outlives every client, so it can move freely between terminal and
 app. Exactly one client holds it at a time.
@@ -128,6 +147,8 @@ fn main() {
 
 struct Roer {
     tmux: Tmux,
+    /// roer-tmux.conf, which the skills ship beside: see `skills`.
+    conf: PathBuf,
     /// Where this was run, as the shell sees it: see `here`.
     cwd: String,
 }
@@ -136,7 +157,7 @@ impl Roer {
     fn new() -> Result<Self, Fail> {
         let bin = self_path();
         let conf = find_conf(&bin)?;
-        Ok(Roer { tmux: Tmux::new(conf, bin.to_string_lossy().into_owned()), cwd: here() })
+        Ok(Roer { tmux: Tmux::new(conf.clone(), bin.to_string_lossy().into_owned()), conf, cwd: here() })
     }
 
     fn dispatch(&self, cmd: &str, args: &[&str]) -> Outcome {
@@ -157,6 +178,11 @@ impl Roer {
             "plugin-ui-actions" => self.plugin_ui_actions(args),
             "send" => self.send(args),
             "pr-draft" => self.pr_draft(args),
+            "skills" => skills::run(&self.conf, args),
+            "mcp" => match args.first() {
+                None => mcp::serve(self),
+                Some(_) => mcp_install::run(args),
+            },
             other => Err(Fail::new(64, format!("unknown command: {other}"))),
         }
     }
@@ -446,26 +472,35 @@ impl Roer {
     fn plugin_ui_save(&self, args: &[&str]) -> Outcome {
         let name = args.first().copied().unwrap_or_default();
         check_bundle_name(name)?;
-        let dir = self.bundle_dir(name);
-        std::fs::create_dir_all(&dir)
-            .map_err(|e| Fail::new(1, format!("could not create {}: {e}", dir.display())))?;
-
-        let (file, body) = match args.get(1).copied() {
-            Some("surfaceUpdate") => {
-                ("surface-update.json", read_stdin("save surfaceUpdate needs JSON on stdin")?)
-            }
-            Some("dataModelUpdate") => {
-                ("data-model.json", read_stdin("save dataModelUpdate needs JSON on stdin")?)
+        let body = match args.get(1).copied() {
+            Some(kind @ ("surfaceUpdate" | "dataModelUpdate")) => {
+                read_stdin(&format!("save {kind} needs JSON on stdin"))?
             }
             Some("prompt") => {
                 let text = args.get(2).copied().unwrap_or_default();
                 if text.is_empty() {
                     return Err(Fail::new(2, "save prompt needs the request text as an argument"));
                 }
-                ("prompt.md", text.to_string())
+                text.to_string()
             }
             _ => return Err(Fail::new(2, "save needs a kind: surfaceUpdate, dataModelUpdate, or prompt")),
         };
+        self.save_piece(name, args[1], &body)
+    }
+
+    /// Writes one piece of bundle `name`: `kind` is surfaceUpdate,
+    /// dataModelUpdate or prompt.
+    fn save_piece(&self, name: &str, kind: &str, body: &str) -> Outcome {
+        check_bundle_name(name)?;
+        let file = match kind {
+            "surfaceUpdate" => "surface-update.json",
+            "dataModelUpdate" => "data-model.json",
+            "prompt" => "prompt.md",
+            _ => return Err(Fail::new(2, "save needs a kind: surfaceUpdate, dataModelUpdate, or prompt")),
+        };
+        let dir = self.bundle_dir(name);
+        std::fs::create_dir_all(&dir)
+            .map_err(|e| Fail::new(1, format!("could not create {}: {e}", dir.display())))?;
         records::write_atomic(&dir.join(file), &format!("{body}\n"))
     }
 
@@ -476,9 +511,12 @@ impl Roer {
             ["--pane", pane, rest @ ..] => (resolve_pane(&self.tmux, &["--pane", pane])?, rest.first().copied()),
             _ => (resolve_pane(&self.tmux, &[])?, args.first().copied()),
         };
-        let name = name.unwrap_or_default();
-        check_bundle_name(name)?;
+        self.load_bundle(&pane, name.unwrap_or_default())
+    }
 
+    /// Shows saved bundle `name` in `pane`.
+    fn load_bundle(&self, pane: &str, name: &str) -> Outcome {
+        check_bundle_name(name)?;
         let dir = self.bundle_dir(name);
         let surface = dir.join("surface-update.json");
         if !surface.is_file() {
@@ -490,12 +528,12 @@ impl Roer {
                 ),
             ));
         }
-        emit_plugin_ui(&pane, read_json_file(&surface)?, 1)?;
+        emit_plugin_ui(pane, read_json_file(&surface)?, 1)?;
         let data = dir.join("data-model.json");
         if data.is_file() {
-            emit_plugin_ui(&pane, read_json_file(&data)?, 2)?;
+            emit_plugin_ui(pane, read_json_file(&data)?, 2)?;
         }
-        emit_plugin_ui(&pane, json!({ "kind": "beginRendering", "surfaceId": name }), 3)
+        emit_plugin_ui(pane, json!({ "kind": "beginRendering", "surfaceId": name }), 3)
     }
 
     /// Prints the pending component actions for a pane, oldest first, one JSON
@@ -504,6 +542,15 @@ impl Roer {
     /// is chronological.
     fn plugin_ui_actions(&self, args: &[&str]) -> Outcome {
         let pane = resolve_pane(&self.tmux, args)?;
+        for action in Self::take_actions(&pane)? {
+            println!("{action}");
+        }
+        Ok(())
+    }
+
+    /// The pending component actions for `pane`, oldest first, each consumed
+    /// as it is taken.
+    fn take_actions(pane: &str) -> Result<Vec<String>, Fail> {
         let dir = records::home().join("plugin-ui-actions");
         std::fs::create_dir_all(&dir)
             .map_err(|e| Fail::new(1, format!("could not create {}: {e}", dir.display())))?;
@@ -515,16 +562,17 @@ impl Roer {
             .collect();
         files.sort();
 
+        let mut taken = Vec::new();
         for file in files {
             let Ok(text) = std::fs::read_to_string(&file) else { continue };
             let for_pane = serde_json::from_str::<Value>(&text)
-                .is_ok_and(|action| action.get("pane").and_then(Value::as_str) == Some(pane.as_str()));
+                .is_ok_and(|action| action.get("pane").and_then(Value::as_str) == Some(pane));
             if for_pane {
-                println!("{}", text.trim_end_matches('\n'));
+                taken.push(text.trim_end_matches('\n').to_string());
                 let _ = std::fs::remove_file(&file);
             }
         }
-        Ok(())
+        Ok(taken)
     }
 
     /// Types stdin into a pane as one prompt and submits it: how the app hands
