@@ -11,7 +11,7 @@ name: Release
 #   bundle-windows    windows-latest  unsigned nsis and msi installers
 #   cli-windows       windows-latest  roer.exe with the psmux it drives
 #   package           macos-26        verify, hdiutil .dmg, roer CLI, checksums
-#   publish           ubuntu-latest   draft prerelease
+#   publish           ubuntu-latest   draft release
 #
 # Until the CodeSign service account lands, set no CODESIGN_ENABLED variable and
 # the pipeline runs end to end unsigned.
@@ -502,11 +502,10 @@ jobs:
         working-directory: dist
         run: |
           set -euo pipefail
-          # Draft prerelease on purpose: a human confirms the app opens and that
-          # M-h hands a session over before this is visible to anyone.
+          # Draft on purpose: a human confirms the app opens and that M-h hands
+          # a session over before this is visible to anyone.
           gh release create "$GITHUB_REF_NAME" \
             --draft \
-            --prerelease \
             --title "Roer $VERSION" \
             --notes-file notes.md \
             "Roer_${VERSION}_universal.dmg" \
