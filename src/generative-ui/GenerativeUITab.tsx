@@ -193,7 +193,7 @@ export function GenerativeUITab({
         />
       ) : (
         <p className="gen-text muted">
-          Canvas for <code>/generative-ui</code> skill
+          Canvas for the agent's <code>show_ui</code>
         </p>
       )}
 
