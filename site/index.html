@@ -45,7 +45,7 @@
         <a class="btn btn-primary" href="{{release.url}}">Download Roer {{release.version}}</a>
         <a class="btn btn-ghost" href="{{blogUrl}}">Read the blog</a>
       </div>
-      <p class="meta">macOS 14+ &nbsp;·&nbsp; Linux &nbsp;·&nbsp; Windows preview &nbsp;·&nbsp; released {{release.date}}</p>
+      <p class="meta">macOS 15+ &nbsp;·&nbsp; Linux &nbsp;·&nbsp; Windows preview &nbsp;·&nbsp; released {{release.date}}</p>
     </div>
 
     <div class="wrap">
@@ -177,16 +177,13 @@
 
       <div class="os-pane" role="tabpanel" id="pane-mac" aria-labelledby="os-mac">
         <ol class="steps">
-          <li><p>Download the app and the <code>roer</code> command. One universal build for Apple silicon and Intel.</p>
+          <li><p>Download the app. One universal build for Apple silicon and Intel, macOS 15 or later.</p>
             <div class="dl-row">
               <a class="btn btn-primary btn-sm" href="{{dl.mac.app}}">{{dl.mac.appName}}</a>
-              <a class="btn btn-ghost btn-sm" href="{{dl.mac.cli}}">{{dl.mac.cliName}}</a>
             </div></li>
           <li><p>Drag Roer to Applications, then clear the quarantine flag. Without it, macOS stops the app on first launch.</p>
             <pre class="cmd"><code>xattr -dr com.apple.quarantine /Applications/Roer.app</code><button type="button" class="copy">Copy</button></pre></li>
-          <li><p>Install tmux, which keeps sessions alive.</p>
-            <pre class="cmd"><code>brew install tmux</code><button type="button" class="copy">Copy</button></pre></li>
-          <li><p>Unpack the CLI, put <code>roer</code> on your <code>PATH</code>, and start a session.</p>
+          <li><p>Open Roer once. It puts <code>roer</code> on your <code>PATH</code>, so a new terminal can start a session.</p>
             <pre class="cmd"><code>roer shell</code><button type="button" class="copy">Copy</button></pre></li>
         </ol>
       </div>

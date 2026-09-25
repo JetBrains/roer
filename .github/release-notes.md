@@ -1,10 +1,10 @@
 Roer is a session host for agent terminals: `roer shell` starts a terminal you
 work in normally, and `M-h` hands that live session over to the desktop app.
 
-Requires **macOS 14** or later. The `.dmg` is a universal build — one download
+Requires **macOS 15** or later. The `.dmg` is a universal build — one download
 for Apple silicon and Intel.
 
-## Install the app
+## Install
 
 1. Open `Roer___VERSION___universal.dmg` and drag **Roer** to Applications.
 2. Clear the quarantine flag:
@@ -16,37 +16,28 @@ for Apple silicon and Intel.
    __SIGNING__ Until notarization is in place, macOS quarantines the app on
    first launch and it is killed instead of opening. The command above is the
    fix; it is not optional.
+3. Open Roer once. It puts the `roer` command on your `PATH`; in a new
+   terminal, `roer help`.
 
-## Install tmux
+The app carries `roer` and the tmux it drives, so there is nothing else to
+install, Homebrew included. It links `roer` into `~/.local/bin`, where Claude
+Code's installer puts `claude`; if your shell cannot find it there, the app
+asks once for your password and links it into `/usr/local/bin` instead.
 
-tmux is roer's session engine and is **not** bundled. 3.3 or later, for
-`allow-passthrough`:
+## Linux
 
-```sh
-brew install tmux
-```
-
-## Install the `roer` command
+The `roer` command alone, with tmux 3.3 or later installed yourself:
 
 ```sh
 mkdir -p ~/.roer/bin ~/.local/bin
-curl -fsSL https://github.com/JetBrains/roer/releases/download/__TAG__/roer-cli-__VERSION__.tar.gz \
+curl -fsSL https://github.com/JetBrains/roer/releases/download/__TAG__/roer-cli-__VERSION__-linux-x86_64.tar.gz \
   | tar -xzf - -C ~/.roer/bin
 ln -sf ~/.roer/bin/roer ~/.local/bin/roer
 roer help
 ```
 
-`tar` keeps `roer` and `roer-tmux.conf` in one directory, and `curl` does not
-set the quarantine flag a browser download would. `roer` looks for
-`roer-tmux.conf` beside itself, so the two cannot be split up — `roer help`
-succeeding is what proves the config was found.
-
-`~/.local/bin` is not just about `PATH`. An app launched from Finder inherits
-only `/usr/bin:/bin:/usr/sbin:/sbin`, so Roer looks for `roer` at
-`~/.local/bin/roer` and `~/bin/roer` when it is not on the inherited `PATH`.
-
-On Linux, take `roer-cli-__VERSION__-linux-x86_64.tar.gz` instead; the steps
-are the same.
+`roer` looks for `roer-tmux.conf` beside itself, so the two cannot be split
+up — `roer help` succeeding is what proves the config was found.
 
 ## Windows (preview)
 

@@ -42,7 +42,12 @@ impl Env {
     }
 
     fn roer(&self, args: &[&str]) -> Command {
-        let mut roer = Command::new(env!("CARGO_BIN_EXE_roer"));
+        self.roer_at(Path::new(env!("CARGO_BIN_EXE_roer")), args)
+    }
+
+    /// `roer`, running a given copy of it.
+    fn roer_at(&self, bin: &Path, args: &[&str]) -> Command {
+        let mut roer = Command::new(bin);
         roer.args(args)
             .current_dir(&self.dir)
             .env("PWD", &self.dir)
@@ -405,6 +410,32 @@ fn a_missing_config_is_reported() {
     // help too: it is how an install proves the config was found.
     let help = env.roer(&["help"]).env("ROER_TMUX_CONF", "/nonexistent/roer-tmux.conf").output().unwrap();
     assert_eq!(code(&help), 1);
+}
+
+#[test]
+fn the_roer_in_the_app_bundle_uses_the_bundles_tmux_and_config() {
+    use std::os::unix::fs::PermissionsExt;
+    let env = Env::new("app-bundle");
+    let contents = env.dir.join("Roer.app/Contents");
+    std::fs::create_dir_all(contents.join("MacOS")).unwrap();
+    std::fs::create_dir_all(contents.join("Resources")).unwrap();
+    let roer = contents.join("MacOS/roer");
+    std::fs::copy(env!("CARGO_BIN_EXE_roer"), &roer).unwrap();
+    let conf = contents.join("Resources/roer-tmux.conf");
+    std::fs::copy(concat!(env!("CARGO_MANIFEST_DIR"), "/../scripts/roer-tmux.conf"), &conf).unwrap();
+    // The bundle's tmux, standing in: notes how it was called, then is tmux.
+    let calls = env.dir.join("tmux-calls");
+    let tmux = contents.join("MacOS/tmux");
+    std::fs::write(&tmux, format!("#!/bin/sh\necho \"$*\" >> '{}'\nexec tmux \"$@\"\n", calls.display())).unwrap();
+    std::fs::set_permissions(&tmux, std::fs::Permissions::from_mode(0o755)).unwrap();
+    // Run through a link, as the one the app puts on PATH.
+    let link = env.dir.join("roer");
+    std::os::unix::fs::symlink(&roer, &link).unwrap();
+
+    let out = env.roer_at(&link, &["list"]).env_remove("ROER_MUX").output().unwrap();
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    let calls = std::fs::read_to_string(&calls).unwrap_or_default();
+    assert!(calls.contains(&format!("-f {}", conf.display())), "{calls}");
 }
 
 /// Runs `roer args...` in a pane of a second tmux server, which gives it the

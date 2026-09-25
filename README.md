@@ -7,12 +7,11 @@ Latest build: [v0.4.1](https://github.com/JetBrains/roer/releases/tag/v0.4.1).
 
 ## Install
 
-1. Download `Roer_<version>_universal.dmg` and `roer-cli-<version>.tar.gz` from the [release](https://github.com/JetBrains/roer/releases/tag/v0.4.1) (one build, Apple silicon + Intel, macOS 14+).
+1. Download `Roer_<version>_universal.dmg` from the [release](https://github.com/JetBrains/roer/releases/tag/v0.4.1) (one build, Apple silicon + Intel, macOS 15+).
 2. Drag `Roer.app` to Applications, then clear its quarantine flag: `xattr -dr com.apple.quarantine /Applications/Roer.app`.
-3. `brew install tmux`.
-4. Unpack the CLI tarball and symlink `roer` onto your `PATH`.
+3. Open Roer once. It puts the `roer` command on your `PATH`, and a new terminal can run `roer shell`.
 
-The quarantine step is required — the app is killed on first launch without it. Keep `roer` and `roer-tmux.conf` together in the directory you unpack them into: `roer` finds its config beside itself.
+The quarantine step is required — the app is killed on first launch without it. Nothing else to install: the app carries `roer` and the tmux it drives. On launch it links `roer` into `~/.local/bin`, where Claude Code's installer puts `claude`. If your shell cannot find it there, the app asks once for your password and links it into `/usr/local/bin` instead. A `roer` you installed yourself as a regular file is left alone.
 
 ### From a checkout
 
@@ -23,7 +22,7 @@ The quarantine step is required — the app is killed on first launch without it
 The Linux app is not published to releases yet (the `roer` command is); the `roer-linux` artifact of a [Nightly bundles](../../actions/workflows/nightly-bundles.yml) run has a `.deb`, `.rpm` and `.AppImage`.
 
 1. Install the `.deb` or `.rpm` (it pulls in `tmux`), or install `tmux` yourself and use the `.AppImage`.
-2. Unpack `roer-cli-<version>-linux-x86_64.tar.gz` and symlink `roer` onto your `PATH`, as on macOS.
+2. Unpack `roer-cli-<version>-linux-x86_64.tar.gz` and symlink `roer` onto your `PATH`. Keep `roer` and `roer-tmux.conf` together in the directory you unpack them into: `roer` finds its config beside itself.
 3. Using the AppImage: `export ROER_APP=/path/to/Roer.AppImage`, so `roer handoff` can start the app. The packages install it as `roer-app`, which `roer` finds on its own.
 
 Shortcuts use `Ctrl+Shift` instead of `⌘` (`Ctrl+Shift+T` new session, `Ctrl+Shift+O` Go to File) and `Alt+←`/`Alt+→` to step through commits, leaving plain `Ctrl` keys to the terminal.

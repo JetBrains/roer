@@ -5,12 +5,12 @@ name: Release
 # GitHub-hosted runners. Hence the three-runner shuttle:
 #
 #   validate-version  ubuntu-latest   tag agrees with the version records
-#   bundle-macos      macos-26        universal Roer.app.tar.gz
+#   bundle-macos      macos-26        universal Roer.app.tar.gz, roer and tmux inside
 #   codesign          sre-eqx-kata    Developer ID + hardened runtime
 #   cli-linux         ubuntu-latest   the roer command for Linux
 #   bundle-windows    windows-latest  unsigned nsis and msi installers
 #   cli-windows       windows-latest  roer.exe with the psmux it drives
-#   package           macos-26        verify, hdiutil .dmg, roer CLI, checksums
+#   package           macos-26        verify, hdiutil .dmg, checksums
 #   publish           ubuntu-latest   draft release
 #
 # Until the CodeSign service account lands, set no CODESIGN_ENABLED variable and
@@ -78,7 +78,11 @@ jobs:
       # (macos-15-intel / macos-26-intel die with macOS 15 in Fall 2027) is a
       # non-event and users get one download instead of a choice.
       rust_targets: aarch64-apple-darwin,x86_64-apple-darwin
-      tauri_args: --target universal-apple-darwin --bundles app
+      # The app carries the roer command and the tmux it drives, and links
+      # roer onto PATH itself, so the .dmg is the whole install: see
+      # tauri.macos-cli.conf.json.
+      prepare_script: .github/macos/prepare-bundle.sh
+      tauri_args: --target universal-apple-darwin --bundles app --config src-tauri/tauri.macos-cli.conf.json
       bundle_dir: src-tauri/target/universal-apple-darwin/release/bundle
       artifact_name: unsigned-macos
       cache_key: macos-universal
@@ -88,8 +92,8 @@ jobs:
       # `codesign` and `publish` touch credentials.
 
   # The roer command on Linux. It is a small crate with no Tauri in it, so this
-  # is a minute of cargo rather than a bundle; the macOS one is built in
-  # `package`, beside the .dmg it ships with.
+  # is a minute of cargo rather than a bundle; the macOS one ships inside
+  # Roer.app, built by bundle-macos's prepare script.
   cli-linux:
     name: CLI (Linux)
     needs: validate-version
@@ -147,8 +151,8 @@ jobs:
         src-tauri/target/release/bundle/msi/*.msi
 
   # The same roer and psmux as the installers carry, as a zip, for anyone who
-  # wants the command without the app, the way the macOS and Linux CLIs ship
-  # as tarballs.
+  # wants the command without the app, the way the Linux CLI ships as a
+  # tarball.
   cli-windows:
     name: CLI (Windows)
     needs: validate-version
@@ -308,6 +312,17 @@ jobs:
           }
           # TODO: assert ^TeamIdentifier=<id>$ once SRE confirms which Developer
           # ID roer signs under. Without it, any valid Developer ID passes.
+          # The roer command and tmux run on their own, from a terminal, so
+          # each needs its own signature and hardened runtime, not only the
+          # bundle's seal over them.
+          for tool in roer tmux; do
+            codesign --verify --strict --verbose=2 "$APP/Contents/MacOS/$tool"
+            codesign -dvv "$APP/Contents/MacOS/$tool" 2>&1 | grep -q 'flags=.*(runtime)' || {
+              echo "Contents/MacOS/$tool is not signed with the hardened runtime" >&2
+              codesign -dvv "$APP/Contents/MacOS/$tool" >&2 || true
+              exit 1
+            }
+          done
           ENT="$(codesign -d --entitlements :- "$APP" 2>&1 || true)"
           if grep -q '<key>' <<< "$ENT"; then
             echo "Unexpected entitlement in signed Roer.app" >&2
@@ -319,18 +334,26 @@ jobs:
         run: |
           set -euo pipefail
           APP="$GITHUB_WORKSPACE/work/Roer.app"
-          ARCHS="$(lipo -archs "$APP/Contents/MacOS/roer")"
-          echo "archs: $ARCHS"
-          for want in x86_64 arm64; do
-            grep -qw "$want" <<< "$ARCHS" || {
-              echo "Universal binary is missing $want" >&2
-              exit 1
-            }
+          for bin in roer-app roer tmux; do
+            ARCHS="$(lipo -archs "$APP/Contents/MacOS/$bin")"
+            echo "$bin archs: $ARCHS"
+            for want in x86_64 arm64; do
+              grep -qw "$want" <<< "$ARCHS" || {
+                echo "Universal binary $bin is missing $want" >&2
+                exit 1
+              }
+            done
           done
+          # The roer that the app links onto PATH has to find its config in
+          # Resources and its tmux beside it, with no checkout and no Homebrew
+          # to fall back on. `roer help` fails without the config.
+          test -f "$APP/Contents/Resources/roer-tmux.conf"
+          "$APP/Contents/MacOS/roer" help > /dev/null
+          "$APP/Contents/MacOS/tmux" -V
           MIN="$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$APP/Contents/Info.plist")"
           echo "minimum system version: $MIN"
-          [ "$MIN" = "14.0" ] || {
-            echo "Expected LSMinimumSystemVersion 14.0, got $MIN — tauri.conf.json and the README disagree" >&2
+          [ "$MIN" = "15.0" ] || {
+            echo "Expected LSMinimumSystemVersion 15.0, got $MIN — tauri.conf.json and the README disagree" >&2
             exit 1
           }
 
@@ -347,36 +370,6 @@ jobs:
           # intermittently on CI. hdiutil is deterministic.
           hdiutil create -volname Roer -srcfolder stage -ov -format UDZO \
             "dist/Roer_${VERSION}_universal.dmg"
-
-      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
-        with:
-          targets: aarch64-apple-darwin,x86_64-apple-darwin
-
-      - name: Build and stage the roer command
-        run: |
-          set -euo pipefail
-          # One universal binary, like the app: both slices built on this arm64
-          # runner and joined with lipo.
-          for target in aarch64-apple-darwin x86_64-apple-darwin; do
-            cargo build --release --locked --manifest-path cli/Cargo.toml --target "$target"
-          done
-          mkdir -p shim
-          lipo -create -output shim/roer \
-            cli/target/aarch64-apple-darwin/release/roer \
-            cli/target/x86_64-apple-darwin/release/roer
-          chmod 755 shim/roer
-          ARCHS="$(lipo -archs shim/roer)"
-          [ "$ARCHS" = "x86_64 arm64" ] || [ "$ARCHS" = "arm64 x86_64" ] || {
-            echo "roer is not universal: $ARCHS" >&2
-            exit 1
-          }
-          # The pair must land in one directory: roer looks for
-          # roer-tmux.conf beside itself, and a release build has no checkout
-          # to fall back on. `roer help` succeeding is the proof.
-          install -m 644 scripts/roer-tmux.conf shim/roer-tmux.conf
-          shim/roer help > /dev/null
-          tar -czf "dist/roer-cli-${VERSION}.tar.gz" -C shim roer roer-tmux.conf
-          tar -tvzf "dist/roer-cli-${VERSION}.tar.gz"
 
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -509,7 +502,6 @@ jobs:
             --title "Roer $VERSION" \
             --notes-file notes.md \
             "Roer_${VERSION}_universal.dmg" \
-            "roer-cli-${VERSION}.tar.gz" \
             "roer-cli-${VERSION}-linux-x86_64.tar.gz" \
             "Roer_${VERSION}_x64-setup.exe" \
             "Roer_${VERSION}_x64_en-US.msi" \
