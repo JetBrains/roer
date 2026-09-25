@@ -10,8 +10,10 @@
 //! What roer installed is written down under `$ROER_HOME/skills`, and only
 //! those entries are ever replaced or removed: a skill of the same name the
 //! person made themselves is left alone. The app runs `install --auto` on
-//! every launch; that mode also remembers what the person took away, so a
-//! link they delete, or `roer skills uninstall`, stays done.
+//! every launch; that mode never installs for someone who has not said yes
+//! (the app asks first, then runs `install`), and it also remembers what the
+//! person took away, so a link they delete, or `roer skills uninstall`, stays
+//! done.
 
 use std::collections::BTreeSet;
 use std::io::ErrorKind;
@@ -132,10 +134,12 @@ impl Target {
         self.forget("declined")
     }
 
-    /// What the app runs on launch: installs what is new and refreshes what
-    /// is there, but never brings back what the person removed.
+    /// What the app runs on launch: refreshes what is there, and installs a
+    /// skill new in this roer, but only for someone who installed before —
+    /// never a first install, and never what the person removed.
     fn auto(&self, sources: &[(String, PathBuf)]) -> Outcome {
-        if self.path("declined").exists() || !self.root.is_dir() {
+        let opted_in = self.path("installed").exists();
+        if !opted_in || self.path("declined").exists() || !self.root.is_dir() {
             return Ok(());
         }
         let mut installed = self.read("installed");

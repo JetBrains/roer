@@ -8,11 +8,11 @@
 //! app ask, once, for an administrator's password to link it into
 //! `/usr/local/bin`, which every Mac has on `PATH`.
 //!
-//! It also has that `roer` install the skills it carries for Claude Code, and
-//! register itself as an MCP server with Claude Code, so
-//! sessions in any project know how to hand themselves over and show a UI.
-//! `roer skills` and `roer mcp` own what that means, including staying out
-//! once the person removes them.
+//! It also has that `roer` keep the skills it carries, and its MCP server
+//! entry, pointing at this app for someone who set them up in Claude Code:
+//! the setting up itself is the person's choice, asked for in the app (see
+//! `claude_setup.rs`). `roer skills` and `roer mcp` own what that means,
+//! including staying out once the person removes them.
 
 use std::io::ErrorKind;
 use std::path::Path;
@@ -69,8 +69,8 @@ fn link() -> std::io::Result<()> {
     Ok(())
 }
 
-/// `roer <what> install --auto`: what is new installed, what is there kept
-/// pointing at this app, nothing the person removed brought back.
+/// `roer <what> install --auto`: what is there kept pointing at this app,
+/// nothing installed that the person has not said yes to or has removed.
 fn install_auto(cli: &Path, what: &str) {
     let out = command(cli).args([what, "install", "--auto"]).stdin(Stdio::null()).output();
     match out {

@@ -594,14 +594,20 @@ fn skills_install_links_every_skill_and_uninstall_keeps_them_away() {
 }
 
 #[test]
-fn skills_the_app_installs_stay_removed_once_the_person_removes_them() {
+fn skills_the_app_installs_nothing_until_asked_and_keeps_removals() {
     let env = Env::new("skills-auto");
     skills(&env, &["install", "--auto"]);
     assert!(!claude_dir(&env).exists(), "no Claude directory is made for a Mac without Claude Code");
 
     std::fs::create_dir_all(claude_dir(&env)).unwrap();
     skills(&env, &["install", "--auto"]);
-    assert!(linked(&env, "roer-handoff"));
+    assert!(!linked(&env, "roer-handoff"), "the app's launch installs nothing the person has not said yes to");
+
+    skills(&env, &["install"]);
+    std::fs::remove_file(claude_dir(&env).join("skills/roer-handoff")).unwrap();
+    std::fs::write(env.home.join("skills/claude-installed"), "").unwrap();
+    skills(&env, &["install", "--auto"]);
+    assert!(linked(&env, "roer-handoff"), "once they have, a skill new in this roer is added");
 
     std::fs::remove_file(claude_dir(&env).join("skills/roer-handoff")).unwrap();
     skills(&env, &["install", "--auto"]);
@@ -830,6 +836,8 @@ fn mcp_install_registers_roer_and_uninstall_keeps_it_away() {
     let env = Env::new("mcp-install");
     let clients = Clients::new(&env);
     clients.run(&env, &["install", "--auto"]);
+    assert!(clients.code_entry().is_null(), "the app's launch registers nothing the person has not said yes to");
+    clients.run(&env, &["install"]);
     let entry = clients.code_entry();
     assert_eq!(entry["args"], serde_json::json!(["mcp"]));
     assert!(entry["command"].as_str().unwrap().ends_with("/roer"), "{entry}");

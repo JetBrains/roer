@@ -19,6 +19,7 @@ import {
   spawnPty,
 } from "./lib/pty";
 import type { Handoff, PtyEvent } from "./lib/pty";
+import { claudeSetupStatus } from "./lib/claudeSetup";
 import { listWorkspaces } from "./lib/workspaces";
 
 // Shared between the test body and the hoisted module mock below.
@@ -29,6 +30,8 @@ const mocks = vi.hoisted(() => ({
   // The onEvent callback the component handed to spawnPty, so a test can
   // push PTY output through it.
   emit: { current: undefined as undefined | ((event: unknown) => void) },
+  // What the menu's "Claude Code Integration…" is heard with.
+  setupMenu: { current: undefined as undefined | (() => void) },
   // The last terminal made, so a test can see what it was told to look like.
   terminal: { current: undefined as undefined | { options: { theme?: { background?: string } } } },
 }));
@@ -90,6 +93,22 @@ vi.mock("./lib/pty", () => ({
   failHandoff: vi.fn(async () => undefined),
   onHandoff: vi.fn(async (handler: (handoff: unknown) => void) => {
     mocks.handoffHandlers.push(handler);
+    return () => undefined;
+  }),
+}));
+
+// Nothing to ask about unless a test says so.
+vi.mock("./lib/claudeSetup", () => ({
+  claudeSetupStatus: vi.fn(async () => ({
+    claudeCode: true,
+    skills: false,
+    mcp: false,
+    shouldPrompt: false,
+  })),
+  applyClaudeSetup: vi.fn(),
+  dismissClaudeSetup: vi.fn(),
+  onClaudeSetupMenu: vi.fn(async (handler: () => void) => {
+    mocks.setupMenu.current = handler;
     return () => undefined;
   }),
 }));
@@ -195,6 +214,7 @@ beforeEach(() => {
   mocks.handoffHandlers.length = 0;
   mocks.changedHandlers.length = 0;
   mocks.emit.current = undefined;
+  mocks.setupMenu.current = undefined;
   mocks.terminal.current = undefined;
   delete document.documentElement.dataset.theme;
   // The sidebar's collapsed state persists here across renders on purpose;
@@ -203,6 +223,39 @@ beforeEach(() => {
 });
 
 describe("App", () => {
+  it("asks about Claude Code on a launch with nothing decided, and only then", async () => {
+    vi.mocked(claudeSetupStatus).mockResolvedValueOnce({
+      claudeCode: true,
+      skills: false,
+      mcp: false,
+      shouldPrompt: true,
+    });
+    const { unmount } = render(<App />);
+    expect(await screen.findByRole("dialog", { name: /Claude Code/ })).toBeInTheDocument();
+    unmount();
+
+    render(<App />);
+    await waitFor(() => expect(claudeSetupStatus).toHaveBeenCalledTimes(2));
+    expect(screen.queryByRole("dialog", { name: /Claude Code/ })).not.toBeInTheDocument();
+  });
+
+  it("opens the Claude Code setup from the menu, showing what is set up", async () => {
+    render(<App />);
+    await waitFor(() => expect(mocks.setupMenu.current).toBeDefined());
+    vi.mocked(claudeSetupStatus).mockResolvedValueOnce({
+      claudeCode: true,
+      skills: true,
+      mcp: false,
+      shouldPrompt: false,
+    });
+
+    act(() => mocks.setupMenu.current?.());
+
+    expect(await screen.findByRole("checkbox", { name: /roer-handoff/ })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: /MCP server/ })).not.toBeChecked();
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeInTheDocument();
+  });
+
   it("collapses and reopens the sidebar, remembering the choice", async () => {
     render(<App />);
 

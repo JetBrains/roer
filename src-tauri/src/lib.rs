@@ -1,4 +1,5 @@
 mod claude;
+mod claude_setup;
 mod cli_link;
 mod files;
 mod gh;
@@ -62,6 +63,9 @@ pub fn run() {
             roer::roer_status,
             roer::roer_send,
             claude::roer_claude_threads,
+            claude_setup::claude_setup_status,
+            claude_setup::claude_setup_apply,
+            claude_setup::claude_setup_dismiss,
             workspaces::workspaces_list,
             workspaces::workspace_create,
             workspaces::workspace_rename,
@@ -83,6 +87,7 @@ pub fn run() {
             projects::project_delete,
         ])
         .setup(|app| {
+            menu(app)?;
             cli_link::install();
             handoff::watch(app.handle().clone())?;
             plugin_ui::watch(app.handle().clone())?;
@@ -91,4 +96,32 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running roer");
+}
+
+/// The app's own entry in the standard macOS menu: "Claude Code Integration…"
+/// under About, where an app keeps its settings, opening the same choice the
+/// first launch offers. Only on macOS, which has an app menu whether an app
+/// sets one or not; elsewhere setting one would add a menu bar to the window.
+fn menu(app: &mut tauri::App) -> tauri::Result<()> {
+    #[cfg(target_os = "macos")]
+    {
+        use tauri::menu::{Menu, MenuItem};
+        use tauri::Emitter;
+
+        let handle = app.handle();
+        let menu = Menu::default(handle)?;
+        let setup = MenuItem::with_id(handle, "claude-setup", "Claude Code Integration…", true, None::<&str>)?;
+        if let Some(app_menu) = menu.items()?.first().and_then(|item| item.as_submenu().cloned()) {
+            app_menu.insert(&setup, 1)?;
+        }
+        app.set_menu(menu)?;
+        app.on_menu_event(|app, event| {
+            if event.id() == "claude-setup" {
+                let _ = app.emit("roer://claude-setup", ());
+            }
+        });
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = app;
+    Ok(())
 }

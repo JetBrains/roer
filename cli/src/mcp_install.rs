@@ -7,8 +7,10 @@
 //! What roer registered is written down under `$ROER_HOME/mcp`, with the
 //! command it registered, and only an entry still exactly that is ever
 //! changed or removed: a `roer` entry the person wrote or edited is theirs.
-//! The app runs `install --auto` on every launch, which also keeps out of a
-//! client once the person has taken the entry away there.
+//! The app runs `install --auto` on every launch, which never registers roer
+//! where it was not registered before (the app asks first, then runs
+//! `install`), and also keeps out of a client once the person has taken the
+//! entry away there.
 //!
 //! Claude Code is changed through its own `claude mcp`, never by writing its
 //! `.claude.json`, which it rewrites constantly; roer only reads it. The
@@ -99,9 +101,9 @@ impl Client {
         Ok(())
     }
 
-    /// What the app runs on launch: registers where roer never has, keeps its
-    /// own entry pointing at this roer, and never brings back what the person
-    /// removed or overrides what they changed.
+    /// What the app runs on launch: keeps roer's own entry pointing at this
+    /// roer, and never registers it where it has not been, brings back what
+    /// the person removed, or overrides what they changed.
     fn auto(self, me: &str) -> Outcome {
         if self.path("declined").exists() || !self.present() {
             return Ok(());
@@ -117,8 +119,7 @@ impl Client {
                 }
             }
             (Some(_), Some(_)) => self.forget("installed")?,
-            (None, None) => self.register(me, false)?,
-            (None, Some(_)) => {}
+            (None, _) => {}
         }
         Ok(())
     }

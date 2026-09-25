@@ -1285,6 +1285,55 @@ button.tree-row.selected {
   overflow-y: auto;
 }
 
+/* The Claude Code setup: a popup that is read, not typed into, so it has
+   room for its explanations instead of a list. */
+.popup.setup {
+  width: min(520px, 90vw);
+  max-height: 80vh;
+  overflow-y: auto;
+  gap: 12px;
+  padding: 18px 20px;
+  font-size: 13px;
+  color: var(--ide-text);
+}
+
+.popup.setup h2 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.popup.setup p {
+  margin: 0;
+  line-height: 1.45;
+}
+
+.setup-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  line-height: 1.45;
+}
+
+.setup-option input {
+  margin-top: 3px;
+}
+
+.setup-option > span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.setup-error {
+  color: var(--roer-warn);
+}
+
+.setup-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .hit {
   display: flex;
   align-items: baseline;

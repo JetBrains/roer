@@ -21,19 +21,19 @@ The quarantine step is required — the app is killed on first launch without it
 - **Any other MCP client** it is added to by hand: `show_ui` and `read_ui_actions` only, each naming the session to act on.
 - **Claude Code in a plain terminal**: nothing. The server connects but offers no tools and no instructions, so that session carries none of Roer in its context.
 
-On launch the app registers it with Claude Code (`claude mcp add-json --scope user`), if Claude Code is installed. It leaves the Claude app alone; `roer mcp install --client claude-desktop` adds it there (restart the Claude app to pick it up).
+The first time the app finds Claude Code, it asks whether to set this and the skill below up, explaining each; **Roer › Claude Code Integration…** asks again later, and unticking one there removes it. Set up, it is registered with Claude Code as `roer` (`claude mcp add-json --scope user`). It leaves the Claude app alone; `roer mcp install --client claude-desktop` adds it there (restart the Claude app to pick it up).
 
 - `roer mcp status` says where it is registered.
 - `roer mcp install` registers it yourself, or after an uninstall.
-- `roer mcp uninstall` removes roer's entries and keeps the app from adding them back. Removing the entry in the client itself also sticks.
+- `roer mcp uninstall` removes roer's entries. Removing the entry in the client itself also sticks.
 
 ### Skills
 
-Roer's Claude Code skill `roer-handoff` (in `.claude/skills`) ships with `roer`. On launch the app links it into `~/.claude/skills`, so a session in any project can hand itself over; it does nothing if you have no `~/.claude`. The link points into the app, so updating Roer updates it.
+Roer's Claude Code skill `roer-handoff` (in `.claude/skills`) ships with `roer`. Set up from the app, as above, it is linked into `~/.claude/skills`, so a session in any project can hand itself over. The link points into the app, so updating Roer updates it; the app never installs anything you have not said yes to.
 
 - `roer skills` lists them and whether each is installed.
 - `roer skills install` installs them yourself: from the Linux or Windows CLI, or after an uninstall.
-- `roer skills uninstall` removes them and keeps the app from putting them back. Deleting one link by hand also sticks: the app never reinstalls a skill you removed.
+- `roer skills uninstall` removes them. Deleting one link by hand also sticks: the app never reinstalls a skill you removed.
 
 A skill of the same name that you made yourself is never replaced or removed, and neither is a `roer` MCP entry you wrote yourself. Before deleting Roer.app, run `roer skills uninstall` and `roer mcp uninstall`; afterwards, `rm ~/.claude/skills/roer-handoff` and `claude mcp remove --scope user roer`.
 

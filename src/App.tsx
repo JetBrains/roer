@@ -1,3 +1,4 @@
+import { message } from "@tauri-apps/plugin-dialog";
 import {
   Monitor,
   Moon,
@@ -14,12 +15,14 @@ import { FileView } from "./FileView";
 import { GenerativeUITab } from "./generative-ui/GenerativeUITab";
 import { applyAll, applyMessage } from "./generative-ui/apply";
 import { emptyState, type A2uiMessage, type RenderState } from "./generative-ui/schema";
+import { ClaudeSetup } from "./ClaudeSetup";
 import { GoToFile } from "./GoToFile";
 import { NewSessionButton } from "./NewSessionButton";
 import { PullRequestView } from "./PullRequestView";
 import { SessionBrowser, type OpenRequest } from "./SessionBrowser";
 import { TerminalView } from "./TerminalView";
 import { WorkspaceSidebar } from "./WorkspaceSidebar";
+import { claudeSetupStatus, onClaudeSetupMenu, type SetupStatus } from "./lib/claudeSetup";
 import { onFilesChanged, type FilesChanged } from "./lib/files";
 import { isGoToFile, isMac, isNewSession, useHotkey } from "./lib/keys";
 import { nextChoice, useThemeChoice } from "./lib/theme";
@@ -80,6 +83,9 @@ export function App() {
   const [notice, setNotice] = useState<string | null>(null);
   const [tabs, setTabs] = useState<Tabs>(noTabs);
   const [finding, setFinding] = useState(false);
+  // The Claude Code setup on screen, if it is: put there by the app on the
+  // first launch that finds Claude Code, or asked for from the menu.
+  const [setup, setSetup] = useState<{ status: SetupStatus; firstRun: boolean } | null>(null);
   // The changes view stays mounted once opened, so switching back to the
   // terminal and away again keeps the file that was selected. File tabs get
   // this for free: being open is being in `tabs.files`.
@@ -268,6 +274,40 @@ export function App() {
     },
     [ack, owesProof, show],
   );
+
+  useEffect(() => {
+    let cancelled = false;
+    let unlisten: (() => void) | undefined;
+    const show = (firstRun: boolean) =>
+      claudeSetupStatus()
+        .then((status) => {
+          if (cancelled || (firstRun && !status.shouldPrompt)) return;
+          setSetup({ status, firstRun });
+        })
+        .catch((cause: unknown) => {
+          // Asked for from the menu, a failure is the answer; on launch it
+          // just means not asking this time.
+          if (!firstRun) {
+            void message(String(cause), {
+              title: "Could not read the Claude Code setup",
+              kind: "error",
+            });
+          }
+        });
+
+    void onClaudeSetupMenu(() => void show(false))
+      .then((fn) => {
+        if (cancelled) fn();
+        else unlisten = fn;
+      })
+      .catch(() => undefined);
+    void show(true);
+
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -832,6 +872,14 @@ export function App() {
               }
             />
           </aside>
+        ) : null}
+
+        {setup ? (
+          <ClaudeSetup
+            status={setup.status}
+            firstRun={setup.firstRun}
+            onClose={() => setSetup(null)}
+          />
         ) : null}
 
         {finding ? (

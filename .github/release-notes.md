@@ -24,12 +24,11 @@ install, Homebrew included. It links `roer` into `~/.local/bin`, where Claude
 Code's installer puts `claude`; if your shell cannot find it there, the app
 asks once for your password and links it into `/usr/local/bin` instead.
 
-It also links Roer's Claude Code skills into `~/.claude/skills`, so a session
-in any project can hand itself over, and registers `roer mcp`, Roer's MCP
-server, with Claude Code, so an agent in a Roer session can show a UI in its
-session's Generative UI panel. `roer skills` and `roer mcp status` say what is
-installed, and `roer skills uninstall` and `roer mcp uninstall` remove it for
-good.
+If Claude Code is installed, the first launch asks whether to set Roer up in
+it: the `/roer-handoff` skill, so a session in any terminal can hand itself
+over, and `roer mcp`, Roer's MCP server, so an agent in a Roer session can show
+a UI in its session's Generative UI panel. **Roer › Claude Code Integration…**
+changes the answer later, including taking either one back.
 
 ## Linux
 
