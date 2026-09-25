@@ -3,6 +3,7 @@
 //! in parallel and never touch the sessions of whoever runs them.
 #![cfg(unix)]
 
+use std::cell::Cell;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
@@ -17,6 +18,10 @@ struct Env {
     home: PathBuf,
     /// A directory to run in, standing in for a project.
     dir: PathBuf,
+    /// How many terminals `in_a_terminal` has started, each on a server of its
+    /// own: `kill-server` returns before the server is gone, and a new one on
+    /// the same socket can connect to it while it exits.
+    terminals: Cell<usize>,
 }
 
 impl Env {
@@ -32,6 +37,7 @@ impl Env {
             socket: format!("roer-test-{name}-{}", std::process::id()),
             home: root.join("home"),
             dir: root.join("project"),
+            terminals: Cell::new(0),
         }
     }
 
@@ -56,7 +62,11 @@ impl Env {
 
     fn run_with(&self, args: &[&str], stdin: &str) -> Output {
         let mut child = self.roer(args).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
-        child.stdin.take().unwrap().write_all(stdin.as_bytes()).unwrap();
+        // A usage error exits before stdin is read, and can do so before this
+        // write: the exit code is what the test checks, not the pipe.
+        if let Err(e) = child.stdin.take().unwrap().write_all(stdin.as_bytes()) {
+            assert_eq!(e.kind(), std::io::ErrorKind::BrokenPipe, "{e}");
+        }
         child.wait_with_output().unwrap()
     }
 
@@ -91,8 +101,10 @@ impl Env {
 impl Drop for Env {
     fn drop(&mut self) {
         self.tmux(&["kill-server"]);
-        // The second server `in_a_terminal` starts, if this test made one.
-        let _ = Command::new("tmux").args(["-L", &format!("{}-outer", self.socket), "kill-server"]).status();
+        // The servers `in_a_terminal` started, if this test made any.
+        for n in 1..=self.terminals.get() {
+            kill_terminal(self, n);
+        }
         let _ = std::fs::remove_dir_all(self.home.parent().unwrap());
     }
 }
@@ -405,7 +417,8 @@ fn in_a_terminal(env: &Env, args: &[&str], wait_for: &str) {
 
 /// `in_a_terminal`, running a given copy of roer.
 fn in_a_terminal_with(env: &Env, bin: &Path, args: &[&str], wait_for: &str) {
-    let outer = format!("{}-outer", env.socket);
+    env.terminals.set(env.terminals.get() + 1);
+    let outer = terminal_socket(env, env.terminals.get());
     let bin = bin.display();
     // env -u TMUX: the outer pane is itself inside tmux, and a client started
     // there refuses to nest.
@@ -416,11 +429,11 @@ fn in_a_terminal_with(env: &Env, bin: &Path, args: &[&str], wait_for: &str) {
         env.home.display(),
         args.join(" ")
     );
-    let status = Command::new("tmux")
+    let out = Command::new("tmux")
         .args(["-L", &outer, "-f", "/dev/null", "new-session", "-d", "-x", "80", "-y", "24", &command])
-        .status()
+        .output()
         .unwrap();
-    assert!(status.success());
+    assert!(out.status.success(), "roer {}: {}", args.join(" "), stderr(&out));
     for _ in 0..100 {
         let attached = env.tmux(&["list-sessions", "-F", "#{session_name} #{session_attached}"]);
         if attached.lines().any(|line| line == format!("{wait_for} 1")) {
@@ -431,9 +444,18 @@ fn in_a_terminal_with(env: &Env, bin: &Path, args: &[&str], wait_for: &str) {
     panic!("{wait_for} never attached: {}", env.tmux(&["list-sessions"]));
 }
 
-/// Ends the terminal `in_a_terminal` made, so the next one starts clean.
+/// Ends the terminal `in_a_terminal` made last.
 fn kill_outer(env: &Env) {
-    let _ = Command::new("tmux").args(["-L", &format!("{}-outer", env.socket), "kill-server"]).status();
+    kill_terminal(env, env.terminals.get());
+}
+
+fn terminal_socket(env: &Env, n: usize) -> String {
+    format!("{}-outer-{n}", env.socket)
+}
+
+/// Quietly: it is usually gone already, killed by the test.
+fn kill_terminal(env: &Env, n: usize) {
+    let _ = Command::new("tmux").args(["-L", &terminal_socket(env, n), "kill-server"]).stderr(Stdio::null()).status();
 }
 
 #[test]
