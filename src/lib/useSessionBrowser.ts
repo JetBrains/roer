@@ -65,12 +65,12 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
   // Session id (live session or Claude conversation) to the Workspace it is
   // assigned to — membership is explicit, not derived from a directory.
   const [assignments, setAssignments] = useState<Record<string, string>>({});
-  // `null` is "All" — every session and conversation, same as before
-  // Workspaces existed. Selecting a Workspace clears the Project filter and
-  // vice versa: one active filter at a time, not a combined query. This
-  // always starts as "All" on launch — it's a view filter, not a memory of
-  // last time. `lastNewSessionCwd` below is what remembers where to put a
-  // new session; the two are deliberately independent.
+  // Selecting a Workspace clears the Project filter and vice versa: one
+  // active filter at a time, not a combined query. With no Project selected
+  // there is always a Workspace, the first one on launch (see below) — it's a
+  // view filter, not a memory of last time. `lastNewSessionCwd` below is what
+  // remembers where to put a new session; the two are deliberately
+  // independent. `null` is only the Project filter's turn, or before loading.
   const [selectedWorkspaceId, setSelectedWorkspaceIdRaw] = useState<string | null>(null);
   const [selectedProjectId, setSelectedProjectIdRaw] = useState<string | null>(null);
   const [addingItem, setAddingItem] = useState(false);
@@ -168,6 +168,17 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
   useEffect(() => {
     void refreshWorkspaces();
   }, [refreshWorkspaces]);
+
+  // There is no unfiltered "All" to fall back to, so whenever neither filter
+  // points at anything — on launch, or once the selected Workspace or Project
+  // is deleted — the first Workspace is selected. The backend always seeds a
+  // Default one, so there is a first.
+  useEffect(() => {
+    if (selectedProjectId !== null) return;
+    if (workspaces.some((workspace) => workspace.id === selectedWorkspaceId)) return;
+    const first = workspaces[0];
+    if (first) setSelectedWorkspaceIdRaw(first.id);
+  }, [workspaces, selectedWorkspaceId, selectedProjectId]);
 
   const selectedWorkspace = workspaces.find((workspace) => workspace.id === selectedWorkspaceId) ?? null;
   const selectedProject = projects.find((project) => project.id === selectedProjectId) ?? null;
@@ -372,9 +383,9 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
     openedRef.current += 1;
     const known = sessions.map((session) => session.pane);
     pendingAssignRef.current = workspace ? { known, workspaceId: workspace.id } : null;
-    // Remembered only so a later "All"-filtered `openNew` (below) has
-    // somewhere better than home to fall back to — not tied to the view
-    // filter, which always starts fresh as "All" on launch.
+    // Remembered only so a later `openNew` (below) in a Workspace with no
+    // Projects has somewhere better than home to fall back to — not tied to
+    // the view filter, which always starts fresh on launch.
     if (cwd) localStorage.setItem("roer:last-new-session-cwd", cwd);
     onOpen({
       args: ["new"],

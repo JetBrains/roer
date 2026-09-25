@@ -4,9 +4,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { gitRoot } from "./lib/git";
 import { listClaudeSessions, listPastSessions, listSessions, roerStatus } from "./lib/pty";
 import { useSessionBrowser } from "./lib/useSessionBrowser";
+import { listProjects } from "./lib/projects";
 import { assignSession, listWorkspaces, unassignSession, workspaceAssignments } from "./lib/workspaces";
 import { NewSessionButton } from "./NewSessionButton";
-import { paneLabel, SessionBrowser, shortSessionName, type OpenRequest } from "./SessionBrowser";
+import { paneLabel, SessionBrowser, type OpenRequest } from "./SessionBrowser";
 import { WorkspaceSidebar } from "./WorkspaceSidebar";
 
 vi.mock("./lib/pty", () => ({
@@ -237,7 +238,7 @@ describe("grouping by git root", () => {
     vi.mocked(gitRoot).mockResolvedValue("/work/one");
     renderList();
 
-    await screen.findByRole("button", { name: /roer-a/i });
+    await screen.findByTitle(/^roer-a /);
     expect(screen.queryByRole("heading", { level: 3 })).not.toBeInTheDocument();
   });
 });
@@ -257,13 +258,14 @@ describe("naming a session", () => {
     ]);
     renderList();
 
-    const row = await screen.findByRole("button", { name: /^github-pr-tab-integration/ });
-    expect(row).toHaveTextContent("roer-3");
-    expect(row).not.toHaveTextContent("daf2");
+    const row = await screen.findByRole("button", { name: /^github-pr-tab-integrationclaude/ });
+    // The session's own name says only which directory it is in: the
+    // tooltip keeps it, the row does not.
+    expect(row).not.toHaveTextContent("roer");
     expect(row).toHaveAttribute("title", expect.stringContaining("roer-daf2-3"));
   });
 
-  it("falls back to the session name without its path hash", async () => {
+  it("falls back to the command, still without the session name", async () => {
     vi.mocked(listSessions).mockResolvedValue([
       {
         id: "1",
@@ -277,8 +279,8 @@ describe("naming a session", () => {
     ]);
     renderList();
 
-    const row = await screen.findByRole("button", { name: /^roerzsh/ });
-    expect(row).not.toHaveTextContent("daf2");
+    const row = await screen.findByRole("button", { name: /^zsh/ });
+    expect(row).not.toHaveTextContent("roer");
   });
 
   it("tells same-named repositories apart by their parent directory", async () => {
@@ -298,13 +300,6 @@ describe("naming a session", () => {
 });
 
 describe("session labels", () => {
-  it("strips only the four-hex path hash", () => {
-    expect(shortSessionName("roer-daf2")).toBe("roer");
-    expect(shortSessionName("roer-daf2-2")).toBe("roer-2");
-    expect(shortSessionName("my-cafe-1a2b-resume")).toBe("my-cafe-resume");
-    expect(shortSessionName("roer-a")).toBe("roer-a");
-  });
-
   it("drops spinner glyphs and titles that just repeat the command", () => {
     expect(paneLabel("\u2802 fixing tests", "claude")).toBe("fixing tests");
     expect(paneLabel("zsh", "zsh")).toBe("");
@@ -326,7 +321,7 @@ describe("naming the agent", () => {
     ]);
     renderList();
 
-    const row = await screen.findByRole("button", { name: /roer-a/i });
+    const row = await screen.findByTitle(/^roer-a /);
     expect(row).toHaveTextContent("claude");
   });
 
@@ -356,16 +351,53 @@ describe("naming the agent", () => {
   });
 });
 
+describe("the selected workspace", () => {
+  it("is the first one on launch, with no unfiltered All beside it", async () => {
+    vi.mocked(listWorkspaces).mockResolvedValueOnce([
+      { id: "w1", name: "Default", projects: [], items: [] },
+      { id: "w2", name: "Feature work", projects: [], items: [] },
+    ]);
+    vi.mocked(listSessions).mockResolvedValue([
+      { id: "1", session: "roer-a", pane: "%0", attached: true, cwd: "/Users/test/project", command: "zsh" },
+    ]);
+    renderList();
+
+    expect(await screen.findByRole("button", { name: /Default/ })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.queryByRole("button", { name: "All" })).not.toBeInTheDocument();
+    // Neither assigned to Default nor under a Project of its: not listed.
+    await waitFor(() => expect(listSessions).toHaveBeenCalled());
+    expect(screen.queryByRole("button", { name: /roer-a/i })).not.toBeInTheDocument();
+  });
+
+  it("offers no Delete for Default, only for the ones after it", async () => {
+    vi.mocked(listWorkspaces).mockResolvedValueOnce([
+      { id: "w1", name: "Default", projects: [], items: [] },
+      { id: "w2", name: "Feature work", projects: [], items: [] },
+    ]);
+    renderList();
+
+    fireEvent.contextMenu(await screen.findByRole("button", { name: /Default/ }));
+    expect(await screen.findByText("Rename")).toBeInTheDocument();
+    expect(screen.queryByText("Delete")).not.toBeInTheDocument();
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
+
+    fireEvent.contextMenu(screen.getByRole("button", { name: /Feature work/ }));
+    expect(await screen.findByText("Delete")).toBeInTheDocument();
+  });
+});
+
 describe("assigning a session to a workspace", () => {
   it("assigns a live session to a workspace via its right-click menu", async () => {
-    vi.mocked(listWorkspaces).mockResolvedValue([{ id: "w1", name: "Feature work", projects: [], items: [] }]);
+    // Listed because it is under the Workspace's Project, not yet assigned.
+    vi.mocked(listProjects).mockResolvedValueOnce([{ id: "p1", path: "/Users/test/project", name: "project" }]);
+    vi.mocked(listWorkspaces).mockResolvedValue([{ id: "w1", name: "Feature work", projects: ["p1"], items: [] }]);
     vi.mocked(listSessions).mockResolvedValue([
       { id: "1", session: "roer-a", pane: "%0", attached: true, cwd: "/Users/test/project", command: "zsh" },
     ]);
     vi.mocked(assignSession).mockResolvedValue(undefined);
     renderList();
 
-    const row = await screen.findByRole("button", { name: /roer-a/i });
+    const row = await screen.findByTitle(/^roer-a /);
     fireEvent.contextMenu(row);
 
     fireEvent.click(await screen.findByText("Assign to Feature work"));
@@ -382,7 +414,7 @@ describe("assigning a session to a workspace", () => {
     vi.mocked(unassignSession).mockResolvedValue(undefined);
     renderList();
 
-    const row = await screen.findByRole("button", { name: /roer-a/i });
+    const row = await screen.findByTitle(/^roer-a /);
     fireEvent.contextMenu(row);
 
     expect(await screen.findByText("Assign to Feature work")).toHaveAttribute("aria-disabled", "true");

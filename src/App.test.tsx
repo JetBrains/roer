@@ -19,6 +19,7 @@ import {
   spawnPty,
 } from "./lib/pty";
 import type { Handoff, PtyEvent } from "./lib/pty";
+import { listWorkspaces } from "./lib/workspaces";
 
 // Shared between the test body and the hoisted module mock below.
 const mocks = vi.hoisted(() => ({
@@ -91,6 +92,29 @@ vi.mock("./lib/pty", () => ({
     mocks.handoffHandlers.push(handler);
     return () => undefined;
   }),
+}));
+
+// No Workspaces unless a test gives some: with one, the sidebar selects it
+// and filters every session list down to what it covers.
+vi.mock("./lib/workspaces", () => ({
+  listWorkspaces: vi.fn(async () => []),
+  createWorkspace: vi.fn(),
+  renameWorkspace: vi.fn(),
+  deleteWorkspace: vi.fn(),
+  attachProject: vi.fn(),
+  detachProject: vi.fn(),
+  addWorkspaceItem: vi.fn(),
+  removeWorkspaceItem: vi.fn(),
+  workspaceAssignments: vi.fn(async () => ({})),
+  assignSession: vi.fn(),
+  unassignSession: vi.fn(),
+}));
+
+vi.mock("./lib/projects", () => ({
+  listProjects: vi.fn(async () => []),
+  createProject: vi.fn(),
+  renameProject: vi.fn(),
+  deleteProject: vi.fn(),
 }));
 
 // Go to File has tests of its own; here it only has to answer.
@@ -456,9 +480,9 @@ describe("App", () => {
     fireEvent.click(await screen.findByRole("tab", { name: "Sessions" }));
 
     const rows = await screen.findAllByRole("button", { current: false });
-    expect(rows.some((row) => row.textContent?.includes("other"))).toBe(true);
+    expect(rows.some((row) => row.title.startsWith("other "))).toBe(true);
     const open = await screen.findByRole("button", { current: true });
-    expect(open).toHaveTextContent("roer");
+    expect(open).toHaveAttribute("title", expect.stringMatching(/^roer /));
     expect(open).toHaveTextContent("open here");
   });
 
@@ -567,6 +591,9 @@ describe("App", () => {
   });
 
   it("switches to Sessions when a Workspace is picked, even mid-diff", async () => {
+    vi.mocked(listWorkspaces).mockResolvedValueOnce([
+      { id: "w1", name: "Default", projects: [], items: [] },
+    ]);
     render(<App />);
     await teleport();
     await emit({ kind: "output", data: "aGk=" });
@@ -576,7 +603,7 @@ describe("App", () => {
 
     // Picking a Workspace is asking to see what's in it, so it comes to the
     // front even over a tab nothing about Workspaces points at.
-    fireEvent.click(screen.getByRole("button", { name: "All" }));
+    fireEvent.click(screen.getByRole("button", { name: /Default/ }));
 
     expect(
       await screen.findByRole("navigation", { name: /sessions/i }),

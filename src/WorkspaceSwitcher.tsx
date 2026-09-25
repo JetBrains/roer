@@ -10,9 +10,9 @@ import { type Workspace } from "./lib/workspaces";
 
 export interface WorkspaceSwitcherProps {
   workspaces: Workspace[];
-  /** `null` means "All" — every session and conversation, unfiltered. */
+  /** `null` while a Project is selected instead, or before any load. */
   selectedId: string | null;
-  onSelect: (id: string | null) => void;
+  onSelect: (id: string) => void;
   onCreate: (name: string) => void;
   onRename: (id: string, name: string) => void;
   onDelete: (id: string) => void;
@@ -20,8 +20,8 @@ export interface WorkspaceSwitcherProps {
 
 /**
  * The top half of the sidebar: which Workspace's sessions and conversations
- * the bottom half is showing. Selecting none is "All", the flat list this
- * app had before Workspaces existed — additive, not a forced migration.
+ * the bottom half is showing. There is no unfiltered "All": one Workspace is
+ * always selected, the first on launch, unless a Project is.
  */
 export function WorkspaceSwitcher({
   workspaces,
@@ -85,17 +85,7 @@ export function WorkspaceSwitcher({
       ) : null}
 
       <ul>
-        <li>
-          <button
-            type="button"
-            className={selectedId === null ? "row active" : "row"}
-            aria-pressed={selectedId === null}
-            onClick={() => onSelect(null)}
-          >
-            <strong>All</strong>
-          </button>
-        </li>
-        {workspaces.map((workspace) => {
+        {workspaces.map((workspace, index) => {
           const active = workspace.id === selectedId;
           if (renamingId === workspace.id) {
             return (
@@ -146,9 +136,13 @@ export function WorkspaceSwitcher({
                   <ContextMenuItem onSelect={() => startRename(workspace)}>
                     Rename
                   </ContextMenuItem>
-                  <ContextMenuItem variant="destructive" onSelect={() => onDelete(workspace.id)}>
-                    Delete
-                  </ContextMenuItem>
+                  {/* The first is Default, which the backend will not delete
+                      for now: something always has to be selected. */}
+                  {index > 0 ? (
+                    <ContextMenuItem variant="destructive" onSelect={() => onDelete(workspace.id)}>
+                      Delete
+                    </ContextMenuItem>
+                  ) : null}
                 </ContextMenuContent>
               </ContextMenu>
             </li>

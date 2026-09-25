@@ -68,15 +68,6 @@ export function distinctLabels(paths: string[]): Map<string, string> {
 }
 
 /**
- * The session name without the shim's path hash: `roer-daf2-2` is `roer-2`.
- * The hash only keeps same-named directories apart in tmux, and the group
- * heading already does that here.
- */
-export function shortSessionName(name: string): string {
-  return name.replace(/^(.+)-[0-9a-f]{4}(?=-|$)/, "$1");
-}
-
-/**
  * The pane's title as a label, or "" when it says nothing the row doesn't.
  * Claude Code prefixes it with a spinner glyph that changes as it works.
  */
@@ -86,17 +77,19 @@ export function paneLabel(title: string | undefined, command: string): string {
 }
 
 /** A live row's name: what the agent says it is doing, when it says, with
- * the session's own name beside it; otherwise just the session's name. */
+ * the command beside it; otherwise just the command, named exactly as the
+ * terminal would show it. The session's own name (`roer-2`) says only which
+ * directory it is in, which the group headings show wherever there is more
+ * than one, so it is left to the row's tooltip. */
 function LiveName({ session }: { session: SessionInfo }) {
   const label = paneLabel(session.title, session.command);
-  const name = shortSessionName(session.session);
   return label ? (
     <>
       <strong>{label}</strong>
-      <span className="muted">{name}</span>
+      <span className="muted">{session.command}</span>
     </>
   ) : (
-    <strong>{name}</strong>
+    <strong>{session.command}</strong>
   );
 }
 
@@ -217,7 +210,7 @@ export type SessionBrowserProps = Pick<
 
 /**
  * The right side: the sessions and Claude conversations the selected
- * Workspace (or "All") filters to, plus its attached Projects and generic
+ * Workspace (or Project) filters to, plus its attached Projects and generic
  * items. Which Workspace is selected lives in the sidebar; this is
  * everything that selection changes.
  */
@@ -321,9 +314,6 @@ export function SessionBrowser({
                           }
                         >
                           <LiveName session={entry.session} />
-                          {/* Named exactly as the terminal would show it: the
-                              command running in the pane. */}
-                          <span className="muted">{entry.session.command}</span>
                           {/* Attaching takes a session over from whoever holds it,
                               which may be a terminal or another window of this app. */}
                           <span

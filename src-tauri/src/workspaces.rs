@@ -165,8 +165,14 @@ pub fn delete(id: &str) -> std::io::Result<()> {
     delete_in(&workspaces_file(), id)
 }
 
+/// Refuses the first Workspace, the Default one `list` seeds, for now: the
+/// app always has one selected, and there is no unfiltered view to fall back
+/// to without it.
 fn delete_in(path: &std::path::Path, id: &str) -> std::io::Result<()> {
     let mut store = load(path);
+    if store.workspaces.first().is_some_and(|w| w.id == id) {
+        return Err(std::io::Error::other("the Default workspace cannot be deleted"));
+    }
     store.workspaces.retain(|w| w.id != id);
     // A deleted Workspace's assignments would otherwise dangle, pointing at
     // an id that no longer resolves to anything.
@@ -430,20 +436,33 @@ mod tests {
     #[test]
     fn a_deleted_workspace_is_gone() {
         let file = temp_file();
+        list_in(&file);
         let workspace = create_in(&file, "one".to_string()).unwrap();
         create_in(&file, "two".to_string()).unwrap();
 
         delete_in(&file, &workspace.id).unwrap();
 
         let listed = list_in(&file);
-        assert_eq!(listed.len(), 1);
-        assert_eq!(listed[0].name, "two");
+        let names: Vec<_> = listed.iter().map(|w| w.name.as_str()).collect();
+        assert_eq!(names, [DEFAULT_WORKSPACE_NAME, "two"]);
+        std::fs::remove_file(&file).ok();
+    }
+
+    #[test]
+    fn the_default_workspace_cannot_be_deleted() {
+        let file = temp_file();
+        let default = list_in(&file).remove(0);
+
+        assert!(delete_in(&file, &default.id).is_err());
+
+        assert_eq!(list_in(&file)[0].id, default.id);
         std::fs::remove_file(&file).ok();
     }
 
     #[test]
     fn deleting_a_workspace_drops_its_assignments() {
         let file = temp_file();
+        list_in(&file);
         let workspace = create_in(&file, "one".to_string()).unwrap();
         assign_in(&file, "session-1", &workspace.id).unwrap();
 
