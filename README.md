@@ -3,11 +3,11 @@
 # roer
 
 Session host for agent terminals — a session moves freely between a terminal and the Roer app without restarting.
-Latest build: [v0.4.4](https://github.com/JetBrains/roer/releases/tag/v0.4.4).
+Latest build: [v0.4.5](https://github.com/JetBrains/roer/releases/tag/v0.4.5).
 
 ## Install
 
-1. Download `Roer_<version>_universal.dmg` from the [release](https://github.com/JetBrains/roer/releases/tag/v0.4.4) (one build, Apple silicon + Intel, macOS 15+).
+1. Download `Roer_<version>_universal.dmg` from the [release](https://github.com/JetBrains/roer/releases/tag/v0.4.5) (one build, Apple silicon + Intel, macOS 15+).
 2. Drag `Roer.app` to Applications, then clear its quarantine flag: `xattr -dr com.apple.quarantine /Applications/Roer.app`.
 3. Open Roer once. It puts the `roer` command on your `PATH`, and a new terminal can run `roer shell`.
 
