@@ -7,6 +7,12 @@ name: Pages
 # changelog follow it. A release published by a person fires `published`;
 # one published by this repo's own GITHUB_TOKEN would not, which is why the
 # workflow also runs on demand.
+#
+# A release run cannot deploy itself: its ref is the tag, and the
+# github-pages environment only lets `main` deploy ("Tag v0.4.2 is not
+# allowed to deploy"). So it only dispatches this workflow again on main,
+# which can. A workflow_dispatch is one of the few events GITHUB_TOKEN is
+# allowed to start a run with.
 
 on:
   push:
@@ -28,8 +34,22 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  redeploy-from-main:
+    name: Redeploy from main
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      # No checkout, so gh has no remote to infer the repository from.
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - run: gh workflow run pages.yml --ref "${{ github.event.repository.default_branch }}"
+
   build:
     name: Build
+    if: github.event_name != 'release'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
