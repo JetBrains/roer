@@ -1,94 +1,195 @@
 /**
- * A minimal, A2UI-shaped wire format: enough to prototype one scenario, not
- * the full spec. Components are flat and id-referenced (A2UI's own choice,
- * for the same reason — an agent streams and patches a list more easily than
- * it edits a nested tree), and the client's catalog is a closed union: a
- * component type the catalog does not know is data the renderer refuses to
- * act on, never code it runs.
+ * A2UI v1.0 — the snapshot documented today, frozen (docs/pluginsspec.md §0).
+ * Roer is both the agent side and the renderer, so there is nobody else's
+ * build to track; a later revision would be a deliberate change here.
+ *
+ * Components are flat and id-referenced (A2UI's own choice, for the same
+ * reason — an agent streams and patches a list more easily than it edits a
+ * nested tree), and the catalog is a closed union: a component type the
+ * catalog does not know is data the renderer refuses to act on, never code
+ * it runs.
  */
 
-export type ComponentId = string;
+export const A2UI_VERSION = "v1.0";
 
-export type Justify = "start" | "center" | "end" | "spaceBetween";
-export type Align = "start" | "center" | "end";
-export type TextFieldType = "shortText" | "longText" | "number" | "obscured" | "date";
+/** Every surface's default catalog: A2UI's basic catalog plus Roer's own. */
+export const ROER_CATALOG_ID = "roer:catalog/1";
+
+export type ComponentId = string;
+/** RFC 6901. Absolute from the data model's root, or — without the leading
+ * `/` — relative to the current template item. */
+export type JsonPointer = string;
+
+export interface DataBinding {
+  path: JsonPointer;
+}
+
+export interface FunctionCall {
+  call: string;
+  args?: Record<string, DynamicValue>;
+  catalogId?: string;
+}
+
+export type DynamicValue =
+  | string
+  | number
+  | boolean
+  | unknown[]
+  | Record<string, unknown>
+  | DataBinding
+  | FunctionCall;
+export type DynamicString = string | DataBinding | FunctionCall;
+export type DynamicNumber = number | DataBinding | FunctionCall;
+export type DynamicBoolean = boolean | DataBinding | FunctionCall;
+export type DynamicStringList = string[] | DataBinding | FunctionCall;
+
+/** A fixed list of child ids, or one template child per element of a list. */
+export type ChildList = ComponentId[] | { componentId: ComponentId; path: JsonPointer };
+
+export type Action =
+  | {
+      event: {
+        name: string;
+        userMessage?: DynamicString;
+        context?: Record<string, DynamicValue>;
+      };
+    }
+  | { functionCall: FunctionCall };
+
+export interface CheckRule {
+  condition: DataBinding | FunctionCall;
+  message?: string;
+}
+
+export interface AccessibilityAttributes {
+  label?: DynamicString;
+  description?: DynamicString;
+  live?: "off" | "polite" | "assertive";
+  /** Hides from assistive technologies only — never from the screen. */
+  hidden?: DynamicBoolean;
+}
+
+interface ComponentCommon {
+  id: ComponentId;
+  catalogId?: string;
+  accessibility?: AccessibilityAttributes;
+  metadata?: { extensions?: Record<string, unknown> };
+  /** flex-grow inside a Row or Column. */
+  weight?: number;
+}
+
+export type Justify =
+  | "start"
+  | "center"
+  | "end"
+  | "spaceBetween"
+  | "spaceAround"
+  | "spaceEvenly"
+  | "stretch";
+export type Align = "start" | "center" | "end" | "stretch";
+
+type Variant<C extends string, P> = ComponentCommon & { component: C } & P;
 
 export type Component =
-  // Layout
-  | { id: ComponentId; type: "Row"; children: ComponentId[]; justify?: Justify; align?: Align }
-  | { id: ComponentId; type: "Column"; children: ComponentId[]; justify?: Justify; align?: Align }
-  | {
-      id: ComponentId;
-      type: "List";
-      children: ComponentId[];
-      direction?: "vertical" | "horizontal";
-    }
-  // Display
-  | { id: ComponentId; type: "Text"; text: string; muted?: boolean }
-  | { id: ComponentId; type: "Image"; url: string; alt?: string }
-  | { id: ComponentId; type: "Icon"; name: string }
-  | { id: ComponentId; type: "Divider" }
-  | {
-      id: ComponentId;
-      type: "Arrow";
-      direction?: "horizontal" | "vertical";
-      label?: string;
-    }
-  // Interactive
-  | { id: ComponentId; type: "Button"; label: string; action: string; primary?: boolean }
-  | {
-      id: ComponentId;
-      type: "TextField";
-      label: string;
-      valuePath: string;
-      textFieldType?: TextFieldType;
-    }
-  | { id: ComponentId; type: "Checkbox"; label: string; checkedPath: string }
-  | { id: ComponentId; type: "Slider"; valuePath: string; minValue: number; maxValue: number }
-  | {
-      id: ComponentId;
-      type: "DateTimeInput";
-      valuePath: string;
-      enableDate?: boolean;
-      enableTime?: boolean;
-    }
-  | {
-      id: ComponentId;
-      type: "ChoicePicker";
-      options: { label: string; value: string }[];
-      selectionsPath: string;
-      maxAllowedSelections?: number;
-    }
-  // Container
-  | { id: ComponentId; type: "Card"; children: ComponentId[] }
-  | { id: ComponentId; type: "ButtonRow"; children: ComponentId[] }
-  | { id: ComponentId; type: "Modal"; entryPointChild: ComponentId; contentChild: ComponentId }
-  | {
-      id: ComponentId;
-      type: "Expandable";
-      title: string;
-      child: ComponentId;
-      defaultExpanded?: boolean;
-    }
-  | {
-      id: ComponentId;
-      type: "Tabs";
-      tabItems: { title: string; child: ComponentId }[];
-    };
+  // A2UI basic catalog — layout
+  | Variant<"Row", { children: ChildList; justify?: Justify; align?: Align }>
+  | Variant<"Column", { children: ChildList; justify?: Justify; align?: Align }>
+  | Variant<"List", { children: ChildList; direction?: "vertical" | "horizontal"; align?: Align }>
+  | Variant<"Card", { child: ComponentId }>
+  | Variant<"Tabs", { tabs: { title: DynamicString; child: ComponentId }[] }>
+  | Variant<"Modal", { trigger: ComponentId; content: ComponentId }>
+  | Variant<"Divider", { axis?: "horizontal" | "vertical" }>
+  // A2UI basic catalog — display
+  | Variant<"Text", { text: DynamicString; variant?: "caption" | "body" }>
+  | Variant<
+      "Image",
+      {
+        url: DynamicString;
+        description?: DynamicString;
+        fit?: "contain" | "cover" | "fill" | "none" | "scaleDown";
+        variant?: "icon" | "avatar" | "smallFeature" | "mediumFeature" | "largeFeature" | "header";
+      }
+    >
+  | Variant<"Icon", { name: DynamicString | { svgPath: DynamicString } }>
+  | Variant<"Video", { url: DynamicString; posterUrl?: DynamicString }>
+  | Variant<"AudioPlayer", { url: DynamicString; description?: DynamicString }>
+  // A2UI basic catalog — input
+  | Variant<
+      "Button",
+      { child: ComponentId; action: Action; variant?: "default" | "primary" | "borderless"; checks?: CheckRule[] }
+    >
+  | Variant<
+      "TextField",
+      {
+        label: DynamicString;
+        value?: DynamicString;
+        placeholder?: DynamicString;
+        variant?: "shortText" | "longText" | "number" | "obscured";
+        checks?: CheckRule[];
+      }
+    >
+  | Variant<"CheckBox", { label: DynamicString; value: DynamicBoolean; checks?: CheckRule[] }>
+  | Variant<
+      "ChoicePicker",
+      {
+        label?: DynamicString;
+        variant?: "multipleSelection" | "mutuallyExclusive";
+        options: { label: DynamicString; value: string }[];
+        value: DynamicStringList;
+        displayStyle?: "checkbox" | "chips";
+        filterable?: boolean;
+        checks?: CheckRule[];
+      }
+    >
+  | Variant<
+      "Slider",
+      { label?: DynamicString; min?: number; max: number; value: DynamicNumber; steps?: number; checks?: CheckRule[] }
+    >
+  | Variant<
+      "DateTimeInput",
+      {
+        value: DynamicString;
+        enableDate?: boolean;
+        enableTime?: boolean;
+        min?: DynamicString;
+        max?: DynamicString;
+        label?: DynamicString;
+        checks?: CheckRule[];
+      }
+    >
+  // Roer's additions
+  | Variant<"Arrow", { direction?: "horizontal" | "vertical"; label?: DynamicString }>
+  | Variant<"Expandable", { title: DynamicString; child: ComponentId; defaultExpanded?: boolean }>;
 
 export interface SurfaceState {
-  root?: ComponentId;
+  catalogId: string;
   components: Record<ComponentId, Component>;
-  rendering: boolean;
+  /** Echo the whole data model back with every action. */
+  sendDataModel: boolean;
 }
 
 export type DataModel = Record<string, unknown>;
 
-/** The three message kinds this prototype speaks — A2UI's own names. */
+export interface CreateSurface {
+  surfaceId: string;
+  catalogId?: string;
+  sendDataModel?: boolean;
+  components?: Component[];
+  dataModel?: DataModel;
+  metadata?: { extensions?: Record<string, unknown> };
+}
+
+/** The agent-to-renderer messages this renderer acts on. The function-call
+ * RPCs (`callRendererFunction`, `agentFunctionResponse`) are valid v1.0 but
+ * come with the first renderer functions — until then they are dropped. */
 export type A2uiMessage =
-  | { kind: "surfaceUpdate"; surfaceId: string; root: ComponentId; components: Component[] }
-  | { kind: "dataModelUpdate"; surfaceId: string; patch: DataModel }
-  | { kind: "beginRendering"; surfaceId: string };
+  | { version: typeof A2UI_VERSION; createSurface: CreateSurface }
+  | { version: typeof A2UI_VERSION; updateComponents: { surfaceId: string; components: Component[] } }
+  | {
+      version: typeof A2UI_VERSION;
+      updateDataModel: { surfaceId: string; path?: JsonPointer; value: unknown };
+    }
+  | { version: typeof A2UI_VERSION; deleteSurface: { surfaceId: string } };
 
 export interface RenderState {
   surfaces: Record<string, SurfaceState>;
@@ -97,41 +198,109 @@ export interface RenderState {
 
 export const emptyState: RenderState = { surfaces: {}, dataModels: {} };
 
+/** The surface a message is about. */
+export function surfaceIdOf(message: A2uiMessage): string {
+  if ("createSurface" in message) return message.createSurface.surfaceId;
+  if ("updateComponents" in message) return message.updateComponents.surfaceId;
+  if ("updateDataModel" in message) return message.updateDataModel.surfaceId;
+  return message.deleteSurface.surfaceId;
+}
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
 /**
  * Runtime guard for a message read off the wire (a watcher event, a saved
  * bundle) — `A2uiMessage` is only a compile-time promise about that data,
  * never checked once it crosses an `invoke`/`listen`/JSON boundary. Checks
- * just enough shape (`kind` plus the fields every consumer indexes into) to
- * keep a malformed message from reaching the reducer or renderer.
+ * the envelope and just enough of the body (the fields every consumer
+ * indexes into) to keep a malformed message from reaching the reducer.
  */
 export function isA2uiMessage(value: unknown): value is A2uiMessage {
-  if (typeof value !== "object" || value === null) return false;
-  const v = value as Record<string, unknown>;
-  if (typeof v.surfaceId !== "string") return false;
-  switch (v.kind) {
-    case "surfaceUpdate":
-      return typeof v.root === "string" && Array.isArray(v.components);
-    case "dataModelUpdate":
-      return typeof v.patch === "object" && v.patch !== null;
-    case "beginRendering":
+  if (!isRecord(value) || value.version !== A2UI_VERSION) return false;
+  const keys = Object.keys(value).filter((key) => key !== "version");
+  if (keys.length !== 1) return false;
+  const body = value[keys[0]];
+  if (!isRecord(body) || typeof body.surfaceId !== "string") return false;
+  switch (keys[0]) {
+    case "createSurface":
+      return (
+        (body.components === undefined || Array.isArray(body.components)) &&
+        (body.dataModel === undefined || isRecord(body.dataModel))
+      );
+    case "updateComponents":
+      return Array.isArray(body.components);
+    case "updateDataModel":
+      return "value" in body && (body.path === undefined || typeof body.path === "string");
+    case "deleteSurface":
       return true;
     default:
       return false;
   }
 }
 
-/** Reads a dot path (`"files.0.include"`) out of a data model. */
-export function readPath(model: DataModel, path: string): unknown {
-  return path.split(".").reduce<unknown>((value, key) => {
-    if (value === undefined || value === null) return undefined;
-    return (value as Record<string, unknown>)[key];
-  }, model);
+// ---------------------------------------------------------------------------
+// JSON Pointer (RFC 6901)
+
+/** Keys that would reach an object's prototype rather than its own data. */
+const FORBIDDEN = new Set(["__proto__", "constructor", "prototype"]);
+
+/** The unescaped segments of a pointer. `""` and `"/"` are both the root. */
+export function pointerSegments(pointer: JsonPointer): string[] {
+  if (pointer === "" || pointer === "/") return [];
+  const body = pointer.startsWith("/") ? pointer.slice(1) : pointer;
+  return body.split("/").map((segment) => segment.replace(/~1/g, "/").replace(/~0/g, "~"));
 }
 
-/** Writes a dot path, without mutating the model it was given. */
-export function writePath(model: DataModel, path: string, value: unknown): DataModel {
-  const [head, ...rest] = path.split(".");
-  if (rest.length === 0) return { ...model, [head]: value };
-  const child = (model[head] as DataModel | undefined) ?? {};
-  return { ...model, [head]: writePath(child, rest.join("."), value) };
+/** A relative pointer resolved against the current template item, the way
+ * A2UI's own data model does it; an absolute one is returned as is. */
+export function resolvePointer(pointer: JsonPointer, scope?: JsonPointer): JsonPointer {
+  if (pointer.startsWith("/")) return pointer;
+  if (!scope || scope === "/") return `/${pointer}`;
+  if (pointer === "") return scope;
+  return `${scope.endsWith("/") ? scope : `${scope}/`}${pointer}`;
+}
+
+/** Reads a pointer (`"/files/0/include"`) out of a data model. */
+export function readPointer(model: unknown, pointer: JsonPointer): unknown {
+  let value: unknown = model;
+  for (const key of pointerSegments(pointer)) {
+    if (FORBIDDEN.has(key) || value === undefined || value === null || typeof value !== "object") {
+      return undefined;
+    }
+    value = (value as Record<string, unknown>)[key];
+  }
+  return value;
+}
+
+/**
+ * Writes a pointer without mutating the model it was given. `null` (or
+ * `undefined`) deletes the key, as `updateDataModel` defines it. Arrays stay
+ * arrays; a missing container is created as an object.
+ */
+export function writePointer(model: DataModel, pointer: JsonPointer, value: unknown): DataModel {
+  const segments = pointerSegments(pointer);
+  if (segments.length === 0) return isRecord(value) ? value : {};
+  if (segments.some((key) => FORBIDDEN.has(key))) return model;
+  return writeAt(model, segments, value) as DataModel;
+}
+
+function writeAt(container: unknown, [head, ...rest]: string[], value: unknown): unknown {
+  const remove = value === null || value === undefined;
+  if (Array.isArray(container)) {
+    const index = head === "-" ? container.length : Number(head);
+    if (!Number.isInteger(index) || index < 0) return container;
+    const next = [...container];
+    if (rest.length > 0) next[index] = writeAt(next[index], rest, value);
+    else if (remove) next.splice(index, 1);
+    else next[index] = value;
+    return next;
+  }
+  const base = isRecord(container) ? container : {};
+  if (rest.length > 0) return { ...base, [head]: writeAt(base[head], rest, value) };
+  if (remove) {
+    const { [head]: _gone, ...kept } = base;
+    return kept;
+  }
+  return { ...base, [head]: value };
 }

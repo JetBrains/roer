@@ -67,10 +67,10 @@ fn ensure_dir(dir: &Path) -> Result<(), Fail> {
         .map_err(|e| Fail::new(1, format!("could not create {}: {e}", dir.display())))
 }
 
-/// Drops one A2UI-shaped message into the app's Plugin UI watcher, tagged with
+/// Drops one A2UI v1.0 message into the app's Plugin UI watcher, tagged with
 /// the pane it belongs to. Fire and forget: no claim, ack or timeout. `seq`
 /// keeps two messages from one process in one second — a `load`'s
-/// surfaceUpdate and its dataModelUpdate — from sharing a filename.
+/// deleteSurface and its createSurface — from sharing a filename.
 /// `seq` orders one command's messages; the count keeps apart the records of
 /// a process that sends several in the same second, as `roer mcp` does, where
 /// the stamp alone would have a later one overwrite one not yet delivered.

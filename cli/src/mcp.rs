@@ -130,8 +130,9 @@ impl Server<'_> {
             json!({
                 "name": "show_ui",
                 "description": "Show or update a UI in a Roer session's Generative UI panel. `messages` is the \
-                    sequence to send: surfaceUpdate, any dataModelUpdate, then beginRendering. The message \
-                    kinds and the whole component catalog are in this server's instructions.",
+                    sequence of A2UI v1.0 messages to send: usually one createSurface with the components and \
+                    data model inline, later updateComponents / updateDataModel for the same surfaceId. The \
+                    messages and the whole component catalog are in this server's instructions.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -144,7 +145,8 @@ impl Server<'_> {
             json!({
                 "name": "read_ui_actions",
                 "description": "The button clicks waiting in a Roer session's Generative UI panel, oldest first, \
-                    each as one JSON object per line and consumed as it is read. Empty when nothing was clicked.",
+                    each an A2UI v1.0 action message on its own line, consumed as it is read. Empty when nothing \
+                    was clicked.",
                 "inputSchema": {
                     "type": "object",
                     "properties": { "session": session },
@@ -163,11 +165,13 @@ impl Server<'_> {
                     "type": "object",
                     "properties": {
                         "name": name,
-                        "surfaceUpdate": { "type": "object" },
-                        "dataModelUpdate": { "type": "object" },
+                        "surface": {
+                            "type": "object",
+                            "description": "One A2UI v1.0 createSurface message, components and data model inline.",
+                        },
                         "prompt": { "type": "string", "description": "The request that produced it." },
                     },
-                    "required": ["name", "surfaceUpdate"],
+                    "required": ["name", "surface"],
                 },
             }));
             tools.push(json!({
@@ -200,11 +204,8 @@ impl Server<'_> {
             "read_ui_actions" => Ok(Roer::take_actions(&self.pane(args)?)?.join("\n")),
             "save_ui" if self.here.is_some() => {
                 let name = text(args, "name");
-                let surface = args.get("surfaceUpdate").ok_or_else(|| Fail::new(2, "`surfaceUpdate` is required"))?;
-                self.roer.save_piece(name, "surfaceUpdate", &surface.to_string())?;
-                if let Some(data) = args.get("dataModelUpdate") {
-                    self.roer.save_piece(name, "dataModelUpdate", &data.to_string())?;
-                }
+                let surface = args.get("surface").ok_or_else(|| Fail::new(2, "`surface` is required"))?;
+                self.roer.save_piece(name, "surface", &surface.to_string())?;
                 if let Some(prompt) = args.get("prompt").and_then(Value::as_str).filter(|p| !p.is_empty()) {
                     self.roer.save_piece(name, "prompt", prompt)?;
                 }

@@ -1,15 +1,18 @@
 /**
- * Typed bridge to the plugin-UI watcher: `roer plugin-ui` piped an A2UI-shaped
+ * Typed bridge to the plugin-UI watcher: `roer plugin-ui` piped an A2UI v1.0
  * message, tagged with the pane it came from.
  *
  * The reverse direction, `reportPluginUiAction`, is the same shape run
- * backwards: A2UI's own client-to-server `action` message, tagged with the
+ * backwards: v1.0's renderer-to-agent `action` message, tagged with the
  * pane so `roer plugin-ui-actions` knows which terminal to deliver it to.
  */
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
-import { isA2uiMessage, type A2uiMessage } from "../generative-ui/schema";
+import { type LegacyBundle } from "../generative-ui/legacy";
+import { A2UI_VERSION, isA2uiMessage, type A2uiMessage, type DataModel } from "../generative-ui/schema";
+
+type CreateSurfaceMessage = Extract<A2uiMessage, { createSurface: unknown }>;
 
 export interface PluginUiRecord {
   pane: string;
@@ -30,28 +33,41 @@ export const onPluginUi = (handler: (record: PluginUiRecord) => void): Promise<U
     if (isPluginUiRecord(event.payload)) handler(event.payload);
   });
 
+/**
+ * A component's action on its way to the terminal: v1.0's own renderer-to-
+ * agent `action` message, tagged with the pane. `dataModel` travels beside
+ * the message rather than inside it, the way A2A carries a surface's data
+ * model in transport metadata when `createSurface` asked for `sendDataModel`.
+ */
 export interface PluginUiAction {
   pane: string;
-  surfaceId: string;
-  name: string;
-  sourceComponentId: string;
-  timestamp: string;
-  context?: unknown;
+  message: {
+    version: typeof A2UI_VERSION;
+    action: {
+      name: string;
+      surfaceId: string;
+      sourceComponentId: string;
+      timestamp: string;
+      context: Record<string, unknown>;
+      userMessage?: string;
+    };
+  };
+  dataModel?: DataModel;
 }
 
 export const reportPluginUiAction = (action: PluginUiAction): Promise<void> =>
   invoke("report_plugin_ui_action", { action });
 
 /**
- * A saved plugin UI: the prompt that produced it, plus the exact messages
- * that build it — the same shapes `roer plugin-ui` already carries, kept
- * separate rather than merged into one object so each one round-trips
- * losslessly through the Rust side's opaque `serde_json::Value` handling.
+ * A saved plugin UI: the prompt that produced it, plus the one v1.0
+ * `createSurface` message that builds it — components and data model inline.
+ * A bundle saved before v1.0 comes back as `legacy` instead, its old files
+ * as they were, for `upgradeBundle` to turn into a `surface` once.
  */
 export interface PluginUiBundle {
   prompt: string;
-  surfaceUpdate: Extract<A2uiMessage, { kind: "surfaceUpdate" }>;
-  dataModelUpdate?: Extract<A2uiMessage, { kind: "dataModelUpdate" }>;
+  surface?: CreateSurfaceMessage;
+  legacy?: LegacyBundle;
 }
 
 export interface PluginUiBundleSummary {
@@ -68,5 +84,5 @@ export const readPluginUiBundle = (cwd: string, name: string): Promise<PluginUiB
 export const writePluginUiBundle = (
   cwd: string,
   name: string,
-  bundle: PluginUiBundle,
+  bundle: PluginUiBundle & { surface: CreateSurfaceMessage },
 ): Promise<void> => invoke("write_plugin_ui_bundle", { cwd, name, bundle });

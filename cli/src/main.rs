@@ -68,7 +68,7 @@ usage:
   roer handoff --resume <id>
                         hand a conversation over when this terminal is not a
                         roer session and so cannot be attached
-  roer plugin-ui        read one A2UI-shaped JSON message from stdin and show
+  roer plugin-ui        read one A2UI v1.0 JSON message from stdin and show
                         it in the app's Generative UI panel, for this
                         session's pane
   roer plugin-ui --pane <id>
@@ -80,11 +80,10 @@ usage:
                         consume them; prints nothing if none are waiting
   roer plugin-ui-actions --pane <id>
                         same, for an explicit pane
-  roer plugin-ui save <name> surfaceUpdate
-                        read a surfaceUpdate message from stdin and save it
-                        under <name> in this project's .roer/plugin-ui
-  roer plugin-ui save <name> dataModelUpdate
-                        same, for a dataModelUpdate message
+  roer plugin-ui save <name> surface
+                        read a createSurface message (components and data
+                        model inline) from stdin and save it under <name>
+                        in this project's .roer/plugin-ui
   roer plugin-ui save <name> prompt \"<text>\"
                         record the request that produced <name>
   roer plugin-ui load <name>
@@ -473,9 +472,7 @@ impl Roer {
         let name = args.first().copied().unwrap_or_default();
         check_bundle_name(name)?;
         let body = match args.get(1).copied() {
-            Some(kind @ ("surfaceUpdate" | "dataModelUpdate")) => {
-                read_stdin(&format!("save {kind} needs JSON on stdin"))?
-            }
+            Some("surface") => read_stdin("save surface needs a createSurface message on stdin")?,
             Some("prompt") => {
                 let text = args.get(2).copied().unwrap_or_default();
                 if text.is_empty() {
@@ -483,29 +480,41 @@ impl Roer {
                 }
                 text.to_string()
             }
-            _ => return Err(Fail::new(2, "save needs a kind: surfaceUpdate, dataModelUpdate, or prompt")),
+            Some("surfaceUpdate" | "dataModelUpdate") => return Err(Fail::new(2, PRE_V1_SAVE)),
+            _ => return Err(Fail::new(2, "save needs a kind: surface or prompt")),
         };
         self.save_piece(name, args[1], &body)
     }
 
-    /// Writes one piece of bundle `name`: `kind` is surfaceUpdate,
-    /// dataModelUpdate or prompt.
+    /// Writes one piece of bundle `name`: `kind` is surface (a v1.0
+    /// createSurface message) or prompt.
     fn save_piece(&self, name: &str, kind: &str, body: &str) -> Outcome {
         check_bundle_name(name)?;
         let file = match kind {
-            "surfaceUpdate" => "surface-update.json",
-            "dataModelUpdate" => "data-model.json",
+            "surface" => {
+                let message: Value = serde_json::from_str(body)
+                    .map_err(|e| Fail::new(2, format!("the surface is not JSON: {e}")))?;
+                surface_id(&message)?;
+                "surface.json"
+            }
             "prompt" => "prompt.md",
-            _ => return Err(Fail::new(2, "save needs a kind: surfaceUpdate, dataModelUpdate, or prompt")),
+            _ => return Err(Fail::new(2, "save needs a kind: surface or prompt")),
         };
         let dir = self.bundle_dir(name);
         std::fs::create_dir_all(&dir)
             .map_err(|e| Fail::new(1, format!("could not create {}: {e}", dir.display())))?;
-        records::write_atomic(&dir.join(file), &format!("{body}\n"))
+        records::write_atomic(&dir.join(file), &format!("{body}\n"))?;
+        if kind == "surface" {
+            // Saved as v1.0, what it was before would only make it look like
+            // a legacy bundle to whoever reads it next.
+            let _ = std::fs::remove_file(dir.join("surface-update.json"));
+            let _ = std::fs::remove_file(dir.join("data-model.json"));
+        }
+        Ok(())
     }
 
-    /// Re-shows a saved plugin UI: the same three-message sequence the skill
-    /// sends live, read back from disk instead of stdin.
+    /// Re-shows a saved plugin UI: its one createSurface message, read back
+    /// from disk instead of stdin.
     fn plugin_ui_load(&self, args: &[&str]) -> Outcome {
         let (pane, name) = match args {
             ["--pane", pane, rest @ ..] => (resolve_pane(&self.tmux, &["--pane", pane])?, rest.first().copied()),
@@ -518,7 +527,15 @@ impl Roer {
     fn load_bundle(&self, pane: &str, name: &str) -> Outcome {
         check_bundle_name(name)?;
         let dir = self.bundle_dir(name);
-        let surface = dir.join("surface-update.json");
+        let surface = dir.join("surface.json");
+        if !surface.is_file() && dir.join("surface-update.json").is_file() {
+            // Upgrading one needs the component catalog, which only the app
+            // has; it rewrites the bundle the first time it opens it.
+            return Err(Fail::new(
+                3,
+                format!("'{name}' was saved before A2UI v1.0; open it once from Roer's Generative UI panel (Open) to upgrade it"),
+            ));
+        }
         if !surface.is_file() {
             return Err(Fail::new(
                 3,
@@ -528,12 +545,12 @@ impl Roer {
                 ),
             ));
         }
-        emit_plugin_ui(pane, read_json_file(&surface)?, 1)?;
-        let data = dir.join("data-model.json");
-        if data.is_file() {
-            emit_plugin_ui(pane, read_json_file(&data)?, 2)?;
-        }
-        emit_plugin_ui(pane, json!({ "kind": "beginRendering", "surfaceId": name }), 3)
+        let message = read_json_file(&surface)?;
+        let id = surface_id(&message)?.to_string();
+        // A surface may already be on screen under this id; v1.0 wants it
+        // deleted before it is created again.
+        emit_plugin_ui(pane, json!({ "version": "v1.0", "deleteSurface": { "surfaceId": id } }), 1)?;
+        emit_plugin_ui(pane, message, 2)
     }
 
     /// Prints the pending component actions for a pane, oldest first, one JSON
@@ -668,6 +685,17 @@ fn read_stdin(missing: &str) -> Result<String, Fail> {
 fn read_json_stdin(missing: &str) -> Result<Value, Fail> {
     let text = read_stdin(missing)?;
     serde_json::from_str(&text).map_err(|e| Fail::new(2, format!("stdin is not JSON: {e}")))
+}
+
+const PRE_V1_SAVE: &str = "surfaceUpdate and dataModelUpdate are from before A2UI v1.0; save one createSurface \
+message with the components and data model inline instead: roer plugin-ui save <name> surface";
+
+/// The surfaceId of a v1.0 createSurface message, or why it isn't one.
+fn surface_id(message: &Value) -> Result<&str, Fail> {
+    let body = message.get("createSurface").filter(|_| message.get("version") == Some(&json!("v1.0")));
+    body.and_then(|b| b.get("surfaceId"))
+        .and_then(Value::as_str)
+        .ok_or_else(|| Fail::new(2, "a saved surface is one A2UI v1.0 createSurface message: {\"version\": \"v1.0\", \"createSurface\": {\"surfaceId\": ...}}"))
 }
 
 fn read_json_file(path: &std::path::Path) -> Result<Value, Fail> {

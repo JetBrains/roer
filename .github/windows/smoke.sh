@@ -62,7 +62,7 @@ printf 'echo roer-smoke-send' | "$ROER" send --pane "$PANE" >/dev/null 2>&1 && o
 sleep 2
 has "  ...the text ran in the pane" "$(m capture-pane -p -t "$PANE")" "roer-smoke-send"
 
-printf '{"kind":"surfaceUpdate"}' | "$ROER" plugin-ui --pane "$PANE" && ok "plugin-ui --pane" || bad "plugin-ui --pane" ""
+printf '{"version":"v1.0","deleteSurface":{"surfaceId":"smoke"}}' | "$ROER" plugin-ui --pane "$PANE" && ok "plugin-ui --pane" || bad "plugin-ui --pane" ""
 has "  ...record tagged with the pane" "$(cat "$HOME_U"/plugin-ui/*.json 2>/dev/null)" "\"$PANE\""
 
 # From inside the pane, with no --pane: TMUX/TMUX_PANE and the inside check.

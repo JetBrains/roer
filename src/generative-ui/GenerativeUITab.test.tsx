@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { applyAll } from "./apply";
 import { GenerativeUITab } from "./GenerativeUITab";
-import type { A2uiMessage } from "./schema";
+import { A2UI_VERSION, type A2uiMessage } from "./schema";
 import {
   listPluginUiBundles,
   readPluginUiBundle,
@@ -20,12 +20,13 @@ vi.mock("../lib/pluginUi", async (importOriginal) => ({
 
 const messages: A2uiMessage[] = [
   {
-    kind: "surfaceUpdate",
-    surfaceId: "demo",
-    root: "card",
-    components: [{ id: "card", type: "Text", text: "hi" }],
+    version: A2UI_VERSION,
+    createSurface: {
+      surfaceId: "demo",
+      catalogId: "roer:catalog/1",
+      components: [{ id: "root", component: "Text", text: "hi" }],
+    },
   },
-  { kind: "beginRendering", surfaceId: "demo" },
 ];
 
 function renderTab(overrides: Partial<React.ComponentProps<typeof GenerativeUITab>> = {}) {
@@ -48,6 +49,7 @@ function renderTab(overrides: Partial<React.ComponentProps<typeof GenerativeUITa
 
 describe("GenerativeUITab saved bundles", () => {
   beforeEach(() => {
+    vi.clearAllMocks();
     vi.mocked(listPluginUiBundles).mockResolvedValue([]);
   });
 
@@ -86,13 +88,14 @@ describe("GenerativeUITab saved bundles", () => {
     await waitFor(() =>
       expect(writePluginUiBundle).toHaveBeenCalledWith("/work/roer", "test-runner", {
         prompt: "Add a test runner",
-        surfaceUpdate: {
-          kind: "surfaceUpdate",
-          surfaceId: "demo",
-          root: "card",
-          components: [{ id: "card", type: "Text", text: "hi" }],
+        surface: {
+          version: "v1.0",
+          createSurface: {
+            surfaceId: "demo",
+            catalogId: "roer:catalog/1",
+            components: [{ id: "root", component: "Text", text: "hi" }],
+          },
         },
-        dataModelUpdate: undefined,
       }),
     );
     expect(await screen.findByText(/Saved as "test-runner"/)).toBeInTheDocument();
@@ -104,34 +107,54 @@ describe("GenerativeUITab saved bundles", () => {
     expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
   });
 
-  it("loads a saved bundle by replaying it as surfaceUpdate/beginRendering", async () => {
-    vi.mocked(listPluginUiBundles).mockResolvedValue([
-      { name: "test-runner", prompt: "" },
-    ]);
-    vi.mocked(readPluginUiBundle).mockResolvedValue({
-      prompt: "Add a test runner",
-      surfaceUpdate: {
-        kind: "surfaceUpdate",
+  it("loads a saved bundle as its one createSurface", async () => {
+    vi.mocked(listPluginUiBundles).mockResolvedValue([{ name: "test-runner", prompt: "" }]);
+    const surface: A2uiMessage & { createSurface: unknown } = {
+      version: A2UI_VERSION,
+      createSurface: {
         surfaceId: "test-runner",
-        root: "card",
-        components: [{ id: "card", type: "Text", text: "loaded" }],
+        components: [{ id: "root", component: "Text", text: "loaded" }],
       },
-    });
+    };
+    vi.mocked(readPluginUiBundle).mockResolvedValue({ prompt: "Add a test runner", surface });
     const { onLoadBundle } = renderTab();
 
     fireEvent.click(screen.getByRole("button", { name: "Open" }));
     fireEvent.click(await screen.findByRole("button", { name: "test-runner" }));
 
-    await waitFor(() =>
-      expect(onLoadBundle).toHaveBeenCalledWith("test-runner", [
-        {
+    await waitFor(() => expect(onLoadBundle).toHaveBeenCalledWith("test-runner", [surface]));
+    expect(writePluginUiBundle).not.toHaveBeenCalled();
+  });
+
+  it("upgrades a bundle saved before v1.0 and writes it back once", async () => {
+    vi.mocked(listPluginUiBundles).mockResolvedValue([{ name: "old", prompt: "" }]);
+    vi.mocked(readPluginUiBundle).mockResolvedValue({
+      prompt: "An old one",
+      legacy: {
+        surfaceUpdate: {
           kind: "surfaceUpdate",
-          surfaceId: "test-runner",
+          surfaceId: "old",
           root: "card",
           components: [{ id: "card", type: "Text", text: "loaded" }],
         },
-        { kind: "beginRendering", surfaceId: "test-runner" },
-      ]),
-    );
+      },
+    });
+    vi.mocked(writePluginUiBundle).mockResolvedValue(undefined);
+    const { onLoadBundle } = renderTab();
+
+    fireEvent.click(screen.getByRole("button", { name: "Open" }));
+    fireEvent.click(await screen.findByRole("button", { name: "old" }));
+
+    const upgraded = {
+      version: "v1.0",
+      createSurface: {
+        surfaceId: "old",
+        catalogId: "roer:catalog/1",
+        sendDataModel: true,
+        components: [{ id: "root", component: "Text", text: "loaded" }],
+      },
+    };
+    await waitFor(() => expect(onLoadBundle).toHaveBeenCalledWith("old", [upgraded]));
+    expect(writePluginUiBundle).toHaveBeenCalledWith("/work/roer", "old", { prompt: "An old one", surface: upgraded });
   });
 });
