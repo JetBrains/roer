@@ -64,7 +64,7 @@ Shortcuts are as on Linux. Not there yet on Windows: session titles (psmux repor
 
 ## Screenshots
 
-**Generative UI** — a plugin drafts a UI as A2UI-shaped JSON and shows it live in Roer's panel; save it as a project-local bundle to reload later.
+**Generative UI** — a plugin drafts a UI as A2UI v1.0 JSON and shows it live in Roer's panel; save it as a project-local bundle to reload later.
 
 ![Generative UI panel](docs/screenshots/Gen%20UI%20artifacts.png)
 

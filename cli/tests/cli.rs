@@ -325,10 +325,13 @@ fn send_pastes_the_text_and_submits_it() {
 #[test]
 fn plugin_ui_messages_reach_the_app_tagged_with_their_pane() {
     let env = Env::new("plugin-ui");
-    let out = env.run_with(&["plugin-ui", "--pane", "%4"], r#"{"kind":"surfaceUpdate","surfaceId":"s"}"#);
+    let out = env.run_with(&["plugin-ui", "--pane", "%4"], r#"{"version":"v1.0","deleteSurface":{"surfaceId":"s"}}"#);
     assert_eq!(code(&out), 0, "{}", stderr(&out));
     let records = env.records("plugin-ui");
-    assert_eq!(records, vec![serde_json::json!({"pane": "%4", "message": {"kind": "surfaceUpdate", "surfaceId": "s"}})]);
+    assert_eq!(
+        records,
+        vec![serde_json::json!({"pane": "%4", "message": {"version": "v1.0", "deleteSurface": {"surfaceId": "s"}}})]
+    );
 
     let out = env.run_with(&["plugin-ui", "--pane", "%4"], "{not json");
     assert_eq!(code(&out), 2);
@@ -338,19 +341,27 @@ fn plugin_ui_messages_reach_the_app_tagged_with_their_pane() {
 }
 
 #[test]
-fn a_saved_plugin_ui_loads_back_in_order() {
+fn a_saved_plugin_ui_loads_back_as_its_one_create_surface() {
     let env = Env::new("bundle");
-    assert_eq!(code(&env.run_with(&["plugin-ui", "save", "issues", "surfaceUpdate"], r#"{"kind":"surfaceUpdate"}"#)), 0);
-    assert_eq!(code(&env.run_with(&["plugin-ui", "save", "issues", "dataModelUpdate"], r#"{"kind":"dataModelUpdate"}"#)), 0);
+    let surface = r#"{"version":"v1.0","createSurface":{"surfaceId":"issues","components":[{"id":"root","component":"Divider"}]}}"#;
+    assert_eq!(code(&env.run_with(&["plugin-ui", "save", "issues", "surface"], surface)), 0);
     assert_eq!(code(&env.run(&["plugin-ui", "save", "issues", "prompt", "show open issues"])), 0);
     let bundle = env.dir.join(".roer/plugin-ui/bundles/issues");
     assert_eq!(std::fs::read_to_string(bundle.join("prompt.md")).unwrap(), "show open issues\n");
 
     let out = env.run(&["plugin-ui", "load", "--pane", "%2", "issues"]);
     assert_eq!(code(&out), 0, "{}", stderr(&out));
-    let kinds: Vec<Value> = env.records("plugin-ui").iter().map(|r| r["message"]["kind"].clone()).collect();
-    assert_eq!(kinds, ["surfaceUpdate", "dataModelUpdate", "beginRendering"]);
-    assert_eq!(env.records("plugin-ui")[2]["message"]["surfaceId"], "issues");
+    let records = env.records("plugin-ui");
+    assert_eq!(records[0]["message"], serde_json::json!({"version": "v1.0", "deleteSurface": {"surfaceId": "issues"}}));
+    assert_eq!(records[1]["message"]["createSurface"]["surfaceId"], "issues");
+    assert_eq!(records.len(), 2);
+
+    // The pre-v1.0 kinds are refused with the way forward, and so is
+    // anything that isn't a createSurface.
+    let old = env.run_with(&["plugin-ui", "save", "issues", "surfaceUpdate"], r#"{"kind":"surfaceUpdate"}"#);
+    assert_eq!(code(&old), 2);
+    assert!(stderr(&old).contains("save <name> surface"));
+    assert_eq!(code(&env.run_with(&["plugin-ui", "save", "issues", "surface"], r#"{"kind":"surfaceUpdate"}"#)), 2);
 
     assert_eq!(code(&env.run(&["plugin-ui", "load", "--pane", "%2", "missing"])), 3);
     assert_eq!(code(&env.run(&["plugin-ui", "save", "../up", "prompt", "x"])), 2);
@@ -697,6 +708,25 @@ fn mcp_offers_the_session_tools_only_inside_a_roer_session() {
 /// instructions; any other client, like the Claude app, and Claude Code in a
 /// Roer session, do.
 #[test]
+fn a_pre_v1_bundle_is_left_for_the_app_to_upgrade() {
+    let env = Env::new("bundle-legacy");
+    let bundle = env.dir.join(".roer/plugin-ui/bundles/old");
+    std::fs::create_dir_all(&bundle).unwrap();
+    std::fs::write(bundle.join("surface-update.json"), r#"{"kind":"surfaceUpdate","surfaceId":"old"}"#).unwrap();
+
+    let out = env.run(&["plugin-ui", "load", "--pane", "%2", "old"]);
+    assert_eq!(code(&out), 3);
+    assert!(stderr(&out).contains("before A2UI v1.0"), "{}", stderr(&out));
+    assert!(env.records("plugin-ui").is_empty());
+
+    // Saving it as v1.0 retires the old file.
+    let surface = r#"{"version":"v1.0","createSurface":{"surfaceId":"old"}}"#;
+    assert_eq!(code(&env.run_with(&["plugin-ui", "save", "old", "surface"], surface)), 0);
+    assert!(!bundle.join("surface-update.json").exists());
+    assert!(bundle.join("surface.json").is_file());
+}
+
+#[test]
 fn mcp_offers_claude_code_nothing_outside_a_roer_session() {
     let env = Env::new("mcp-idle");
     let here = pane(&env, "work", "sh");
@@ -706,7 +736,7 @@ fn mcp_offers_claude_code_nothing_outside_a_roer_session() {
         }})
     };
     let list = serde_json::json!({ "method": "tools/list" });
-    let show = call("show_ui", serde_json::json!({ "session": "work", "messages": [{ "kind": "beginRendering", "surfaceId": "s" }] }));
+    let show = call("show_ui", serde_json::json!({ "session": "work", "messages": [{ "version": "v1.0", "deleteSurface": { "surfaceId": "s" } }] }));
 
     let code = mcp(&env, &[], &[init("claude-code"), list.clone(), show.clone()]);
     assert!(code[0]["result"]["instructions"].is_null());
@@ -729,8 +759,8 @@ fn mcp_shows_ui_in_its_own_session_or_a_named_one() {
     let here = pane(&env, "work", "sh");
     let other = pane(&env, "other", "sh");
     let messages = serde_json::json!([
-        { "kind": "surfaceUpdate", "surfaceId": "s", "root": "t", "components": [{ "id": "t", "type": "Text", "text": "hi" }] },
-        { "kind": "beginRendering", "surfaceId": "s" },
+        { "version": "v1.0", "createSurface": { "surfaceId": "s" } },
+        { "version": "v1.0", "updateComponents": { "surfaceId": "s", "components": [{ "id": "root", "component": "Text", "text": "hi" }] } },
     ]);
 
     let replies = mcp(&env, &[], &[call("show_ui", serde_json::json!({ "messages": messages }))]);
@@ -762,7 +792,7 @@ fn mcp_saves_loads_and_reads_clicks_back() {
     let replies = mcp(&env, &vars, &[
         call("save_ui", serde_json::json!({
             "name": "issues",
-            "surfaceUpdate": { "kind": "surfaceUpdate", "surfaceId": "issues" },
+            "surface": { "version": "v1.0", "createSurface": { "surfaceId": "issues" } },
             "prompt": "show open issues",
         })),
         call("load_ui", serde_json::json!({ "name": "issues" })),
@@ -771,9 +801,10 @@ fn mcp_saves_loads_and_reads_clicks_back() {
     ]);
     assert!(replies.iter().all(|r| r["result"]["isError"] == false), "{replies:?}");
     let bundle = env.dir.join(".roer/plugin-ui/bundles/issues");
-    assert!(bundle.join("surface-update.json").is_file() && bundle.join("prompt.md").is_file());
-    let kinds: Vec<Value> = env.records("plugin-ui").iter().map(|r| r["message"]["kind"].clone()).collect();
-    assert_eq!(kinds, ["surfaceUpdate", "beginRendering"]);
+    assert!(bundle.join("surface.json").is_file() && bundle.join("prompt.md").is_file());
+    let records = env.records("plugin-ui");
+    assert!(records[0]["message"]["deleteSurface"].is_object());
+    assert_eq!(records[1]["message"]["createSurface"]["surfaceId"], "issues");
     assert!(replies[2]["result"]["content"][0]["text"].as_str().unwrap().contains("refresh"));
     assert_eq!(replies[3]["result"]["content"][0]["text"], "", "a click is read once");
     assert!(actions.join("2.json").exists(), "another pane's click is left for it");

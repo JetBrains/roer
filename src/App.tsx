@@ -14,7 +14,7 @@ import { DiffBrowserView } from "./DiffBrowserView";
 import { FileView } from "./FileView";
 import { GenerativeUITab } from "./generative-ui/GenerativeUITab";
 import { applyAll, applyMessage } from "./generative-ui/apply";
-import { emptyState, type A2uiMessage, type RenderState } from "./generative-ui/schema";
+import { emptyState, surfaceIdOf, type A2uiMessage, type RenderState } from "./generative-ui/schema";
 import { ClaudeSetup } from "./ClaudeSetup";
 import { GoToFile } from "./GoToFile";
 import { NewSessionButton } from "./NewSessionButton";
@@ -395,7 +395,7 @@ export function App() {
         // The fixture and a live surface are dropped together, not merged —
         // the first real message starts the reducer over.
         state: applyMessage(current.live ? current.state : emptyState, record.message),
-        surfaceId: record.message.surfaceId,
+        surfaceId: surfaceIdOf(record.message),
         log: current.live ? [...current.log, record.message] : [record.message],
         live: true,
       }));

@@ -1,291 +1,435 @@
 /**
  * The trusted catalog and renderer — the half of A2UI that matters for
- * safety. It switches on `Component["type"]`, a closed union; a component id
+ * safety. It switches on `Component["component"]`, a closed union; a type
  * the switch does not recognise renders as a visible placeholder rather than
  * being skipped silently, so a catalog gap is a bug you can see, not one an
  * agent can quietly exploit into running something else.
  */
-import { useState, type CSSProperties, type ReactNode } from "react";
+import { Fragment, useState, type CSSProperties, type ReactNode } from "react";
 
-import type { Component, ComponentId, DataModel, SurfaceState, TextFieldType } from "./schema";
-import { readPath } from "./schema";
+import { asString, boundPointer, evaluate, type Scope } from "./evaluate";
+import {
+  readPointer,
+  resolvePointer,
+  type Action,
+  type Align,
+  type ChildList,
+  type Component,
+  type ComponentId,
+  type DataModel,
+  type JsonPointer,
+  type Justify,
+  type SurfaceState,
+} from "./schema";
+
+/** A button's `event`, with its bindings resolved at click time. */
+export interface ResolvedEvent {
+  name: string;
+  userMessage?: string;
+  context: Record<string, unknown>;
+}
 
 interface Props {
   surface: SurfaceState;
   dataModel: DataModel;
-  onSetValue: (path: string, value: unknown) => void;
-  onAction: (action: string, sourceComponentId: ComponentId) => void;
+  onSetValue: (path: JsonPointer, value: unknown) => void;
+  onAction: (event: ResolvedEvent, sourceComponentId: ComponentId) => void;
+}
+
+interface Ctx extends Omit<Props, "surface"> {
+  components: Record<ComponentId, Component>;
 }
 
 export function GenerativeSurface({ surface, dataModel, onSetValue, onAction }: Props) {
-  if (!surface.rendering || !surface.root) {
-    return <p className="gen-text muted">Waiting for the surface to begin rendering…</p>;
+  // `createSurface` implies a `Surface` whose only child is "root"; until an
+  // agent sends it, there is nothing to draw yet.
+  if (!surface.components.root) {
+    return <p className="gen-text muted">Waiting for the surface's root component…</p>;
   }
-  return (
-    <div className="gen-surface">
-      {renderNode(surface.root, surface.components, dataModel, onSetValue, onAction, new Set())}
-    </div>
-  );
+  const ctx: Ctx = { components: surface.components, dataModel, onSetValue, onAction };
+  return <div className="gen-surface">{renderNode("root", ctx, {}, new Set())}</div>;
 }
 
 function renderNode(
   id: ComponentId,
-  components: Record<ComponentId, Component>,
-  dataModel: DataModel,
-  onSetValue: Props["onSetValue"],
-  onAction: Props["onAction"],
+  ctx: Ctx,
+  scope: Scope,
   ancestors: ReadonlySet<ComponentId>,
+  key: string = id,
 ): ReactNode {
-  const node = components[id];
-  if (!node) return <p key={id} className="gen-text muted">[missing component: {id}]</p>;
+  const node = ctx.components[id];
+  if (!node) return <p key={key} className="gen-text muted">[missing component: {id}]</p>;
   // Child ids are agent-provided; a self-referential Card/Row would recurse
   // forever without this, so a cycle renders as a placeholder instead of
   // overflowing the stack and taking the whole panel down.
   if (ancestors.has(id)) {
-    return <p key={id} className="gen-text muted">[cyclic component: {id}]</p>;
+    return <p key={key} className="gen-text muted">[cyclic component: {id}]</p>;
   }
   const seen = new Set(ancestors).add(id);
+  return <Fragment key={key}>{renderBody(node, ctx, scope, seen)}</Fragment>;
+}
 
-  const child = (childId: ComponentId) =>
-    renderNode(childId, components, dataModel, onSetValue, onAction, seen);
-  const children = (ids: ComponentId[]) => ids.map(child);
+function renderBody(node: Component, ctx: Ctx, scope: Scope, seen: ReadonlySet<ComponentId>): ReactNode {
+  const value = (v: unknown) => evaluate(v, ctx.dataModel, scope);
+  const text = (v: unknown) => asString(value(v));
+  const child = (childId: ComponentId) => renderNode(childId, ctx, scope, seen);
+  const children = (list: ChildList) => renderChildren(list, ctx, scope, seen);
+  const write = (v: unknown) => {
+    const pointer = boundPointer(v, scope);
+    return (next: unknown) => {
+      if (pointer) ctx.onSetValue(pointer, next);
+    };
+  };
+  const common = { ...aria(node, value), style: weightStyle(node.weight) };
 
-  switch (node.type) {
+  switch (node.component) {
     case "Row":
       return (
-        <div
-          key={node.id}
-          className="gen-row"
-          style={justifyAlignStyle(node.justify, node.align)}
-        >
+        <div {...common} className="gen-row" style={{ ...common.style, ...flexStyle(node.justify, node.align) }}>
           {children(node.children)}
         </div>
       );
     case "Column":
       return (
-        <div
-          key={node.id}
-          className="gen-column"
-          style={justifyAlignStyle(node.justify, node.align)}
-        >
+        <div {...common} className="gen-column" style={{ ...common.style, ...flexStyle(node.justify, node.align) }}>
           {children(node.children)}
         </div>
       );
     case "List":
       return (
         <div
-          key={node.id}
+          {...common}
           className={node.direction === "horizontal" ? "gen-list horizontal" : "gen-list"}
+          style={{ ...common.style, ...flexStyle(undefined, node.align) }}
         >
           {children(node.children)}
         </div>
       );
+    case "Card":
+      return (
+        <div {...common} className="gen-card">
+          {child(node.child)}
+        </div>
+      );
+    case "Divider":
+      return <hr {...common} className={node.axis === "vertical" ? "gen-divider vertical" : "gen-divider"} />;
     case "Text":
       return (
-        <p key={node.id} className={node.muted ? "gen-text muted" : "gen-text"}>
-          {node.text}
+        <p {...common} className={node.variant === "caption" ? "gen-text muted" : "gen-text"}>
+          {text(node.text)}
         </p>
       );
     case "Image":
-      return <img key={node.id} className="gen-image" src={node.url} alt={node.alt ?? ""} />;
-    case "Icon":
       return (
-        <span key={node.id} className="gen-icon" aria-hidden="true">
-          {node.name}
+        <img
+          {...common}
+          className={`gen-image ${node.variant ?? "mediumFeature"}`}
+          style={{ ...common.style, objectFit: objectFit(node.fit) }}
+          src={text(node.url)}
+          alt={text(node.description)}
+        />
+      );
+    case "Icon": {
+      const name = node.name;
+      if (typeof name === "object" && name !== null && "svgPath" in name) {
+        return (
+          <svg {...common} className="gen-icon" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+            <path d={text(name.svgPath)} fill="currentColor" />
+          </svg>
+        );
+      }
+      return (
+        <span {...common} className="gen-icon" aria-hidden="true">
+          {text(name)}
         </span>
       );
-    case "Divider":
-      return <hr key={node.id} className="gen-divider" />;
-    case "Arrow":
+    }
+    case "Video":
       return (
-        <div
-          key={node.id}
-          className={node.direction === "vertical" ? "gen-arrow vertical" : "gen-arrow horizontal"}
-        >
-          {node.label ? <span className="gen-arrow-label">{node.label}</span> : null}
-          <span className="gen-arrow-line" />
-        </div>
+        <video {...common} className="gen-image" src={text(node.url)} poster={text(node.posterUrl) || undefined} controls />
+      );
+    case "AudioPlayer":
+      return (
+        <figure {...common} className="gen-audio">
+          <audio src={text(node.url)} controls />
+          {node.description ? <figcaption className="gen-text muted">{text(node.description)}</figcaption> : null}
+        </figure>
       );
     case "Button":
       return (
         <button
-          key={node.id}
+          {...common}
           type="button"
-          className={node.primary ? "gen-button primary" : "gen-button"}
-          onClick={() => onAction(node.action, node.id)}
+          className={node.variant && node.variant !== "default" ? `gen-button ${node.variant}` : "gen-button"}
+          onClick={() => {
+            const event = resolveEvent(node.action, value);
+            if (event) ctx.onAction(event, node.id);
+          }}
         >
-          {node.label}
+          {child(node.child)}
         </button>
       );
     case "TextField": {
-      const value = String(readPath(dataModel, node.valuePath) ?? "");
+      const current = text(node.value);
+      const set = write(node.value);
+      const placeholder = text(node.placeholder) || undefined;
       return (
-        <label key={node.id} className="gen-field">
-          <span className="gen-field-label">{node.label}</span>
-          {node.textFieldType === "longText" ? (
-            <textarea
-              value={value}
-              onChange={(e) => onSetValue(node.valuePath, e.target.value)}
-            />
+        <label {...common} className="gen-field">
+          <span className="gen-field-label">{text(node.label)}</span>
+          {node.variant === "longText" ? (
+            <textarea value={current} placeholder={placeholder} onChange={(e) => set(e.target.value)} />
           ) : (
             <input
-              type={inputTypeFor(node.textFieldType)}
-              value={value}
-              onChange={(e) => onSetValue(node.valuePath, e.target.value)}
+              type={node.variant === "number" ? "number" : node.variant === "obscured" ? "password" : "text"}
+              value={current}
+              placeholder={placeholder}
+              onChange={(e) => set(node.variant === "number" ? Number(e.target.value) : e.target.value)}
             />
           )}
         </label>
       );
     }
-    case "Checkbox": {
-      const checked = Boolean(readPath(dataModel, node.checkedPath));
+    case "CheckBox": {
+      const set = write(node.value);
       return (
-        <label key={node.id} className="gen-checkbox">
-          <input
-            type="checkbox"
-            checked={checked}
-            onChange={(e) => onSetValue(node.checkedPath, e.target.checked)}
-          />
-          {node.label}
+        <label {...common} className="gen-checkbox">
+          <input type="checkbox" checked={Boolean(value(node.value))} onChange={(e) => set(e.target.checked)} />
+          {text(node.label)}
         </label>
       );
     }
     case "Slider": {
-      const value = Number(readPath(dataModel, node.valuePath) ?? node.minValue);
+      const min = node.min ?? 0;
+      const current = Number(value(node.value) ?? min);
+      const set = write(node.value);
       return (
-        <label key={node.id} className="gen-slider">
+        <label {...common} className="gen-slider">
+          {node.label ? <span className="gen-field-label">{text(node.label)}</span> : null}
           <input
             type="range"
-            min={node.minValue}
-            max={node.maxValue}
-            value={value}
-            onChange={(e) => onSetValue(node.valuePath, Number(e.target.value))}
+            min={min}
+            max={node.max}
+            step={node.steps ? (node.max - min) / node.steps : "any"}
+            value={current}
+            onChange={(e) => set(Number(e.target.value))}
           />
-          <span className="gen-slider-value">{value}</span>
+          <span className="gen-slider-value">{current}</span>
         </label>
       );
     }
     case "DateTimeInput": {
-      const value = String(readPath(dataModel, node.valuePath) ?? "");
-      // Both flags default to enabled, per the catalog's contract — only an
-      // explicit `false` narrows the input.
-      const type =
-        node.enableDate === false ? "time" : node.enableTime === false ? "date" : "datetime-local";
+      // Both flags default to off in v1.0; with neither set, offer both
+      // rather than an input that can pick nothing.
+      const type = node.enableDate && !node.enableTime ? "date" : node.enableTime && !node.enableDate ? "time" : "datetime-local";
+      const set = write(node.value);
       return (
-        <input
-          key={node.id}
-          type={type}
-          className="gen-datetime"
-          value={value}
-          onChange={(e) => onSetValue(node.valuePath, e.target.value)}
-        />
+        <label {...common} className="gen-field">
+          {node.label ? <span className="gen-field-label">{text(node.label)}</span> : null}
+          <input
+            type={type}
+            className="gen-datetime"
+            value={text(node.value)}
+            min={text(node.min) || undefined}
+            max={text(node.max) || undefined}
+            onChange={(e) => set(e.target.value)}
+          />
+        </label>
       );
     }
-    case "ChoicePicker": {
-      const selected = new Set(
-        (readPath(dataModel, node.selectionsPath) as string[] | undefined) ?? [],
-      );
-      const toggle = (value: string) => {
-        const next = new Set(selected);
-        if (next.has(value)) next.delete(value);
-        else if (node.maxAllowedSelections === undefined || next.size < node.maxAllowedSelections)
-          next.add(value);
-        onSetValue(node.selectionsPath, Array.from(next));
-      };
+    case "ChoicePicker":
       return (
-        <div key={node.id} className="gen-choice-picker">
-          {node.options.map((option) => (
-            <label key={option.value} className="gen-choice-option">
-              <input
-                type="checkbox"
-                checked={selected.has(option.value)}
-                onChange={() => toggle(option.value)}
-              />
-              {option.label}
-            </label>
-          ))}
-        </div>
-      );
-    }
-    case "Card":
-      return (
-        <div key={node.id} className="gen-card">
-          {children(node.children)}
-        </div>
-      );
-    case "ButtonRow":
-      return (
-        <div key={node.id} className="gen-button-row">
-          {children(node.children)}
-        </div>
-      );
-    case "Modal":
-      return (
-        <ModalNode
-          key={node.id}
-          entry={child(node.entryPointChild)}
-          content={child(node.contentChild)}
-        />
-      );
-    case "Expandable":
-      return (
-        <ExpandableNode
-          key={node.id}
-          title={node.title}
-          defaultExpanded={node.defaultExpanded}
-          content={child(node.child)}
+        <ChoicePickerNode
+          {...common}
+          label={node.label ? text(node.label) : undefined}
+          options={node.options.map((option) => ({ label: text(option.label), value: option.value }))}
+          selected={toStrings(value(node.value))}
+          multiple={node.variant === "multipleSelection"}
+          chips={node.displayStyle === "chips"}
+          filterable={node.filterable ?? false}
+          onChange={write(node.value)}
         />
       );
     case "Tabs":
       return (
         <TabsNode
-          key={node.id}
-          tabItems={node.tabItems}
+          {...common}
+          tabs={node.tabs.map((tab) => ({ title: text(tab.title), child: tab.child }))}
           renderChild={child}
+        />
+      );
+    case "Modal":
+      return <ModalNode {...common} trigger={child(node.trigger)} content={child(node.content)} />;
+    case "Arrow":
+      return (
+        <div {...common} className={node.direction === "vertical" ? "gen-arrow vertical" : "gen-arrow horizontal"}>
+          {node.label ? <span className="gen-arrow-label">{text(node.label)}</span> : null}
+          <span className="gen-arrow-line" />
+        </div>
+      );
+    case "Expandable":
+      return (
+        <ExpandableNode
+          {...common}
+          title={text(node.title)}
+          defaultExpanded={node.defaultExpanded}
+          content={child(node.child)}
         />
       );
     default: {
       // Exhaustiveness check: a new Component variant fails the build here
-      // instead of silently falling through the switch.
-      const neverNode: never = node;
-      return <p key={(neverNode as Component).id}>[unsupported component]</p>;
+      // instead of silently falling through the switch. At runtime this is
+      // where an unknown type — raw JSON off the wire — ends up.
+      const unknown: never = node;
+      const type = (unknown as { component?: unknown }).component;
+      return <p className="gen-text muted">[unsupported component: {String(type)}]</p>;
     }
   }
 }
 
-function inputTypeFor(kind: TextFieldType | undefined) {
-  switch (kind) {
-    case "number":
-      return "number";
-    case "obscured":
-      return "password";
-    case "date":
-      return "date";
-    default:
-      return "text";
-  }
+/** A fixed list of ids, or one copy of the template per element of the
+ * list it is bound to, each evaluated against its own element. */
+function renderChildren(list: ChildList, ctx: Ctx, scope: Scope, ancestors: ReadonlySet<ComponentId>): ReactNode {
+  if (Array.isArray(list)) return list.map((id) => renderNode(id, ctx, scope, ancestors));
+  if (typeof list !== "object" || list === null) return null;
+  const pointer = resolvePointer(list.path, scope.item);
+  const items = readPointer(ctx.dataModel, pointer);
+  if (!Array.isArray(items)) return null;
+  return items.map((_, index) =>
+    renderNode(list.componentId, ctx, { item: `${pointer}/${index}`, index }, ancestors, `${list.componentId}@${index}`),
+  );
 }
 
-function justifyAlignStyle(
-  justify?: "start" | "center" | "end" | "spaceBetween",
-  align?: "start" | "center" | "end",
-): CSSProperties {
-  const justifyMap = { start: "flex-start", center: "center", end: "flex-end", spaceBetween: "space-between" };
-  const alignMap = { start: "flex-start", center: "center", end: "flex-end" };
+function resolveEvent(action: Action, value: (v: unknown) => unknown): ResolvedEvent | undefined {
+  if (!("event" in action)) {
+    // `functionCall` actions run renderer functions, and there are none yet —
+    // `openUrl` and Roer's own arrive with the function catalog.
+    return undefined;
+  }
+  const { name, userMessage, context } = action.event;
+  return {
+    name,
+    userMessage: userMessage === undefined ? undefined : asString(value(userMessage)),
+    context: Object.fromEntries(Object.entries(context ?? {}).map(([k, v]) => [k, value(v)])),
+  };
+}
+
+function aria(node: Component, value: (v: unknown) => unknown) {
+  const a11y = node.accessibility;
+  if (!a11y) return {};
+  const label = a11y.label === undefined ? undefined : asString(value(a11y.label));
+  const description = a11y.description === undefined ? undefined : asString(value(a11y.description));
+  return {
+    "aria-label": label || undefined,
+    "aria-description": description || undefined,
+    "aria-live": a11y.live && a11y.live !== "off" ? a11y.live : undefined,
+    "aria-hidden": a11y.hidden === undefined ? undefined : Boolean(value(a11y.hidden)) || undefined,
+  };
+}
+
+const toStrings = (v: unknown): string[] => (Array.isArray(v) ? v.map(String) : []);
+
+const weightStyle = (weight?: number): CSSProperties | undefined =>
+  weight === undefined ? undefined : { flexGrow: weight };
+
+function flexStyle(justify?: Justify, align?: Align): CSSProperties {
+  const justifyMap: Record<Justify, string> = {
+    start: "flex-start",
+    center: "center",
+    end: "flex-end",
+    spaceBetween: "space-between",
+    spaceAround: "space-around",
+    spaceEvenly: "space-evenly",
+    stretch: "stretch",
+  };
+  const alignMap: Record<Align, string> = { start: "flex-start", center: "center", end: "flex-end", stretch: "stretch" };
   return {
     justifyContent: justify ? justifyMap[justify] : undefined,
     alignItems: align ? alignMap[align] : undefined,
   };
 }
 
-/** Local, client-only state: which A2UI message would open this is not part
- * of the protocol, so the trigger and the open flag both live here. */
-function ModalNode({ entry, content }: { entry: ReactNode; content: ReactNode }) {
+function objectFit(fit?: "contain" | "cover" | "fill" | "none" | "scaleDown"): CSSProperties["objectFit"] {
+  return fit === "scaleDown" ? "scale-down" : fit;
+}
+
+interface Common {
+  "aria-label"?: string;
+  "aria-description"?: string;
+  "aria-live"?: "polite" | "assertive";
+  "aria-hidden"?: boolean;
+  style?: CSSProperties;
+}
+
+function ChoicePickerNode({
+  label,
+  options,
+  selected,
+  multiple,
+  chips,
+  filterable,
+  onChange,
+  ...common
+}: Common & {
+  label?: string;
+  options: { label: string; value: string }[];
+  selected: string[];
+  multiple: boolean;
+  chips: boolean;
+  filterable: boolean;
+  onChange: (next: string[]) => void;
+}) {
+  const [filter, setFilter] = useState("");
+  const picked = new Set(selected);
+  const toggle = (value: string) => {
+    if (!multiple) return onChange(picked.has(value) ? [] : [value]);
+    const next = new Set(picked);
+    if (next.has(value)) next.delete(value);
+    else next.add(value);
+    onChange(Array.from(next));
+  };
+  const shown = filter
+    ? options.filter((option) => option.label.toLowerCase().includes(filter.toLowerCase()))
+    : options;
+  return (
+    <div {...common} className={chips ? "gen-choice-picker chips" : "gen-choice-picker"}>
+      {label ? <span className="gen-field-label">{label}</span> : null}
+      {filterable ? (
+        <input className="gen-bundles-input" placeholder="Filter…" value={filter} onChange={(e) => setFilter(e.target.value)} />
+      ) : null}
+      {shown.map((option) =>
+        chips ? (
+          <button
+            key={option.value}
+            type="button"
+            aria-pressed={picked.has(option.value)}
+            className={picked.has(option.value) ? "gen-chip on" : "gen-chip"}
+            onClick={() => toggle(option.value)}
+          >
+            {option.label}
+          </button>
+        ) : (
+          <label key={option.value} className="gen-choice-option">
+            <input
+              type={multiple ? "checkbox" : "radio"}
+              checked={picked.has(option.value)}
+              onChange={() => toggle(option.value)}
+            />
+            {option.label}
+          </label>
+        ),
+      )}
+    </div>
+  );
+}
+
+/** Local, client-only state: whether the modal is open is not part of the
+ * protocol, so the trigger and the open flag both live here. */
+function ModalNode({ trigger, content, ...common }: Common & { trigger: ReactNode; content: ReactNode }) {
   const [open, setOpen] = useState(false);
   return (
     <>
-      <span className="gen-modal-trigger" onClick={() => setOpen(true)}>
-        {entry}
+      <span {...common} className="gen-modal-trigger" onClick={() => setOpen(true)}>
+        {trigger}
       </span>
       {open ? (
         <div className="gen-modal-backdrop" onClick={() => setOpen(false)}>
@@ -304,14 +448,11 @@ function ExpandableNode({
   title,
   defaultExpanded,
   content,
-}: {
-  title: string;
-  defaultExpanded?: boolean;
-  content: ReactNode;
-}) {
+  ...common
+}: Common & { title: string; defaultExpanded?: boolean; content: ReactNode }) {
   const [open, setOpen] = useState(defaultExpanded ?? false);
   return (
-    <div className="gen-expandable">
+    <div {...common} className="gen-expandable">
       <button
         type="button"
         className="gen-expandable-header"
@@ -329,32 +470,28 @@ function ExpandableNode({
 /** Same reasoning as `ModalNode`: which tab is active is client-only state,
  * never part of the data model an agent reads or writes. */
 function TabsNode({
-  tabItems,
+  tabs,
   renderChild,
-}: {
-  tabItems: { title: string; child: ComponentId }[];
-  renderChild: (id: ComponentId) => ReactNode;
-}) {
+  ...common
+}: Common & { tabs: { title: string; child: ComponentId }[]; renderChild: (id: ComponentId) => ReactNode }) {
   const [active, setActive] = useState(0);
   return (
-    <div className="gen-tabs">
+    <div {...common} className="gen-tabs">
       <div className="gen-tabs-bar" role="tablist">
-        {tabItems.map((item, i) => (
+        {tabs.map((tab, i) => (
           <button
-            key={item.child}
+            key={tab.child}
             type="button"
             role="tab"
             aria-selected={active === i}
             className={active === i ? "gen-tabs-btn on" : "gen-tabs-btn"}
             onClick={() => setActive(i)}
           >
-            {item.title}
+            {tab.title}
           </button>
         ))}
       </div>
-      <div className="gen-tabs-panel">
-        {tabItems[active] ? renderChild(tabItems[active].child) : null}
-      </div>
+      <div className="gen-tabs-panel">{tabs[active] ? renderChild(tabs[active].child) : null}</div>
     </div>
   );
 }

@@ -12,7 +12,8 @@
 import { useEffect, useState } from "react";
 
 import { applyMessage } from "./apply";
-import { GenerativeSurface } from "./GenerativeSurface";
+import { GenerativeSurface, type ResolvedEvent } from "./GenerativeSurface";
+import { upgradeBundle } from "./legacy";
 import {
   listPluginUiBundles,
   readPluginUiBundle,
@@ -21,8 +22,7 @@ import {
   type PluginUiBundleSummary,
 } from "../lib/pluginUi";
 import { resolveDir } from "../lib/session";
-import type { A2uiMessage, ComponentId, RenderState } from "./schema";
-import { writePath } from "./schema";
+import { A2UI_VERSION, type A2uiMessage, type ComponentId, type JsonPointer, type RenderState } from "./schema";
 
 interface Props {
   state: RenderState;
@@ -92,21 +92,16 @@ export function GenerativeUITab({
   const surface = state.surfaces[surfaceId];
   const dataModel = state.dataModels[surfaceId] ?? {};
 
-  const handleSetValue = (path: string, value: unknown) => {
-    // A field edit becomes the same message shape a server-authored update
-    // would send — proving the renderer only ever reacts to messages, never
-    // to a shortcut path around them.
-    onChange(
-      applyMessage(state, {
-        kind: "dataModelUpdate",
-        surfaceId,
-        patch: writePath({}, path, value),
-      }),
-    );
+  const handleSetValue = (path: JsonPointer, value: unknown) => {
+    // A field edit becomes the same message an agent-authored update would
+    // send — proving the renderer only ever reacts to messages, never to a
+    // shortcut path around them.
+    onChange(applyMessage(state, { version: A2UI_VERSION, updateDataModel: { surfaceId, path, value } }));
     setResult(null);
   };
 
-  const handleAction = (action: string, sourceComponentId: ComponentId) => {
+  const handleAction = (event: ResolvedEvent, sourceComponentId: ComponentId) => {
+    const action = event.name;
     if (action === "approve") {
       const chosen = Object.entries((dataModel.changes as Record<string, boolean>) ?? {})
         .filter(([, on]) => on)
@@ -125,32 +120,41 @@ export function GenerativeUITab({
     if (pane) {
       reportPluginUiAction({
         pane,
-        surfaceId,
-        name: action,
-        sourceComponentId,
-        timestamp: new Date().toISOString(),
-        context: dataModel,
+        message: {
+          version: A2UI_VERSION,
+          action: {
+            name: event.name,
+            surfaceId,
+            sourceComponentId,
+            timestamp: new Date().toISOString(),
+            context: event.context,
+            ...(event.userMessage ? { userMessage: event.userMessage } : {}),
+          },
+        },
+        ...(surface?.sendDataModel ? { dataModel } : {}),
       }).catch((e: unknown) => console.error("roer: could not report a plugin-ui action", e));
     }
   };
 
   const handleSave = () => {
-    if (!dir || !surface?.root) return;
+    if (!dir || !surface?.components.root) return;
     const name = saveName.trim();
     if (!name) return;
 
-    const surfaceUpdate: Extract<A2uiMessage, { kind: "surfaceUpdate" }> = {
-      kind: "surfaceUpdate",
-      surfaceId,
-      root: surface.root,
-      components: Object.values(surface.components),
+    // One `createSurface` with everything inline is the whole UI as it
+    // stands, edits included — v1.0 made that a single message.
+    const createSurface: Extract<A2uiMessage, { createSurface: unknown }> = {
+      version: A2UI_VERSION,
+      createSurface: {
+        surfaceId,
+        catalogId: surface.catalogId,
+        ...(surface.sendDataModel ? { sendDataModel: true } : {}),
+        components: Object.values(surface.components),
+        ...(Object.keys(dataModel).length > 0 ? { dataModel } : {}),
+      },
     };
-    const dataModelUpdate =
-      Object.keys(dataModel).length > 0
-        ? ({ kind: "dataModelUpdate", surfaceId, patch: dataModel } as const)
-        : undefined;
 
-    writePluginUiBundle(dir, name, { prompt: savePrompt.trim(), surfaceUpdate, dataModelUpdate })
+    writePluginUiBundle(dir, name, { prompt: savePrompt.trim(), surface: createSurface })
       .then(() => {
         setBundleStatus(`Saved as "${name}".`);
         setSaveName("");
@@ -167,11 +171,16 @@ export function GenerativeUITab({
   const handleLoad = (name: string) => {
     if (!dir) return;
     readPluginUiBundle(dir, name)
-      .then((bundle) => {
-        const messages: A2uiMessage[] = [bundle.surfaceUpdate];
-        if (bundle.dataModelUpdate) messages.push(bundle.dataModelUpdate);
-        messages.push({ kind: "beginRendering", surfaceId: bundle.surfaceUpdate.surfaceId });
-        onLoadBundle(bundle.surfaceUpdate.surfaceId, messages);
+      .then(async (bundle) => {
+        let surface = bundle.surface;
+        if (!surface && bundle.legacy) {
+          // Saved before v1.0: upgrade it once and write it back, so the old
+          // shape never lives on beside the new one.
+          surface = upgradeBundle(bundle.legacy);
+          if (surface) await writePluginUiBundle(dir, name, { prompt: bundle.prompt, surface });
+        }
+        if (!surface) throw new Error(`bundle "${name}" has no surface`);
+        onLoadBundle(surface.createSurface.surfaceId, [surface]);
         setResult(null);
         setBundleStatus(`Loaded "${name}".`);
         setBundlePanel(null);
@@ -202,7 +211,7 @@ export function GenerativeUITab({
       {dir ? (
         <div className="gen-bundles">
           <div className="gen-bundles-links">
-            {surface?.root ? (
+            {surface?.components.root ? (
               <button
                 type="button"
                 className="link"
@@ -263,7 +272,7 @@ export function GenerativeUITab({
       ) : null}
 
       <details className="gen-wire">
-        <summary>Raw A2UI-shaped messages behind this surface</summary>
+        <summary>Raw A2UI v1.0 messages behind this surface</summary>
         <pre>{JSON.stringify(log, null, 2)}</pre>
       </details>
     </div>

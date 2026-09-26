@@ -1,6 +1,6 @@
 //! The terminal ↔ app plugin-UI channels.
 //!
-//! `roer plugin-ui` drops one A2UI-shaped message into ~/.roer/plugin-ui and
+//! `roer plugin-ui` drops one A2UI v1.0 message into ~/.roer/plugin-ui and
 //! returns immediately — unlike a handoff, nothing is waiting on it, so there
 //! is no claim, ack or timeout. This module only has to notice a new record,
 //! hand its contents to the frontend, and forget it: consuming (deleting) the
@@ -31,11 +31,12 @@ use crate::history::roer_home;
 
 pub const PLUGIN_UI_EVENT: &str = "roer://plugin-ui";
 
-/// One A2UI-shaped message, tagged with the pane that sent it.
+/// One A2UI v1.0 message, tagged with the pane that sent it.
 ///
-/// `message` is passed through untouched: its shape (`surfaceUpdate`,
-/// `dataModelUpdate`, `beginRendering`) is the frontend's contract with the
-/// agent, not this watcher's, so it travels as an opaque JSON value.
+/// `message` is passed through untouched: its shape (`createSurface`,
+/// `updateComponents`, `updateDataModel`, `deleteSurface`) is the frontend's
+/// contract with the agent, not this watcher's, so it travels as an opaque
+/// JSON value.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct PluginUiRecord {
     pub pane: String,
@@ -52,22 +53,18 @@ pub fn plugin_ui_actions_dir() -> PathBuf {
     roer_home().join("plugin-ui-actions")
 }
 
-/// A component's action, in the same shape A2UI's own client-to-server
-/// `action` message uses: `name` and `sourceComponentId` say what was
-/// triggered and by what, `context` carries whatever the component's
-/// `action` bound from the data model, and this prototype tags the pane it
-/// belongs to itself rather than making every plugin author repeat it.
+/// A component's action: v1.0's own renderer-to-agent `action` message,
+/// tagged with the pane it belongs to rather than making every plugin author
+/// repeat it. Opaque here for the same reason [`PluginUiRecord::message`] is.
+/// `dataModel` is the surface's whole data model, present only when its
+/// `createSurface` asked for `sendDataModel` — the transport carries it
+/// beside the message, as A2A carries it in metadata.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct PluginUiAction {
     pub pane: String,
-    #[serde(rename = "surfaceId")]
-    pub surface_id: String,
-    pub name: String,
-    #[serde(rename = "sourceComponentId")]
-    pub source_component_id: String,
-    pub timestamp: String,
-    #[serde(default)]
-    pub context: serde_json::Value,
+    pub message: serde_json::Value,
+    #[serde(rename = "dataModel", default, skip_serializing_if = "Option::is_none")]
+    pub data_model: Option<serde_json::Value>,
 }
 
 /// Report a component's action back to the terminal. Write-then-rename, the
@@ -188,18 +185,39 @@ fn read<R: DeserializeOwned>(path: &Path) -> Result<R, String> {
     serde_json::from_str(&raw).map_err(|e| e.to_string())
 }
 
-/// A saved plugin UI: the prompt that produced it, plus the exact
-/// `surfaceUpdate`/`dataModelUpdate` messages that build it — the same
-/// messages `roer plugin-ui` already knows how to carry, kept opaque here for
-/// the same reason [`PluginUiRecord::message`] is: this module doesn't know
-/// or care about the A2UI component catalog, only the frontend does.
+/// A saved plugin UI: the prompt that produced it, plus the one v1.0
+/// `createSurface` message that builds it, components and data model inline
+/// — kept opaque here for the same reason [`PluginUiRecord::message`] is:
+/// this module doesn't know or care about the A2UI component catalog, only
+/// the frontend does.
+///
+/// A bundle saved before v1.0 comes back as `legacy` instead, its files as
+/// they are. Upgrading one needs the catalog, so that is the frontend's job
+/// too; it writes the result back as `surface`, which clears the old files.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct PluginUiBundle {
     pub prompt: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub surface: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub legacy: Option<LegacyBundle>,
+}
+
+/// The two files a pre-v1.0 bundle kept its messages in.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+pub struct LegacyBundle {
     #[serde(rename = "surfaceUpdate")]
     pub surface_update: serde_json::Value,
     #[serde(rename = "dataModelUpdate", skip_serializing_if = "Option::is_none")]
     pub data_model_update: Option<serde_json::Value>,
+}
+
+const SURFACE_FILE: &str = "surface.json";
+const LEGACY_SURFACE_FILE: &str = "surface-update.json";
+const LEGACY_DATA_FILE: &str = "data-model.json";
+
+fn is_bundle(dir: &Path) -> bool {
+    dir.join(SURFACE_FILE).is_file() || dir.join(LEGACY_SURFACE_FILE).is_file()
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -257,7 +275,7 @@ pub fn list_plugin_ui_bundles(cwd: String) -> Vec<PluginUiBundleSummary> {
     };
     let mut bundles: Vec<PluginUiBundleSummary> = entries
         .flatten()
-        .filter(|entry| entry.path().join("surface-update.json").is_file())
+        .filter(|entry| is_bundle(&entry.path()))
         .filter_map(|entry| {
             let name = entry.file_name().to_str()?.to_string();
             let prompt = std::fs::read_to_string(entry.path().join("prompt.md")).unwrap_or_default();
@@ -272,13 +290,21 @@ pub fn list_plugin_ui_bundles(cwd: String) -> Vec<PluginUiBundleSummary> {
 pub fn read_plugin_ui_bundle(cwd: String, name: String) -> Result<PluginUiBundle, String> {
     validate_bundle_name(&name)?;
     let dir = bundles_dir(&cwd).join(&name);
-    let surface_update = read_json(&dir.join("surface-update.json"))?;
-    let data_model_update = read_json(&dir.join("data-model.json")).ok();
     let prompt = std::fs::read_to_string(dir.join("prompt.md")).unwrap_or_default();
+    if dir.join(SURFACE_FILE).is_file() {
+        return Ok(PluginUiBundle {
+            prompt,
+            surface: Some(read_json(&dir.join(SURFACE_FILE))?),
+            legacy: None,
+        });
+    }
     Ok(PluginUiBundle {
         prompt,
-        surface_update,
-        data_model_update,
+        surface: None,
+        legacy: Some(LegacyBundle {
+            surface_update: read_json(&dir.join(LEGACY_SURFACE_FILE))?,
+            data_model_update: read_json(&dir.join(LEGACY_DATA_FILE)).ok(),
+        }),
     })
 }
 
@@ -289,22 +315,21 @@ pub fn write_plugin_ui_bundle(
     bundle: PluginUiBundle,
 ) -> Result<(), String> {
     validate_bundle_name(&name)?;
+    let surface = bundle
+        .surface
+        .as_ref()
+        .ok_or("a plugin-ui bundle is written as its createSurface message")?;
     let dir = bundles_dir(&cwd).join(&name);
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     write_string(&dir.join("prompt.md"), &bundle.prompt)?;
     write_string(
-        &dir.join("surface-update.json"),
-        &serde_json::to_string_pretty(&bundle.surface_update).map_err(|e| e.to_string())?,
+        &dir.join(SURFACE_FILE),
+        &serde_json::to_string_pretty(surface).map_err(|e| e.to_string())?,
     )?;
-    match &bundle.data_model_update {
-        Some(patch) => write_string(
-            &dir.join("data-model.json"),
-            &serde_json::to_string_pretty(patch).map_err(|e| e.to_string())?,
-        )?,
-        None => {
-            let _ = std::fs::remove_file(dir.join("data-model.json"));
-        }
-    }
+    // Written as v1.0, it no longer needs what it was before — and leaving
+    // them would make it look like a legacy bundle to an older reader.
+    let _ = std::fs::remove_file(dir.join(LEGACY_SURFACE_FILE));
+    let _ = std::fs::remove_file(dir.join(LEGACY_DATA_FILE));
     Ok(())
 }
 
@@ -328,14 +353,14 @@ mod tests {
         let path = dir.join("20260101T000000-1.json");
         std::fs::write(
             &path,
-            r#"{"pane": "%3", "message": {"kind": "beginRendering", "surfaceId": "s"}}"#,
+            r#"{"pane": "%3", "message": {"version": "v1.0", "deleteSurface": {"surfaceId": "s"}}}"#,
         )
         .expect("write record");
 
         let got = read::<PluginUiRecord>(&path).expect("parse");
         assert_eq!(got.pane, "%3");
-        assert_eq!(got.message["kind"], "beginRendering");
-        assert_eq!(got.message["surfaceId"], "s");
+        assert_eq!(got.message["version"], "v1.0");
+        assert_eq!(got.message["deleteSurface"]["surfaceId"], "s");
 
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -357,11 +382,17 @@ mod tests {
 
         let action = PluginUiAction {
             pane: "%9".into(),
-            surface_id: "catalog-demo".into(),
-            name: "run".into(),
-            source_component_id: "run-button".into(),
-            timestamp: "2026-09-22T00:00:00Z".into(),
-            context: serde_json::json!({}),
+            message: serde_json::json!({
+                "version": "v1.0",
+                "action": {
+                    "name": "run",
+                    "surfaceId": "catalog-demo",
+                    "sourceComponentId": "run-button",
+                    "timestamp": "2026-09-22T00:00:00Z",
+                    "context": {},
+                },
+            }),
+            data_model: None,
         };
         write_action(&action, &dir).expect("write");
 
@@ -376,8 +407,10 @@ mod tests {
         let raw = std::fs::read_to_string(&entries[0]).expect("read");
         let got: PluginUiAction = serde_json::from_str(&raw).expect("parse");
         assert_eq!(got.pane, "%9");
-        assert_eq!(got.name, "run");
-        assert_eq!(got.source_component_id, "run-button");
+        assert_eq!(got.message["action"]["name"], "run");
+        assert_eq!(got.message["action"]["sourceComponentId"], "run-button");
+        // No `sendDataModel`, no data model on the wire.
+        assert!(!raw.contains("dataModel"));
 
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -401,6 +434,17 @@ mod tests {
         assert!(validate_bundle_name("a/b").is_err());
     }
 
+    fn surface(id: &str) -> serde_json::Value {
+        serde_json::json!({
+            "version": "v1.0",
+            "createSurface": {
+                "surfaceId": id,
+                "components": [{"id": "root", "component": "Text", "text": "hi"}],
+                "dataModel": {"status": "idle"},
+            },
+        })
+    }
+
     #[test]
     fn a_bundle_round_trips_through_write_and_read() {
         let project = temp_project("roundtrip");
@@ -408,25 +452,16 @@ mod tests {
 
         let bundle = PluginUiBundle {
             prompt: "Add a test runner".into(),
-            surface_update: serde_json::json!({
-                "kind": "surfaceUpdate",
-                "surfaceId": "test-runner",
-                "root": "card",
-                "components": [{"id": "card", "type": "Card", "children": []}],
-            }),
-            data_model_update: Some(serde_json::json!({
-                "kind": "dataModelUpdate",
-                "surfaceId": "test-runner",
-                "patch": {"status": "idle"},
-            })),
+            surface: Some(surface("test-runner")),
+            legacy: None,
         };
         write_plugin_ui_bundle(cwd.clone(), "test-runner".into(), bundle.clone())
             .expect("write bundle");
 
         let got = read_plugin_ui_bundle(cwd.clone(), "test-runner".into()).expect("read bundle");
         assert_eq!(got.prompt, bundle.prompt);
-        assert_eq!(got.surface_update, bundle.surface_update);
-        assert_eq!(got.data_model_update, bundle.data_model_update);
+        assert_eq!(got.surface, bundle.surface);
+        assert_eq!(got.legacy, None);
 
         let bundles = list_plugin_ui_bundles(cwd);
         assert_eq!(bundles.len(), 1);
@@ -437,30 +472,52 @@ mod tests {
     }
 
     #[test]
-    fn a_bundle_without_a_data_model_update_omits_the_file() {
-        let project = temp_project("no-data-model");
+    fn a_pre_v1_bundle_is_listed_read_as_legacy_and_cleared_once_rewritten() {
+        let project = temp_project("legacy");
         let cwd = project.to_str().unwrap().to_string();
+        let dir = bundles_dir(&cwd).join("old");
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        std::fs::write(dir.join(LEGACY_SURFACE_FILE), r#"{"kind": "surfaceUpdate", "surfaceId": "old"}"#)
+            .expect("write");
+        std::fs::write(dir.join(LEGACY_DATA_FILE), r#"{"kind": "dataModelUpdate", "patch": {}}"#)
+            .expect("write");
+
+        assert_eq!(list_plugin_ui_bundles(cwd.clone()).len(), 1);
+        let got = read_plugin_ui_bundle(cwd.clone(), "old".into()).expect("read");
+        assert_eq!(got.surface, None);
+        let legacy = got.legacy.expect("legacy");
+        assert_eq!(legacy.surface_update["kind"], "surfaceUpdate");
+        assert!(legacy.data_model_update.is_some());
 
         write_plugin_ui_bundle(
             cwd.clone(),
-            "static".into(),
-            PluginUiBundle {
-                prompt: "A static banner".into(),
-                surface_update: serde_json::json!({"kind": "surfaceUpdate"}),
-                data_model_update: None,
-            },
+            "old".into(),
+            PluginUiBundle { prompt: String::new(), surface: Some(surface("old")), legacy: None },
         )
-        .expect("write bundle");
-
-        assert!(!bundles_dir(&cwd).join("static").join("data-model.json").exists());
-        let got = read_plugin_ui_bundle(cwd, "static".into()).expect("read bundle");
-        assert_eq!(got.data_model_update, None);
+        .expect("rewrite");
+        assert!(!dir.join(LEGACY_SURFACE_FILE).exists());
+        assert!(!dir.join(LEGACY_DATA_FILE).exists());
+        assert!(read_plugin_ui_bundle(cwd, "old".into()).expect("read").surface.is_some());
 
         std::fs::remove_dir_all(&project).ok();
     }
 
     #[test]
-    fn listing_skips_directories_with_no_surface_update() {
+    fn writing_a_bundle_needs_its_surface() {
+        let project = temp_project("no-surface");
+        let cwd = project.to_str().unwrap().to_string();
+        let err = write_plugin_ui_bundle(
+            cwd,
+            "empty".into(),
+            PluginUiBundle { prompt: String::new(), surface: None, legacy: None },
+        )
+        .unwrap_err();
+        assert!(err.contains("createSurface"));
+        std::fs::remove_dir_all(&project).ok();
+    }
+
+    #[test]
+    fn listing_skips_directories_with_no_surface() {
         let project = temp_project("skip-incomplete");
         let cwd = project.to_str().unwrap().to_string();
         std::fs::create_dir_all(bundles_dir(&cwd).join("half-written")).expect("mkdir");
@@ -480,8 +537,8 @@ mod tests {
             "../escaped".into(),
             PluginUiBundle {
                 prompt: String::new(),
-                surface_update: serde_json::json!({}),
-                data_model_update: None,
+                surface: Some(serde_json::json!({})),
+                legacy: None,
             },
         )
         .unwrap_err();

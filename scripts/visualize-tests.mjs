@@ -19,7 +19,8 @@ function send(message) {
     stdio: ["pipe", "inherit", "inherit"],
   });
   if (result.status !== 0) {
-    console.error(`roer plugin-ui failed for kind=${message.kind} (exit ${result.status})`);
+    const kind = Object.keys(message).find((key) => key !== "version");
+    console.error(`roer plugin-ui failed for ${kind} (exit ${result.status})`);
   }
   return result.status === 0;
 }
@@ -48,23 +49,23 @@ function buildSurface(report) {
       const label = [...assertion.ancestorTitles, assertion.title].join(" > ");
       const ms = Math.round(assertion.duration ?? 0);
       const rowId = `t-${nextRow++}`;
-      push({ id: rowId, type: "Text", text: `${rowMark} ${label} (${ms}ms)` });
+      push({ id: rowId, component: "Text", text: `${rowMark} ${label} (${ms}ms)` });
 
       if (assertion.failureMessages?.length > 0) {
         const msgId = `${rowId}-msg`;
-        push({ id: msgId, type: "Text", muted: true, text: assertion.failureMessages.join("\n") });
+        push({ id: msgId, component: "Text", variant: "caption", text: assertion.failureMessages.join("\n") });
         return [rowId, msgId];
       }
       return [rowId];
     });
 
     const listId = `file-${fileIndex}-list`;
-    push({ id: listId, type: "List", children: rowIds.flat() });
+    push({ id: listId, component: "List", children: rowIds.flat() });
 
     const expandableId = `file-${fileIndex}`;
     push({
       id: expandableId,
-      type: "Expandable",
+      component: "Expandable",
       title: `${mark} ${relPath} (${passed}/${total})`,
       child: listId,
       defaultExpanded: file.status !== "passed",
@@ -72,61 +73,69 @@ function buildSurface(report) {
     return expandableId;
   });
 
-  push({ id: "heading", type: "Text", text: "Test Runner" });
+  push({ id: "heading", component: "Text", text: "Test Runner" });
   push({
     id: "subtitle",
-    type: "Text",
-    muted: true,
+    component: "Text",
+    variant: "caption",
     text: `${report.numPassedTests}/${report.numTotalTests} tests passed · ${report.numTotalTestSuites} files`,
   });
-  push({ id: "divider", type: "Divider" });
-  push({ id: "runRow", type: "ButtonRow", children: ["run"] });
-  push({ id: "run", type: "Button", label: "Run tests", action: "run", primary: true });
-  push({ id: "divider2", type: "Divider" });
-  push({ id: "files", type: "List", children: fileIds, direction: "vertical" });
+  push({ id: "divider", component: "Divider" });
+  push(...runButton());
+  push({ id: "divider2", component: "Divider" });
+  push({ id: "files", component: "List", children: fileIds, direction: "vertical" });
   push({
-    id: "root",
-    type: "Card",
+    id: "body",
+    component: "Column",
     children: ["heading", "subtitle", "divider", "runRow", "divider2", "files"],
   });
+  push({ id: "root", component: "Card", child: "body" });
 
-  return {
-    surfaceUpdate: { kind: "surfaceUpdate", surfaceId: SURFACE_ID, root: "root", components },
-    dataModelUpdate: {
-      kind: "dataModelUpdate",
-      surfaceId: SURFACE_ID,
-      patch: {
-        summary: {
+  return [
+    { version: "v1.0", updateComponents: { surfaceId: SURFACE_ID, components } },
+    {
+      version: "v1.0",
+      updateDataModel: {
+        surfaceId: SURFACE_ID,
+        path: "/summary",
+        value: {
           total: report.numTotalTests,
           passed: report.numPassedTests,
           failed: report.numFailedTests,
         },
       },
     },
-  };
+  ];
+}
+
+function runButton() {
+  return [
+    { id: "runRow", component: "Row", justify: "end", children: ["run"] },
+    { id: "run-label", component: "Text", text: "Run tests" },
+    { id: "run", component: "Button", child: "run-label", variant: "primary", action: { event: { name: "run" } } },
+  ];
 }
 
 function buildEmptyShell() {
   return {
-    kind: "surfaceUpdate",
-    surfaceId: SURFACE_ID,
-    root: "root",
-    components: [
-      { id: "heading", type: "Text", text: "Test Runner" },
-      { id: "subtitle", type: "Text", muted: true, text: "Not run yet." },
-      { id: "divider", type: "Divider" },
-      { id: "runRow", type: "ButtonRow", children: ["run"] },
-      { id: "run", type: "Button", label: "Run tests", action: "run", primary: true },
-      { id: "root", type: "Card", children: ["heading", "subtitle", "divider", "runRow"] },
-    ],
+    version: "v1.0",
+    createSurface: {
+      surfaceId: SURFACE_ID,
+      catalogId: "roer:catalog/1",
+      components: [
+        { id: "heading", component: "Text", text: "Test Runner" },
+        { id: "subtitle", component: "Text", variant: "caption", text: "Not run yet." },
+        { id: "divider", component: "Divider" },
+        ...runButton(),
+        { id: "body", component: "Column", children: ["heading", "subtitle", "divider", "runRow"] },
+        { id: "root", component: "Card", child: "body" },
+      ],
+    },
   };
 }
 
-function showReport(report, { begin }) {
-  const { surfaceUpdate, dataModelUpdate } = buildSurface(report);
-  send(surfaceUpdate);
-  send(dataModelUpdate);
-  if (begin) send({ kind: "beginRendering", surfaceId: SURFACE_ID });
+function showReport(report) {
+  for (const message of buildSurface(report)) send(message);
 }
 
 function pollActions() {
@@ -141,22 +150,21 @@ function pollActions() {
 
 // Initial render: an empty shell, no results until "Run tests" is clicked.
 send(buildEmptyShell());
-send({ kind: "beginRendering", surfaceId: SURFACE_ID });
 console.log("Sent test-runner surface to Roer's Plugin UI tab. Watching for \"Run tests\" clicks (Ctrl+C to stop)...");
 
 // Watch loop: a click on "Run tests" re-runs vitest for real and refreshes
 // the surface with the new results.
 for (;;) {
   for (const action of pollActions()) {
-    if (action.name !== "run") continue;
+    if (action.message?.action?.name !== "run") continue;
     send({
-      kind: "surfaceUpdate",
-      surfaceId: SURFACE_ID,
-      root: "root",
-      components: [{ id: "subtitle", type: "Text", muted: true, text: "Running tests…" }],
+      version: "v1.0",
+      updateComponents: {
+        surfaceId: SURFACE_ID,
+        components: [{ id: "subtitle", component: "Text", variant: "caption", text: "Running tests…" }],
+      },
     });
-    const fresh = runVitest();
-    showReport(fresh, { begin: false });
+    showReport(runVitest());
   }
   await new Promise((resolve) => setTimeout(resolve, POLL_MS));
 }
