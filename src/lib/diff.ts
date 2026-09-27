@@ -33,6 +33,75 @@ export interface Diff {
   truncated: boolean;
 }
 
+/** A remark about one line of a file's diff, or about the file as a whole. */
+export interface DiffNote {
+  path: string;
+  /** The line's number on `side`; without one the note heads the file. */
+  line?: number;
+  /** Which file `line` counts in: the new one unless it is a removed line.
+   * @default "new" */
+  side?: "old" | "new";
+  text: string;
+  /** How much it matters, for a note that is a finding. Plain when unset. */
+  tone?: "info" | "warn" | "error";
+}
+
+/** One file of a multi-file patch, and the part of the patch that is its. */
+export interface PatchFile {
+  path: string;
+  /** Git's letter for what happened to it: `A`, `D`, `R`, `C` or `M`. */
+  status: string;
+  renamedFrom?: string;
+  added: number;
+  deleted: number;
+  binary: boolean;
+  /** This file's own `diff --git` section, ready for `parseDiff`. */
+  text: string;
+}
+
+/**
+ * A whole `git diff` — any range, any number of files — cut at each
+ * `diff --git` header, for a viewer that shows one file at a time.
+ */
+export function splitPatch(patch: string): PatchFile[] {
+  const sections = patch.split(/^(?=diff --git )/m).filter((s) => s.startsWith("diff --git "));
+  return sections.map((text) => {
+    const firstHunk = text.search(/^@@/m);
+    const header = firstHunk < 0 ? text : text.slice(0, firstHunk);
+    const field = (name: string) => new RegExp(`^${name} (.*)$`, "m").exec(header)?.[1];
+    // `+++ b/path` names the file even when its path has spaces; a deleted
+    // file only has `--- a/path`, and a binary or mode-only change neither.
+    const plus = field("\\+\\+\\+");
+    const minus = field("---");
+    const path =
+      field("rename to") ??
+      (plus && plus !== "/dev/null" ? plus.replace(/^b\//, "") : undefined) ??
+      (minus && minus !== "/dev/null" ? minus.replace(/^a\//, "") : undefined) ??
+      / b\/(.*)$/m.exec(header.split("\n")[0])?.[1] ??
+      "";
+    const renamedFrom = field("rename from") ?? field("copy from");
+    const status = /^new file mode/m.test(header)
+      ? "A"
+      : /^deleted file mode/m.test(header)
+        ? "D"
+        : field("rename from")
+          ? "R"
+          : field("copy from")
+            ? "C"
+            : "M";
+    const parsed = parseDiff(text);
+    return {
+      path,
+      status,
+      ...(renamedFrom ? { renamedFrom } : {}),
+      added: parsed.hunks.reduce((sum, hunk) => sum + hunk.added, 0),
+      deleted: parsed.hunks.reduce((sum, hunk) => sum + hunk.deleted, 0),
+      binary: parsed.binary,
+      text,
+    };
+  });
+}
+
 const HUNK = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@(.*)$/;
 
 export function parseDiff(text: string): Diff {

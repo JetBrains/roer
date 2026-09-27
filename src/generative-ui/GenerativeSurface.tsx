@@ -517,7 +517,6 @@ const SOURCES: Record<string, string> = {
   youtrack: "YouTrack",
   notion: "Notion",
   jira: "Jira",
-  linear: "Linear",
   personal: "Personal",
 };
 

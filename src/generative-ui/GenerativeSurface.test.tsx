@@ -1,10 +1,13 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
+import { openUrl } from "../lib/github";
 import { applyAll } from "./apply";
 import { GenerativeSurface } from "./GenerativeSurface";
 import { approvalGateMessages, SURFACE_ID } from "./fixtures";
 import { A2UI_VERSION, type Component, type DataModel } from "./schema";
+
+vi.mock("../lib/github", () => ({ openUrl: vi.fn().mockResolvedValue(undefined) }));
 
 function draw(components: Component[], dataModel: DataModel = {}) {
   const state = applyAll([{ version: A2UI_VERSION, createSurface: { surfaceId: "s", components, dataModel } }]);
@@ -82,6 +85,127 @@ describe("GenerativeSurface", () => {
     const text = screen.getByText("x");
     expect(text).toHaveAttribute("aria-label", "Status");
     expect(text).toHaveAttribute("aria-hidden", "true");
+  });
+
+  it("shows a patch from the data model in the Changes tab's diff pane", async () => {
+    const patch = [
+      "diff --git a/src/a.ts b/src/a.ts",
+      "--- a/src/a.ts",
+      "+++ b/src/a.ts",
+      "@@ -1,2 +1,2 @@",
+      " keep",
+      "-const before = 1;",
+      "+const after = 2;",
+      "diff --git a/README.md b/README.md",
+      "new file mode 100644",
+      "--- /dev/null",
+      "+++ b/README.md",
+      "@@ -0,0 +1 @@",
+      "+# Hello",
+      "",
+    ].join("\n");
+    draw([{ id: "root", component: "DiffView", diff: { path: "/patch" }, title: "main...HEAD" }], { patch });
+    const tree = screen.getByRole("list", { name: "Changed files" });
+    expect(tree).toHaveTextContent("a.ts");
+    expect(tree).toHaveTextContent("README.md");
+    expect(screen.getByText("main...HEAD")).toBeInTheDocument();
+    // The first file is selected, and its diff is read out of the patch.
+    // Highlighting splits a line into tokens, so this reads the line whole.
+    await waitFor(() => expect(document.querySelector(".line.add .text")).toHaveTextContent("const after = 2;"));
+    expect(document.querySelector(".line.del .text")).toHaveTextContent("const before = 1;");
+  });
+
+  it.each(["unified", "split"] as const)("draws notes under the lines they are about (%s)", async (layout) => {
+    const patch = [
+      "diff --git a/src/a.ts b/src/a.ts",
+      "--- a/src/a.ts",
+      "+++ b/src/a.ts",
+      "@@ -1,2 +1,2 @@",
+      " keep",
+      "-const before = 1;",
+      "+const after = 2;",
+      "",
+    ].join("\n");
+    const notes = [
+      { path: "src/a.ts", text: "Renames the constant." },
+      { path: "src/a.ts", line: 1, text: "Unchanged, kept for context." },
+      { path: "src/a.ts", line: 2, side: "old", text: "The old name." },
+      { path: "src/a.ts", line: 2, text: "The new name." },
+      { path: "src/other.ts", line: 1, text: "Another file's note." },
+      { line: 3, text: "No path, so dropped." },
+    ];
+    draw([{ id: "root", component: "DiffView", diff: { path: "/patch" }, notes: { path: "/notes" }, layout }], {
+      patch,
+      notes,
+    });
+    await waitFor(() => expect(document.querySelector(".line-note:not(.file)")).not.toBeNull());
+    const texts = [...document.querySelectorAll(".line-note")].map((n) => n.textContent);
+    expect(texts).toEqual(["Renames the constant.", "Unchanged, kept for context.", "The old name.", "The new name."]);
+  });
+
+  it("says so when the patch is empty", () => {
+    draw([{ id: "root", component: "DiffView", diff: "", emptyText: "Nothing to review." }]);
+    expect(screen.getByText("Nothing to review.")).toBeInTheDocument();
+  });
+
+  it("draws work items from different trackers as one board, and moves one with its footer", () => {
+    const board = [
+      { id: "root", component: "Row", children: ["todo", "done"] },
+      { id: "todo", component: "List", children: { path: "/todo", componentId: "item" } },
+      { id: "done", component: "List", children: { path: "/done", componentId: "item" } },
+      {
+        id: "item",
+        component: "WorkItem",
+        source: { path: "source" },
+        key: { path: "key" },
+        title: { path: "title" },
+        status: { path: "status" },
+        url: { path: "url" },
+        labels: { path: "labels" },
+        assignee: { path: "assignee" },
+        footer: "move",
+      },
+      {
+        id: "move",
+        component: "Button",
+        child: "moveLabel",
+        action: { event: { name: "moveTask", context: { id: { path: "key" }, to: "done" } } },
+      },
+      { id: "moveLabel", component: "Text", text: "Done" },
+    ] as Component[];
+    const { onAction } = draw(board, {
+      todo: [
+        {
+          source: "github",
+          key: "#21",
+          title: "Support configuring default agents",
+          status: "open",
+          url: "https://github.com/JetBrains/roer/issues/21",
+          labels: ["enhancement"],
+          assignee: "andrey-sokolov",
+        },
+        { source: "personal", key: "T-1", title: "Write the release notes", status: "todo" },
+      ],
+      done: [{ source: "youtrack", key: "RO-7", title: "Old ticket", status: "Fixed", url: "javascript:alert(1)" }],
+    });
+
+    expect(screen.getByText("GitHub")).toBeInTheDocument();
+    expect(screen.getByText("Personal")).toBeInTheDocument();
+    expect(screen.getByText("YouTrack")).toBeInTheDocument();
+    expect(screen.getByText("enhancement")).toBeInTheDocument();
+    expect(screen.getByText("andrey-sokolov")).toBeInTheDocument();
+    expect(screen.getByText("Fixed")).toHaveClass("done");
+
+    fireEvent.click(screen.getByRole("button", { name: "Support configuring default agents" }));
+    expect(openUrl).toHaveBeenCalledWith("https://github.com/JetBrains/roer/issues/21");
+    // Anything but an https link is not offered as one.
+    expect(screen.queryByRole("button", { name: "Old ticket" })).toBeNull();
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Done" })[1]);
+    expect(onAction).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "moveTask", context: { id: "T-1", to: "done" } }),
+      "move",
+    );
   });
 
   it("renders the approval-gate fixture", () => {

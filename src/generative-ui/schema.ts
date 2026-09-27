@@ -183,7 +183,7 @@ export type Component =
       "WorkItem",
       {
         title: DynamicString;
-        /** Where it lives: `github`, `youtrack`, `notion`, `jira`, `linear`,
+        /** Where it lives: `github`, `youtrack`, `notion`, `jira`,
          * `personal`, or any other name, shown as it is. */
         source?: DynamicString;
         /** The tracker's own id: `#21`, `RO-12`, `T-3`. */
