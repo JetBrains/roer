@@ -29,6 +29,13 @@ const GUIDE: &str = include_str!("mcp-guide.md");
 /// anything newer than tools, so it answers each in kind.
 const VERSIONS: &[&str] = &["2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"];
 
+/// `GUIDE`, as a resource: some clients truncate a long `instructions` string
+/// before an agent ever sees the component catalog in it, and unlike
+/// `instructions` a resource is read on demand, in full, as an ordinary tool
+/// result. The name matches the `catalogId` in every `createSurface` example,
+/// so a guess at reading "the catalog" lands on the real thing.
+const CATALOG_URI: &str = "roer:catalog/1";
+
 pub fn serve(roer: &Roer) -> Result<(), Fail> {
     let server = Server { roer, here: roer.tmux.inside_roer().ok(), idle: Cell::new(false) };
     let stdin = std::io::stdin();
@@ -74,7 +81,7 @@ impl Server<'_> {
                 self.idle.set(self.here.is_none() && client == "claude-code");
                 let mut reply = json!({
                     "protocolVersion": version,
-                    "capabilities": { "tools": {} },
+                    "capabilities": { "tools": {}, "resources": {} },
                     "serverInfo": { "name": "roer", "version": env!("CARGO_PKG_VERSION") },
                 });
                 if !self.idle.get() {
@@ -83,6 +90,14 @@ impl Server<'_> {
                 result(id, reply)
             }
             "ping" => result(id, json!({})),
+            "resources/list" => result(id, json!({ "resources": self.resources() })),
+            "resources/read" => {
+                let uri = params.get("uri").and_then(Value::as_str).unwrap_or_default();
+                match self.read_resource(uri) {
+                    Ok(contents) => result(id, json!({ "contents": [contents] })),
+                    Err(fail) => error(id, -32602, &fail.message),
+                }
+            }
             "tools/list" => result(id, json!({ "tools": self.tools() })),
             "tools/call" => {
                 let name = params.get("name").and_then(Value::as_str).unwrap_or_default();
@@ -100,6 +115,11 @@ impl Server<'_> {
         })
     }
 
+    /// Deliberately short: some clients cut a long `instructions` string
+    /// partway through, so this only orients the agent and points it at
+    /// `CATALOG_URI` for everything else — the message kinds in full, the
+    /// whole component catalog and worked examples, which used to live here
+    /// and so were the part a cut client never got to.
     fn instructions(&self) -> String {
         let scope = if self.here.is_some() {
             "This agent is running in a Roer session: `show_ui` and `read_ui_actions` act on it unless given \
@@ -109,7 +129,37 @@ impl Server<'_> {
             "This agent is not running in a Roer session, so each tool needs the `session` to act on: \
              the name Roer shows for it. Ask the user which session if they have not said."
         };
-        format!("{scope}\n\n{GUIDE}")
+        format!(
+            "{scope}\n\n\
+             Roer's Generative UI: a panel beside a Roer session's terminal that draws UI from a small, \
+             fixed catalog of trusted components, never from code you write. Every message is an envelope \
+             with `\"version\": \"v1.0\"` and one body (`createSurface`, `updateComponents`, \
+             `updateDataModel` or `deleteSurface`), naming the `surfaceId` it belongs to; pass them to \
+             `show_ui`, which shows the panel itself once the first message arrives.\n\n\
+             Before drafting anything, read the `{CATALOG_URI}` resource: it has the whole catalog, every \
+             field, and worked examples, none of which fits here reliably. There is no escape hatch to \
+             arbitrary markup, so whatever component you reach for is only documented there."
+        )
+    }
+
+    fn resources(&self) -> Vec<Value> {
+        if self.idle.get() {
+            return Vec::new();
+        }
+        vec![json!({
+            "uri": CATALOG_URI,
+            "name": "Generative UI guide",
+            "description": "The A2UI v1.0 message kinds and the whole component catalog for show_ui, in full \
+                — read this if the server's instructions arrived cut short.",
+            "mimeType": "text/markdown",
+        })]
+    }
+
+    fn read_resource(&self, uri: &str) -> Result<Value, Fail> {
+        if self.idle.get() || uri != CATALOG_URI {
+            return Err(Fail::new(2, format!("no such resource: {uri}")));
+        }
+        Ok(json!({ "uri": CATALOG_URI, "mimeType": "text/markdown", "text": GUIDE }))
     }
 
     fn tools(&self) -> Vec<Value> {
@@ -130,10 +180,11 @@ impl Server<'_> {
         let mut tools = vec![
             json!({
                 "name": "show_ui",
-                "description": "Show or update a UI in a Roer session's Generative UI panel. `messages` is the \
-                    sequence of A2UI v1.0 messages to send: usually one createSurface with the components and \
+                "description": format!("Show or update a UI in a Roer session's Generative UI panel. `messages` is \
+                    the sequence of A2UI v1.0 messages to send: usually one createSurface with the components and \
                     data model inline, later updateComponents / updateDataModel for the same surfaceId. The \
-                    messages and the whole component catalog are in this server's instructions.",
+                    messages and the whole component catalog are in this server's instructions, and also as a \
+                    resource ({CATALOG_URI}) if those arrived truncated."),
                 "inputSchema": {
                     "type": "object",
                     "properties": {
