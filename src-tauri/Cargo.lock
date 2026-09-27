@@ -3078,6 +3078,7 @@ dependencies = [
  "base64 0.23.1",
  "notify",
  "portable-pty",
+ "rand",
  "serde",
  "serde_json",
  "tauri",

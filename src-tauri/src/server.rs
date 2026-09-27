@@ -21,10 +21,13 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use axum::extract::State;
-use axum::response::IntoResponse;
+use axum::extract::{Query, State};
+use axum::http::{header, HeaderMap, HeaderValue, Request, StatusCode};
+use axum::middleware::{self, Next};
+use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
+use base64::Engine as _;
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -32,10 +35,66 @@ use crate::events::Bus;
 use crate::files::FileIndex;
 use crate::pty::{PtyEvent, PtySink};
 
+/// The cookie an authorized browser carries on every `/api/*` call after
+/// `GET /api/session?token=...` once proved it knew the server's token.
+const TOKEN_COOKIE: &str = "roer_token";
+
 struct AppState {
     pty: crate::pty::PtyState,
     files: FileIndex,
     bus: Bus,
+    /// Minted fresh each run; only ever handed to a browser that already
+    /// proved it knows it, over `/api/session`.
+    token: String,
+}
+
+/// 32 bytes of OS randomness, URL-safe so it drops straight into a query
+/// string.
+fn generate_token() -> String {
+    use rand::RngCore;
+    let mut bytes = [0u8; 32];
+    rand::thread_rng().fill_bytes(&mut bytes);
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
+}
+
+fn carries_token(headers: &HeaderMap, expected: &str) -> bool {
+    let Some(cookie) = headers.get(header::COOKIE).and_then(|v| v.to_str().ok()) else {
+        return false;
+    };
+    cookie.split(';').map(str::trim).any(|kv| kv.strip_prefix(TOKEN_COOKIE).and_then(|v| v.strip_prefix('=')) == Some(expected))
+}
+
+/// Guards `/api/invoke` and `/api/ws`: everything but `/api/session` itself,
+/// which is how a browser gets the cookie this checks for in the first
+/// place.
+async fn require_token(State(state): State<Arc<AppState>>, req: Request<axum::body::Body>, next: Next) -> Response {
+    if carries_token(req.headers(), &state.token) {
+        next.run(req).await
+    } else {
+        (StatusCode::UNAUTHORIZED, "missing or invalid roer_token cookie — open /api/session?token=... first")
+            .into_response()
+    }
+}
+
+#[derive(Deserialize)]
+struct SessionQuery {
+    token: String,
+}
+
+/// The one route a browser can reach without already carrying the cookie:
+/// proves it knows the server's token (from the URL `roer-server` printed at
+/// startup) and gets a `SameSite=Strict`, `HttpOnly` cookie in return, so
+/// every later call is authorized without the token being typed again.
+async fn session(State(state): State<Arc<AppState>>, Query(q): Query<SessionQuery>) -> Response {
+    if q.token != state.token {
+        return (StatusCode::FORBIDDEN, "bad token").into_response();
+    }
+    let mut res = Json(serde_json::json!({ "ok": true })).into_response();
+    let cookie = format!("{TOKEN_COOKIE}={}; Path=/; HttpOnly; SameSite=Strict", state.token);
+    if let Ok(value) = HeaderValue::from_str(&cookie) {
+        res.headers_mut().insert(header::SET_COOKIE, value);
+    }
+    res
 }
 
 /// A `Channel`'s id, tagging pushes on the shared bus so the frontend's one
@@ -296,10 +355,12 @@ async fn handle_ws(mut socket: WebSocket, state: Arc<AppState>) {
 /// Boots the HTTP + WebSocket server. Blocks until the process is killed —
 /// there is no window to close it from.
 pub async fn serve(addr: SocketAddr) {
+    let token = generate_token();
     let state = Arc::new(AppState {
         pty: crate::pty::PtyState::default(),
         files: FileIndex::default(),
         bus: Bus::new(),
+        token: token.clone(),
     });
 
     // Same watchers the desktop app arms in `setup`, fed the server's bus
@@ -315,12 +376,52 @@ pub async fn serve(addr: SocketAddr) {
     let app = Router::new()
         .route("/api/invoke", post(invoke))
         .route("/api/ws", get(ws))
+        .layer(middleware::from_fn_with_state(state.clone(), require_token))
+        .route("/api/session", get(session))
         .layer(tower_http::cors::CorsLayer::permissive())
         .with_state(state);
 
     println!("roer-server: listening on http://{addr}");
+    // Whatever origin the frontend is actually served from (the Vite dev
+    // server's proxy, in the common case) needs to open this once per
+    // browser — the path and token are the same wherever `/api` is proxied
+    // to, only the host:port in front of it changes.
+    println!("roer-server: open http://localhost:1420/api/session?token={token} once per browser to authorize it");
     let listener = tokio::net::TcpListener::bind(addr)
         .await
         .expect("could not bind the server's address");
     axum::serve(listener, app).await.expect("server error");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn accepts_only_a_cookie_with_the_right_value() {
+        let mut headers = HeaderMap::new();
+        assert!(!carries_token(&headers, "secret"), "no cookie header at all");
+
+        headers.insert(header::COOKIE, HeaderValue::from_static("roer_token=wrong"));
+        assert!(!carries_token(&headers, "secret"));
+
+        headers.insert(header::COOKIE, HeaderValue::from_static("roer_token=secret"));
+        assert!(carries_token(&headers, "secret"));
+
+        // Alongside other cookies, in either order, with the usual spacing.
+        headers.insert(header::COOKIE, HeaderValue::from_static("theme=dark; roer_token=secret"));
+        assert!(carries_token(&headers, "secret"));
+
+        // A cookie whose name merely starts with "roer_token" is not a match.
+        headers.insert(header::COOKIE, HeaderValue::from_static("roer_token_extra=secret"));
+        assert!(!carries_token(&headers, "secret"));
+    }
+
+    #[test]
+    fn mints_a_fresh_url_safe_token_every_time() {
+        let a = generate_token();
+        let b = generate_token();
+        assert_ne!(a, b);
+        assert!(a.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'), "{a}");
+    }
 }
