@@ -1,6 +1,8 @@
+mod browse;
 mod claude;
 mod claude_setup;
 mod cli_link;
+pub mod events;
 mod files;
 mod gh;
 mod git;
@@ -10,8 +12,9 @@ mod plugin_ui;
 mod pr_draft;
 mod process;
 mod projects;
-mod pty;
+pub mod pty;
 mod roer;
+pub mod server;
 mod watch;
 mod workspaces;
 

@@ -5,8 +5,7 @@
  * of them, and a query returns fifty — so this module carries a query across
  * and nothing else.
  */
-import { invoke } from "@tauri-apps/api/core";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { invoke, listen, type UnlistenFn } from "./backend";
 
 export interface Hit {
   /** Repo-relative and slash-separated, as git spells it. */

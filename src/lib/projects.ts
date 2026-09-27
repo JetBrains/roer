@@ -5,7 +5,7 @@
  * Workspace — the many-to-many attachment lives on `Workspace.projects` as a
  * list of Project ids (see `./workspaces`), not here.
  */
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "./backend";
 
 export interface Project {
   id: string;

@@ -7,7 +7,6 @@
 //! is tagged with the pane it is showing.
 
 use serde::{Deserialize, Serialize};
-use tauri::AppHandle;
 
 pub const PR_DRAFT_EVENT: &str = "roer://pr-draft";
 
@@ -25,9 +24,9 @@ pub struct PrDraftRecord {
     pub draft: PrDraft,
 }
 
-pub fn watch(app: AppHandle) -> notify::Result<()> {
+pub fn watch<S: crate::events::Sink>(app: S) -> notify::Result<()> {
     let dir = crate::history::roer_home().join("pr-draft");
-    crate::plugin_ui::watch_records::<PrDraftRecord>(app, dir, PR_DRAFT_EVENT)
+    crate::plugin_ui::watch_records::<PrDraftRecord, S>(app, dir, PR_DRAFT_EVENT)
 }
 
 #[cfg(test)]

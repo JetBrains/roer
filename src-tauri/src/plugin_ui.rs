@@ -25,7 +25,6 @@ use std::path::{Path, PathBuf};
 use notify::{EventKind, RecursiveMode, Watcher};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter};
 
 use crate::history::roer_home;
 
@@ -109,15 +108,19 @@ fn is_record(path: &Path) -> bool {
 /// no pending-fetch command to mirror `handoff_pending`. That is deliberate:
 /// a plugin's UI is only ever generated while a session is on screen and an
 /// agent is being asked for it, so the app is already up by construction.
-pub fn watch(app: AppHandle) -> notify::Result<()> {
-    watch_records::<PluginUiRecord>(app, plugin_ui_dir(), PLUGIN_UI_EVENT)
+pub fn watch<S: crate::events::Sink>(app: S) -> notify::Result<()> {
+    watch_records::<PluginUiRecord, S>(app, plugin_ui_dir(), PLUGIN_UI_EVENT)
 }
 
 /// Watch `dir` for fire-and-forget records the shim drops there, emit each
 /// one to the frontend as `event`, and consume the file. Shared by every
 /// terminal → app channel with this shape (plugin UI, PR drafts): only the
 /// record type and the directory differ.
-pub fn watch_records<R>(app: AppHandle, dir: PathBuf, event: &'static str) -> notify::Result<()>
+pub fn watch_records<R, S: crate::events::Sink>(
+    app: S,
+    dir: PathBuf,
+    event: &'static str,
+) -> notify::Result<()>
 where
     R: DeserializeOwned + Serialize + Clone,
 {
@@ -151,7 +154,7 @@ where
             seen.retain(|path| path.exists());
             for path in change.paths {
                 if is_record(&path) && path.exists() && seen.insert(path.clone()) {
-                    deliver::<R>(&app, &path, event);
+                    deliver::<R, S>(&app, &path, event);
                 }
             }
         }
@@ -160,16 +163,12 @@ where
     Ok(())
 }
 
-fn deliver<R>(app: &AppHandle, path: &Path, event: &str)
+fn deliver<R, S: crate::events::Sink>(app: &S, path: &Path, event: &str)
 where
     R: DeserializeOwned + Serialize + Clone,
 {
     match read::<R>(path) {
-        Ok(record) => {
-            if let Err(e) = app.emit(event, record) {
-                eprintln!("roer: could not deliver a {event} record: {e}");
-            }
-        }
+        Ok(record) => app.emit(event, &record),
         // A malformed record must not take the watcher down with it.
         Err(e) => eprintln!("roer: ignoring {}: {e}", path.display()),
     }

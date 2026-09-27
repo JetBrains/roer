@@ -1,4 +1,3 @@
-import { open } from "@tauri-apps/plugin-dialog";
 import type { ReactNode } from "react";
 
 import {
@@ -8,6 +7,7 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
+import { pickFolder } from "./lib/folderPicker";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -244,9 +244,9 @@ export function SessionBrowser({
     : [];
 
   const attachNewProject = async () => {
-    // `open` resolves to a plain path on directory mode, or `null` when the
-    // dialog was dismissed — nothing to do either way but let it settle.
-    const picked = await open({ directory: true, multiple: false });
+    // Resolves to a plain path, or `null` when the dialog was dismissed —
+    // nothing to do either way but let it settle.
+    const picked = await pickFolder();
     if (typeof picked === "string") handleAttachNewProject(picked);
   };
 
