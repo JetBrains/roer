@@ -323,11 +323,11 @@ export function isA2uiMessage(value: unknown): value is A2uiMessage {
   switch (keys[0]) {
     case "createSurface":
       return (
-        (body.components === undefined || Array.isArray(body.components)) &&
+        (body.components === undefined || isComponentArray(body.components)) &&
         (body.dataModel === undefined || isRecord(body.dataModel))
       );
     case "updateComponents":
-      return Array.isArray(body.components);
+      return isComponentArray(body.components);
     case "updateDataModel":
       return "value" in body && (body.path === undefined || typeof body.path === "string");
     case "deleteSurface":
@@ -337,15 +337,30 @@ export function isA2uiMessage(value: unknown): value is A2uiMessage {
   }
 }
 
+/**
+ * Just enough shape-checking for `byId()` (in `apply.ts`) to index every
+ * entry by `.id` safely — a live message with a `null` or otherwise
+ * malformed component would otherwise throw out of the reducer.
+ */
+function isComponentArray(value: unknown): boolean {
+  return (
+    Array.isArray(value) &&
+    value.every((c) => isRecord(c) && typeof c.id === "string" && typeof c.component === "string")
+  );
+}
+
 // ---------------------------------------------------------------------------
 // JSON Pointer (RFC 6901)
 
 /** Keys that would reach an object's prototype rather than its own data. */
 const FORBIDDEN = new Set(["__proto__", "constructor", "prototype"]);
 
-/** The unescaped segments of a pointer. `""` and `"/"` are both the root. */
+/**
+ * The unescaped segments of a pointer. `""` is the root (RFC 6901) — `"/"`
+ * is not the same thing, it is a pointer to the member keyed `""`.
+ */
 export function pointerSegments(pointer: JsonPointer): string[] {
-  if (pointer === "" || pointer === "/") return [];
+  if (pointer === "") return [];
   const body = pointer.startsWith("/") ? pointer.slice(1) : pointer;
   return body.split("/").map((segment) => segment.replace(/~1/g, "/").replace(/~0/g, "~"));
 }
@@ -366,6 +381,7 @@ export function readPointer(model: unknown, pointer: JsonPointer): unknown {
     if (FORBIDDEN.has(key) || value === undefined || value === null || typeof value !== "object") {
       return undefined;
     }
+    if (!Object.prototype.hasOwnProperty.call(value, key)) return undefined;
     value = (value as Record<string, unknown>)[key];
   }
   return value;
@@ -388,6 +404,10 @@ function writeAt(container: unknown, [head, ...rest]: string[], value: unknown):
   if (Array.isArray(container)) {
     const index = head === "-" ? container.length : Number(head);
     if (!Number.isInteger(index) || index < 0) return container;
+    // A delete through a parent that doesn't exist is a no-op, not a
+    // reason to create it: `/a/b` with a missing `a` must leave the model
+    // untouched rather than materialising `a` as an empty array entry.
+    if (rest.length > 0 && remove && index >= container.length) return container;
     const next = [...container];
     if (rest.length > 0) next[index] = writeAt(next[index], rest, value);
     else if (remove) next.splice(index, 1);
@@ -395,7 +415,10 @@ function writeAt(container: unknown, [head, ...rest]: string[], value: unknown):
     return next;
   }
   const base = isRecord(container) ? container : {};
-  if (rest.length > 0) return { ...base, [head]: writeAt(base[head], rest, value) };
+  if (rest.length > 0) {
+    if (remove && !Object.prototype.hasOwnProperty.call(base, head)) return container;
+    return { ...base, [head]: writeAt(base[head], rest, value) };
+  }
   if (remove) {
     const { [head]: _gone, ...kept } = base;
     return kept;
