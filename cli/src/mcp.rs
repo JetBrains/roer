@@ -103,7 +103,8 @@ impl Server<'_> {
     fn instructions(&self) -> String {
         let scope = if self.here.is_some() {
             "This agent is running in a Roer session: `show_ui` and `read_ui_actions` act on it unless given \
-             another `session`, and `save_ui`/`load_ui` keep plugin UIs with this project."
+             another `session`, `save_ui`/`load_ui` keep plugin UIs with this project, and `add_task`, \
+             `update_task`, `list_tasks` and `delete_task` keep the user's personal tasks with it."
         } else {
             "This agent is not running in a Roer session, so each tool needs the `session` to act on: \
              the name Roer shows for it. Ask the user which session if they have not said."
@@ -183,6 +184,44 @@ impl Server<'_> {
                     "required": ["name"],
                 },
             }));
+            let id = json!({ "type": "string", "description": "The task's id, like T-3." });
+            let status = json!({ "type": "string", "enum": crate::tasks::STATUSES });
+            let fields = json!({
+                "title": { "type": "string" },
+                "status": status,
+                "body": { "type": "string", "description": "Longer notes. Empty clears them." },
+                "labels": { "type": "array", "items": { "type": "string" }, "description": "Replaces the labels; [] clears them." },
+            });
+            let with_id = {
+                let mut all = json!({ "id": id });
+                all.as_object_mut().unwrap().extend(fields.as_object().unwrap().clone());
+                all
+            };
+            tools.push(json!({
+                "name": "add_task",
+                "description": "Add a personal task to this project's task store (.roer/tasks/), for the user or \
+                    yourself to pick up later. Returns it with its id. Status starts as todo. To show it, \
+                    draw it on a board with WorkItem (source \"personal\").",
+                "inputSchema": { "type": "object", "properties": fields, "required": ["title"] },
+            }));
+            tools.push(json!({
+                "name": "update_task",
+                "description": "Change fields of a personal task — move it to doing or done, retitle it, relabel \
+                    it. Only the fields given change. Returns the task.",
+                "inputSchema": { "type": "object", "properties": with_id, "required": ["id"] },
+            }));
+            tools.push(json!({
+                "name": "list_tasks",
+                "description": "This project's personal tasks as a JSON array, oldest first, optionally only \
+                    those with one status.",
+                "inputSchema": { "type": "object", "properties": { "status": status } },
+            }));
+            tools.push(json!({
+                "name": "delete_task",
+                "description": "Delete a personal task. Prefer update_task with status done for finished work; \
+                    delete one the user no longer wants at all.",
+                "inputSchema": { "type": "object", "properties": { "id": id }, "required": ["id"] },
+            }));
         }
         tools
     }
@@ -215,6 +254,22 @@ impl Server<'_> {
                 let name = text(args, "name");
                 self.roer.load_bundle(&self.pane(args)?, name)?;
                 Ok(format!("Showing {name}."))
+            }
+            "add_task" if self.here.is_some() => Ok(self.roer.tasks().add(args)?.to_string()),
+            "update_task" if self.here.is_some() => {
+                let mut fields = args.clone();
+                let id = fields.as_object_mut().and_then(|f| f.remove("id"));
+                let id = id.as_ref().and_then(Value::as_str).unwrap_or_default().to_string();
+                Ok(self.roer.tasks().update(&id, &fields)?.to_string())
+            }
+            "list_tasks" if self.here.is_some() => {
+                let status = args.get("status").and_then(Value::as_str).filter(|s| !s.is_empty());
+                Ok(Value::Array(self.roer.tasks().list(status)?).to_string())
+            }
+            "delete_task" if self.here.is_some() => {
+                let id = text(args, "id");
+                self.roer.tasks().remove(id)?;
+                Ok(format!("Deleted {id}."))
             }
             _ => Err(Fail::new(2, format!("unknown tool: {name}"))),
         }

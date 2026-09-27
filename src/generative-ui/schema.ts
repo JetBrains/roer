@@ -10,6 +10,8 @@
  * it runs.
  */
 
+import type { DiffNote } from "../lib/diff";
+
 export const A2UI_VERSION = "v1.0";
 
 /** Every surface's default catalog: A2UI's basic catalog plus Roer's own. */
@@ -42,6 +44,8 @@ export type DynamicString = string | DataBinding | FunctionCall;
 export type DynamicNumber = number | DataBinding | FunctionCall;
 export type DynamicBoolean = boolean | DataBinding | FunctionCall;
 export type DynamicStringList = string[] | DataBinding | FunctionCall;
+/** A list of records: literal, or bound to one in the data model. */
+export type DynamicList = Record<string, unknown>[] | DataBinding;
 
 /** A fixed list of child ids, or one template child per element of a list. */
 export type ChildList = ComponentId[] | { componentId: ComponentId; path: JsonPointer };
@@ -159,7 +163,65 @@ export type Component =
     >
   // Roer's additions
   | Variant<"Arrow", { direction?: "horizontal" | "vertical"; label?: DynamicString }>
-  | Variant<"Expandable", { title: DynamicString; child: ComponentId; defaultExpanded?: boolean }>;
+  | Variant<"Expandable", { title: DynamicString; child: ComponentId; defaultExpanded?: boolean }>
+  /** Roer's own diff viewer, fed a whole `git diff` as text. */
+  | Variant<
+      "DiffView",
+      {
+        diff: DynamicString;
+        title?: DynamicString;
+        layout?: "unified" | "split";
+        emptyText?: DynamicString;
+        /** `{ path, line?, side?, text }[]`, drawn under the lines they are about. */
+        notes?: DataBinding | DiffNote[];
+      }
+    >
+  /** One task from any tracker — a GitHub issue, a YouTrack ticket, a Notion
+   * card, or a personal task from Roer's own store — drawn the same way, so
+   * a board can mix them. */
+  | Variant<
+      "WorkItem",
+      {
+        title: DynamicString;
+        /** Where it lives: `github`, `youtrack`, `notion`, `jira`, `linear`,
+         * `personal`, or any other name, shown as it is. */
+        source?: DynamicString;
+        /** The tracker's own id: `#21`, `RO-12`, `T-3`. */
+        key?: DynamicString;
+        status?: DynamicString;
+        /** An https link to the item; the title opens it in the browser. */
+        url?: DynamicString;
+        assignee?: DynamicString;
+        labels?: DynamicStringList;
+        /** One line of secondary text, e.g. when it last changed. */
+        meta?: DynamicString;
+        /** Controls under the item, e.g. a Row of Buttons that move it. */
+        footer?: ComponentId;
+        /** `card` (the default) for a board; `detail` opens the item up with
+         * the fields below, which a card ignores. */
+        variant?: "card" | "detail";
+        goal?: DynamicString;
+        /** `{ id, text, met }[]` — a checklist the user can tick. */
+        requirements?: DynamicList;
+        /** `{ kind: ticket | slack | doc | file, label, url?, path? }[]`. */
+        sources?: DynamicList;
+        /** `{ id, author, text, at? }[]`, read-only, oldest first. */
+        comments?: DynamicList;
+        /** `{ id, title, patch, notes? }[]`, each drawn with `DiffView`. */
+        changes?: DynamicList;
+        /** `{ id, severity: info | warn | error, text, at?, state? }[]`;
+         * `at` is `{ changeId, path, line, side? }`. */
+        findings?: DynamicList;
+        /** `{ id, question, options: { label, value }[], answer? }[]`. */
+        decisions?: DynamicList;
+      }
+    >
+  // A work item's sections on their own, each `items` read as above.
+  | Variant<"Requirements", { items: DynamicList }>
+  | Variant<"Findings", { items: DynamicList }>
+  | Variant<"Decisions", { items: DynamicList }>
+  | Variant<"Sources", { items: DynamicList }>
+  | Variant<"Comments", { items: DynamicList }>;
 
 export interface SurfaceState {
   catalogId: string;

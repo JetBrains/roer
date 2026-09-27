@@ -7,6 +7,8 @@
  */
 import { Fragment, useState, type CSSProperties, type ReactNode } from "react";
 
+import { openUrl } from "../lib/github";
+
 import { asString, boundPointer, evaluate, type Scope } from "./evaluate";
 import {
   readPointer,
@@ -21,6 +23,17 @@ import {
   type Justify,
   type SurfaceState,
 } from "./schema";
+import { readChanges, readComments, readDecisions, readFindings, readNotes, readRequirements, readSources } from "./workItem";
+import {
+  CommentsNode,
+  DecisionsNode,
+  FindingsNode,
+  PatchPane,
+  RequirementsNode,
+  SourcesSection,
+  WorkItemDetail,
+  type Report,
+} from "./WorkItemDetail";
 
 /** A button's `event`, with its bindings resolved at click time. */
 export interface ResolvedEvent {
@@ -34,19 +47,22 @@ interface Props {
   dataModel: DataModel;
   onSetValue: (path: JsonPointer, value: unknown) => void;
   onAction: (event: ResolvedEvent, sourceComponentId: ComponentId) => void;
+  /** Opens a project-relative file in Roer's viewer; without it, a file a
+   * surface names is only named. */
+  onOpenFile?: (path: string) => void;
 }
 
 interface Ctx extends Omit<Props, "surface"> {
   components: Record<ComponentId, Component>;
 }
 
-export function GenerativeSurface({ surface, dataModel, onSetValue, onAction }: Props) {
+export function GenerativeSurface({ surface, dataModel, onSetValue, onAction, onOpenFile }: Props) {
   // `createSurface` implies a `Surface` whose only child is "root"; until an
   // agent sends it, there is nothing to draw yet.
   if (!surface.components.root) {
     return <p className="gen-text muted">Waiting for the surface's root component…</p>;
   }
-  const ctx: Ctx = { components: surface.components, dataModel, onSetValue, onAction };
+  const ctx: Ctx = { components: surface.components, dataModel, onSetValue, onAction, onOpenFile };
   return <div className="gen-surface">{renderNode("root", ctx, {}, new Set())}</div>;
 }
 
@@ -81,6 +97,7 @@ function renderBody(node: Component, ctx: Ctx, scope: Scope, seen: ReadonlySet<C
     };
   };
   const common = { ...aria(node, value), style: weightStyle(node.weight) };
+  const report: Report = (name, context) => ctx.onAction({ name, context }, node.id);
 
   switch (node.component) {
     case "Row":
@@ -275,6 +292,58 @@ function renderBody(node: Component, ctx: Ctx, scope: Scope, seen: ReadonlySet<C
           content={child(node.child)}
         />
       );
+    case "DiffView":
+      return (
+        <PatchPane
+          {...common}
+          patch={text(node.diff)}
+          title={node.title === undefined ? "" : text(node.title)}
+          layout={node.layout}
+          emptyText={node.emptyText === undefined ? "No changes." : text(node.emptyText)}
+          notes={readNotes(value(node.notes))}
+        />
+      );
+    case "WorkItem":
+      return (
+        <WorkItemNode
+          {...common}
+          title={text(node.title)}
+          source={node.source === undefined ? "" : text(node.source)}
+          itemKey={node.key === undefined ? "" : text(node.key)}
+          status={node.status === undefined ? "" : text(node.status)}
+          url={node.url === undefined ? "" : text(node.url)}
+          assignee={node.assignee === undefined ? "" : text(node.assignee)}
+          labels={toStrings(value(node.labels))}
+          meta={node.meta === undefined ? "" : text(node.meta)}
+          footer={node.footer === undefined ? null : child(node.footer)}
+          detail={
+            node.variant === "detail" ? (
+              <WorkItemDetail
+                itemKey={node.key === undefined ? "" : text(node.key)}
+                goal={node.goal === undefined ? "" : text(node.goal)}
+                requirements={readRequirements(value(node.requirements))}
+                sources={readSources(value(node.sources))}
+                comments={readComments(value(node.comments))}
+                changes={readChanges(value(node.changes))}
+                findings={readFindings(value(node.findings))}
+                decisions={readDecisions(value(node.decisions))}
+                report={report}
+                onOpenFile={ctx.onOpenFile}
+              />
+            ) : null
+          }
+        />
+      );
+    case "Requirements":
+      return <RequirementsNode items={readRequirements(value(node.items))} report={report} />;
+    case "Findings":
+      return <FindingsNode items={readFindings(value(node.items))} report={report} />;
+    case "Decisions":
+      return <DecisionsNode items={readDecisions(value(node.items))} report={report} />;
+    case "Sources":
+      return <SourcesSection items={readSources(value(node.items))} onOpenFile={ctx.onOpenFile} />;
+    case "Comments":
+      return <CommentsNode items={readComments(value(node.items))} />;
     default: {
       // Exhaustiveness check: a new Component variant fails the build here
       // instead of silently falling through the switch. At runtime this is
@@ -439,6 +508,89 @@ function ModalNode({ trigger, content, ...common }: Common & { trigger: ReactNod
         </div>
       ) : null}
     </>
+  );
+}
+
+/** How each tracker is named on an item; anything else is shown as sent. */
+const SOURCES: Record<string, string> = {
+  github: "GitHub",
+  youtrack: "YouTrack",
+  notion: "Notion",
+  jira: "Jira",
+  linear: "Linear",
+  personal: "Personal",
+};
+
+/** A status, by what it means for the work rather than what a tracker calls
+ * it: every tracker spells "finished" its own way. */
+function statusTone(status: string): "done" | "doing" | "blocked" | "todo" {
+  const s = status.toLowerCase().replace(/[\s_-]+/g, " ").trim();
+  if (["done", "closed", "fixed", "resolved", "completed", "merged", "verified"].includes(s)) return "done";
+  if (["doing", "in progress", "in review", "active", "started", "review", "working"].includes(s)) return "doing";
+  if (["blocked", "on hold", "waiting"].includes(s)) return "blocked";
+  return "todo";
+}
+
+function WorkItemNode({
+  title,
+  source,
+  itemKey,
+  status,
+  url,
+  assignee,
+  labels,
+  meta,
+  footer,
+  detail,
+  ...common
+}: Common & {
+  title: string;
+  source: string;
+  itemKey: string;
+  status: string;
+  url: string;
+  assignee: string;
+  labels: string[];
+  meta: string;
+  footer: ReactNode;
+  /** The opened-up body, for `variant: "detail"`. */
+  detail?: ReactNode;
+}) {
+  const sourceLabel = SOURCES[source.toLowerCase()] ?? source;
+  // The backend refuses anything but an https link too; checking here keeps
+  // a title that could not open from looking like a link.
+  const link = url.startsWith("https://") ? url : "";
+  return (
+    <article
+      {...common}
+      className={detail ? "gen-workitem detail" : "gen-workitem"}
+      data-source={source.toLowerCase() || undefined}
+    >
+      <header className="gen-workitem-head">
+        {sourceLabel ? <span className="gen-workitem-source">{sourceLabel}</span> : null}
+        {itemKey ? <span className="gen-workitem-key">{itemKey}</span> : null}
+        {status ? <span className={`gen-workitem-status ${statusTone(status)}`}>{status}</span> : null}
+      </header>
+      {link ? (
+        <button type="button" className="link gen-workitem-title" title={link} onClick={() => void openUrl(link)}>
+          {title}
+        </button>
+      ) : (
+        <span className="gen-workitem-title">{title}</span>
+      )}
+      {labels.length > 0 ? (
+        <ul className="gen-workitem-labels" aria-label="Labels">
+          {labels.map((label) => (
+            <li key={label}>{label}</li>
+          ))}
+        </ul>
+      ) : null}
+      {assignee || meta ? (
+        <p className="gen-workitem-meta">{[assignee, meta].filter(Boolean).join(" · ")}</p>
+      ) : null}
+      {detail}
+      {footer ? <div className="gen-workitem-footer">{footer}</div> : null}
+    </article>
   );
 }
 

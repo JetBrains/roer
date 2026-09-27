@@ -1126,6 +1126,25 @@ button.tree-row.selected {
   background: none;
 }
 
+/* A reviewer's note, set under the line it is about and indented past the
+   gutters so it reads as a remark on the code, not as code. */
+.line-note {
+  margin: 2px 12px 4px 84px;
+  padding: 5px 9px;
+  border-left: 2px solid var(--ide-accent);
+  border-radius: 0 4px 4px 0;
+  background: var(--ide-head);
+  color: var(--ide-text);
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+
+.line-note.file {
+  margin: 8px 12px;
+}
+
 /* Side by side: the old file on the left, the new one on the right --------- */
 
 .pair {
@@ -2027,6 +2046,365 @@ button.gen-chip.on {
 
 .gen-expandable-body {
   padding: 4px 0 4px 18px;
+}
+
+/* A work item from any tracker, compact enough to stack in a board lane. */
+.gen-workitem {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+  padding: 9px 11px;
+  background: var(--roer-panel);
+  border: 1px solid var(--roer-border);
+  border-radius: 6px;
+  font-size: 12.5px;
+}
+
+.gen-workitem-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--roer-muted);
+}
+
+.gen-workitem-source {
+  font-weight: 600;
+}
+
+.gen-workitem[data-source="personal"] .gen-workitem-source {
+  color: var(--roer-accent);
+}
+
+.gen-workitem-status {
+  margin-left: auto;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--roer-border);
+  white-space: nowrap;
+}
+
+.gen-workitem-status.doing {
+  color: var(--roer-accent);
+  border-color: var(--roer-accent);
+}
+
+.gen-workitem-status.done {
+  color: var(--roer-plus);
+  border-color: var(--roer-plus);
+}
+
+.gen-workitem-title {
+  color: var(--roer-fg);
+  overflow-wrap: anywhere;
+}
+
+button.link.gen-workitem-title {
+  font-size: 12.5px;
+  text-align: left;
+  color: var(--roer-fg);
+}
+
+button.link.gen-workitem-title:hover {
+  color: var(--roer-accent);
+  text-decoration: underline;
+}
+
+.gen-workitem-labels {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.gen-workitem-labels li {
+  font-size: 10.5px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--roer-hover);
+  color: var(--roer-muted);
+}
+
+.gen-workitem-meta {
+  margin: 0;
+  font-size: 11px;
+  color: var(--roer-muted);
+}
+
+.gen-workitem-footer {
+  display: flex;
+  gap: 6px;
+  padding-top: 2px;
+}
+
+.gen-workitem-status.blocked {
+  color: var(--roer-warn);
+  border-color: var(--roer-warn);
+}
+
+/* A work item opened up: the card's header, then its sections, widest
+   first where the diff needs room. */
+.gen-workitem.detail {
+  flex: 1 1 auto;
+  gap: 10px;
+  padding: 14px 16px;
+  font-size: 13px;
+}
+
+.gen-workitem.detail .gen-workitem-title {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.gen-wi-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.gen-wi-goal {
+  margin: 0;
+  color: var(--roer-fg);
+  line-height: 1.45;
+}
+
+.gen-wi-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 10px;
+  border-top: 1px solid var(--roer-border);
+}
+
+.gen-wi-heading {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 0;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--roer-muted);
+}
+
+.gen-wi-aside {
+  margin-left: auto;
+  font-weight: 400;
+  letter-spacing: normal;
+  text-transform: none;
+}
+
+.gen-wi-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.gen-wi-met span {
+  color: var(--roer-muted);
+  text-decoration: line-through;
+}
+
+.gen-wi-finding {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 8px;
+}
+
+.gen-wi-finding-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow-wrap: anywhere;
+}
+
+.gen-wi-where {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  color: var(--roer-muted);
+  text-align: left;
+}
+
+button.link.gen-wi-where:hover {
+  color: var(--roer-accent);
+  text-decoration: underline;
+}
+
+.gen-wi-severity {
+  padding: 0 6px;
+  border-radius: 999px;
+  border: 1px solid var(--roer-border);
+  font-size: 10.5px;
+  color: var(--roer-muted);
+}
+
+.gen-wi-severity.warn {
+  color: var(--roer-warn);
+  border-color: var(--roer-warn);
+}
+
+.gen-wi-severity.error {
+  color: var(--roer-minus);
+  border-color: var(--roer-minus);
+}
+
+/* Settled: still there to read back, but no longer asking for anything. */
+.gen-wi-finding.settled,
+.gen-wi-decision.settled {
+  opacity: 0.6;
+}
+
+.gen-wi-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.gen-wi-state {
+  font-size: 11px;
+  color: var(--roer-muted);
+}
+
+.gen-wi-decision {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.gen-wi-decision fieldset {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  border: none;
+}
+
+.gen-wi-question {
+  padding: 0;
+  margin-bottom: 2px;
+  color: var(--roer-fg);
+  font-weight: 500;
+}
+
+.gen-wi-other {
+  margin-left: 22px;
+  padding: 4px 8px;
+  font-size: 12.5px;
+  background: var(--roer-bg);
+  color: var(--roer-fg);
+  border: 1px solid var(--roer-border);
+  border-radius: 4px;
+}
+
+.gen-wi-sources {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.gen-wi-source {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 2px 9px;
+  font-size: 12px;
+  color: var(--roer-fg);
+  background: var(--roer-hover);
+  border: 1px solid transparent;
+  border-radius: 999px;
+}
+
+button.gen-wi-source:hover {
+  border-color: var(--roer-accent);
+}
+
+.gen-wi-kind {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--roer-muted);
+}
+
+.gen-wi-comments {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.gen-wi-comments li {
+  padding: 8px 10px;
+  border-left: 2px solid var(--roer-border);
+}
+
+.gen-wi-comment-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 11px;
+}
+
+.gen-wi-comment-author {
+  font-weight: 600;
+  color: var(--roer-fg);
+}
+
+.gen-wi-comment-at {
+  color: var(--roer-muted);
+}
+
+.gen-wi-comment-text {
+  margin: 4px 0 0;
+  font-size: 12.5px;
+  color: var(--roer-fg);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.gen-wi-change {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.gen-wi-change .counts {
+  margin-left: 6px;
+}
+
+/* A finding drawn into its diff, coloured by how much it matters. */
+.line-note.warn {
+  border-left-color: var(--roer-warn);
+}
+
+.line-note.error {
+  border-left-color: var(--roer-minus);
+}
+
+/* The Changes tab's diff pane, given a height of its own: the panel scrolls,
+   and the tree and diff inside each scroll too. */
+.gen-diff {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 72vh;
+  min-height: 320px;
+  display: flex;
+  border: 1px solid var(--roer-border);
+  border-radius: 8px;
+  overflow: hidden;
 }
 
 .gen-tabs-bar {
