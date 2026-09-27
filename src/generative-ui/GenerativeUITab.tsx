@@ -21,6 +21,7 @@ import {
   writePluginUiBundle,
   type PluginUiBundleSummary,
 } from "../lib/pluginUi";
+import { gitRoot } from "../lib/git";
 import { resolveDir } from "../lib/session";
 import { A2UI_VERSION, type A2uiMessage, type ComponentId, type JsonPointer, type RenderState } from "./schema";
 
@@ -46,6 +47,8 @@ interface Props {
    * live message from `roer plugin-ui` does — the parent owns `surfaceId`
    * and `log`, which `onChange` alone can't reach. */
   onLoadBundle: (surfaceId: string, messages: A2uiMessage[]) => void;
+  /** Opens a file of the session's repository in a tab of its own. */
+  onOpenFile?: (root: string, path: string) => void;
 }
 
 export function GenerativeUITab({
@@ -57,6 +60,7 @@ export function GenerativeUITab({
   pane,
   cwd,
   onLoadBundle,
+  onOpenFile,
 }: Props) {
   const [result, setResult] = useState<string | null>(null);
   const [bundles, setBundles] = useState<PluginUiBundleSummary[]>([]);
@@ -136,6 +140,16 @@ export function GenerativeUITab({
     }
   };
 
+  // A surface names files relative to the project, which is the repository
+  // the pane is sitting in — or the directory itself outside one.
+  const handleOpenFile =
+    onOpenFile && dir
+      ? (path: string) =>
+          void gitRoot(dir)
+            .then((root) => onOpenFile(root ?? dir, path))
+            .catch((e: unknown) => console.error("roer: could not open a file from a plugin UI", e))
+      : undefined;
+
   const handleSave = () => {
     if (!dir || !surface?.components.root) return;
     const name = saveName.trim();
@@ -199,6 +213,7 @@ export function GenerativeUITab({
           dataModel={dataModel}
           onSetValue={handleSetValue}
           onAction={handleAction}
+          onOpenFile={handleOpenFile}
         />
       ) : (
         <p className="gen-text muted">

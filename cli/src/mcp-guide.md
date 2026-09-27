@@ -97,6 +97,83 @@ screen readers only) and `weight` (flex-grow inside a `Row`/`Column`).
 | **Roer's own** | | |
 | `Arrow` | `direction?`, `label?` | A connector line with an arrowhead, `horizontal` (default) or `vertical`. It flows inline like `Divider`, so place it between the things it connects inside a `Row`/`Column`. |
 | `Expandable` | `title`, `child: id`, `defaultExpanded?` | A collapsible section. Nest these for a tree. |
+| `DiffView` | `diff`, `title?`, `layout?`, `emptyText?`, `notes?` | The Changes tab's diff viewer: a file tree beside the selected file's diff, with highlighting and arrow-key stepping. `diff` is the whole output of `git diff` (any range, any number of files), best bound to the data model. `layout` is `unified` (default) or `split`. `notes` is a list of `{ path, line?, side?, text }`, each drawn under its line: `line` counts in the new file, or in the old one with `side: "old"` (for a removed line); without `line` the note heads the file. It needs room: use it as `root` or in a `Column`, not inside a `Card` or a `List`. |
+| `WorkItem` | `title`, `source?`, `key?`, `status?`, `url?`, `assignee?`, `labels?`, `meta?`, `footer?: id` | One task from any tracker, drawn the same way whatever it came from. `source` is `github`, `youtrack`, `notion`, `jira` or `personal` (any other name is shown as sent); `key` is the tracker's id (`#21`, `RO-12`, `T-3`); an `https` `url` makes the title open it. The status is coloured by meaning, so `closed`, `Fixed` and `done` all read as finished. `footer` holds controls, usually a `Row` of `Button`s. With `variant: "detail"` it opens the item up: see *One work item in detail* below. |
+| `Requirements` / `Findings` / `Decisions` / `Sources` / `Comments` | `items` | One section of a detailed work item on its own, `items` shaped as there. |
+
+## Boards of work items
+
+A board is lanes of `WorkItem`s: a `Row` of `Column`s, each with a heading
+and a `List` templated over its lane in the data model. Map every tracker's
+items to the same fields — `{ source, key, title, status, url, labels,
+assignee }` — so one template draws them all.
+
+```json
+{ "id": "root", "component": "Row", "children": ["todo", "doing", "done"] },
+{ "id": "todo", "component": "Column", "weight": 1, "children": ["todo-h", "todo-list"] },
+{ "id": "todo-h", "component": "Text", "text": "To do" },
+{ "id": "todo-list", "component": "List", "children": { "path": "/lanes/todo", "componentId": "item" } },
+{ "id": "item", "component": "WorkItem", "source": { "path": "source" }, "key": { "path": "key" },
+  "title": { "path": "title" }, "status": { "path": "status" }, "url": { "path": "url" },
+  "labels": { "path": "labels" }, "footer": "item-actions" }
+```
+
+GitHub issues come from `gh issue list --json number,title,state,url,labels,assignees`
+(`key` `"#" + number`, `status` the state or the project column). **Personal
+tasks** live in this project's task store: `add_task`, `update_task`,
+`list_tasks` and `delete_task` (or `roer task add|list|set|rm`). Their
+statuses are `todo`, `doing` and `done`, and their `key` is their `id`. When
+the user asks you to note something to do, add a task; draw it with `source:
+"personal"`. The panel does not watch the store: after changing a task, send
+an `updateDataModel` for the lanes it moved between. A button that moves a
+task sends its id, e.g. `"context": { "id": { "path": "key" }, "to": "done" }`,
+and on reading that click you call `update_task` and then update the board.
+
+## One work item in detail
+
+`"variant": "detail"` draws one item, not a board: the card's header, then
+its `goal`, then what needs the user (open decisions and findings), then
+`requirements`, `sources` and `changes`. Bind each to the item in the data
+model; every list is optional.
+
+- `requirements`: `{ id, text, met }[]`, a checklist the user can tick.
+- `sources`: `{ kind, label, url?, path? }[]`, where `kind` is `ticket`,
+  `slack`, `doc` or `file`. A `path` (project-relative) opens in Roer's file
+  viewer, an `https` `url` in the browser.
+- `changes`: `{ id, title, patch, notes? }[]`, each drawn with `DiffView`;
+  `patch` is a whole `git diff`, `notes` as `DiffView`'s.
+- `comments`: `{ id, author, text, at? }[]`, read-only — a YouTrack ticket's
+  or a GitHub issue's discussion thread, oldest first. `at` is shown as
+  sent (a timestamp or "2h ago"); there is nothing here to write back.
+- `findings`: `{ id, severity, text, at?, state? }[]`, `severity` `info`,
+  `warn` or `error`, `state` `open` (default), `resolved` or `dismissed`.
+  `at` is `{ changeId, path, line, side? }`: an open finding is also drawn
+  under that line of the change, and clicking its location shows it there.
+- `decisions`: `{ id, question, options: { label, value }[], answer? }[]`.
+  The user picks an option or writes their own answer.
+
+```json
+{ "id": "root", "component": "WorkItem", "variant": "detail",
+  "key": { "path": "/item/key" }, "title": { "path": "/item/title" },
+  "status": { "path": "/item/status" }, "goal": { "path": "/item/goal" },
+  "requirements": { "path": "/item/requirements" }, "sources": { "path": "/item/sources" },
+  "changes": { "path": "/item/changes" }, "findings": { "path": "/item/findings" },
+  "decisions": { "path": "/item/decisions" } }
+```
+
+What the user does arrives through `read_ui_actions` like a click, with the
+item's `key` as `workItem`:
+
+- `toggleRequirement` `{ workItem, id, met }`
+- `settleFinding` `{ workItem, id, state }`
+- `answerDecision` `{ workItem, id, answer }`, `answer` an option's `value`
+  or the user's own words
+
+The panel shows the user's answer straight away but does not write it into
+the data model. Record it in yours and send it back with an
+`updateDataModel`. Until you send something new for that field, resending
+the old value leaves the user's answer on screen. The status is yours alone:
+use `planning`, `working`, `blocked`, `review` or `done`.
 
 ## Button clicks
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { changedRange, pairRows, parseDiff } from "./diff";
+import { changedRange, pairRows, parseDiff, splitPatch } from "./diff";
 
 const diff = [
   "diff --git a/src/App.tsx b/src/App.tsx",
@@ -154,5 +154,55 @@ describe("changedRange", () => {
     expect(range).toEqual({ from: 1, to: 2 });
     // The other side gained nothing, so its range is empty but still placed.
     expect(changedRange("ab", "aXb")).toEqual({ from: 1, to: 1 });
+  });
+});
+
+describe("splitPatch", () => {
+  const patch = [
+    diff.trimEnd(),
+    "diff --git a/docs/new.md b/docs/new.md",
+    "new file mode 100644",
+    "index 0000000..3333333",
+    "--- /dev/null",
+    "+++ b/docs/new.md",
+    "@@ -0,0 +1,2 @@",
+    "+# New",
+    "+text",
+    "diff --git a/old.txt b/old.txt",
+    "deleted file mode 100644",
+    "index 4444444..0000000",
+    "--- a/old.txt",
+    "+++ /dev/null",
+    "@@ -1 +0,0 @@",
+    "-gone",
+    "diff --git a/a.ts b/b.ts",
+    "similarity index 100%",
+    "rename from a.ts",
+    "rename to b.ts",
+    "diff --git a/logo.png b/logo.png",
+    "index 5555555..6666666 100644",
+    "Binary files a/logo.png and b/logo.png differ",
+    "",
+  ].join("\n");
+
+  it("cuts a patch into one section per file, each parseable on its own", () => {
+    const files = splitPatch(patch);
+    expect(files.map((f) => f.path)).toEqual(["src/App.tsx", "docs/new.md", "old.txt", "b.ts", "logo.png"]);
+    expect(parseDiff(files[0].text).hunks).toHaveLength(2);
+    expect(files[1].text).not.toContain("old.txt");
+  });
+
+  it("names what happened to each file and counts its lines", () => {
+    const [app, added, removed, renamed, image] = splitPatch(patch);
+    expect(app).toMatchObject({ status: "M", added: 3, deleted: 2, binary: false });
+    expect(added).toMatchObject({ status: "A", added: 2, deleted: 0 });
+    expect(removed).toMatchObject({ status: "D", added: 0, deleted: 1 });
+    expect(renamed).toMatchObject({ status: "R", renamedFrom: "a.ts", added: 0 });
+    expect(image).toMatchObject({ status: "M", binary: true });
+  });
+
+  it("finds nothing in text that is not a patch", () => {
+    expect(splitPatch("")).toEqual([]);
+    expect(splitPatch("hello")).toEqual([]);
   });
 });

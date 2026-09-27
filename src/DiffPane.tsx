@@ -1,5 +1,6 @@
 import {
   createContext,
+  Fragment,
   memo,
   useContext,
   useCallback,
@@ -15,6 +16,7 @@ import { Spans } from "./CodeLine";
 import {
   changedRange,
   pairRows,
+  type DiffNote,
   parseDiff,
   type DiffLine,
   type Hunk,
@@ -62,14 +64,20 @@ export interface DiffPaneProps {
   "aria-label"?: string;
   /** The layout shown before the viewer picks one. @default "unified" */
   defaultLayout?: "unified" | "split";
+  /** Notes drawn into the diff under the lines they are about. */
+  notes?: DiffNote[];
+  /** Selects `path` at the change holding `line`, each time `seq` changes —
+   * how something outside the pane points into it. */
+  reveal?: { path: string; line: number; side?: "old" | "new"; seq: number };
 }
 
 /** Where the selection is: a file, and which of its hunks. */
 interface Selection {
   path: string;
   /** `"last"` asks for the final hunk of a file whose diff is still loading,
-   * which is what stepping backwards into a file means. */
-  at: number | "last";
+   * which is what stepping backwards into a file means; a line asks for the
+   * hunk that holds it, which is only known once the diff is in. */
+  at: number | "last" | { line: number; side: "old" | "new" };
 }
 
 function plural(count: number, one: string, many: string): string {
@@ -88,24 +96,52 @@ type Layout = "unified" | "split";
  */
 const Coloured = createContext<Colouring | null>(null);
 
+/** The selected file's notes by `side:line`, carried like `Coloured` so the
+ * layouts need not know about them. */
+const Notes = createContext<ReadonlyMap<string, DiffNote[]>>(new Map());
+
+/** The notes under a line, found by the numbers it has on each side. */
+function LineNotes({ line }: { line?: DiffLine }) {
+  const notes = useContext(Notes);
+  if (!line) return null;
+  // A context line has an old number too, but a note about it is counted in
+  // the new file, and asking both would show it twice.
+  const old = line.kind === "del" ? notes.get(`old:${line.oldNo}`) : undefined;
+  const now =
+    line.newNo === undefined ? undefined : notes.get(`new:${line.newNo}`);
+  const found = [...(old ?? []), ...(now ?? [])];
+  return (
+    <>
+      {found.map((note, i) => (
+        <div key={i} className={`line-note ${note.tone ?? ""}`} role="note">
+          {note.text}
+        </div>
+      ))}
+    </>
+  );
+}
+
 /** What `git diff` prints: one column, a marker per line, both numbers. */
 function Unified({ hunk }: { hunk: Hunk }) {
   return (
     <>
       {hunk.lines.map((line, j) => (
-        <div key={j} className={`line ${line.kind}`}>
-          <span className="no" data-no={line.oldNo ?? ""} />
-          <span className="no" data-no={line.newNo ?? ""} />
-          <span
-            className="mark"
-            data-mark={
-              line.kind === "add" ? "+" : line.kind === "del" ? "-" : ""
-            }
-          />
-          <span className="text">
-            <Code line={line} side={line.kind === "del" ? "old" : "new"} />
-          </span>
-        </div>
+        <Fragment key={j}>
+          <div className={`line ${line.kind}`}>
+            <span className="no" data-no={line.oldNo ?? ""} />
+            <span className="no" data-no={line.newNo ?? ""} />
+            <span
+              className="mark"
+              data-mark={
+                line.kind === "add" ? "+" : line.kind === "del" ? "-" : ""
+              }
+            />
+            <span className="text">
+              <Code line={line} side={line.kind === "del" ? "old" : "new"} />
+            </span>
+          </div>
+          <LineNotes line={line} />
+        </Fragment>
       ))}
     </>
   );
@@ -168,18 +204,23 @@ function Split({ hunk }: { hunk: Hunk }) {
             <span className="text">{row.left?.text}</span>
           </div>
         ) : (
-          <div key={j} className="pair">
-            <Side
-              line={row.left}
-              other={row.kind === "change" ? row.right : undefined}
-              which="old"
-            />
-            <Side
-              line={row.right}
-              other={row.kind === "change" ? row.left : undefined}
-              which="new"
-            />
-          </div>
+          <Fragment key={j}>
+            <div className="pair">
+              <Side
+                line={row.left}
+                other={row.kind === "change" ? row.right : undefined}
+                which="old"
+              />
+              <Side
+                line={row.right}
+                other={row.kind === "change" ? row.left : undefined}
+                which="new"
+              />
+            </div>
+            {/* A context line is both sides at once; its notes go under it once. */}
+            <LineNotes line={row.left} />
+            {row.right !== row.left ? <LineNotes line={row.right} /> : null}
+          </Fragment>
         ),
       )}
     </>
@@ -208,6 +249,8 @@ export function DiffPane({
   "data-testid": testId,
   "aria-label": ariaLabel,
   defaultLayout = "unified",
+  notes,
+  reveal,
 }: DiffPaneProps) {
   const [selection, setSelection] = useState<Selection | null>(null);
   const [diff, setDiff] = useState<{ path: string; text: string } | null>(null);
@@ -248,6 +291,15 @@ export function DiffPane({
     // in lockstep with `files` anyway.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [files, resetKey]);
+
+  // Declared after the reset above, so on mount a reveal wins over the
+  // default of the first file.
+  useEffect(() => {
+    if (!reveal) return;
+    select({ path: reveal.path, at: { line: reveal.line, side: reveal.side ?? "new" } });
+    // Keyed on `seq` alone: pointing at the same line again is still a request.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reveal?.seq]);
 
   const path = selected?.path;
   const untracked = selected ? isUntracked(selected) : false;
@@ -301,11 +353,32 @@ export function DiffPane({
     [parsed, lang, grammars],
   );
 
+  const [fileNotes, lineNotes] = useMemo(() => {
+    const byLine = new Map<string, DiffNote[]>();
+    const heading: DiffNote[] = [];
+    for (const note of notes ?? []) {
+      if (note.path !== path) continue;
+      if (note.line === undefined) {
+        heading.push(note);
+        continue;
+      }
+      const key = `${note.side ?? "new"}:${note.line}`;
+      byLine.set(key, [...(byLine.get(key) ?? []), note]);
+    }
+    return [heading, byLine] as const;
+  }, [notes, path]);
+
   const index = useMemo(() => {
     const count = parsed?.hunks.length ?? 0;
     if (count === 0) return 0;
-    if (selection?.at === "last") return count - 1;
-    return Math.min(selection?.at ?? 0, count - 1);
+    const at = selection?.at ?? 0;
+    if (at === "last") return count - 1;
+    if (typeof at === "object") {
+      const no = (line: DiffLine) => (at.side === "old" ? line.oldNo : line.newNo);
+      const found = parsed!.hunks.findIndex((hunk) => hunk.lines.some((line) => no(line) === at.line));
+      return Math.max(found, 0);
+    }
+    return Math.min(at, count - 1);
   }, [parsed, selection]);
 
   const select = useCallback((next: Selection) => {
@@ -365,7 +438,7 @@ export function DiffPane({
 
   useEffect(() => {
     hunkRefs.current[index]?.scrollIntoView?.({ block: "nearest" });
-  }, [index, diff]);
+  }, [index, diff, reveal?.seq]);
 
   useEffect(() => {
     if (selection)
@@ -519,24 +592,32 @@ export function DiffPane({
               </p>
             ) : null}
 
-            <Coloured.Provider value={coloured}>
-              {parsed?.hunks.map((hunk, i) => (
-                <div
-                  key={`${selected?.path}:${i}`}
-                  ref={(node) => {
-                    hunkRefs.current[i] = node;
-                  }}
-                  className={i === index ? "hunk current" : "hunk"}
-                >
-                  <div className="hunk-head">{hunk.header}</div>
-                  {layout === "split" ? (
-                    <Split hunk={hunk} />
-                  ) : (
-                    <Unified hunk={hunk} />
-                  )}
-                </div>
-              ))}
-            </Coloured.Provider>
+            {fileNotes.map((note, i) => (
+              <div key={i} className={`line-note file ${note.tone ?? ""}`} role="note">
+                {note.text}
+              </div>
+            ))}
+
+            <Notes.Provider value={lineNotes}>
+              <Coloured.Provider value={coloured}>
+                {parsed?.hunks.map((hunk, i) => (
+                  <div
+                    key={`${selected?.path}:${i}`}
+                    ref={(node) => {
+                      hunkRefs.current[i] = node;
+                    }}
+                    className={i === index ? "hunk current" : "hunk"}
+                  >
+                    <div className="hunk-head">{hunk.header}</div>
+                    {layout === "split" ? (
+                      <Split hunk={hunk} />
+                    ) : (
+                      <Unified hunk={hunk} />
+                    )}
+                  </div>
+                ))}
+              </Coloured.Provider>
+            </Notes.Provider>
 
             {parsed?.truncated ? (
               <p className="muted pad">

@@ -870,6 +870,7 @@ export function App() {
               onLoadBundle={(surfaceId, messages) =>
                 setGenerativeUi({ state: applyAll(messages), surfaceId, log: messages, live: true })
               }
+              onOpenFile={openInTab}
             />
           </aside>
         ) : null}
