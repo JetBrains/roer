@@ -100,6 +100,9 @@ export type Component =
   | Variant<"Column", { children: ChildList; justify?: Justify; align?: Align }>
   | Variant<"List", { children: ChildList; direction?: "vertical" | "horizontal"; align?: Align }>
   | Variant<"Card", { child: ComponentId }>
+  /** Roer's own: the one layout that wraps, for tiles and cards whose count
+   * varies. `Row`/`Column` stay strictly linear. */
+  | Variant<"Grid", { children: ChildList; columns?: number; minItemWidth?: number }>
   | Variant<"Tabs", { tabs: { title: DynamicString; child: ComponentId }[] }>
   | Variant<"Modal", { trigger: ComponentId; content: ComponentId }>
   | Variant<"Divider", { axis?: "horizontal" | "vertical" }>
@@ -174,6 +177,39 @@ export type Component =
         emptyText?: DynamicString;
         /** `{ path, line?, side?, text }[]`, drawn under the lines they are about. */
         notes?: DataBinding | DiffNote[];
+      }
+    >
+  /** A KPI number for a dashboard, e.g. "12 running jobs". */
+  | Variant<
+      "StatTile",
+      {
+        label: DynamicString;
+        value: DynamicString | DynamicNumber;
+        trend?: { delta: DynamicString | DynamicNumber; direction: "up" | "down" | "flat" };
+        icon?: DynamicString | { svgPath: DynamicString };
+      }
+    >
+  /** A generic SDLC entity tile — a ticket, a CI run, a deployment, a running
+   * job — for a dashboard that mixes several kinds of thing. Unlike
+   * `WorkItem` it carries no tracker ontology (`source`/`key`/`assignee`/
+   * `labels`) and has no `detail` variant: it stays a dense, uniform card
+   * across mixed entity types rather than a deep-dive ticket view. */
+  | Variant<
+      "StatusCard",
+      {
+        title: DynamicString;
+        subtitle?: DynamicString;
+        /** One line of secondary text, e.g. when it last changed. */
+        meta?: DynamicString;
+        icon?: DynamicString | { svgPath: DynamicString };
+        /** Coloured by meaning, the same way `WorkItem`'s is. */
+        status?: DynamicString;
+        /** 0-100, drawn as a slim bar for a job mid-run. */
+        progress?: DynamicNumber;
+        /** An https link to the item; the title opens it in the browser. */
+        url?: DynamicString;
+        /** Controls under the item, e.g. a Row of retry/cancel/open Buttons. */
+        footer?: ComponentId;
       }
     >
   /** One task from any tracker — a GitHub issue, a YouTrack ticket, a Notion

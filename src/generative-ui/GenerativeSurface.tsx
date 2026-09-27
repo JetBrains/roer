@@ -128,6 +128,16 @@ function renderBody(node: Component, ctx: Ctx, scope: Scope, seen: ReadonlySet<C
           {child(node.child)}
         </div>
       );
+    case "Grid":
+      return (
+        <div
+          {...common}
+          className="gen-grid"
+          style={{ ...common.style, ...gridStyle(node.columns, node.minItemWidth) }}
+        >
+          {children(node.children)}
+        </div>
+      );
     case "Divider":
       return <hr {...common} className={node.axis === "vertical" ? "gen-divider vertical" : "gen-divider"} />;
     case "Text":
@@ -146,21 +156,8 @@ function renderBody(node: Component, ctx: Ctx, scope: Scope, seen: ReadonlySet<C
           alt={text(node.description)}
         />
       );
-    case "Icon": {
-      const name = node.name;
-      if (typeof name === "object" && name !== null && "svgPath" in name) {
-        return (
-          <svg {...common} className="gen-icon" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
-            <path d={text(name.svgPath)} fill="currentColor" />
-          </svg>
-        );
-      }
-      return (
-        <span {...common} className="gen-icon" aria-hidden="true">
-          {text(name)}
-        </span>
-      );
-    }
+    case "Icon":
+      return renderIcon(node.name, text, common);
     case "Video":
       return (
         <video {...common} className="gen-image" src={text(node.url)} poster={text(node.posterUrl) || undefined} controls />
@@ -303,6 +300,34 @@ function renderBody(node: Component, ctx: Ctx, scope: Scope, seen: ReadonlySet<C
           notes={readNotes(value(node.notes))}
         />
       );
+    case "StatTile":
+      return (
+        <StatTileNode
+          {...common}
+          label={text(node.label)}
+          value={text(node.value)}
+          trend={
+            node.trend
+              ? { delta: text(node.trend.delta), direction: node.trend.direction }
+              : undefined
+          }
+          icon={node.icon === undefined ? undefined : renderIcon(node.icon, text)}
+        />
+      );
+    case "StatusCard":
+      return (
+        <StatusCardNode
+          {...common}
+          title={text(node.title)}
+          subtitle={node.subtitle === undefined ? "" : text(node.subtitle)}
+          meta={node.meta === undefined ? "" : text(node.meta)}
+          icon={node.icon === undefined ? undefined : renderIcon(node.icon, text)}
+          status={node.status === undefined ? "" : text(node.status)}
+          progress={node.progress === undefined ? undefined : Number(value(node.progress))}
+          url={node.url === undefined ? "" : text(node.url)}
+          footer={node.footer === undefined ? null : child(node.footer)}
+        />
+      );
     case "WorkItem":
       return (
         <WorkItemNode
@@ -421,12 +446,42 @@ function objectFit(fit?: "contain" | "cover" | "fill" | "none" | "scaleDown"): C
   return fit === "scaleDown" ? "scale-down" : fit;
 }
 
+/** `columns` wins when both are set: a fixed count reads as the agent's
+ * intent, `minItemWidth` as "wrap by however many fit". */
+function gridStyle(columns?: number, minItemWidth?: number): CSSProperties {
+  return {
+    gridTemplateColumns:
+      columns !== undefined
+        ? `repeat(${columns}, 1fr)`
+        : minItemWidth !== undefined
+          ? `repeat(auto-fill, minmax(${minItemWidth}px, 1fr))`
+          : undefined,
+  };
+}
+
 interface Common {
   "aria-label"?: string;
   "aria-description"?: string;
   "aria-live"?: "polite" | "assertive";
   "aria-hidden"?: boolean;
   style?: CSSProperties;
+}
+
+/** `Icon`'s own body, shared with `StatTile`/`StatusCard` icons: an svg for
+ * `{ svgPath }`, otherwise the name shown as text. */
+function renderIcon(name: unknown, text: (v: unknown) => string, common?: Common): ReactNode {
+  if (typeof name === "object" && name !== null && "svgPath" in name) {
+    return (
+      <svg {...common} className="gen-icon" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+        <path d={text((name as { svgPath: unknown }).svgPath)} fill="currentColor" />
+      </svg>
+    );
+  }
+  return (
+    <span {...common} className="gen-icon" aria-hidden="true">
+      {text(name)}
+    </span>
+  );
 }
 
 function ChoicePickerNode({
@@ -528,6 +583,93 @@ function statusTone(status: string): "done" | "doing" | "blocked" | "todo" {
   if (["doing", "in progress", "in review", "active", "started", "review", "working"].includes(s)) return "doing";
   if (["blocked", "on hold", "waiting"].includes(s)) return "blocked";
   return "todo";
+}
+
+function StatTileNode({
+  label,
+  value,
+  trend,
+  icon,
+  ...common
+}: Common & {
+  label: string;
+  value: string;
+  trend?: { delta: string; direction: "up" | "down" | "flat" };
+  icon?: ReactNode;
+}) {
+  return (
+    <div {...common} className="gen-stat-tile">
+      {icon ? <div className="gen-stat-tile-icon">{icon}</div> : null}
+      <div className="gen-stat-tile-body">
+        <span className="gen-stat-tile-value">{value}</span>
+        <span className="gen-stat-tile-label">{label}</span>
+      </div>
+      {trend ? (
+        <span className={`gen-stat-tile-trend ${trend.direction}`}>
+          {trend.direction === "up" ? "▲" : trend.direction === "down" ? "▼" : "•"} {trend.delta}
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
+/** A generic SDLC entity — a ticket, a CI run, a deployment, a running job —
+ * dense enough to sit beside unrelated kinds of thing on one dashboard,
+ * unlike `WorkItemNode`'s tracker-specific layout. */
+function StatusCardNode({
+  title,
+  subtitle,
+  meta,
+  icon,
+  status,
+  progress,
+  url,
+  footer,
+  ...common
+}: Common & {
+  title: string;
+  subtitle: string;
+  meta: string;
+  icon?: ReactNode;
+  status: string;
+  progress?: number;
+  url: string;
+  footer: ReactNode;
+}) {
+  // The backend refuses anything but an https link too; checking here keeps
+  // a title that could not open from looking like a link.
+  const link = url.startsWith("https://") ? url : "";
+  const clampedProgress = progress === undefined ? undefined : Math.min(100, Math.max(0, progress));
+  return (
+    <article {...common} className="gen-status-card">
+      <header className="gen-status-card-head">
+        {icon ? <span className="gen-status-card-icon">{icon}</span> : null}
+        {link ? (
+          <button type="button" className="link gen-status-card-title" title={link} onClick={() => void openUrl(link)}>
+            {title}
+          </button>
+        ) : (
+          <span className="gen-status-card-title">{title}</span>
+        )}
+        {status ? <span className={`gen-status-card-status ${statusTone(status)}`}>{status}</span> : null}
+      </header>
+      {subtitle || meta ? (
+        <p className="gen-status-card-meta">{[subtitle, meta].filter(Boolean).join(" · ")}</p>
+      ) : null}
+      {clampedProgress === undefined ? null : (
+        <div
+          className="gen-status-card-progress"
+          role="progressbar"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={clampedProgress}
+        >
+          <div className="gen-status-card-progress-fill" style={{ width: `${clampedProgress}%` }} />
+        </div>
+      )}
+      {footer ? <div className="gen-status-card-footer">{footer}</div> : null}
+    </article>
+  );
 }
 
 function WorkItemNode({

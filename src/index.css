@@ -1884,6 +1884,14 @@ button.gen-button .gen-text {
   overflow-x: auto;
 }
 
+/* The one layout that wraps; without `columns`/`minItemWidth` it falls back
+   to a sensible tile width rather than one giant column. */
+.gen-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 10px;
+}
+
 .gen-image {
   max-width: 100%;
   border-radius: 6px;
@@ -2046,6 +2054,149 @@ button.gen-chip.on {
 
 .gen-expandable-body {
   padding: 4px 0 4px 18px;
+}
+
+/* A KPI number for a dashboard. */
+.gen-stat-tile {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 10px 12px;
+  background: var(--roer-panel);
+  border: 1px solid var(--roer-border);
+  border-radius: 6px;
+}
+
+.gen-stat-tile-icon {
+  display: flex;
+  color: var(--roer-muted);
+}
+
+.gen-stat-tile-body {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.gen-stat-tile-value {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--roer-fg);
+}
+
+.gen-stat-tile-label {
+  font-size: 11px;
+  color: var(--roer-muted);
+}
+
+.gen-stat-tile-trend {
+  margin-left: auto;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.gen-stat-tile-trend.up {
+  color: var(--roer-plus);
+}
+
+.gen-stat-tile-trend.down {
+  color: var(--roer-warn);
+}
+
+.gen-stat-tile-trend.flat {
+  color: var(--roer-muted);
+}
+
+/* A generic SDLC entity — a ticket, a CI run, a deployment, a running job —
+   dense enough to sit on a dashboard beside unrelated kinds of thing. */
+.gen-status-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  padding: 9px 11px;
+  background: var(--roer-panel);
+  border: 1px solid var(--roer-border);
+  border-radius: 6px;
+  font-size: 12.5px;
+}
+
+.gen-status-card-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.gen-status-card-icon {
+  display: flex;
+  color: var(--roer-muted);
+}
+
+.gen-status-card-title {
+  flex: 1;
+  min-width: 0;
+  color: var(--roer-fg);
+  overflow-wrap: anywhere;
+}
+
+button.link.gen-status-card-title {
+  text-align: left;
+  font-size: 12.5px;
+  color: var(--roer-fg);
+}
+
+button.link.gen-status-card-title:hover {
+  color: var(--roer-accent);
+  text-decoration: underline;
+}
+
+.gen-status-card-status {
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--roer-border);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.gen-status-card-status.doing {
+  color: var(--roer-accent);
+  border-color: var(--roer-accent);
+}
+
+.gen-status-card-status.done {
+  color: var(--roer-plus);
+  border-color: var(--roer-plus);
+}
+
+.gen-status-card-status.blocked {
+  color: var(--roer-warn);
+  border-color: var(--roer-warn);
+}
+
+.gen-status-card-meta {
+  margin: 0;
+  font-size: 11px;
+  color: var(--roer-muted);
+}
+
+.gen-status-card-progress {
+  height: 4px;
+  border-radius: 999px;
+  background: var(--roer-hover);
+  overflow: hidden;
+}
+
+.gen-status-card-progress-fill {
+  height: 100%;
+  background: var(--roer-accent);
+  transition: width 0.2s ease;
+}
+
+.gen-status-card-footer {
+  display: flex;
+  gap: 6px;
+  padding-top: 2px;
 }
 
 /* A work item from any tracker, compact enough to stack in a board lane. */
