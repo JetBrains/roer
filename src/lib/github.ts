@@ -6,8 +6,7 @@
  * The prompt builders below are what the Pull Request tab types into that
  * session when it hands the agent a job.
  */
-import { invoke } from "@tauri-apps/api/core";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { invoke, listen, type UnlistenFn } from "./backend";
 
 export interface GhStatus {
   installed: boolean;

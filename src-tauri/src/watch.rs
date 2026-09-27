@@ -28,8 +28,8 @@ use std::time::{Duration, Instant};
 
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use serde::Serialize;
-use tauri::{AppHandle, Emitter};
 
+use crate::events::Sink;
 use crate::files::{self, Repos};
 use crate::git;
 
@@ -85,7 +85,7 @@ pub(crate) struct Watch {
 }
 
 /// Start watching `root`, reporting to `app` and marking `repos` stale.
-pub(crate) fn arm(app: AppHandle, repos: Arc<Mutex<Repos>>, root: String) -> Result<Watch, String> {
+pub(crate) fn arm<S: Sink>(app: S, repos: Arc<Mutex<Repos>>, root: String) -> Result<Watch, String> {
     // FSEvents reports canonical paths, and a worktree under `/var` or a
     // symlinked home is reached by a name that is not the one it reports —
     // so the prefix events are stripped of has to be the canonical one, and
@@ -108,7 +108,7 @@ pub(crate) fn arm(app: AppHandle, repos: Arc<Mutex<Repos>>, root: String) -> Res
 type Events = Receiver<notify::Result<notify::Event>>;
 
 /// One thread per watched root: batch, ask git what matters, tell everyone.
-fn run(app: &AppHandle, repos: &Arc<Mutex<Repos>>, root: &str, full: &Path, rx: &Events) {
+fn run<S: Sink>(app: &S, repos: &Arc<Mutex<Repos>>, root: &str, full: &Path, rx: &Events) {
     // Kept across batches, because the answer only changes when a
     // `.gitignore` does — and then the whole cache is dropped.
     let mut ignored: HashMap<String, bool> = HashMap::new();
@@ -128,9 +128,7 @@ fn run(app: &AppHandle, repos: &Arc<Mutex<Repos>>, root: &str, full: &Path, rx: 
         if !patched(repos, root, settled.relist.as_deref()) {
             files::mark_stale(repos, root);
         }
-        if let Err(e) = app.emit(CHANGED_EVENT, &settled.changed) {
-            eprintln!("roer: could not report a change under {root}: {e}");
-        }
+        app.emit(CHANGED_EVENT, &settled.changed);
     }
 }
 

@@ -28,6 +28,19 @@ pub enum PtyEvent {
     Exit { code: Option<i32> },
 }
 
+/// Where a spawned PTY's [`PtyEvent`]s go — Tauri's own `Channel` inside the
+/// app, or a tagged slot on `roer-server`'s WebSocket bus for a browser tab.
+pub(crate) trait PtySink: Clone + Send + 'static {
+    /// `false` means the other end is gone; the reader thread stops.
+    fn push(&self, event: PtyEvent) -> bool;
+}
+
+impl PtySink for Channel<PtyEvent> {
+    fn push(&self, event: PtyEvent) -> bool {
+        self.send(event).is_ok()
+    }
+}
+
 struct Session {
     master: Box<dyn MasterPty + Send>,
     writer: Box<dyn Write + Send>,
@@ -61,6 +74,19 @@ pub fn pty_spawn(
     cols: u16,
     rows: u16,
     on_event: Channel<PtyEvent>,
+) -> Result<String, String> {
+    spawn(&state, args, cwd, cols, rows, on_event)
+}
+
+/// The spawn itself, generic over [`PtySink`] so `roer-server` can hand it a
+/// WebSocket-backed sink instead of Tauri's own `Channel`.
+pub(crate) fn spawn<P: PtySink>(
+    state: &PtyState,
+    args: Vec<String>,
+    cwd: Option<String>,
+    cols: u16,
+    rows: u16,
+    on_event: P,
 ) -> Result<String, String> {
     let size = PtySize {
         rows: rows.max(1),
@@ -136,7 +162,7 @@ pub fn pty_spawn(
                     let data = base64::engine::general_purpose::STANDARD.encode(&buf[..n]);
                     // A send error means the webview dropped the channel
                     // (navigated away, or the view unmounted); stop reading.
-                    if on_event.send(PtyEvent::Output { data }).is_err() {
+                    if !on_event.push(PtyEvent::Output { data }) {
                         break;
                     }
                 }
@@ -148,7 +174,7 @@ pub fn pty_spawn(
             .ok()
             .and_then(|mut c| c.wait().ok())
             .map(|status| status.exit_code() as i32);
-        let _ = on_event.send(PtyEvent::Exit { code });
+        let _ = on_event.push(PtyEvent::Exit { code });
 
         if let Ok(mut sessions) = sessions.lock() {
             sessions.remove(&done_id);
@@ -164,6 +190,10 @@ pub fn pty_write(
     id: String,
     data: String,
 ) -> Result<(), String> {
+    write(&state, id, data)
+}
+
+pub(crate) fn write(state: &PtyState, id: String, data: String) -> Result<(), String> {
     let mut sessions = state.sessions.lock().map_err(|_| poisoned())?;
     let session = sessions
         .get_mut(&id)
@@ -182,6 +212,10 @@ pub fn pty_resize(
     cols: u16,
     rows: u16,
 ) -> Result<(), String> {
+    resize(&state, id, cols, rows)
+}
+
+pub(crate) fn resize(state: &PtyState, id: String, cols: u16, rows: u16) -> Result<(), String> {
     let sessions = state.sessions.lock().map_err(|_| poisoned())?;
     let session = sessions
         .get(&id)
@@ -202,6 +236,10 @@ pub fn pty_resize(
 /// reattachable from a terminal afterwards.
 #[tauri::command]
 pub fn pty_close(state: tauri::State<'_, PtyState>, id: String) -> Result<(), String> {
+    close(&state, id)
+}
+
+pub(crate) fn close(state: &PtyState, id: String) -> Result<(), String> {
     let mut sessions = state.sessions.lock().map_err(|_| poisoned())?;
     if let Some(session) = sessions.remove(&id) {
         if let Ok(mut child) = session.child.lock() {

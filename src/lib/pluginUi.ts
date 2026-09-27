@@ -6,8 +6,7 @@
  * backwards: v1.0's renderer-to-agent `action` message, tagged with the
  * pane so `roer plugin-ui-actions` knows which terminal to deliver it to.
  */
-import { invoke } from "@tauri-apps/api/core";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { invoke, listen, type UnlistenFn } from "./backend";
 
 import { type LegacyBundle } from "../generative-ui/legacy";
 import { A2UI_VERSION, isA2uiMessage, type A2uiMessage, type DataModel } from "../generative-ui/schema";

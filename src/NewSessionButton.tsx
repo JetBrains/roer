@@ -1,11 +1,10 @@
-import { open } from "@tauri-apps/plugin-dialog";
-
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { pickFolder } from "./lib/folderPicker";
 import { shortcutLabel } from "./lib/keys";
 import type { Project } from "./lib/projects";
 import type { SessionBrowserState } from "./lib/useSessionBrowser";
@@ -41,7 +40,7 @@ export function NewSessionButton({
     : [];
 
   const attachNewForPicker = async () => {
-    const picked = await open({ directory: true, multiple: false });
+    const picked = await pickFolder();
     if (typeof picked === "string") {
       attachNewProjectForNewSession(picked);
     } else {

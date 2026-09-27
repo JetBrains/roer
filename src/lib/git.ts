@@ -4,7 +4,7 @@
  * The backend answers about one repository at a time — the one the staged
  * session is sitting in — so every call carries the directory it is about.
  */
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "./backend";
 
 export interface FileChange {
   /** Repo-relative and slash-separated. */

@@ -914,7 +914,7 @@ fn poisoned() -> String {
 /// it asks for nothing. Arming is cheap enough to do from a per-keystroke
 /// path — a recursive FSEvents watch is kernel-side, 4.9 ms on a worktree of
 /// 1.36M files — but it is still done once.
-pub(crate) fn watch_root(app: &AppHandle, state: &FileIndex, root: &str) {
+pub(crate) fn watch_root<S: crate::events::Sink>(app: &S, state: &FileIndex, root: &str) {
     let Ok(mut repos) = state.repos.lock() else {
         return;
     };
@@ -1022,8 +1022,20 @@ pub fn files_search(
     query: String,
     limit: usize,
 ) -> Result<Hits, String> {
+    files_search_core(&app, &state, cwd, query, limit)
+}
+
+/// The search itself, generic over the host's [`crate::events::Sink`] so
+/// `roer-server` can call it with nothing of Tauri about it.
+pub(crate) fn files_search_core<S: crate::events::Sink>(
+    app: &S,
+    state: &FileIndex,
+    cwd: String,
+    query: String,
+    limit: usize,
+) -> Result<Hits, String> {
     let root = git::root(&cwd)?;
-    watch_root(&app, &state, &root);
+    watch_root(app, state, &root);
     let (line, query) = split_line(&query);
 
     let (snapshot, indexing) = {
@@ -1130,8 +1142,19 @@ pub fn file_read(
     root: String,
     path: String,
 ) -> Result<FileText, String> {
+    file_read_core(&app, &state, root, path)
+}
+
+/// The reading itself, generic over the host the same way
+/// [`files_search_core`] is.
+pub(crate) fn file_read_core<S: crate::events::Sink>(
+    app: &S,
+    state: &FileIndex,
+    root: String,
+    path: String,
+) -> Result<FileText, String> {
     // Opening a file is asking to be told when it changes.
-    watch_root(&app, &state, &root);
+    watch_root(app, state, &root);
     read(&root, &path)
 }
 

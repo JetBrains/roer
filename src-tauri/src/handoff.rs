@@ -255,16 +255,21 @@ fn claimed_in(path: &Path, dir: &Path) -> Result<(), String> {
 /// the ordinary case, because the shim starts Roer itself and then waits.
 #[tauri::command]
 pub fn handoff_pending(app: AppHandle) -> Vec<Handoff> {
-    let records: Vec<Handoff> = pending(&handoffs_dir())
-        .iter()
-        .filter_map(|path| read(path).ok())
-        .collect();
+    let records = handoff_pending_core();
     // Same as a delivery through the watcher: a handoff is also a request to
-    // come forward, and this one has been waiting.
+    // come forward, and this one has been waiting. Native to the desktop
+    // window, so it has no equivalent on `roer-server`'s browser tab.
     if !records.is_empty() {
         focus(&app);
     }
     records
+}
+
+pub(crate) fn handoff_pending_core() -> Vec<Handoff> {
+    pending(&handoffs_dir())
+        .iter()
+        .filter_map(|path| read(path).ok())
+        .collect()
 }
 
 /// Take a pending record, before attaching anything.

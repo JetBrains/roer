@@ -1,4 +1,4 @@
-import { ask, open } from "@tauri-apps/plugin-dialog";
+import { ask } from "@tauri-apps/plugin-dialog";
 import { useState } from "react";
 
 import {
@@ -7,6 +7,7 @@ import {
   ContextMenuItem,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
+import { pickFolder } from "./lib/folderPicker";
 import type { Project } from "./lib/projects";
 
 export interface ProjectsPanelProps {
@@ -41,7 +42,7 @@ export function ProjectsPanel({
   const [renameValue, setRenameValue] = useState("");
 
   const addProject = async () => {
-    const picked = await open({ directory: true, multiple: false });
+    const picked = await pickFolder();
     if (typeof picked === "string") onCreate(folderName(picked), picked);
   };
 

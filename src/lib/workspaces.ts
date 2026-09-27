@@ -8,7 +8,7 @@
  * Claude conversations are assigned by id via `assignSession`/
  * `unassignSession`, not stored on the Workspace itself.
  */
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "./backend";
 
 /** A generic external item, e.g. a tracker task — no kind-specific UI yet. */
 export interface WorkspaceItem {

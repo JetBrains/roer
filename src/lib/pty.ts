@@ -4,8 +4,7 @@
  * Every session is `roer <args>`: mode 1 is `["shell"]`, mode 2 is
  * `["attach", pane]`. The frontend never names tmux.
  */
-import { Channel, invoke } from "@tauri-apps/api/core";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { Channel, invoke, listen, type UnlistenFn } from "./backend";
 
 export type PtyEvent =
   | { kind: "output"; data: string }

@@ -490,9 +490,19 @@ pub fn git_changes(
     state: tauri::State<'_, crate::files::FileIndex>,
     cwd: String,
 ) -> Result<Changes, String> {
+    git_changes_core(&app, &state, cwd)
+}
+
+/// The watched read itself, generic over the host the same way
+/// [`crate::files::files_search_core`] is.
+pub(crate) fn git_changes_core<S: crate::events::Sink>(
+    app: &S,
+    state: &crate::files::FileIndex,
+    cwd: String,
+) -> Result<Changes, String> {
     let root = root(&cwd)?;
     // Looking at the diff is asking to be told when it changes.
-    crate::files::watch_root(&app, &state, &root);
+    crate::files::watch_root(app, state, &root);
     changes(&root)
 }
 
