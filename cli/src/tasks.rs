@@ -10,12 +10,12 @@
 //! `WorkItem` beside a GitHub issue or a YouTrack ticket, as `source:
 //! "personal"`. The fields are few on purpose: the ones every tracker has.
 
-use std::io::ErrorKind;
+use std::io::{ErrorKind, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 use serde_json::{json, Map, Value};
 
-use crate::records::{now_rfc3339, write_atomic};
+use crate::records::now_rfc3339;
 use crate::Fail;
 
 /// The lanes a personal task moves through.
@@ -56,12 +56,17 @@ impl Tasks {
             let id = format!("T-{n}");
             let path = self.path(&id);
             match std::fs::OpenOptions::new().write(true).create_new(true).open(&path) {
-                Ok(_) => {
+                Ok(mut file) => {
                     task["id"] = id.into();
-                    // Claimed empty, then written whole, so a reader sees
-                    // either nothing it can parse or the complete task.
-                    write_atomic(&path, &pretty(&task))?;
-                    return Ok(task);
+                    // Written straight into the file `create_new` just
+                    // claimed, rather than through a temp-file-and-rename: the
+                    // destination always already exists at this point (we
+                    // just created it), and replacing an existing file by
+                    // rename is not dependable on Windows.
+                    return file
+                        .write_all(pretty(&task).as_bytes())
+                        .map(|()| task)
+                        .map_err(|e| Fail::new(1, format!("could not write {}: {e}", path.display())));
                 }
                 Err(e) if e.kind() == ErrorKind::AlreadyExists => n += 1,
                 Err(e) => return Err(Fail::new(1, format!("could not create {}: {e}", path.display()))),
@@ -75,10 +80,30 @@ impl Tasks {
         if fields.get("title").and_then(Value::as_str).is_some_and(|t| t.trim().is_empty()) {
             return Err(Fail::new(2, "a task needs a title"));
         }
-        let mut task = self.get(id)?;
+        check_id(id)?;
+        let path = self.path(id);
+        let mut file = std::fs::OpenOptions::new().read(true).write(true).open(&path).map_err(|e| match e.kind()
+        {
+            ErrorKind::NotFound => Fail::new(3, format!("no task {id}")),
+            _ => Fail::new(1, format!("could not open {}: {e}", path.display())),
+        })?;
+        // Held across the whole read-merge-write below, so two agents
+        // updating the same task at once serialise instead of one silently
+        // discarding the other's change: both would otherwise read the same
+        // old JSON and the later write would overwrite the earlier field.
+        file.lock().map_err(|e| Fail::new(1, format!("could not lock {}: {e}", path.display())))?;
+        let mut text = String::new();
+        file.read_to_string(&mut text)
+            .map_err(|e| Fail::new(1, format!("could not read {}: {e}", path.display())))?;
+        let mut task: Value = serde_json::from_str(&text)
+            .map_err(|e| Fail::new(1, format!("{} is not JSON: {e}", path.display())))?;
         merge(&mut task, &fields);
         task["updated"] = now_rfc3339().into();
-        write_atomic(&self.path(id), &pretty(&task))?;
+        let out = pretty(&task);
+        file.set_len(0)
+            .and_then(|()| file.seek(SeekFrom::Start(0)).map(|_| ()))
+            .and_then(|()| file.write_all(out.as_bytes()))
+            .map_err(|e| Fail::new(1, format!("could not write {}: {e}", path.display())))?;
         Ok(task)
     }
 
@@ -240,6 +265,41 @@ mod tests {
         tasks.remove("T-1").unwrap();
         // A removed number is not reused while a later one exists.
         assert_eq!(tasks.add(&json!({ "title": "Third" })).unwrap()["id"], "T-3");
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn concurrent_updates_to_different_fields_both_stick() {
+        use std::sync::{Arc, Barrier};
+
+        let (tasks, root) = store("concurrent");
+        let tasks = Arc::new(tasks);
+        let id = tasks.add(&json!({ "title": "Shared" })).unwrap()["id"].as_str().unwrap().to_string();
+
+        // Without a lock around update's read-merge-write, both threads can
+        // read the same pre-update JSON and the later write then overwrites
+        // the earlier one's field instead of both landing.
+        let barrier = Arc::new(Barrier::new(2));
+        let a = {
+            let (tasks, id, barrier) = (Arc::clone(&tasks), id.clone(), Arc::clone(&barrier));
+            std::thread::spawn(move || {
+                barrier.wait();
+                tasks.update(&id, &json!({ "status": "doing" })).unwrap();
+            })
+        };
+        let b = {
+            let (tasks, id, barrier) = (Arc::clone(&tasks), id.clone(), Arc::clone(&barrier));
+            std::thread::spawn(move || {
+                barrier.wait();
+                tasks.update(&id, &json!({ "labels": ["urgent"] })).unwrap();
+            })
+        };
+        a.join().unwrap();
+        b.join().unwrap();
+
+        let task = tasks.get(&id).unwrap();
+        assert_eq!(task["status"], "doing");
+        assert_eq!(task["labels"], json!(["urgent"]));
         std::fs::remove_dir_all(&root).ok();
     }
 

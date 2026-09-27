@@ -97,6 +97,19 @@ describe("isA2uiMessage", () => {
       isA2uiMessage({ version: "v1.0", createSurface: { surfaceId: "s" }, deleteSurface: { surfaceId: "s" } }),
     ).toBe(false);
   });
+
+  it("rejects a malformed component entry rather than letting it reach the reducer", () => {
+    expect(isA2uiMessage({ version: "v1.0", createSurface: { surfaceId: "s", components: [null] } })).toBe(false);
+    expect(
+      isA2uiMessage({ version: "v1.0", updateComponents: { surfaceId: "s", components: [{ id: "root" }] } }),
+    ).toBe(false);
+    expect(
+      isA2uiMessage({
+        version: "v1.0",
+        updateComponents: { surfaceId: "s", components: [{ id: "root", component: "Text" }] },
+      }),
+    ).toBe(true);
+  });
 });
 
 describe("JSON Pointer", () => {
@@ -126,6 +139,23 @@ describe("JSON Pointer", () => {
     expect(resolvePointer("name", "/files/2")).toBe("/files/2/name");
     expect(resolvePointer("/top", "/files/2")).toBe("/top");
     expect(resolvePointer("name")).toBe("/name");
+  });
+
+  it("does not read inherited prototype properties", () => {
+    expect(readPointer({}, "/toString")).toBeUndefined();
+    expect(readPointer({}, "/constructor")).toBeUndefined();
+  });
+
+  it("treats only the empty pointer as the root, per RFC 6901", () => {
+    // "/" points to the member keyed "", not to the document itself.
+    expect(writePointer({ a: 1 }, "/", "x")).toEqual({ a: 1, "": "x" });
+    expect(writePointer({ a: 1 }, "", { fresh: true })).toEqual({ fresh: true });
+  });
+
+  it("does not create a missing parent just to delete through it", () => {
+    expect(writePointer({}, "/a/b", null)).toEqual({});
+    expect(writePointer({ a: { c: 1 } }, "/a/b/d", null)).toEqual({ a: { c: 1 } });
+    expect(writePointer({ files: [] }, "/files/0/on", null)).toEqual({ files: [] });
   });
 });
 

@@ -55,7 +55,7 @@ export function applyMessage(state: RenderState, message: A2uiMessage): RenderSt
     const current = state.dataModels[surfaceId] ?? {};
     return {
       ...state,
-      dataModels: { ...state.dataModels, [surfaceId]: writePointer(current, path ?? "/", value) },
+      dataModels: { ...state.dataModels, [surfaceId]: writePointer(current, path ?? "", value) },
     };
   }
   if ("deleteSurface" in message) {
