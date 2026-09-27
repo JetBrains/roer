@@ -11,6 +11,7 @@ mod mcp_install;
 mod names;
 mod records;
 mod skills;
+mod tasks;
 mod tmux;
 
 use std::io::Read;
@@ -20,6 +21,7 @@ use serde_json::{json, Value};
 
 use names::{is_agent_id, is_bundle_name, is_pane_id, session_name};
 use records::{emit_plugin_ui, emit_pr_draft, publish};
+use tasks::Tasks;
 use tmux::Tmux;
 
 /// A command's failure: the exit code the shim used for it, and what to say.
@@ -90,6 +92,16 @@ usage:
                         re-show a saved plugin UI in this session's pane
   roer plugin-ui load --pane <id> <name>
                         same, for an explicit pane
+  roer task add \"<title>\" [--status <s>] [--body <text>] [--label <l>]...
+                        add a personal task to this project's .roer/tasks
+                        and print it as JSON; status is todo (the default),
+                        doing or done
+  roer task list [--status <s>]
+                        print this project's tasks, one JSON object per line
+  roer task set <id> [--title <t>] [--status <s>] [--body <text>] [--label <l>]...
+                        change a task's fields and print it; any --label
+                        replaces its labels, and an empty --body clears it
+  roer task rm <id>     delete a task
   roer send [--pane <id>]
                         read text from stdin and submit it as a prompt to
                         the program running in the session's pane
@@ -175,6 +187,7 @@ impl Roer {
                 _ => self.plugin_ui(args),
             },
             "plugin-ui-actions" => self.plugin_ui_actions(args),
+            "task" | "tasks" => self.task(args),
             "send" => self.send(args),
             "pr-draft" => self.pr_draft(args),
             "skills" => skills::run(&self.conf, args),
@@ -623,6 +636,35 @@ impl Roer {
         emit_pr_draft(&pane, draft)
     }
 
+    /// `roer task …`: the project's personal tasks, see `tasks`.
+    fn task(&self, args: &[&str]) -> Outcome {
+        let tasks = self.tasks();
+        let print = |task: Value| println!("{task}");
+        match args {
+            ["add", title, rest @ ..] => {
+                let mut fields = task_flags(rest)?;
+                fields["title"] = (*title).into();
+                tasks.add(&fields).map(print)
+            }
+            ["list" | "ls", rest @ ..] => {
+                let status = match rest {
+                    [] => None,
+                    ["--status", status] => Some(*status),
+                    _ => return Err(Fail::new(2, "usage: roer task list [--status <s>]")),
+                };
+                tasks.list(status).map(|all| all.into_iter().for_each(print))
+            }
+            ["set", id, rest @ ..] => tasks.update(id, &task_flags(rest)?).map(print),
+            ["rm", id] => tasks.remove(id),
+            _ => Err(Fail::new(2, "usage: roer task add|list|set|rm (see roer help)")),
+        }
+    }
+
+    /// This project's task store.
+    fn tasks(&self) -> Tasks {
+        Tasks::new(&self.project_root())
+    }
+
     /// The project's own bundle store: a plugin UI worth keeping lives with the
     /// project, versioned and shared the way the code that built it is.
     fn bundle_dir(&self, name: &str) -> PathBuf {
@@ -655,6 +697,35 @@ fn resolve_pane(tmux: &Tmux, args: &[&str]) -> Result<String, Fail> {
         return Ok(pane.to_string());
     }
     tmux.inside_roer()
+}
+
+/// `--title`, `--status`, `--body` and `--label` (repeatable) as a task's
+/// fields, for `Tasks` to check.
+fn task_flags(args: &[&str]) -> Result<Value, Fail> {
+    let mut fields = json!({});
+    let mut labels: Option<Vec<Value>> = None;
+    let mut rest = args.iter();
+    while let Some(flag) = rest.next() {
+        let key = match *flag {
+            "--title" => "title",
+            "--status" => "status",
+            "--body" => "body",
+            "--label" => "label",
+            other => return Err(Fail::new(2, format!("unknown task option: {other}"))),
+        };
+        let Some(value) = rest.next() else {
+            return Err(Fail::new(2, format!("{flag} needs a value")));
+        };
+        if key == "label" {
+            labels.get_or_insert_with(Vec::new).push((*value).into());
+        } else {
+            fields[key] = (*value).into();
+        }
+    }
+    if let Some(labels) = labels {
+        fields["labels"] = labels.into();
+    }
+    Ok(fields)
 }
 
 fn check_bundle_name(name: &str) -> Outcome {

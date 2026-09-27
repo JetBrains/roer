@@ -701,12 +701,21 @@ fn mcp_offers_the_session_tools_only_inside_a_roer_session() {
     let vars = in_pane(&env, &here);
     let vars: Vec<(&str, &str)> = vars.iter().map(|(k, v)| (*k, v.as_str())).collect();
     let inside = mcp(&env, &vars, &[list]);
-    assert_eq!(tool_names(&inside[0]), ["show_ui", "read_ui_actions", "save_ui", "load_ui"]);
+    assert_eq!(
+        tool_names(&inside[0]),
+        [
+            "show_ui",
+            "read_ui_actions",
+            "save_ui",
+            "load_ui",
+            "add_task",
+            "update_task",
+            "list_tasks",
+            "delete_task"
+        ]
+    );
 }
 
-/// Claude Code in a plain terminal gets nothing from Roer, not even the
-/// instructions; any other client, like the Claude app, and Claude Code in a
-/// Roer session, do.
 #[test]
 fn a_pre_v1_bundle_is_left_for_the_app_to_upgrade() {
     let env = Env::new("bundle-legacy");
@@ -726,6 +735,9 @@ fn a_pre_v1_bundle_is_left_for_the_app_to_upgrade() {
     assert!(bundle.join("surface.json").is_file());
 }
 
+/// Claude Code in a plain terminal gets nothing from Roer, not even the
+/// instructions; any other client, like the Claude app, and Claude Code in a
+/// Roer session, do.
 #[test]
 fn mcp_offers_claude_code_nothing_outside_a_roer_session() {
     let env = Env::new("mcp-idle");
@@ -750,7 +762,7 @@ fn mcp_offers_claude_code_nothing_outside_a_roer_session() {
     let vars = in_pane(&env, &here);
     let vars: Vec<(&str, &str)> = vars.iter().map(|(k, v)| (*k, v.as_str())).collect();
     let inside = mcp(&env, &vars, &[init("claude-code"), list]);
-    assert_eq!(tool_names(&inside[1]), ["show_ui", "read_ui_actions", "save_ui", "load_ui"]);
+    assert_eq!(tool_names(&inside[1])[..4], ["show_ui", "read_ui_actions", "save_ui", "load_ui"]);
 }
 
 #[test]
@@ -921,4 +933,55 @@ fn mcp_install_leaves_the_claude_app_alone_unless_asked_and_keeps_its_config() {
     let config: Value = serde_json::from_str(&std::fs::read_to_string(clients.desktop_file()).unwrap()).unwrap();
     assert!(config["mcpServers"]["roer"].is_null());
     assert_eq!(config["mcpServers"]["other"]["command"], "x");
+}
+
+#[test]
+fn tasks_are_kept_with_the_project() {
+    let env = Env::new("tasks");
+    let add = env.run(&["task", "add", "Triage issue #21", "--label", "github", "--label", "triage"]);
+    assert_eq!(code(&add), 0, "{}", stderr(&add));
+    let task: Value = serde_json::from_slice(&add.stdout).unwrap();
+    assert_eq!((task["id"].as_str(), task["status"].as_str()), (Some("T-1"), Some("todo")));
+    assert_eq!(task["labels"], serde_json::json!(["github", "triage"]));
+    assert!(env.dir.join(".roer/tasks/T-1.json").is_file());
+
+    assert_eq!(code(&env.run(&["task", "add", "Write the release notes"])), 0);
+    let set = env.run(&["task", "set", "T-1", "--status", "doing", "--body", "Started"]);
+    assert_eq!(code(&set), 0, "{}", stderr(&set));
+
+    let list = env.run(&["task", "list", "--status", "doing"]);
+    let lines: Vec<Value> = String::from_utf8_lossy(&list.stdout).lines().map(|l| serde_json::from_str(l).unwrap()).collect();
+    assert_eq!(lines.len(), 1);
+    assert_eq!((lines[0]["id"].as_str(), lines[0]["body"].as_str()), (Some("T-1"), Some("Started")));
+
+    assert_eq!(code(&env.run(&["task", "set", "T-1", "--status", "blocked"])), 2);
+    assert_eq!(code(&env.run(&["task", "add", "x", "--priority", "high"])), 2);
+    assert_eq!(code(&env.run(&["task", "rm", "T-1"])), 0);
+    assert_eq!(code(&env.run(&["task", "rm", "T-1"])), 3);
+    assert_eq!(String::from_utf8_lossy(&env.run(&["task", "list"]).stdout).lines().count(), 1);
+}
+
+#[test]
+fn mcp_adds_updates_lists_and_deletes_tasks() {
+    let env = Env::new("mcp-tasks");
+    let here = pane(&env, "work", "sh");
+    let vars = in_pane(&env, &here);
+    let vars: Vec<(&str, &str)> = vars.iter().map(|(k, v)| (*k, v.as_str())).collect();
+
+    let replies = mcp(&env, &vars, &[
+        call("add_task", serde_json::json!({ "title": "Follow up on #18", "labels": ["github"] })),
+        call("update_task", serde_json::json!({ "id": "T-1", "status": "done" })),
+        call("list_tasks", serde_json::json!({ "status": "done" })),
+        call("add_task", serde_json::json!({ "title": "" })),
+        call("delete_task", serde_json::json!({ "id": "T-1" })),
+        call("list_tasks", serde_json::json!({})),
+    ]);
+    let text = |n: usize| replies[n]["result"]["content"][0]["text"].as_str().unwrap().to_string();
+    let added: Value = serde_json::from_str(&text(0)).unwrap();
+    assert_eq!(added["id"], "T-1");
+    let done: Value = serde_json::from_str(&text(2)).unwrap();
+    assert_eq!(done[0]["status"], "done");
+    assert_eq!(replies[3]["result"]["isError"], true, "a task needs a title");
+    assert_eq!(replies[4]["result"]["isError"], false);
+    assert_eq!(text(5), "[]");
 }

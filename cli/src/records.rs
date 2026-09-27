@@ -38,6 +38,14 @@ pub fn stamp() -> String {
     )
 }
 
+/// Now as RFC 3339 in UTC, to the second: what a task says it was touched.
+pub fn now_rfc3339() -> String {
+    let secs = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+    let (days, rest) = (secs / 86_400, secs % 86_400);
+    let (y, m, d) = civil(days as i64);
+    format!("{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}Z", rest / 3600, rest % 3600 / 60, rest % 60)
+}
+
 /// Days since 1970-01-01 as a calendar date (Howard Hinnant's algorithm).
 fn civil(days: i64) -> (i64, u32, u32) {
     let z = days + 719_468;
