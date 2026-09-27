@@ -765,6 +765,29 @@ fn mcp_offers_claude_code_nothing_outside_a_roer_session() {
     assert_eq!(tool_names(&inside[1])[..4], ["show_ui", "read_ui_actions", "save_ui", "load_ui"]);
 }
 
+/// Some clients cut a long `instructions` string short before the component
+/// catalog in it ever reaches the agent; the same text is also a resource, to
+/// read in full as an ordinary result instead.
+#[test]
+fn mcp_serves_the_guide_as_a_resource_too() {
+    let env = Env::new("mcp-resource");
+    let list = serde_json::json!({ "method": "resources/list" });
+    let read = |uri: &str| serde_json::json!({ "method": "resources/read", "params": { "uri": uri } });
+
+    let replies = mcp(&env, &[], &[list, read("roer:catalog/1"), read("nonsense")]);
+    let resources = replies[0]["result"]["resources"].as_array().unwrap();
+    assert_eq!(resources.len(), 1);
+    assert_eq!(resources[0]["uri"], "roer:catalog/1");
+
+    let contents = &replies[1]["result"]["contents"][0];
+    assert_eq!(contents["uri"], "roer:catalog/1");
+    let text = contents["text"].as_str().unwrap();
+    assert!(text.contains("## The component catalog"), "{text}");
+    assert!(text.contains("WorkItem"), "{text}");
+
+    assert!(replies[2]["error"]["message"].as_str().unwrap().contains("nonsense"));
+}
+
 #[test]
 fn mcp_shows_ui_in_its_own_session_or_a_named_one() {
     let env = Env::new("mcp-show");
