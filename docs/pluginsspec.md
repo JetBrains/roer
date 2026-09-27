@@ -323,6 +323,14 @@ different repo re-resolves `root` and re-runs everything.
 | `git.branchCommits` | `branch`, `base` | `Commit[]` | `git:read` | `git_branch_commits` (phase 3) |
 | `git.commitFiles` | `commit` | `FileChange[]` | `git:read` | `git_commit_files` (phase 3) |
 | `files.read` | `path` | `{ text, lang }` | `files:read` | `files.rs` |
+| `github.issues` | — | `WorkItem[]`-shaped list | `github:read` | `gh issue list` (proposed) |
+| `ci.jobs` | — | `StatusCard[]`-shaped list | `ci:read` | proposed |
+
+`github.issues` and `ci.jobs` are proposed, for dashboard sourcing (§4):
+one query per integration, backed by host code that calls that integration
+directly, same precedent as `git.*`. Deliberately not a generic `mcp.call`
+query — that would let a manifest invoke any MCP tool the host has, a much
+bigger capability/trust decision this spec doesn't take on here.
 
 There's no `git.diff` query: diffs belong to `DiffView` (§4). Derived fields
 are added host-side where every consumer needs them: `FileChange` gains
@@ -396,6 +404,25 @@ has to catch anything:
 
 Inside `fileRow` and its descendants, relative paths (`"path"`, `"status"`)
 resolve against the current element.
+
+### Dashboard components (proposed)
+
+Not yet implemented — tracked here until they land in `schema.ts` /
+`GenerativeSurface.tsx` and the live `mcp-guide.md` catalog. They're plain
+catalog components, not host components below: no self-fetching, bound to
+the data model like `WorkItem` is today.
+
+| Component | Fields | Notes |
+| --- | --- | --- |
+| `Grid` | `children`, `columns?`, `minItemWidth?` | The one layout primitive that wraps; `Row`/`Column` stay strictly linear. |
+| `StatTile` | `label`, `value`, `trend?: { delta, direction }`, `icon?` | A KPI number, e.g. "12 running jobs". |
+| `StatusCard` | `title`, `subtitle?`, `meta?`, `icon?`, `status?`, `progress?: 0-100`, `url?`, `footer?: id` | A generic SDLC entity tile — ticket, CI run, deployment, job. Same status→tone coloring as `WorkItem`, but no `source`/`key`/`assignee`/`labels` ontology and no `detail` variant: it stays a dense, uniform tile across mixed entity types on one dashboard, where `WorkItem` is for ticket-tracker items specifically. |
+
+A dashboard is a pattern, not a component: a `Grid` of `StatTile`s for
+aggregate counts, then a `Grid` or `List` of `StatusCard`s templated over
+a `github.issues`/`ci.jobs` `Source`'s result — the same shape as "Boards
+of work items" in `mcp-guide.md`, with `StatusCard` standing in for
+`WorkItem` where the items aren't tickets.
 
 ### Host components
 
