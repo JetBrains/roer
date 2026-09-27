@@ -267,7 +267,14 @@ async fn handle_ws(mut socket: WebSocket, state: Arc<AppState>) {
     loop {
         tokio::select! {
             msg = rx.recv() => {
-                let Ok(msg) = msg else { break };
+                let msg = match msg {
+                    Ok(msg) => msg,
+                    // Falling behind more than the channel's capacity is a
+                    // busy PTY, not a dead bus — skip what was missed and
+                    // keep listening, rather than dropping the connection.
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                };
                 let Ok(text) = serde_json::to_string(&msg) else { continue };
                 if socket.send(Message::Text(text)).await.is_err() {
                     break;

@@ -22,8 +22,10 @@ impl Sink for tauri::AppHandle {
 /// One message pushed down the server's WebSocket. `Event` is the browser's
 /// `listen()`; `Channel` is the browser's `Channel.onmessage`, tagged with
 /// the id the frontend made up when it created the channel.
+/// The tag stays `Event`/`Channel` (not camelCased) to match `backend.ts`'s
+/// `ServerMsg` discriminant on the wire.
 #[derive(Clone, Serialize)]
-#[serde(tag = "kind", rename_all = "camelCase")]
+#[serde(tag = "kind")]
 pub enum ServerMsg {
     Event { event: String, payload: serde_json::Value },
     Channel { id: String, payload: serde_json::Value },
@@ -53,5 +55,24 @@ impl Sink for Bus {
         if let Ok(payload) = serde_json::to_value(payload) {
             let _ = self.0.send(ServerMsg::Event { event: event.to_string(), payload });
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_wire_tag_matches_backend_ts_verbatim() {
+        let event = ServerMsg::Event { event: "watch".into(), payload: serde_json::json!(1) };
+        let channel = ServerMsg::Channel { id: "c1".into(), payload: serde_json::json!(2) };
+        assert_eq!(
+            serde_json::to_value(event).unwrap(),
+            serde_json::json!({ "kind": "Event", "event": "watch", "payload": 1 }),
+        );
+        assert_eq!(
+            serde_json::to_value(channel).unwrap(),
+            serde_json::json!({ "kind": "Channel", "id": "c1", "payload": 2 }),
+        );
     }
 }
