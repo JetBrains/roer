@@ -41,13 +41,6 @@ impl Bus {
         let (tx, _rx) = tokio::sync::broadcast::channel(1024);
         Self(tx)
     }
-
-    /// Pushed to a specific `Channel`, by the id the frontend minted for it.
-    pub fn push_channel<T: Serialize>(&self, id: &str, payload: &T) {
-        if let Ok(payload) = serde_json::to_value(payload) {
-            let _ = self.0.send(ServerMsg::Channel { id: id.to_string(), payload });
-        }
-    }
 }
 
 impl Sink for Bus {

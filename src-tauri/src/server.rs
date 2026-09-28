@@ -17,8 +17,9 @@
 //! setup, the Generative UI panel, personal tasks — is routed the same as
 //! the desktop app.
 
+use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex as SyncMutex, OnceLock};
 
 use axum::body::Body;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
@@ -31,12 +32,17 @@ use axum::{Json, Router};
 use base64::Engine as _;
 use serde::Deserialize;
 use serde_json::Value;
-use tokio::sync::Mutex;
+use tokio::sync::{mpsc, Mutex};
 
 use crate::assets::Frontend;
-use crate::events::Bus;
+use crate::events::{Bus, ServerMsg};
 use crate::files::FileIndex;
 use crate::pty::{PtyEvent, PtySink};
+
+/// How many not-yet-delivered [`ServerMsg::Channel`] messages a connection
+/// can be holding before a PTY's reader thread blocks — backpressure rather
+/// than the lossy drop a broadcast channel would give it.
+const CHANNEL_BUFFER: usize = 256;
 
 /// The cookie an authorized browser carries on every `/api/*` call after
 /// `GET /api/session?token=...` once proved it knew the server's token.
@@ -49,6 +55,15 @@ struct AppState {
     /// Minted fresh each run; only ever handed to a browser that already
     /// proved it knows it, over `/api/session`.
     token: String,
+    /// One entry per open WebSocket, by the connection id the frontend mints
+    /// for its socket and sends on every `/api/invoke` call. `Channel`
+    /// messages are unicast through here instead of the broadcast `bus`, so
+    /// one tab's PTY output is never visible to another tab or to an
+    /// arbitrary page that merely carries the auth cookie.
+    connections: SyncMutex<HashMap<String, mpsc::Sender<ServerMsg>>>,
+    /// Which connection owns a given `Channel` id, set when the command that
+    /// created it (currently only `pty_spawn`) is dispatched.
+    channel_owners: SyncMutex<HashMap<String, String>>,
 }
 
 /// 32 bytes of OS randomness, URL-safe so it drops straight into a query
@@ -102,18 +117,34 @@ async fn session(State(state): State<Arc<AppState>>, Query(q): Query<SessionQuer
     res
 }
 
-/// A `Channel`'s id, tagging pushes on the shared bus so the frontend's one
-/// WebSocket can fan them back out to the right `Channel.onmessage`.
+/// A `Channel`'s id, routed to the one WebSocket connection that created it
+/// (via `state.channel_owners`/`state.connections`) rather than broadcast to
+/// every authorized tab.
 #[derive(Clone)]
 struct ChannelBus {
     id: String,
-    bus: Bus,
+    state: Arc<AppState>,
 }
 
 impl PtySink for ChannelBus {
+    /// `false` once the owning connection is gone — unknown owner, no such
+    /// connection anymore, or its outgoing buffer's receiver was dropped —
+    /// which is exactly what stops the PTY reader thread, matching how a
+    /// dropped Tauri `Channel` behaves natively.
     fn push(&self, event: PtyEvent) -> bool {
-        self.bus.push_channel(&self.id, &event);
-        true
+        let Some(cid) = self.state.channel_owners.lock().unwrap().get(&self.id).cloned() else {
+            return false;
+        };
+        let Some(sender) = self.state.connections.lock().unwrap().get(&cid).cloned() else {
+            return false;
+        };
+        let Ok(payload) = serde_json::to_value(&event) else { return false };
+        let msg = ServerMsg::Channel { id: self.id.clone(), payload };
+        // Blocking, not `try_send`: this runs on the PTY's own reader
+        // thread, never inside the Tokio runtime, so it is fine to apply
+        // backpressure here instead of dropping output when the browser
+        // can't keep up.
+        sender.blocking_send(msg).is_ok()
     }
 }
 
@@ -122,6 +153,11 @@ struct Invoke {
     cmd: String,
     #[serde(default)]
     args: Value,
+    /// The calling tab's WebSocket connection id (see `AppState::connections`),
+    /// so a command that mints a `Channel` (`pty_spawn`) knows which
+    /// connection to unicast its output to.
+    #[serde(default)]
+    cid: Option<String>,
 }
 
 fn field(args: &Value, name: &str) -> Value {
@@ -157,7 +193,7 @@ macro_rules! call_res {
     }};
 }
 
-fn dispatch(state: &AppState, cmd: &str, args: Value) -> Result<Value, String> {
+fn dispatch(state: &Arc<AppState>, cmd: &str, args: Value, cid: Option<&str>) -> Result<Value, String> {
     match cmd {
         // git
         "git_root" => call!(args, crate::git::git_root, "cwd": String),
@@ -288,7 +324,9 @@ fn dispatch(state: &AppState, cmd: &str, args: Value) -> Result<Value, String> {
             let cols: u16 = parse(&args, "cols")?;
             let rows: u16 = parse(&args, "rows")?;
             let channel_id: String = parse(&args, "onEvent")?;
-            let sink = ChannelBus { id: channel_id, bus: state.bus.clone() };
+            let cid = cid.ok_or_else(|| "pty_spawn: missing connection id".to_string())?;
+            state.channel_owners.lock().unwrap().insert(channel_id.clone(), cid.to_string());
+            let sink = ChannelBus { id: channel_id, state: state.clone() };
             crate::pty::spawn(&state.pty, args_v, cwd, cols, rows, sink)
                 .and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string()))
         }
@@ -316,14 +354,32 @@ fn dispatch(state: &AppState, cmd: &str, args: Value) -> Result<Value, String> {
 }
 
 async fn invoke(State(state): State<Arc<AppState>>, Json(body): Json<Invoke>) -> impl IntoResponse {
-    match dispatch(&state, &body.cmd, body.args) {
+    // `dispatch` shells out to git/gh, walks the filesystem, and spawns
+    // PTYs — all blocking. Off the async task so one slow command can't
+    // starve every other request and WebSocket delivery on this worker.
+    let result = tokio::task::spawn_blocking(move || dispatch(&state, &body.cmd, body.args, body.cid.as_deref()))
+        .await
+        .unwrap_or_else(|e| Err(format!("the command task panicked: {e}")));
+    match result {
         Ok(value) => Json(serde_json::json!({ "ok": true, "value": value })),
         Err(error) => Json(serde_json::json!({ "ok": false, "error": error })),
     }
 }
 
-async fn ws(upgrade: WebSocketUpgrade, State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    upgrade.on_upgrade(move |socket| handle_ws(socket, state))
+#[derive(Deserialize)]
+struct WsQuery {
+    /// The frontend's own connection id (`backend.ts`'s `connectionId`),
+    /// minted once per tab — how `ChannelBus` finds this tab's outgoing
+    /// buffer again for a `Channel` it created over a separate HTTP call.
+    cid: String,
+}
+
+async fn ws(
+    upgrade: WebSocketUpgrade,
+    State(state): State<Arc<AppState>>,
+    Query(q): Query<WsQuery>,
+) -> impl IntoResponse {
+    upgrade.on_upgrade(move |socket| handle_ws(socket, state, q.cid))
 }
 
 /// Everything `/api/*` doesn't claim: the built frontend, embedded at
@@ -343,16 +399,32 @@ async fn static_asset(uri: Uri) -> Response {
     res
 }
 
-async fn handle_ws(mut socket: WebSocket, state: Arc<AppState>) {
-    let mut rx = state.bus.0.subscribe();
+async fn handle_ws(mut socket: WebSocket, state: Arc<AppState>, cid: String) {
+    // `Event`s (file changes, handoffs, plugin UI) are fine for every
+    // authorized tab to see and are disposable, so they still ride the
+    // shared broadcast bus. `Channel` messages (PTY output) are unicast
+    // through this connection's own buffer instead — see `ChannelBus`.
+    let (tx, mut channel_rx) = mpsc::channel::<ServerMsg>(CHANNEL_BUFFER);
+    state.connections.lock().unwrap().insert(cid.clone(), tx);
+    let mut events_rx = state.bus.0.subscribe();
+
     loop {
         tokio::select! {
-            msg = rx.recv() => {
+            msg = channel_rx.recv() => {
+                let Some(msg) = msg else { break };
+                let Ok(text) = serde_json::to_string(&msg) else { continue };
+                if socket.send(Message::Text(text)).await.is_err() {
+                    break;
+                }
+            }
+            msg = events_rx.recv() => {
                 let msg = match msg {
                     Ok(msg) => msg,
                     // Falling behind more than the channel's capacity is a
-                    // busy PTY, not a dead bus — skip what was missed and
-                    // keep listening, rather than dropping the connection.
+                    // busy watcher, not a dead bus — skip what was missed
+                    // and keep listening, rather than dropping the
+                    // connection. Fine for disposable `Event`s; PTY output
+                    // no longer travels this path (see above).
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                 };
@@ -372,6 +444,12 @@ async fn handle_ws(mut socket: WebSocket, state: Arc<AppState>) {
             }
         }
     }
+
+    // Drops this connection's sender: any `ChannelBus::push` still targeting
+    // it now finds no connection and returns `false`, stopping that PTY's
+    // reader thread the same way a dropped Tauri `Channel` would natively.
+    state.connections.lock().unwrap().remove(&cid);
+    state.channel_owners.lock().unwrap().retain(|_, owner| owner != &cid);
 }
 
 /// A server bound and already accepting connections in the background.
@@ -394,12 +472,20 @@ impl Started {
 /// lifetime — so a caller (the desktop app, starting this in-process) gets
 /// the bootstrap URL back right away.
 async fn start(addr: SocketAddr) -> std::io::Result<Started> {
+    // Bind first: if the port is already taken (e.g. a retried start after a
+    // failed one), bail out before arming anything that would otherwise be
+    // left running with nothing to shut it down.
+    let listener = tokio::net::TcpListener::bind(addr).await?;
+    let bound = listener.local_addr()?;
+
     let token = generate_token();
     let state = Arc::new(AppState {
         pty: crate::pty::PtyState::default(),
         files: FileIndex::default(),
         bus: Bus::new(),
         token: token.clone(),
+        connections: SyncMutex::new(HashMap::new()),
+        channel_owners: SyncMutex::new(HashMap::new()),
     });
 
     // Same watchers the desktop app arms in `setup`, fed the server's bus
@@ -412,17 +498,19 @@ async fn start(addr: SocketAddr) -> std::io::Result<Started> {
         eprintln!("roer-server: could not start the PR-draft watcher: {e}");
     }
 
+    // No CORS layer: this is a same-origin browser tab talking to its own
+    // server, never a cross-origin caller, and the auth cookie is scoped
+    // accordingly (`SameSite=Strict`). Opening CORS up would let any other
+    // page on the machine's browser drive PTY/filesystem/Git/GitHub calls
+    // here if it ever got hold of the cookie.
     let app = Router::new()
         .route("/api/invoke", post(invoke))
         .route("/api/ws", get(ws))
         .layer(middleware::from_fn_with_state(state.clone(), require_token))
         .route("/api/session", get(session))
         .fallback(static_asset)
-        .layer(tower_http::cors::CorsLayer::permissive())
         .with_state(state);
 
-    let listener = tokio::net::TcpListener::bind(addr).await?;
-    let bound = listener.local_addr()?;
     tokio::spawn(async move {
         if let Err(e) = axum::serve(listener, app).await {
             eprintln!("roer-server: error: {e}");
@@ -451,9 +539,14 @@ pub async fn serve(addr: SocketAddr) {
 /// instead of trying to bind the port again.
 static RUNNING: OnceLock<Mutex<Option<Started>>> = OnceLock::new();
 
-fn default_addr() -> SocketAddr {
+/// `127.0.0.1` unless overridden — safe by default, but a container or a
+/// remote-machine deployment needs to bind `0.0.0.0` (or a specific
+/// interface) to be reachable at all from outside the loopback interface.
+pub fn default_addr() -> SocketAddr {
     let port: u16 = std::env::var("ROER_SERVER_PORT").ok().and_then(|p| p.parse().ok()).unwrap_or(4317);
-    SocketAddr::from(([127, 0, 0, 1], port))
+    let host: std::net::IpAddr =
+        std::env::var("ROER_SERVER_HOST").ok().and_then(|h| h.parse().ok()).unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST));
+    SocketAddr::from((host, port))
 }
 
 /// Starts the server in-process (spawned as a background task on the
