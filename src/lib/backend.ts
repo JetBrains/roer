@@ -43,6 +43,8 @@ const connectionId = randomId();
 const eventListeners = new Map<string, Set<(payload: unknown) => void>>();
 const channelListeners = new Map<string, (payload: unknown) => void>();
 let socket: WebSocket | null = null;
+/** Settles with `socket`'s handshake. */
+let socketReady: Promise<void> = Promise.resolve();
 
 function wsUrl(): string {
   const proto = window.location.protocol === "https:" ? "wss" : "ws";
@@ -54,15 +56,30 @@ function wsUrl(): string {
  * once the socket is actually open — a caller about to spawn a `Channel`
  * (a PTY) awaits this first so the server has already registered this
  * connection before that PTY's first output can arrive, instead of racing
- * an unawaited `open` and losing it.
+ * an unawaited `open` and losing it. Rejects if it closes before opening,
+ * so callers fail rather than wait forever.
  */
 function ensureSocket(): Promise<void> {
-  if (socket && socket.readyState === WebSocket.OPEN) return Promise.resolve();
-  if (socket && socket.readyState === WebSocket.CONNECTING) {
-    const existing = socket;
-    return new Promise((resolve) => existing.addEventListener("open", () => resolve(), { once: true }));
-  }
+  if (socket && socket.readyState <= WebSocket.OPEN) return socketReady;
   const ws = new WebSocket(wsUrl());
+  socketReady = new Promise((resolve, reject) => {
+    ws.addEventListener("open", () => resolve(), { once: true });
+    // The browser gives no reason (a 401 upgrade looks like any other
+    // failure), so name the likely ones.
+    ws.addEventListener(
+      "close",
+      () =>
+        reject(
+          new Error(
+            "could not connect to roer-server — is it running, and was this browser authorized via /api/session?",
+          ),
+        ),
+      { once: true },
+    );
+  });
+  // Fire-and-forget callers (`listen`, `Channel`) must not surface this as
+  // an unhandled rejection; `invoke` awaits it and reports it itself.
+  socketReady.catch(() => undefined);
   ws.onmessage = (event) => {
     let msg: ServerMsg;
     try {
@@ -80,7 +97,7 @@ function ensureSocket(): Promise<void> {
     if (socket === ws) socket = null;
   };
   socket = ws;
-  return new Promise((resolve) => ws.addEventListener("open", () => resolve(), { once: true }));
+  return socketReady;
 }
 
 /**

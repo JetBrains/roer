@@ -155,6 +155,7 @@ pub(crate) fn spawn<P: PtySink>(
     let done_id = id.clone();
     std::thread::spawn(move || {
         let mut buf = [0u8; 8192];
+        let mut sink_gone = false;
         loop {
             match reader.read(&mut buf) {
                 Ok(0) | Err(_) => break,
@@ -163,9 +164,19 @@ pub(crate) fn spawn<P: PtySink>(
                     // A send error means the webview dropped the channel
                     // (navigated away, or the view unmounted); stop reading.
                     if !on_event.push(PtyEvent::Output { data }) {
+                        sink_gone = true;
                         break;
                     }
                 }
+            }
+        }
+
+        // With nobody reading, the client would run on forever: `wait` below
+        // would never return, holding `child` — and `close`, which needs
+        // that lock to kill it, would hang behind it.
+        if sink_gone {
+            if let Ok(mut c) = child.lock() {
+                let _ = c.kill();
             }
         }
 
@@ -240,11 +251,18 @@ pub fn pty_close(state: tauri::State<'_, PtyState>, id: String) -> Result<(), St
 }
 
 pub(crate) fn close(state: &PtyState, id: String) -> Result<(), String> {
-    let mut sessions = state.sessions.lock().map_err(|_| poisoned())?;
-    if let Some(session) = sessions.remove(&id) {
+    // Released before the kill: the reader thread can hold `child` while it
+    // reaps, and every other PTY call must not queue up behind that.
+    let session = state.sessions.lock().map_err(|_| poisoned())?.remove(&id);
+    if let Some(session) = session {
         if let Ok(mut child) = session.child.lock() {
             let _ = child.kill();
         }
     }
     Ok(())
+}
+
+/// Whether `id` is still a live session — false once it exited or was closed.
+pub(crate) fn exists(state: &PtyState, id: &str) -> bool {
+    state.sessions.lock().is_ok_and(|s| s.contains_key(id))
 }
