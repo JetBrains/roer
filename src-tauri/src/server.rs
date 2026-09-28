@@ -350,7 +350,9 @@ fn dispatch(state: &Arc<AppState>, cmd: &str, args: Value, cid: Option<&str>) ->
 
         // Handoffs (claim/ack/fail are plain file ops; "pending" skips the
         // native window-focus step `handoff_pending` does in the app).
-        "handoff_pending" => call!(args, crate::handoff::handoff_pending_core,),
+        "app_log" => call!(args, crate::logfile::app_log, "message": String),
+
+                "handoff_pending" => call!(args, crate::handoff::handoff_pending_core,),
         "handoff_claim" => call_res!(args, crate::handoff::handoff_claim, "record": String),
         "handoff_ack" => call_res!(args, crate::handoff::handoff_ack, "record": String),
         "handoff_fail" => call_res!(args, crate::handoff::handoff_fail, "record": String),

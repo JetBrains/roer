@@ -49,6 +49,7 @@ import {
   type Handoff,
   type SessionInfo,
 } from "./lib/pty";
+import { logLine } from "./lib/log";
 import { onPluginUi, reportPluginUiReceipt, type PluginUiOutcome } from "./lib/pluginUi";
 
 interface SessionView extends OpenRequest {
@@ -205,6 +206,7 @@ export function App() {
   }, [target]);
 
   const show = useCallback((next: SessionView) => {
+    logLine(`stage: roer ${next.args.join(" ")}${next.cwd ? ` in ${next.cwd}` : ""}${next.pane ? ` (pane ${next.pane})` : ""}`);
     stagedRef.current = next;
     setNotice(null);
     setSession(next);
@@ -493,6 +495,7 @@ export function App() {
    */
   const learnPane = useCallback((staged: SessionView, pane: string) => {
     if (stagedRef.current !== staged || staged.pane) return;
+    logLine(`stage: roer ${staged.args.join(" ")} is pane ${pane}`);
     const next = { ...staged, pane };
     stagedRef.current = next;
     // The target does not depend on the pane, so nothing remounts.
@@ -528,7 +531,10 @@ export function App() {
     }
     // Two sessions appearing at once cannot be told apart, and the wrong pane
     // is worse than none: the view would be about somebody else's session.
-    if (fresh.length !== 1) return;
+    if (fresh.length !== 1) {
+      logLine(`stage: could not tell the new pane, ${fresh.length} candidates`);
+      return;
+    }
     learnPane(staged, fresh[0].pane);
   }, [learnPane]);
 

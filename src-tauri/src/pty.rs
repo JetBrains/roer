@@ -13,7 +13,7 @@ use portable_pty::{Child, CommandBuilder, MasterPty, NativePtySystem, PtySize, P
 use serde::Serialize;
 use tauri::ipc::Channel;
 
-use crate::roer;
+use crate::{logfile, roer};
 
 /// Pushed to the frontend over the session's channel.
 #[derive(Clone, Serialize)]
@@ -59,6 +59,44 @@ impl Default for PtyState {
             next_id: AtomicU64::new(1),
         }
     }
+}
+
+/// The locale variable to set, and to what, when the app's own does not say
+/// UTF-8. LC_ALL outranks the rest, so an LC_ALL that says otherwise is the
+/// one to replace; else LC_CTYPE, which is all tmux needs and leaves the
+/// language of messages and dates to LANG.
+fn utf8_locale(get: impl Fn(&str) -> Option<String>) -> Option<(&'static str, &'static str)> {
+    let set = |var: &str| get(var).filter(|v| !v.is_empty());
+    let effective = set("LC_ALL").or_else(|| set("LC_CTYPE")).or_else(|| set("LANG")).unwrap_or_default();
+    let lower = effective.to_ascii_lowercase();
+    if lower.contains("utf-8") || lower.contains("utf8") {
+        return None;
+    }
+    // macOS has a bare UTF-8 character-type locale; glibc names it C.UTF-8.
+    let value = if cfg!(target_os = "macos") { "UTF-8" } else { "C.UTF-8" };
+    Some((if set("LC_ALL").is_some() { "LC_ALL" } else { "LC_CTYPE" }, value))
+}
+
+/// How much of a terminal's first output goes into the log. It is roer's
+/// pane report and the start of tmux setting the terminal up, which is what
+/// shows how far an attach got, and short enough to hold no screen of text.
+const FIRST_OUTPUT: usize = 160;
+
+/// With `ROER_TRACE_PTY` set, everything a terminal receives is also written
+/// to a file of its own beside the log: the exact bytes, to replay into a
+/// terminal when it draws something wrong. Opt-in, since it records whatever
+/// was on screen.
+fn trace(id: &str) -> Option<std::fs::File> {
+    std::env::var_os("ROER_TRACE_PTY").filter(|v| !v.is_empty())?;
+    let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
+    let path = logfile::dir().join(format!("{id}-{stamp}.pty"));
+    logfile::line(&format!("{id}: tracing output to {}", path.display()));
+    std::fs::File::create(path).ok()
+}
+
+/// Bytes as the log can show them: control characters as escapes.
+fn escaped(bytes: &[u8]) -> String {
+    String::from_utf8_lossy(bytes).escape_debug().to_string()
 }
 
 fn poisoned() -> String {
@@ -120,14 +158,25 @@ pub(crate) fn spawn<P: PtySink>(
     // Without them an agent TUI renders in a degraded palette.
     cmd.env("TERM", "xterm-256color");
     cmd.env("COLORTERM", "truecolor");
+    // tmux decides from the locale whether this client can take UTF-8, and
+    // for one it thinks cannot, draws `_` for every character outside ASCII:
+    // an agent's logo, prompt and status line. An app opened from Finder has
+    // no locale at all. Whatever server this starts inherits it too, so the
+    // shells in it read UTF-8 input as well.
+    let locale = utf8_locale(|var| std::env::var(var).ok());
+    if let Some((var, value)) = locale {
+        cmd.env(var, value);
+    }
     // Asks roer to say, in this terminal, which pane it attached: the only way
     // to know it for a session this starts. The frontend's terminal reads it.
     cmd.env("ROER_REPORT_PANE", "1");
 
-    let child = pair
-        .slave
-        .spawn_command(cmd)
-        .map_err(|e| format!("could not start `{}`: {e}", roer::bin()))?;
+    let command = format!("roer {} in {}", args.join(" "), cmd.get_cwd().map(|d| d.to_string_lossy()).unwrap_or_default());
+    let child = pair.slave.spawn_command(cmd).map_err(|e| {
+        let e = format!("could not start `{}`: {e}", roer::bin());
+        logfile::line(&format!("pty: {command}: {e}"));
+        e
+    })?;
     // Drop our own handle on the slave: while it is held open the reader
     // never sees EOF after the child exits, and the session looks hung
     // instead of finished.
@@ -143,6 +192,9 @@ pub(crate) fn spawn<P: PtySink>(
         .map_err(|e| format!("could not write the pty: {e}"))?;
 
     let id = format!("pty-{}", state.next_id.fetch_add(1, Ordering::Relaxed));
+    let locale = locale.map(|(var, value)| format!(", with {var}={value}")).unwrap_or_default();
+    logfile::line(&format!("{id}: started {command} at {}x{}{locale}", size.cols, size.rows));
+    let mut trace = trace(&id);
     let child = Arc::new(Mutex::new(child));
 
     state.sessions.lock().map_err(|_| poisoned())?.insert(
@@ -159,10 +211,23 @@ pub(crate) fn spawn<P: PtySink>(
     std::thread::spawn(move || {
         let mut buf = [0u8; 8192];
         let mut sink_gone = false;
+        let started = std::time::Instant::now();
+        let mut total = 0usize;
         loop {
             match reader.read(&mut buf) {
                 Ok(0) | Err(_) => break,
                 Ok(n) => {
+                    if total == 0 {
+                        logfile::line(&format!(
+                            "{done_id}: first output after {} ms: {}",
+                            started.elapsed().as_millis(),
+                            escaped(&buf[..n.min(FIRST_OUTPUT)])
+                        ));
+                    }
+                    total += n;
+                    if let Some(file) = trace.as_mut() {
+                        let _ = file.write_all(&buf[..n]);
+                    }
                     let data = base64::engine::general_purpose::STANDARD.encode(&buf[..n]);
                     // A send error means the webview dropped the channel
                     // (navigated away, or the view unmounted); stop reading.
@@ -188,6 +253,11 @@ pub(crate) fn spawn<P: PtySink>(
             .ok()
             .and_then(|mut c| c.wait().ok())
             .map(|status| status.exit_code() as i32);
+        logfile::line(&format!(
+            "{done_id}: exited with {code:?} after {} ms and {total} bytes{}",
+            started.elapsed().as_millis(),
+            if sink_gone { ", its view gone" } else { "" }
+        ));
         let _ = on_event.push(PtyEvent::Exit { code });
 
         if let Ok(mut sessions) = sessions.lock() {
@@ -258,6 +328,7 @@ pub(crate) fn close(state: &PtyState, id: String) -> Result<(), String> {
     // reaps, and every other PTY call must not queue up behind that.
     let session = state.sessions.lock().map_err(|_| poisoned())?.remove(&id);
     if let Some(session) = session {
+        logfile::line(&format!("{id}: closed by its view"));
         if let Ok(mut child) = session.child.lock() {
             let _ = child.kill();
         }
@@ -268,4 +339,34 @@ pub(crate) fn close(state: &PtyState, id: String) -> Result<(), String> {
 /// Whether `id` is still a live session — false once it exited or was closed.
 pub(crate) fn exists(state: &PtyState, id: &str) -> bool {
     state.sessions.lock().is_ok_and(|s| s.contains_key(id))
+}
+
+#[cfg(test)]
+mod locale_tests {
+    use super::utf8_locale;
+
+    fn with<'a>(vars: &'a [(&str, &str)]) -> impl Fn(&str) -> Option<String> + 'a {
+        move |var| vars.iter().find(|(k, _)| *k == var).map(|(_, v)| v.to_string())
+    }
+
+    #[test]
+    fn a_utf8_locale_is_left_alone() {
+        assert_eq!(utf8_locale(with(&[("LANG", "en_US.UTF-8")])), None);
+        assert_eq!(utf8_locale(with(&[("LC_CTYPE", "UTF-8")])), None);
+        assert_eq!(utf8_locale(with(&[("LC_ALL", "de_DE.utf8")])), None);
+    }
+
+    #[test]
+    fn no_locale_gets_a_utf8_character_type() {
+        let (var, value) = utf8_locale(with(&[])).unwrap();
+        assert_eq!(var, "LC_CTYPE");
+        assert!(value.contains("UTF-8"));
+        assert_eq!(utf8_locale(with(&[("LANG", ""), ("LC_ALL", "")])).unwrap().0, "LC_CTYPE");
+        assert_eq!(utf8_locale(with(&[("LANG", "en_US")])).unwrap().0, "LC_CTYPE");
+    }
+
+    #[test]
+    fn an_lc_all_that_says_otherwise_is_the_one_replaced() {
+        assert_eq!(utf8_locale(with(&[("LC_ALL", "C"), ("LANG", "en_US.UTF-8")])).unwrap().0, "LC_ALL");
+    }
 }

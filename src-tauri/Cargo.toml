@@ -29,6 +29,10 @@ tauri-plugin-dialog = "2"
 tauri-plugin-single-instance = "2.4.4"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
 
+[target.'cfg(unix)'.dependencies]
+# dup2, to point the app's stderr at its log file: see logfile.rs.
+libc = "0.2"
+
 [features]
 # The standalone `roer-server` binary. The desktop app runs the same server
 # in-process, so bundles leave it out: Tauri copies every [[bin]] into the app,

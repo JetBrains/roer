@@ -123,6 +123,9 @@ usage:
                         registering it again
                         (each takes --client claude-desktop to act on the
                         Claude app instead, which is left alone otherwise)
+  roer diagnose         print what a bug report needs: which roer, tmux and
+                        config run, the locale, and how the server sees each
+                        client (the app's log includes it)
 
 A session outlives every client, so it can move freely between terminal and
 app. Exactly one client holds it at a time.
@@ -206,8 +209,23 @@ impl Roer {
                 None => mcp::serve(self),
                 Some(_) => mcp_install::run(args),
             },
+            "diagnose" => self.diagnose(),
             other => Err(Fail::new(64, format!("unknown command: {other}"))),
         }
+    }
+
+    /// Everything a bug report about sessions or rendering needs and a user
+    /// cannot easily find: which binary, config and engine are in use, the
+    /// locale tmux decides UTF-8 from, and each client as the server sees it.
+    fn diagnose(&self) -> Outcome {
+        println!("roer: {}", self_path().display());
+        println!("config: {}", self.conf.display());
+        for var in ["LANG", "LC_ALL", "LC_CTYPE", "TERM", "COLORTERM", "TMUX", "ROER_SOCKET"] {
+            println!("{var}={}", std::env::var(var).unwrap_or_default());
+        }
+        print!("{}", self.tmux.describe());
+        println!("sessions:");
+        self.list()
     }
 
     /// A session's durable identity, unlike its name or pane: a name is freed
@@ -257,7 +275,7 @@ impl Roer {
         // Created detached: this terminal must not become a client, because
         // the app is about to be one and a session only ever has the one.
         if !self.tmux.has_session(&name) {
-            self.create_detached(&name, None)?;
+            self.create_detached(&name)?;
         }
         self.tmux.announce();
         self.ensure_id(&name);
@@ -279,17 +297,15 @@ impl Roer {
         // between: create the session if it is not running, then attach and
         // evict whichever client holds it.
         if !self.tmux.has_session(&name) {
-            self.create_detached(&name, None)?;
+            self.create_detached(&name)?;
         }
         self.attach_session(&name, true)
     }
 
     /// Starts a session with no client. With no command tmux runs its
     /// default-shell as a login shell.
-    fn create_detached(&self, name: &str, command: Option<&str>) -> Outcome {
-        let mut args = vec!["new-session", "-d", "-s", name, "-c", &self.cwd];
-        args.extend(command);
-        if self.tmux.run(&args)?.success() {
+    fn create_detached(&self, name: &str) -> Outcome {
+        if self.tmux.run(&["new-session", "-d", "-s", name, "-c", &self.cwd])?.success() {
             Ok(())
         } else {
             Err(Fail::new(1, ""))
@@ -341,7 +357,7 @@ impl Roer {
         // Created detached so the keys can go in before anyone attaches; the
         // shell reads them once it is up. The name is free, so this is always
         // a new session, never a surprise attach to an old one.
-        self.create_detached(&name, None)?;
+        self.create_detached(&name)?;
         if let Some(agent) = agent {
             self.tmux.ok(&["send-keys", "-t", &format!("={name}:"), agent, "Enter"]);
         }
@@ -413,9 +429,17 @@ impl Roer {
         //
         // A free name, not -A: with -A an existing "<dir>-resume" session is
         // attached instead, and tmux discards the command that comes with it.
+        //
+        // Typed into the session's shell, as `new` does, rather than given to
+        // tmux as the pane's command: tmux runs that with the server's own
+        // PATH, and a server the app started from Finder has no directory
+        // `claude` is in, so the pane died at once and there was nothing left
+        // to attach. The login shell sets PATH up the way the user's terminal
+        // does, and says so on screen if `claude` is missing after all.
         let name = self.free_name(&format!("{}-resume", session_name(&self.cwd)));
         let command = format!("claude --resume {agent} --permission-mode manual");
-        self.create_detached(&name, Some(&command))?;
+        self.create_detached(&name)?;
+        self.tmux.ok(&["send-keys", "-t", &format!("={name}:"), &command, "Enter"]);
         self.attach_session(&name, false)
     }
 

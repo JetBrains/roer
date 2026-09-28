@@ -403,6 +403,22 @@ fn a_pr_draft_reaches_the_app() {
 }
 
 #[test]
+fn diagnose_reports_the_server_and_how_it_sees_each_client() {
+    let env = Env::new("diagnose");
+    let out = env.run(&["diagnose"]);
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert!(String::from_utf8_lossy(&out.stdout).contains("server: not running"));
+
+    env.tmux(&["new-session", "-d", "-s", "diag"]);
+    let out = env.run(&["diagnose"]);
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains(&format!("socket: {}", env.socket)), "{text}");
+    assert!(text.contains("server: pid "), "{text}");
+    assert!(text.contains("clients:\n  none"), "{text}");
+    assert!(text.contains("\tdiag\t%"), "{text}");
+}
+
+#[test]
 fn usage_errors_keep_their_exit_codes() {
     let env = Env::new("usage");
     let out = env.run(&["frobnicate"]);
@@ -555,6 +571,26 @@ fn new_always_makes_another_session_and_starts_claude_in_it() {
     kill_outer(&env);
 
     in_a_terminal(&env, &["new", "--shell", "scratch"], "scratch");
+    kill_outer(&env);
+}
+
+/// With a PATH that has no `claude` on it, as a server the app starts from
+/// Finder has: the session must still be there to attach, with the command
+/// typed into its shell rather than run as a pane that dies at once.
+#[test]
+fn resume_types_the_command_into_a_shell_that_survives_it() {
+    let env = Env::new("resume-shell");
+    let name = format!("{}-resume", shim_name(&env.dir));
+    in_a_terminal(&env, &["resume", "0f3c-9a"], &name);
+    let mut typed = String::new();
+    for _ in 0..50 {
+        typed = env.tmux(&["capture-pane", "-p", "-t", &format!("={name}:")]);
+        if typed.contains("claude --resume 0f3c-9a --permission-mode manual") {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert!(typed.contains("claude --resume 0f3c-9a --permission-mode manual"), "typed into the shell: {typed}");
     kill_outer(&env);
 }
 

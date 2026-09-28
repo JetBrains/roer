@@ -4,6 +4,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 
 import { closePty, decodeOutput, resizePty, spawnPty, writePty } from "./lib/pty";
+import { logLine } from "./lib/log";
 import { currentTheme, onThemeChange, terminalTheme } from "./lib/theme";
 
 /**
@@ -73,6 +74,7 @@ export function TerminalView({ args, cwd, onAttached, onPane, onExit }: Terminal
     // Handled, so never drawn, whatever it says; only a pane id is passed on.
     const paneSub = terminal.parser.registerOscHandler(PANE_OSC, (data) => {
       const pane = /^pane=(%\d+)$/.exec(data)?.[1];
+      logLine(`terminal ${target}: roer reported ${pane ?? `an unreadable pane (${data})`}`);
       if (pane) onPaneRef.current?.(pane);
       return true;
     });
@@ -110,6 +112,7 @@ export function TerminalView({ args, cwd, onAttached, onPane, onExit }: Terminal
     // setup's cleanup lands before this timer fires, so only the surviving
     // mount ever attaches.
     const starting = setTimeout(() => {
+      logLine(`terminal ${target}: starting in ${cwd ?? "home"} at ${terminal.cols}x${terminal.rows}`);
       void spawnPty(
         argsRef.current,
         cwd,
@@ -130,6 +133,7 @@ export function TerminalView({ args, cwd, onAttached, onPane, onExit }: Terminal
               attaching = setTimeout(() => {
                 attaching = null;
                 attached = true;
+                logLine(`terminal ${target}: attached`);
                 onAttachedRef.current?.();
               }, ATTACH_GRACE_MS);
             }
@@ -140,6 +144,7 @@ export function TerminalView({ args, cwd, onAttached, onPane, onExit }: Terminal
             clearTimeout(attaching);
             attaching = null;
           }
+          logLine(`terminal ${target}: exited with ${event.code}${attached ? "" : " before it attached"}`);
           onExitRef.current?.(event.code);
         },
       )
@@ -159,6 +164,7 @@ export function TerminalView({ args, cwd, onAttached, onPane, onExit }: Terminal
           void resizePty(id, terminal.cols, terminal.rows).catch(ignoreClosed);
         })
         .catch((error: unknown) => {
+          logLine(`terminal ${target}: could not start: ${String(error)}`);
           terminal.writeln(`roer: could not start the session: ${String(error)}`);
         });
     }, 0);

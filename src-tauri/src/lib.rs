@@ -9,6 +9,7 @@ mod gh;
 mod git;
 mod handoff;
 mod history;
+mod logfile;
 mod plugin_ui;
 mod pr_draft;
 mod process;
@@ -23,6 +24,7 @@ mod workspaces;
 mod testing;
 
 pub fn run() {
+    logfile::init();
     tauri::Builder::default()
         // Registered first, as the plugin requires. The handoff shim runs
         // `open -a Roer` to make sure the app is up; without this that would
@@ -91,6 +93,7 @@ pub fn run() {
             projects::project_rename,
             projects::project_delete,
             server::start_browser_server,
+            logfile::app_log,
         ])
         .setup(|app| {
             menu(app)?;
@@ -111,7 +114,7 @@ pub fn run() {
 fn menu(app: &mut tauri::App) -> tauri::Result<()> {
     #[cfg(target_os = "macos")]
     {
-        use tauri::menu::{Menu, MenuItem};
+        use tauri::menu::{Menu, MenuItem, HELP_SUBMENU_ID};
         use tauri::Emitter;
 
         let handle = app.handle();
@@ -122,12 +125,20 @@ fn menu(app: &mut tauri::App) -> tauri::Result<()> {
             app_menu.insert(&setup, 1)?;
             app_menu.insert(&browser, 2)?;
         }
+        // Where a user reporting a problem finds the log to send with it.
+        let logs = MenuItem::with_id(handle, "show-logs", "Show Logs in Finder", true, None::<&str>)?;
+        if let Some(help) = menu.get(HELP_SUBMENU_ID).and_then(|item| item.as_submenu().cloned()) {
+            help.append(&logs)?;
+        }
         app.set_menu(menu)?;
         app.on_menu_event(|app, event| {
             if event.id() == "claude-setup" {
                 let _ = app.emit("roer://claude-setup", ());
             } else if event.id() == "browser-server" {
                 let _ = app.emit("roer://browser-server", ());
+            } else if event.id() == "show-logs" {
+                // Runs `roer diagnose`, which is not for the menu's thread.
+                std::thread::spawn(logfile::reveal);
             }
         });
     }

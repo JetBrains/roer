@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ask } from "@tauri-apps/plugin-dialog";
+import { logLine } from "./log";
 
 import { gitRoot } from "../lib/git";
 import {
@@ -59,7 +60,12 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [claudeSessions, setClaudeSessions] = useState<ClaudeSession[]>([]);
   const [roots, setRoots] = useState<Record<string, string>>({});
-  const [failure, setFailure] = useState<string | null>(null);
+  const [failure, setShownFailure] = useState<string | null>(null);
+  // Every failure the browser shows is one a bug report wants too.
+  const setFailure = useCallback((next: string | null) => {
+    if (next) logLine(`sessions: ${next}`);
+    setShownFailure(next);
+  }, []);
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   // Session id (live session or Claude conversation) to the Workspace it is

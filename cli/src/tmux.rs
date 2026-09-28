@@ -211,6 +211,35 @@ impl Tmux {
     pub fn has_session(&self, name: &str) -> bool {
         self.ok(&["has-session", "-t", &format!("={name}")])
     }
+
+    /// What `roer diagnose` reports about the engine: which one runs, on which
+    /// socket, and how its server sees every client. `client_utf8` is the one
+    /// to look at when a terminal shows `_` where text should be: a client
+    /// tmux thinks cannot take UTF-8 gets every wide character replaced.
+    pub fn describe(&self) -> String {
+        let version = Command::new(&self.program)
+            .arg("-V")
+            .output()
+            .ok()
+            .map(|out| lines(&out.stdout))
+            .filter(|v| !v.is_empty())
+            .unwrap_or_else(|| "could not run it".into());
+        let mut out = format!("engine: {} ({version})\nsocket: {}\n", self.program, self.socket);
+        let server = self.read(&["display-message", "-p", "pid #{pid}, tmux #{version}, config #{config_files}"]);
+        if server.is_empty() {
+            out.push_str("server: not running\n");
+            return out;
+        }
+        out.push_str(&format!("server: {server}\n"));
+        let clients = self.read(&[
+            "list-clients",
+            "-F",
+            "  #{client_tty} session=#{session_name} term=#{client_termname} utf8=#{client_utf8} \
+             size=#{client_width}x#{client_height} features=#{client_termfeatures}",
+        ]);
+        out.push_str(&format!("clients:\n{}\n", if clients.is_empty() { "  none" } else { &clients }));
+        out
+    }
 }
 
 #[cfg(unix)]
