@@ -46,6 +46,38 @@ describe("GenerativeSurface", () => {
     expect(screen.getByText("2")).toBeInTheDocument();
   });
 
+  it("draws a progress bar only for templated cards that have progress", () => {
+    draw(
+      [
+        { id: "root", component: "Column", children: { componentId: "run", path: "/runs" } },
+        { id: "run", component: "StatusCard", title: { path: "title" }, progress: { path: "progress" } },
+      ],
+      { runs: [{ title: "build" }, { title: "deploy", progress: 64 }] },
+    );
+    const bars = screen.getAllByRole("progressbar");
+    expect(bars).toHaveLength(1);
+    expect(bars[0]).toHaveAttribute("aria-valuenow", "64");
+  });
+
+  it("colours CI statuses by meaning, failures included", () => {
+    draw(
+      [
+        { id: "root", component: "Column", children: { componentId: "run", path: "/runs" } },
+        { id: "run", component: "StatusCard", title: { path: "title" }, status: { path: "status" } },
+      ],
+      {
+        runs: [
+          { title: "a", status: "success" },
+          { title: "b", status: "running" },
+          { title: "c", status: "failed" },
+        ],
+      },
+    );
+    expect(screen.getByText("success")).toHaveClass("done");
+    expect(screen.getByText("running")).toHaveClass("doing");
+    expect(screen.getByText("failed")).toHaveClass("failed");
+  });
+
   it("writes a templated checkbox back to its own element", () => {
     const { onSetValue } = draw(
       [

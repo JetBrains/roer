@@ -2174,6 +2174,11 @@ button.link.gen-status-card-title:hover {
   border-color: var(--roer-warn);
 }
 
+.gen-status-card-status.failed {
+  color: var(--roer-minus);
+  border-color: var(--roer-minus);
+}
+
 .gen-status-card-meta {
   margin: 0;
   font-size: 11px;
@@ -2294,6 +2299,11 @@ button.link.gen-workitem-title:hover {
 .gen-workitem-status.blocked {
   color: var(--roer-warn);
   border-color: var(--roer-warn);
+}
+
+.gen-workitem-status.failed {
+  color: var(--roer-minus);
+  border-color: var(--roer-minus);
 }
 
 /* A work item opened up: the card's header, then its sections, widest

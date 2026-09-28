@@ -323,7 +323,7 @@ function renderBody(node: Component, ctx: Ctx, scope: Scope, seen: ReadonlySet<C
           meta={node.meta === undefined ? "" : text(node.meta)}
           icon={node.icon === undefined ? undefined : renderIcon(node.icon, text)}
           status={node.status === undefined ? "" : text(node.status)}
-          progress={node.progress === undefined ? undefined : Number(value(node.progress))}
+          progress={node.progress === undefined ? undefined : progressValue(value(node.progress))}
           url={node.url === undefined ? "" : text(node.url)}
           footer={node.footer === undefined ? null : child(node.footer)}
         />
@@ -577,12 +577,25 @@ const SOURCES: Record<string, string> = {
 
 /** A status, by what it means for the work rather than what a tracker calls
  * it: every tracker spells "finished" its own way. */
-function statusTone(status: string): "done" | "doing" | "blocked" | "todo" {
+function statusTone(status: string): "done" | "doing" | "blocked" | "failed" | "todo" {
   const s = status.toLowerCase().replace(/[\s_-]+/g, " ").trim();
-  if (["done", "closed", "fixed", "resolved", "completed", "merged", "verified"].includes(s)) return "done";
-  if (["doing", "in progress", "in review", "active", "started", "review", "working"].includes(s)) return "doing";
+  if (
+    ["done", "closed", "fixed", "resolved", "completed", "merged", "verified", "success", "succeeded", "passed", "deployed"].includes(s)
+  )
+    return "done";
+  if (["doing", "in progress", "in review", "active", "started", "review", "working", "running"].includes(s)) return "doing";
   if (["blocked", "on hold", "waiting"].includes(s)) return "blocked";
+  if (["failed", "failure", "error", "errored", "broken"].includes(s)) return "failed";
   return "todo";
+}
+
+/** A bound `progress` resolves to nothing for an item that has none — a
+ * template over runs where only some are mid-run — and that must draw no
+ * bar rather than `Number(undefined)`'s NaN, which CSS reads as a full one. */
+function progressValue(raw: unknown): number | undefined {
+  if (raw === undefined || raw === null || raw === "") return undefined;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : undefined;
 }
 
 function StatTileNode({
