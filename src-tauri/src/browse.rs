@@ -34,9 +34,10 @@ pub(crate) fn list_dir(path: Option<String>) -> Result<DirListing, String> {
         Some(p) => PathBuf::from(p),
         None => crate::roer::home().ok_or("no home directory")?,
     };
-    let dir = dir
-        .canonicalize()
-        .map_err(|e| format!("could not open {}: {e}", dir.display()))?;
+    // Not `Path::canonicalize`: on Windows that returns a `\\?\C:\…` verbatim
+    // path, which the picker would then hand on as a project's path and a
+    // PTY's cwd — places plenty of tools refuse it.
+    let dir = dunce::canonicalize(&dir).map_err(|e| format!("could not open {}: {e}", dir.display()))?;
     if !dir.is_dir() {
         return Err(format!("{} is not a directory", dir.display()));
     }

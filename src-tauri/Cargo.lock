@@ -3139,6 +3139,7 @@ version = "0.4.5"
 dependencies = [
  "axum",
  "base64 0.23.1",
+ "dunce",
  "mime_guess",
  "notify",
  "portable-pty",
