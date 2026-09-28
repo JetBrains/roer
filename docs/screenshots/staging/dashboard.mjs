@@ -1,4 +1,9 @@
 // The checkout-service dashboard, sent as one A2UI v1.0 createSurface.
+// Needs a renderer with #37: its runs are one template where only the running
+// one has `progress`, and the pills rely on the CI status tones (success,
+// running, failed, deployed). Older builds draw full bars and grey pills.
+//
+//   node dashboard.mjs | roer plugin-ui --pane <pane id>
 const btn = (id, label, name, variant) => [
   { id, component: "Button", child: `${id}-l`, variant, action: { event: { name, context: {} } } },
   { id: `${id}-l`, component: "Text", text: label },
