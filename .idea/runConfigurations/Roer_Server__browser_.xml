@@ -1,6 +1,6 @@
 <component name="ProjectRunConfigurationManager">
-  <configuration default="false" name="Stop Roer" type="ShConfigurationType">
-    <option name="SCRIPT_TEXT" value="pkill -x roer; pkill -f tauri.dev; pkill -f 'target/debug/roer-server'; lsof -ti:1420 | xargs kill 2&gt;/dev/null; lsof -ti:4317 | xargs kill 2&gt;/dev/null; echo roer stopped" />
+  <configuration default="false" name="Roer Server (browser)" type="ShConfigurationType">
+    <option name="SCRIPT_TEXT" value="pkill -f 'target/debug/roer-server'; lsof -ti:4317 | xargs kill 2&gt;/dev/null; (cd src-tauri &amp;&amp; cargo run --bin roer-server &gt; /tmp/roer-server.log 2&gt;&amp;1 &amp;); for i in $(seq 1 60); do grep -qo 'token=[^ ]*' /tmp/roer-server.log 2&gt;/dev/null &amp;&amp; break; sleep 0.5; done; URL=$(grep -o 'http://localhost:1420/api/session?token=[^ ]*' /tmp/roer-server.log); if [ -n &quot;$URL&quot; ]; then echo &quot;opening $URL&quot;; open &quot;$URL&quot;; else echo &quot;roer-server did not start in time, check /tmp/roer-server.log&quot;; fi" />
     <option name="INDEPENDENT_SCRIPT_PATH" value="true" />
     <option name="SCRIPT_PATH" value="" />
     <option name="SCRIPT_OPTIONS" value="" />

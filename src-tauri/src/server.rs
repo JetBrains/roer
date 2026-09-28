@@ -18,11 +18,12 @@
 //! the desktop app.
 
 use std::net::SocketAddr;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
+use axum::body::Body;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Query, State};
-use axum::http::{header, HeaderMap, HeaderValue, Request, StatusCode};
+use axum::http::{header, HeaderMap, HeaderValue, Request, StatusCode, Uri};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -30,7 +31,9 @@ use axum::{Json, Router};
 use base64::Engine as _;
 use serde::Deserialize;
 use serde_json::Value;
+use tokio::sync::Mutex;
 
+use crate::assets::Frontend;
 use crate::events::Bus;
 use crate::files::FileIndex;
 use crate::pty::{PtyEvent, PtySink};
@@ -84,12 +87,14 @@ struct SessionQuery {
 /// The one route a browser can reach without already carrying the cookie:
 /// proves it knows the server's token (from the URL `roer-server` printed at
 /// startup) and gets a `SameSite=Strict`, `HttpOnly` cookie in return, so
-/// every later call is authorized without the token being typed again.
+/// every later call is authorized without the token being typed again. Then
+/// redirects to `/` — this is what a browser actually lands on when it
+/// opens the bootstrap link, not a page meant to be read.
 async fn session(State(state): State<Arc<AppState>>, Query(q): Query<SessionQuery>) -> Response {
     if q.token != state.token {
         return (StatusCode::FORBIDDEN, "bad token").into_response();
     }
-    let mut res = Json(serde_json::json!({ "ok": true })).into_response();
+    let mut res = axum::response::Redirect::to("/").into_response();
     let cookie = format!("{TOKEN_COOKIE}={}; Path=/; HttpOnly; SameSite=Strict", state.token);
     if let Ok(value) = HeaderValue::from_str(&cookie) {
         res.headers_mut().insert(header::SET_COOKIE, value);
@@ -321,6 +326,23 @@ async fn ws(upgrade: WebSocketUpgrade, State(state): State<Arc<AppState>>) -> im
     upgrade.on_upgrade(move |socket| handle_ws(socket, state))
 }
 
+/// Everything `/api/*` doesn't claim: the built frontend, embedded at
+/// compile time (see `assets.rs`). Any path `Frontend` doesn't have falls
+/// back to `index.html`, since the app is a client-routed single page.
+async fn static_asset(uri: Uri) -> Response {
+    let path = uri.path().trim_start_matches('/');
+    let path = if path.is_empty() { "index.html" } else { path };
+    let Some(file) = Frontend::get(path).or_else(|| Frontend::get("index.html")) else {
+        return (StatusCode::NOT_FOUND, "not found").into_response();
+    };
+    let mime = mime_guess::from_path(path).first_or_octet_stream();
+    let mut res = Response::new(Body::from(file.data.into_owned()));
+    if let Ok(value) = HeaderValue::from_str(mime.as_ref()) {
+        res.headers_mut().insert(header::CONTENT_TYPE, value);
+    }
+    res
+}
+
 async fn handle_ws(mut socket: WebSocket, state: Arc<AppState>) {
     let mut rx = state.bus.0.subscribe();
     loop {
@@ -352,9 +374,26 @@ async fn handle_ws(mut socket: WebSocket, state: Arc<AppState>) {
     }
 }
 
-/// Boots the HTTP + WebSocket server. Blocks until the process is killed —
-/// there is no window to close it from.
-pub async fn serve(addr: SocketAddr) {
+/// A server bound and already accepting connections in the background.
+pub struct Started {
+    pub addr: SocketAddr,
+    pub token: String,
+}
+
+impl Started {
+    /// The one-time URL a browser opens to trade the token for the
+    /// `roer_token` cookie, against this server's own address — it now
+    /// serves the frontend itself, so nothing else needs to be running.
+    pub fn bootstrap_url(&self) -> String {
+        format!("http://{}/api/session?token={}", self.addr, self.token)
+    }
+}
+
+/// Builds the router, binds `addr`, and spawns the accept loop, returning
+/// as soon as it's listening rather than blocking for the server's whole
+/// lifetime — so a caller (the desktop app, starting this in-process) gets
+/// the bootstrap URL back right away.
+async fn start(addr: SocketAddr) -> std::io::Result<Started> {
     let token = generate_token();
     let state = Arc::new(AppState {
         pty: crate::pty::PtyState::default(),
@@ -378,19 +417,64 @@ pub async fn serve(addr: SocketAddr) {
         .route("/api/ws", get(ws))
         .layer(middleware::from_fn_with_state(state.clone(), require_token))
         .route("/api/session", get(session))
+        .fallback(static_asset)
         .layer(tower_http::cors::CorsLayer::permissive())
         .with_state(state);
 
-    println!("roer-server: listening on http://{addr}");
-    // Whatever origin the frontend is actually served from (the Vite dev
-    // server's proxy, in the common case) needs to open this once per
-    // browser — the path and token are the same wherever `/api` is proxied
-    // to, only the host:port in front of it changes.
-    println!("roer-server: open http://localhost:1420/api/session?token={token} once per browser to authorize it");
-    let listener = tokio::net::TcpListener::bind(addr)
-        .await
-        .expect("could not bind the server's address");
-    axum::serve(listener, app).await.expect("server error");
+    let listener = tokio::net::TcpListener::bind(addr).await?;
+    let bound = listener.local_addr()?;
+    tokio::spawn(async move {
+        if let Err(e) = axum::serve(listener, app).await {
+            eprintln!("roer-server: error: {e}");
+        }
+    });
+    Ok(Started { addr: bound, token })
+}
+
+/// Boots the HTTP + WebSocket server and blocks until the process is
+/// killed — there is no window to close it from.
+pub async fn serve(addr: SocketAddr) {
+    let started = start(addr).await.expect("could not bind the server's address");
+    println!("roer-server: listening on http://{}", started.addr);
+    println!("roer-server: open {} once per browser to authorize it", started.bootstrap_url());
+    // A Vite dev server proxying /api elsewhere works too, at its own
+    // origin's /api/session — same path and token, different host:port.
+    println!(
+        "roer-server: (or, via a frontend dev server proxying /api here: http://localhost:1420/api/session?token={} )",
+        started.token
+    );
+    std::future::pending::<()>().await;
+}
+
+/// One server per app process: a second call while one is already running
+/// (e.g. the menu action clicked twice) just hands back the same URL
+/// instead of trying to bind the port again.
+static RUNNING: OnceLock<Mutex<Option<Started>>> = OnceLock::new();
+
+fn default_addr() -> SocketAddr {
+    let port: u16 = std::env::var("ROER_SERVER_PORT").ok().and_then(|p| p.parse().ok()).unwrap_or(4317);
+    SocketAddr::from(([127, 0, 0, 1], port))
+}
+
+/// Starts the server in-process (spawned as a background task on the
+/// caller's tokio runtime) so the desktop app can offer "open this session
+/// in a browser tab" without a separate `roer-server` process, and opens the
+/// bootstrap URL itself — `open_url`'s `https://`-only check exists for URLs
+/// that came back from GitHub, not this `http://127.0.0.1` link the server
+/// just minted for itself.
+#[tauri::command(async)]
+pub async fn start_browser_server() -> Result<(), String> {
+    let cell = RUNNING.get_or_init(|| Mutex::new(None));
+    let mut guard = cell.lock().await;
+    let url = if let Some(started) = &*guard {
+        started.bootstrap_url()
+    } else {
+        let started = start(default_addr()).await.map_err(|e| e.to_string())?;
+        let url = started.bootstrap_url();
+        *guard = Some(started);
+        url
+    };
+    crate::gh::open_in_system_browser(&url)
 }
 
 #[cfg(test)]

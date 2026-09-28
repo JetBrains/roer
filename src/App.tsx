@@ -23,6 +23,7 @@ import { SessionBrowser, type OpenRequest } from "./SessionBrowser";
 import { TerminalView } from "./TerminalView";
 import { WorkspaceSidebar } from "./WorkspaceSidebar";
 import { claudeSetupStatus, onClaudeSetupMenu, type SetupStatus } from "./lib/claudeSetup";
+import { onBrowserServerMenu, startBrowserServer } from "./lib/browserServer";
 import { onFilesChanged, type FilesChanged } from "./lib/files";
 import { isGoToFile, isMac, isNewSession, useHotkey } from "./lib/keys";
 import { nextChoice, useThemeChoice } from "./lib/theme";
@@ -302,6 +303,29 @@ export function App() {
       })
       .catch(() => undefined);
     void show(true);
+
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    let unlisten: (() => void) | undefined;
+    void onBrowserServerMenu(() => {
+      void startBrowserServer().catch((cause: unknown) => {
+        void message(String(cause), {
+          title: "Could not start the browser server",
+          kind: "error",
+        });
+      });
+    })
+      .then((fn) => {
+        if (cancelled) fn();
+        else unlisten = fn;
+      })
+      .catch(() => undefined);
 
     return () => {
       cancelled = true;
