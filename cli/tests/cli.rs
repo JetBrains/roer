@@ -520,6 +520,22 @@ fn shell_attaches_this_directorys_session_to_the_terminal() {
     kill_outer(&env);
 }
 
+/// The app cannot know the pane of a session it starts, so the `roer` it runs
+/// says, in its terminal, before tmux takes it over. Nobody else is told.
+#[test]
+fn new_tells_the_app_its_pane_and_no_one_else() {
+    let env = Env::new("new-pane");
+    let out = env.roer(&["new", "--shell", "probe"]).env("ROER_REPORT_PANE", "1").output().unwrap();
+    let pane = env.tmux(&["list-panes", "-t", "=probe", "-F", "#{pane_id}"]);
+    assert!(pane.starts_with('%'), "probe was made: {pane}");
+    assert_eq!(String::from_utf8_lossy(&out.stdout), format!("\x1b]7717;pane={pane}\x07"));
+    let leaked = env.tmux(&["show-environment", "-g"]);
+    assert!(!leaked.contains("ROER_REPORT_PANE"), "the server this started never has it: {leaked}");
+
+    let quiet = env.roer(&["new", "--shell", "other"]).output().unwrap();
+    assert!(!String::from_utf8_lossy(&quiet.stdout).contains("\x1b]7717"), "only for the app");
+}
+
 #[test]
 fn new_always_makes_another_session_and_starts_claude_in_it() {
     let env = Env::new("new");

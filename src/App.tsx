@@ -482,12 +482,36 @@ export function App() {
   }, []);
 
   /**
-   * Learns the pane tmux made for a session started from the launcher.
+   * Records the pane tmux made for a session started from the launcher, once,
+   * and only for the session it was learned for.
    *
    * `roer new` names and creates the session itself, so there is nothing to
    * look it up by until it exists. The pane is what says which session is on
-   * screen — which row of the session browser is the live one, and which
-   * directory the changes view is about, after a `cd` has moved it.
+   * screen — which row of the session browser is the live one, which
+   * directory the changes view is about after a `cd` has moved it, and which
+   * Generative UI messages are this session's.
+   */
+  const learnPane = useCallback((staged: SessionView, pane: string) => {
+    if (stagedRef.current !== staged || staged.pane) return;
+    const next = { ...staged, pane };
+    stagedRef.current = next;
+    // The target does not depend on the pane, so nothing remounts.
+    setSession((current) => (current === staged ? next : current));
+  }, []);
+
+  /** What the `roer` in this session's terminal said it attached, just
+   * before attaching: the answer, where `adopt` can only guess. */
+  const handlePane = useCallback(
+    (pane: string) => {
+      if (stagedRef.current) learnPane(stagedRef.current, pane);
+    },
+    [learnPane],
+  );
+
+  /**
+   * The fallback, for a `roer` that says nothing (one from before it did, or
+   * a terminal that swallows the OSC): the one attached pane that was not
+   * there before. It gives up when that is not exactly one pane.
    */
   const adopt = useCallback(async () => {
     const staged = stagedRef.current;
@@ -504,13 +528,9 @@ export function App() {
     }
     // Two sessions appearing at once cannot be told apart, and the wrong pane
     // is worse than none: the view would be about somebody else's session.
-    if (fresh.length !== 1 || stagedRef.current !== staged) return;
-
-    const next = { ...staged, pane: fresh[0].pane };
-    stagedRef.current = next;
-    // The target does not depend on the pane, so nothing remounts.
-    setSession((current) => (current === staged ? next : current));
-  }, []);
+    if (fresh.length !== 1) return;
+    learnPane(staged, fresh[0].pane);
+  }, [learnPane]);
 
   const handleAttached = useCallback(() => {
     attachedRef.current = targetRef.current;
@@ -781,6 +801,7 @@ export function App() {
                 args={session.args}
                 cwd={session.cwd}
                 onAttached={handleAttached}
+                onPane={handlePane}
                 onExit={handleExit}
               />
             ) : (

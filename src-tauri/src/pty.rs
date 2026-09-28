@@ -120,6 +120,9 @@ pub(crate) fn spawn<P: PtySink>(
     // Without them an agent TUI renders in a degraded palette.
     cmd.env("TERM", "xterm-256color");
     cmd.env("COLORTERM", "truecolor");
+    // Asks roer to say, in this terminal, which pane it attached: the only way
+    // to know it for a session this starts. The frontend's terminal reads it.
+    cmd.env("ROER_REPORT_PANE", "1");
 
     let child = pair
         .slave

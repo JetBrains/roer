@@ -162,13 +162,24 @@ struct Roer {
     conf: PathBuf,
     /// Where this was run, as the shell sees it: see `here`.
     cwd: String,
+    /// Run by the app, which wants to hear which pane it attached: see
+    /// `attach_session`.
+    report_pane: bool,
 }
+
+/// Set by the app on the `roer` it runs in its own terminal. Read once and
+/// cleared, since a tmux server this process starts would otherwise hand it
+/// to every shell in every session.
+const REPORT_PANE: &str = "ROER_REPORT_PANE";
 
 impl Roer {
     fn new() -> Result<Self, Fail> {
         let bin = self_path();
         let conf = find_conf(&bin)?;
-        Ok(Roer { tmux: Tmux::new(conf.clone(), bin.to_string_lossy().into_owned()), conf, cwd: here() })
+        let report_pane = std::env::var_os(REPORT_PANE).is_some_and(|v| !v.is_empty());
+        std::env::remove_var(REPORT_PANE);
+        let tmux = Tmux::new(conf.clone(), bin.to_string_lossy().into_owned());
+        Ok(Roer { tmux, conf, cwd: here(), report_pane })
     }
 
     fn dispatch(&self, cmd: &str, args: &[&str]) -> Outcome {
@@ -288,8 +299,20 @@ impl Roer {
     /// Becomes the client of a session: announces this binary to it first,
     /// since once tmux has this process there is no running anything after.
     /// `evict` detaches whoever held it.
+    ///
+    /// For the app, the pane goes out first as a private OSC, which its
+    /// terminal reads and never draws: a session the app started has no pane
+    /// it could know in advance, and guessing it from what `list` shows
+    /// afterwards goes wrong whenever two sessions appear at once.
     fn attach_session(&self, name: &str, evict: bool) -> Outcome {
         self.tmux.announce();
+        if self.report_pane {
+            let pane = self.tmux.active_pane(name);
+            if !pane.is_empty() {
+                print!("\x1b]7717;pane={pane}\x07");
+                let _ = std::io::Write::flush(&mut std::io::stdout());
+            }
+        }
         let target = format!("={name}");
         let mut args = vec!["attach"];
         if evict {

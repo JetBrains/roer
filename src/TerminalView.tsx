@@ -13,6 +13,10 @@ import { currentTheme, onThemeChange, terminalTheme } from "./lib/theme";
  */
 const ATTACH_GRACE_MS = 250;
 
+/** The private OSC `roer` writes, when the app runs it, just before attaching:
+ * `ESC ] 7717 ; pane=%N BEL`. */
+const PANE_OSC = 7717;
+
 /** Writes and resizes race with the session ending; that rejection is normal. */
 function ignoreClosed() {
   /* no-op */
@@ -25,6 +29,9 @@ export interface TerminalViewProps {
   /** Fires once the PTY has produced output and stayed alive, so the session
    * is really on screen. */
   onAttached?: () => void;
+  /** The pane `roer` attached, as it said in the terminal before attaching:
+   * how a session started here learns its pane. */
+  onPane?: (pane: string) => void;
   /** The PTY ended. After a handoff this is a terminal taking the session back. */
   onExit?: (code: number | null) => void;
 }
@@ -33,7 +40,7 @@ export interface TerminalViewProps {
  * Hosts the xterm.js instance and binds it to a PTY in the Rust backend.
  * The terminal owns its DOM node, so React only supplies the container.
  */
-export function TerminalView({ args, cwd, onAttached, onExit }: TerminalViewProps) {
+export function TerminalView({ args, cwd, onAttached, onPane, onExit }: TerminalViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
 
   // Args and callbacks are read through refs so a parent re-render can never
@@ -44,6 +51,8 @@ export function TerminalView({ args, cwd, onAttached, onExit }: TerminalViewProp
   onAttachedRef.current = onAttached;
   const onExitRef = useRef(onExit);
   onExitRef.current = onExit;
+  const onPaneRef = useRef(onPane);
+  onPaneRef.current = onPane;
 
   const target = args.join(" ");
 
@@ -60,6 +69,12 @@ export function TerminalView({ args, cwd, onAttached, onExit }: TerminalViewProp
     });
     const unfollowTheme = onThemeChange((theme) => {
       terminal.options.theme = terminalTheme(theme);
+    });
+    // Handled, so never drawn, whatever it says; only a pane id is passed on.
+    const paneSub = terminal.parser.registerOscHandler(PANE_OSC, (data) => {
+      const pane = /^pane=(%\d+)$/.exec(data)?.[1];
+      if (pane) onPaneRef.current?.(pane);
+      return true;
     });
     const fitAddon = new FitAddon();
     terminal.loadAddon(fitAddon);
@@ -156,6 +171,7 @@ export function TerminalView({ args, cwd, onAttached, onExit }: TerminalViewProp
       unfollowTheme();
       dataSub.dispose();
       resizeSub.dispose();
+      paneSub.dispose();
       // Ends Roer's client only. The session behind it keeps running with no
       // client, which is what makes it reattachable from a terminal.
       if (ptyId) void closePty(ptyId);

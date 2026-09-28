@@ -37,6 +37,9 @@ const mocks = vi.hoisted(() => ({
   terminal: { current: undefined as undefined | { options: { theme?: { background?: string } } } },
   // What the plugin-UI watcher delivers records to.
   pluginUi: { current: undefined as undefined | ((record: unknown) => void) },
+  // The terminal's OSC handlers by number, so a test can play `roer` saying
+  // which pane it attached.
+  osc: new Map<number, (data: string) => boolean>(),
 }));
 
 vi.mock("./lib/pluginUi", async (importOriginal) => ({
@@ -66,6 +69,12 @@ vi.mock("@xterm/xterm", () => ({
     dispose = vi.fn();
     onData = vi.fn(() => ({ dispose: vi.fn() }));
     onResize = vi.fn(() => ({ dispose: vi.fn() }));
+    parser = {
+      registerOscHandler: vi.fn((ident: number, handler: (data: string) => boolean) => {
+        mocks.osc.set(ident, handler);
+        return { dispose: vi.fn() };
+      }),
+    };
   },
 }));
 vi.mock("@xterm/addon-fit", () => ({
@@ -224,6 +233,7 @@ async function emit(event: PtyEvent) {
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.handoffHandlers.length = 0;
+  mocks.osc.clear();
   mocks.changedHandlers.length = 0;
   mocks.emit.current = undefined;
   mocks.setupMenu.current = undefined;
@@ -643,8 +653,18 @@ describe("App", () => {
     const deliver = (pane: string) => act(() => mocks.pluginUi.current?.(record(pane)));
     // From nothing running, so the new session's pane is the one not seen before.
     beforeEach(() => vi.mocked(listSessions).mockResolvedValue([]));
-    const newSessionAppears = async (sessions: Array<{ pane: string; session: string }>) => {
+    const newSessionAppears = async (
+      sessions: Array<{ pane: string; session: string }>,
+      // What roer says in the terminal before attaching, if anything.
+      said?: string,
+    ) => {
       fireEvent.click(await screen.findByRole("button", { name: /new session/i }));
+      if (said) {
+        await waitFor(() => expect(mocks.osc.get(7717)).toBeDefined());
+        act(() => {
+          mocks.osc.get(7717)?.(said);
+        });
+      }
       vi.mocked(listSessions).mockResolvedValue(
         sessions.map(({ pane, session }, n) => ({
           id: String(n),
@@ -675,6 +695,21 @@ describe("App", () => {
       });
       deliver("%9");
       expect(reportPluginUiReceipt).toHaveBeenCalledWith("r-%9", "other-pane", "%7");
+    });
+
+    it("for a session started here, by the pane its roer said it attached", async () => {
+      // Two sessions appearing at once would leave the guess with nothing to
+      // go on; what roer says in the terminal is not a guess.
+      render(<App />);
+      await newSessionAppears(
+        [
+          { pane: "%7", session: "test-1a2b" },
+          { pane: "%8", session: "other" },
+        ],
+        "pane=%8",
+      );
+      deliver("%8");
+      expect(reportPluginUiReceipt).toHaveBeenCalledWith("r-%8", "shown", "%8");
     });
 
     it("when the session on screen never learned its pane", async () => {
