@@ -4,10 +4,8 @@
 
 #[tokio::main]
 async fn main() {
-    let port: u16 = std::env::var("ROER_SERVER_PORT")
-        .ok()
-        .and_then(|p| p.parse().ok())
-        .unwrap_or(4317);
-    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
-    roer_lib::server::serve(addr).await;
+    // `ROER_SERVER_HOST` (default `127.0.0.1`) and `ROER_SERVER_PORT`
+    // (default 4317) — set the host to `0.0.0.0` or a specific interface to
+    // reach this from a container's published address or another machine.
+    roer_lib::server::serve(roer_lib::server::default_addr()).await;
 }

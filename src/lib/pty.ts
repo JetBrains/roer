@@ -78,6 +78,11 @@ export function decodeOutput(data: string): Uint8Array {
   return bytes;
 }
 
+/** By pty id, so `closePty` can dispose the channel that owns it — outside
+ * Tauri, a live map entry retains the terminal/component state a closed
+ * session no longer needs. */
+const channels = new Map<string, Channel<PtyEvent>>();
+
 export function spawnPty(
   args: readonly string[],
   cwd: string | undefined,
@@ -92,6 +97,9 @@ export function spawnPty(
     cols: size.cols,
     rows: size.rows,
     onEvent: channel,
+  }).then((id) => {
+    channels.set(id, channel);
+    return id;
   });
 }
 
@@ -101,7 +109,11 @@ export const writePty = (id: string, data: string): Promise<void> =>
 export const resizePty = (id: string, cols: number, rows: number): Promise<void> =>
   invoke("pty_resize", { id, cols, rows });
 
-export const closePty = (id: string): Promise<void> => invoke("pty_close", { id });
+export const closePty = (id: string): Promise<void> => {
+  channels.get(id)?.dispose();
+  channels.delete(id);
+  return invoke("pty_close", { id });
+};
 
 export const listSessions = (): Promise<SessionInfo[]> => invoke("roer_sessions");
 
