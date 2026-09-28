@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'claude-code/testing'
+import { apply, EMPTY, getAt, setAt } from '../hooks/a2ui'
 
 const PANE = {
   component: 'Pane',
@@ -92,5 +93,70 @@ describe('roer-ui', () => {
     )
     expect(data.startsWith('dataModel: ')).toBe(true)
     await ui.unmount()
+  })
+
+  test('a userMessage rides in the action as well as the prompt', async ($, on) => {
+    on('ui.open', () => ({ value: { isPlaced: true } }))
+    const sent: string[] = []
+    on('prompt.submit', (_$, e) => {
+      sent.push(e.text)
+      return { text: e.text }
+    })
+    const button = { id: 'go', component: 'Button', child: 'go-label', action: { event: { name: 'go', userMessage: 'Ship it' } } }
+    await $.tool.call({
+      tool: 'mcp__roer-ui__show',
+      messages: [{ version: 'v1.0', createSurface: { surfaceId: 's', components: [
+        { id: 'root', component: 'Column', children: ['go'] }, button, { id: 'go-label', component: 'Text', text: 'Go' },
+      ] } }],
+    })
+    const ui = await $.ui.mount({ plugin: 'roer-ui', surface: 'terminal', ...PANE })
+    await ui.press({ key: 's.go' })
+    const [prompt = ''] = sent
+    const [said = '', action = '{}'] = prompt.split('\n')
+    expect(said).toBe('[roer-ui] Ship it')
+    expect(JSON.parse(action).action.userMessage).toBe('Ship it')
+    await ui.unmount()
+  })
+})
+
+describe('the reducer', () => {
+  const surface = (dataModel: Record<string, unknown> = {}) =>
+    apply(EMPTY, { version: 'v1.0', createSurface: { surfaceId: 's', dataModel } })
+
+  test('refuses a message with two bodies, or a malformed component list', () => {
+    expect(typeof apply(EMPTY, { version: 'v1.0', createSurface: { surfaceId: 's' }, deleteSurface: { surfaceId: 's' } })).toBe('string')
+    for (const components of [{}, [null], [{ id: 'a' }], [{ component: 'Text' }]]) {
+      expect(typeof apply(EMPTY, { version: 'v1.0', createSurface: { surfaceId: 's', components } })).toBe('string')
+    }
+    const made = surface()
+    if (typeof made === 'string') throw new Error(made)
+    expect(typeof apply(made, { version: 'v1.0', updateComponents: { surfaceId: 's', components: [null] } })).toBe('string')
+    expect(typeof apply(made, { version: 'v1.0', updateComponents: { surfaceId: 's' } })).toBe('string')
+  })
+
+  test('refuses an updateDataModel without a value, and deletes on null', () => {
+    const made = surface({ title: 'x', keep: 1, list: ['a', 'b', 'c'] })
+    if (typeof made === 'string') throw new Error(made)
+    expect(typeof apply(made, { version: 'v1.0', updateDataModel: { surfaceId: 's', path: '/title' } })).toBe('string')
+    const cleared = apply(made, { version: 'v1.0', updateDataModel: { surfaceId: 's', path: '/title', value: null } })
+    if (typeof cleared === 'string') throw new Error(cleared)
+    expect(cleared.bySurface.s?.dataModel).toEqual({ keep: 1, list: ['a', 'b', 'c'] })
+    expect(setAt({ list: ['a', 'b', 'c'] }, '/list/1', null)).toEqual({ list: ['a', 'c'] })
+  })
+
+  test('a relative pointer keeps its first character', () => {
+    expect(setAt({}, 'title', 'x')).toEqual({ title: 'x' })
+    expect(getAt({ title: 'x' }, 'title')).toBe('x')
+  })
+
+  test('never writes or reads through the prototype', () => {
+    for (const path of ['/__proto__/polluted', '/constructor/prototype/polluted', '/a/__proto__']) {
+      const out = setAt({ a: {} }, path, true)
+      expect(out).toEqual({ a: {} })
+      expect(Object.getPrototypeOf(out)).toBe(Object.prototype)
+    }
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined()
+    expect(getAt({}, '/constructor')).toBeUndefined()
+    expect(getAt({}, '/toString')).toBeUndefined()
   })
 })

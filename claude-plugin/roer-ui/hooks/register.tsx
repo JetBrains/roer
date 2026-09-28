@@ -132,11 +132,19 @@ export const register: Register = on => {
       if (typeof event.context === 'object' && event.context !== null) {
         for (const [name, value] of Object.entries(event.context)) context[name] = resolve(value, model, scope)
       }
+      const userMessage = text(event.userMessage, model, scope)
       const message = {
         version: 'v1.0',
-        action: { name: event.name, surfaceId, sourceComponentId: c.id, timestamp: new Date().toISOString(), context },
+        action: {
+          name: event.name,
+          surfaceId,
+          sourceComponentId: c.id,
+          timestamp: new Date().toISOString(),
+          context,
+          ...(userMessage ? { userMessage } : {}),
+        },
       }
-      const said = text(event.userMessage, model, scope) || `The person pressed "${label}" in the ${surfaceId} UI.`
+      const said = userMessage || `The person pressed "${label}" in the ${surfaceId} UI.`
       const lines = [`[roer-ui] ${said}`, JSON.stringify(message)]
       if (surface.sendDataModel) lines.push(`dataModel: ${JSON.stringify(model)}`)
       await $.prompt.submit({ text: lines.join('\n') })
