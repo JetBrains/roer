@@ -19,6 +19,7 @@
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex as SyncMutex, OnceLock};
 
 use axum::body::Body;
@@ -60,10 +61,18 @@ struct AppState {
     /// messages are unicast through here instead of the broadcast `bus`, so
     /// one tab's PTY output is never visible to another tab or to an
     /// arbitrary page that merely carries the auth cookie.
-    connections: SyncMutex<HashMap<String, mpsc::Sender<ServerMsg>>>,
-    /// Which connection owns a given `Channel` id, set when the command that
-    /// created it (currently only `pty_spawn`) is dispatched.
-    channel_owners: SyncMutex<HashMap<String, String>>,
+    connections: SyncMutex<HashMap<String, Connection>>,
+    next_generation: AtomicU64,
+    /// Which connection spawned each live PTY; `pty_write`/`pty_resize`/
+    /// `pty_close` from any other connection are refused.
+    pty_owners: SyncMutex<HashMap<String, String>>,
+}
+
+struct Connection {
+    /// A tab reconnects under the same id, so an old socket's cleanup must
+    /// only remove its own registration, never the one that replaced it.
+    generation: u64,
+    sender: mpsc::Sender<ServerMsg>,
 }
 
 /// 32 bytes of OS randomness, URL-safe so it drops straight into a query
@@ -82,10 +91,25 @@ fn carries_token(headers: &HeaderMap, expected: &str) -> bool {
     cookie.split(';').map(str::trim).any(|kv| kv.strip_prefix(TOKEN_COOKIE).and_then(|v| v.strip_prefix('=')) == Some(expected))
 }
 
+/// Browsers send the cookie to every port on a host, so a page served from
+/// another local port could otherwise ride it — and a WebSocket upgrade,
+/// unlike a JSON `fetch`, gets no CORS check. A request with no `Origin` is
+/// not from a browser page at all, so there is no cookie to ride.
+fn same_origin(headers: &HeaderMap) -> bool {
+    let Some(origin) = headers.get(header::ORIGIN) else { return true };
+    let (Ok(origin), Some(host)) = (origin.to_str(), headers.get(header::HOST).and_then(|h| h.to_str().ok())) else {
+        return false;
+    };
+    origin.strip_prefix("http://").or_else(|| origin.strip_prefix("https://")) == Some(host)
+}
+
 /// Guards `/api/invoke` and `/api/ws`: everything but `/api/session` itself,
 /// which is how a browser gets the cookie this checks for in the first
 /// place.
 async fn require_token(State(state): State<Arc<AppState>>, req: Request<axum::body::Body>, next: Next) -> Response {
+    if !same_origin(req.headers()) {
+        return (StatusCode::FORBIDDEN, "cross-origin request refused").into_response();
+    }
     if carries_token(req.headers(), &state.token) {
         next.run(req).await
     } else {
@@ -118,24 +142,21 @@ async fn session(State(state): State<Arc<AppState>>, Query(q): Query<SessionQuer
 }
 
 /// A `Channel`'s id, routed to the one WebSocket connection that created it
-/// (via `state.channel_owners`/`state.connections`) rather than broadcast to
-/// every authorized tab.
+/// rather than broadcast to every authorized tab.
 #[derive(Clone)]
 struct ChannelBus {
     id: String,
+    cid: String,
     state: Arc<AppState>,
 }
 
 impl PtySink for ChannelBus {
-    /// `false` once the owning connection is gone — unknown owner, no such
-    /// connection anymore, or its outgoing buffer's receiver was dropped —
-    /// which is exactly what stops the PTY reader thread, matching how a
-    /// dropped Tauri `Channel` behaves natively.
+    /// `false` once the owning connection is gone — no such connection
+    /// anymore, or its outgoing buffer's receiver was dropped — which is
+    /// exactly what stops the PTY reader thread, matching how a dropped
+    /// Tauri `Channel` behaves natively.
     fn push(&self, event: PtyEvent) -> bool {
-        let Some(cid) = self.state.channel_owners.lock().unwrap().get(&self.id).cloned() else {
-            return false;
-        };
-        let Some(sender) = self.state.connections.lock().unwrap().get(&cid).cloned() else {
+        let Some(sender) = self.state.connections.lock().unwrap().get(&self.cid).map(|c| c.sender.clone()) else {
             return false;
         };
         let Ok(payload) = serde_json::to_value(&event) else { return false };
@@ -153,9 +174,8 @@ struct Invoke {
     cmd: String,
     #[serde(default)]
     args: Value,
-    /// The calling tab's WebSocket connection id (see `AppState::connections`),
-    /// so a command that mints a `Channel` (`pty_spawn`) knows which
-    /// connection to unicast its output to.
+    /// The calling tab's WebSocket connection id (see `AppState::connections`):
+    /// where `pty_spawn` unicasts its output, and who may drive that PTY after.
     #[serde(default)]
     cid: Option<String>,
 }
@@ -191,6 +211,17 @@ macro_rules! call_res {
             serde_json::to_value(value).map_err(|e| e.to_string())
         })()
     }};
+}
+
+/// The `id` argument, if the calling connection is the one that spawned it.
+/// PTY ids are sequential, so without this any tab could drive another's.
+fn owned_pty(state: &AppState, args: &Value, cid: Option<&str>) -> Result<String, String> {
+    let id: String = parse(args, "id")?;
+    let owner = state.pty_owners.lock().unwrap().get(&id).cloned();
+    match (owner, cid) {
+        (Some(owner), Some(cid)) if owner == cid => Ok(id),
+        _ => Err(format!("no such session: {id}")),
+    }
 }
 
 fn dispatch(state: &Arc<AppState>, cmd: &str, args: Value, cid: Option<&str>) -> Result<Value, String> {
@@ -324,29 +355,32 @@ fn dispatch(state: &Arc<AppState>, cmd: &str, args: Value, cid: Option<&str>) ->
             let cols: u16 = parse(&args, "cols")?;
             let rows: u16 = parse(&args, "rows")?;
             let channel_id: String = parse(&args, "onEvent")?;
-            let cid = cid.ok_or_else(|| "pty_spawn: missing connection id".to_string())?;
-            state.channel_owners.lock().unwrap().insert(channel_id.clone(), cid.to_string());
-            let sink = ChannelBus { id: channel_id, state: state.clone() };
-            crate::pty::spawn(&state.pty, args_v, cwd, cols, rows, sink)
-                .and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string()))
+            let cid = cid.ok_or_else(|| "pty_spawn: missing connection id".to_string())?.to_string();
+            let sink = ChannelBus { id: channel_id, cid: cid.clone(), state: state.clone() };
+            let id = crate::pty::spawn(&state.pty, args_v, cwd, cols, rows, sink)?;
+            let mut owners = state.pty_owners.lock().unwrap();
+            // PTYs that exited on their own are pruned here, keeping the map
+            // bounded by what is actually running.
+            owners.retain(|pty, _| crate::pty::exists(&state.pty, pty));
+            owners.insert(id.clone(), cid);
+            Ok(Value::String(id))
         }
         "pty_write" => {
-            let id: String = parse(&args, "id")?;
+            let id = owned_pty(state, &args, cid)?;
             let data: String = parse(&args, "data")?;
-            crate::pty::write(&state.pty, id, data)
-                .and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string()))
+            crate::pty::write(&state.pty, id, data).map(|()| Value::Null)
         }
         "pty_resize" => {
-            let id: String = parse(&args, "id")?;
+            let id = owned_pty(state, &args, cid)?;
             let cols: u16 = parse(&args, "cols")?;
             let rows: u16 = parse(&args, "rows")?;
-            crate::pty::resize(&state.pty, id, cols, rows)
-                .and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string()))
+            crate::pty::resize(&state.pty, id, cols, rows).map(|()| Value::Null)
         }
         "pty_close" => {
-            let id: String = parse(&args, "id")?;
-            crate::pty::close(&state.pty, id)
-                .and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string()))
+            let id = owned_pty(state, &args, cid)?;
+            crate::pty::close(&state.pty, id.clone())?;
+            state.pty_owners.lock().unwrap().remove(&id);
+            Ok(Value::Null)
         }
 
         other => Err(format!("no such command: {other}")),
@@ -404,8 +438,9 @@ async fn handle_ws(mut socket: WebSocket, state: Arc<AppState>, cid: String) {
     // authorized tab to see and are disposable, so they still ride the
     // shared broadcast bus. `Channel` messages (PTY output) are unicast
     // through this connection's own buffer instead — see `ChannelBus`.
-    let (tx, mut channel_rx) = mpsc::channel::<ServerMsg>(CHANNEL_BUFFER);
-    state.connections.lock().unwrap().insert(cid.clone(), tx);
+    let (sender, mut channel_rx) = mpsc::channel::<ServerMsg>(CHANNEL_BUFFER);
+    let generation = state.next_generation.fetch_add(1, Ordering::Relaxed);
+    state.connections.lock().unwrap().insert(cid.clone(), Connection { generation, sender });
     let mut events_rx = state.bus.0.subscribe();
 
     loop {
@@ -448,8 +483,12 @@ async fn handle_ws(mut socket: WebSocket, state: Arc<AppState>, cid: String) {
     // Drops this connection's sender: any `ChannelBus::push` still targeting
     // it now finds no connection and returns `false`, stopping that PTY's
     // reader thread the same way a dropped Tauri `Channel` would natively.
-    state.connections.lock().unwrap().remove(&cid);
-    state.channel_owners.lock().unwrap().retain(|_, owner| owner != &cid);
+    // Unless the tab already reconnected under the same id — then its PTYs
+    // carry on over the replacement, which this must leave alone.
+    let mut connections = state.connections.lock().unwrap();
+    if connections.get(&cid).is_some_and(|c| c.generation == generation) {
+        connections.remove(&cid);
+    }
 }
 
 /// A server bound and already accepting connections in the background.
@@ -485,7 +524,8 @@ async fn start(addr: SocketAddr) -> std::io::Result<Started> {
         bus: Bus::new(),
         token: token.clone(),
         connections: SyncMutex::new(HashMap::new()),
-        channel_owners: SyncMutex::new(HashMap::new()),
+        next_generation: AtomicU64::new(0),
+        pty_owners: SyncMutex::new(HashMap::new()),
     });
 
     // Same watchers the desktop app arms in `setup`, fed the server's bus
@@ -592,6 +632,28 @@ mod tests {
         // A cookie whose name merely starts with "roer_token" is not a match.
         headers.insert(header::COOKIE, HeaderValue::from_static("roer_token_extra=secret"));
         assert!(!carries_token(&headers, "secret"));
+    }
+
+    #[test]
+    fn refuses_a_page_served_from_another_origin() {
+        let with = |origin: Option<&'static str>, host: &'static str| {
+            let mut headers = HeaderMap::new();
+            headers.insert(header::HOST, HeaderValue::from_static(host));
+            if let Some(origin) = origin {
+                headers.insert(header::ORIGIN, HeaderValue::from_static(origin));
+            }
+            same_origin(&headers)
+        };
+        assert!(with(Some("http://127.0.0.1:4317"), "127.0.0.1:4317"));
+        // Through the Vite dev proxy, which keeps the browser's Host.
+        assert!(with(Some("http://localhost:1420"), "localhost:1420"));
+        assert!(with(Some("https://roer.example"), "roer.example"));
+        // Same host, different port: still a different origin.
+        assert!(!with(Some("http://127.0.0.1:8080"), "127.0.0.1:4317"));
+        assert!(!with(Some("http://evil.example"), "127.0.0.1:4317"));
+        assert!(!with(Some("null"), "127.0.0.1:4317"));
+        // Not a browser page, so no ambient cookie to worry about.
+        assert!(with(None, "127.0.0.1:4317"));
     }
 
     #[test]

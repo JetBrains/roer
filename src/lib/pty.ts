@@ -97,10 +97,16 @@ export function spawnPty(
     cols: size.cols,
     rows: size.rows,
     onEvent: channel,
-  }).then((id) => {
-    channels.set(id, channel);
-    return id;
-  });
+  }).then(
+    (id) => {
+      channels.set(id, channel);
+      return id;
+    },
+    (error: unknown) => {
+      channel.dispose();
+      throw error;
+    },
+  );
 }
 
 export const writePty = (id: string, data: string): Promise<void> =>
