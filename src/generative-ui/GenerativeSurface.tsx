@@ -591,10 +591,11 @@ function statusTone(status: string): "done" | "doing" | "blocked" | "failed" | "
 
 /** A bound `progress` resolves to nothing for an item that has none — a
  * template over runs where only some are mid-run — and that must draw no
- * bar rather than `Number(undefined)`'s NaN, which CSS reads as a full one. */
+ * bar rather than `Number(undefined)`'s NaN, which CSS reads as a full one.
+ * Only a number or a numeric string counts: `Number` would also turn
+ * `false`, `null` and `" "` into 0 and draw an empty bar for them. */
 function progressValue(raw: unknown): number | undefined {
-  if (raw === undefined || raw === null || raw === "") return undefined;
-  const n = Number(raw);
+  const n = typeof raw === "number" ? raw : typeof raw === "string" && raw.trim() !== "" ? Number(raw) : NaN;
   return Number.isFinite(n) ? n : undefined;
 }
 

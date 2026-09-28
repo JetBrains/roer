@@ -52,11 +52,19 @@ describe("GenerativeSurface", () => {
         { id: "root", component: "Column", children: { componentId: "run", path: "/runs" } },
         { id: "run", component: "StatusCard", title: { path: "title" }, progress: { path: "progress" } },
       ],
-      { runs: [{ title: "build" }, { title: "deploy", progress: 64 }] },
+      {
+        runs: [
+          { title: "build" },
+          { title: "deploy", progress: 64 },
+          { title: "lint", progress: "40" },
+          { title: "e2e", progress: false },
+          { title: "docs", progress: " " },
+          { title: "bench", progress: null },
+        ],
+      },
     );
     const bars = screen.getAllByRole("progressbar");
-    expect(bars).toHaveLength(1);
-    expect(bars[0]).toHaveAttribute("aria-valuenow", "64");
+    expect(bars.map((bar) => bar.getAttribute("aria-valuenow"))).toEqual(["64", "40"]);
   });
 
   it("colours CI statuses by meaning, failures included", () => {
