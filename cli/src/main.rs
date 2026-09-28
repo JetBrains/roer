@@ -475,7 +475,7 @@ impl Roer {
     fn plugin_ui(&self, args: &[&str]) -> Outcome {
         let pane = resolve_pane(&self.tmux, args)?;
         let message = read_json_stdin("plugin-ui needs a JSON message on stdin")?;
-        emit_plugin_ui(&pane, message, 1)
+        emit_plugin_ui(&pane, message, 1).map(drop)
     }
 
     /// Saves one piece of a plugin UI bundle under this project's
@@ -533,11 +533,11 @@ impl Roer {
             ["--pane", pane, rest @ ..] => (resolve_pane(&self.tmux, &["--pane", pane])?, rest.first().copied()),
             _ => (resolve_pane(&self.tmux, &[])?, args.first().copied()),
         };
-        self.load_bundle(&pane, name.unwrap_or_default())
+        self.load_bundle(&pane, name.unwrap_or_default()).map(drop)
     }
 
-    /// Shows saved bundle `name` in `pane`.
-    fn load_bundle(&self, pane: &str, name: &str) -> Outcome {
+    /// Shows saved bundle `name` in `pane`; the ids of the records sent.
+    fn load_bundle(&self, pane: &str, name: &str) -> Result<Vec<String>, Fail> {
         check_bundle_name(name)?;
         let dir = self.bundle_dir(name);
         let surface = dir.join("surface.json");
@@ -562,8 +562,10 @@ impl Roer {
         let id = surface_id(&message)?.to_string();
         // A surface may already be on screen under this id; v1.0 wants it
         // deleted before it is created again.
-        emit_plugin_ui(pane, json!({ "version": "v1.0", "deleteSurface": { "surfaceId": id } }), 1)?;
-        emit_plugin_ui(pane, message, 2)
+        Ok(vec![
+            emit_plugin_ui(pane, json!({ "version": "v1.0", "deleteSurface": { "surfaceId": id } }), 1)?,
+            emit_plugin_ui(pane, message, 2)?,
+        ])
     }
 
     /// Prints the pending component actions for a pane, oldest first, one JSON

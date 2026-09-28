@@ -38,6 +38,10 @@ pub const PLUGIN_UI_EVENT: &str = "roer://plugin-ui";
 /// JSON value.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct PluginUiRecord {
+    /// What the receipt for this record is named after; absent from a shim
+    /// that predates receipts, which waits for none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
     pub pane: String,
     pub message: serde_json::Value,
 }
@@ -45,6 +49,11 @@ pub struct PluginUiRecord {
 /// Mirrors the shim's own resolution, `ROER_HOME` included.
 pub fn plugin_ui_dir() -> PathBuf {
     roer_home().join("plugin-ui")
+}
+
+/// Where the panel's answer for a record waits for the `roer` that sent it.
+pub fn plugin_ui_receipts_dir() -> PathBuf {
+    roer_home().join("plugin-ui-receipts")
 }
 
 /// Where a reported action waits for `roer plugin-ui-actions` to collect it.
@@ -72,6 +81,43 @@ pub struct PluginUiAction {
 #[tauri::command]
 pub fn report_plugin_ui_action(action: PluginUiAction) -> Result<(), String> {
     write_action(&action, &plugin_ui_actions_dir())
+}
+
+/// What the panel did with one record: `shown`, or why not (`other-pane`,
+/// `pane-unknown`, `nothing-on-screen`, `invalid`). `onScreen` is the pane it
+/// was showing instead, when it knew one. Every way a message misses the
+/// panel is silent on screen, so this is how the agent that sent it hears.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct PluginUiReceipt {
+    pub id: String,
+    pub outcome: String,
+    #[serde(rename = "onScreen", default, skip_serializing_if = "Option::is_none")]
+    pub on_screen: Option<String>,
+}
+
+#[tauri::command]
+pub fn report_plugin_ui_receipt(receipt: PluginUiReceipt) -> Result<(), String> {
+    write_receipt(&receipt, &plugin_ui_receipts_dir())
+}
+
+fn write_receipt(receipt: &PluginUiReceipt, dir: &Path) -> Result<(), String> {
+    // The id names a file, and it came back from the frontend.
+    let safe = !receipt.id.is_empty()
+        && receipt.id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-');
+    if !safe {
+        return Err(format!("not a plugin UI record id: {}", receipt.id));
+    }
+    std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    let file = dir.join(format!("{}.json", receipt.id));
+    // A desktop window and a browser tab can both answer for one record:
+    // whichever showed it is the answer that counts.
+    if receipt.outcome != "shown" && file.exists() {
+        return Ok(());
+    }
+    let partial = file.with_extension("json.partial");
+    let body = serde_json::to_string(receipt).map_err(|e| e.to_string())?;
+    std::fs::write(&partial, body).map_err(|e| e.to_string())?;
+    std::fs::rename(&partial, &file).map_err(|e| e.to_string())
 }
 
 fn write_action(action: &PluginUiAction, dir: &Path) -> Result<(), String> {
@@ -360,6 +406,30 @@ mod tests {
         assert_eq!(got.pane, "%3");
         assert_eq!(got.message["version"], "v1.0");
         assert_eq!(got.message["deleteSurface"]["surfaceId"], "s");
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_receipt_is_named_after_its_record_and_a_shown_one_wins() {
+        let dir = std::env::temp_dir().join(format!("roer-plugin-ui-receipts-{}", std::process::id()));
+        std::fs::remove_dir_all(&dir).ok();
+        let receipt = |outcome: &str| PluginUiReceipt {
+            id: "20260101T000000-1-0-1".into(),
+            outcome: outcome.into(),
+            on_screen: Some("%2".into()),
+        };
+        let read_back = || read::<PluginUiReceipt>(&dir.join("20260101T000000-1-0-1.json")).expect("receipt");
+
+        write_receipt(&receipt("other-pane"), &dir).expect("write");
+        assert_eq!(read_back().outcome, "other-pane");
+        assert_eq!(read_back().on_screen.as_deref(), Some("%2"));
+        write_receipt(&receipt("shown"), &dir).expect("write");
+        write_receipt(&receipt("nothing-on-screen"), &dir).expect("write");
+        assert_eq!(read_back().outcome, "shown", "a window that showed it outranks one that did not");
+
+        let escape = PluginUiReceipt { id: "../../evil".into(), outcome: "shown".into(), on_screen: None };
+        assert!(write_receipt(&escape, &dir).is_err());
 
         std::fs::remove_dir_all(&dir).ok();
     }

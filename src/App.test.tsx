@@ -21,6 +21,7 @@ import {
 import type { Handoff, PtyEvent } from "./lib/pty";
 import { claudeSetupStatus } from "./lib/claudeSetup";
 import { listWorkspaces } from "./lib/workspaces";
+import { reportPluginUiReceipt } from "./lib/pluginUi";
 
 // Shared between the test body and the hoisted module mock below.
 const mocks = vi.hoisted(() => ({
@@ -34,6 +35,17 @@ const mocks = vi.hoisted(() => ({
   setupMenu: { current: undefined as undefined | (() => void) },
   // The last terminal made, so a test can see what it was told to look like.
   terminal: { current: undefined as undefined | { options: { theme?: { background?: string } } } },
+  // What the plugin-UI watcher delivers records to.
+  pluginUi: { current: undefined as undefined | ((record: unknown) => void) },
+}));
+
+vi.mock("./lib/pluginUi", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./lib/pluginUi")>()),
+  onPluginUi: vi.fn(async (handler: (record: unknown) => void) => {
+    mocks.pluginUi.current = handler;
+    return () => {};
+  }),
+  reportPluginUiReceipt: vi.fn(async () => undefined),
 }));
 
 // xterm.js measures real glyphs, which jsdom cannot do, so the terminal
@@ -620,6 +632,60 @@ describe("App", () => {
     expect(
       screen.queryByRole("button", { current: true }),
     ).not.toBeInTheDocument();
+  });
+
+  describe("answers for every plugin UI message, since a dropped one is silent on screen", () => {
+    const record = (pane: string) => ({
+      id: `r-${pane}`,
+      pane,
+      message: { version: "v1.0", deleteSurface: { surfaceId: "s" } },
+    });
+    const deliver = (pane: string) => act(() => mocks.pluginUi.current?.(record(pane)));
+    // From nothing running, so the new session's pane is the one not seen before.
+    beforeEach(() => vi.mocked(listSessions).mockResolvedValue([]));
+    const newSessionAppears = async (sessions: Array<{ pane: string; session: string }>) => {
+      fireEvent.click(await screen.findByRole("button", { name: /new session/i }));
+      vi.mocked(listSessions).mockResolvedValue(
+        sessions.map(({ pane, session }, n) => ({
+          id: String(n),
+          session,
+          pane,
+          attached: true,
+          cwd: "/Users/test",
+          command: "zsh",
+        })),
+      );
+      await emit({ kind: "output", data: "aGk=" });
+      await waitFor(() => expect(listSessions).toHaveBeenCalled());
+    };
+
+    it("with no session on screen", async () => {
+      render(<App />);
+      await waitFor(() => expect(mocks.pluginUi.current).toBeDefined());
+      deliver("%7");
+      expect(reportPluginUiReceipt).toHaveBeenCalledWith("r-%7", "nothing-on-screen", undefined);
+    });
+
+    it("for the session on screen, and for another one", async () => {
+      render(<App />);
+      await newSessionAppears([{ pane: "%7", session: "test-1a2b" }]);
+      await waitFor(() => {
+        deliver("%7");
+        expect(reportPluginUiReceipt).toHaveBeenCalledWith("r-%7", "shown", "%7");
+      });
+      deliver("%9");
+      expect(reportPluginUiReceipt).toHaveBeenCalledWith("r-%9", "other-pane", "%7");
+    });
+
+    it("when the session on screen never learned its pane", async () => {
+      render(<App />);
+      await newSessionAppears([
+        { pane: "%7", session: "test-1a2b" },
+        { pane: "%8", session: "other" },
+      ]);
+      deliver("%7");
+      expect(reportPluginUiReceipt).toHaveBeenCalledWith("r-%7", "pane-unknown", undefined);
+    });
   });
 
   it("has no changes to show until a session is staged", async () => {

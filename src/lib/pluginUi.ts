@@ -14,9 +14,19 @@ import { A2UI_VERSION, isA2uiMessage, type A2uiMessage, type DataModel } from ".
 type CreateSurfaceMessage = Extract<A2uiMessage, { createSurface: unknown }>;
 
 export interface PluginUiRecord {
+  /** What the receipt is named after; absent from a shim that predates them. */
+  id?: string;
   pane: string;
   message: A2uiMessage;
 }
+
+/** What the panel did with a record: shown, or why not. Every way a message
+ * misses the panel is silent on screen, so this is how the agent that sent
+ * it hears — `roer mcp` waits for it and says so. */
+export type PluginUiOutcome = "shown" | "other-pane" | "pane-unknown" | "nothing-on-screen" | "invalid";
+
+export const reportPluginUiReceipt = (id: string, outcome: PluginUiOutcome, onScreen?: string): Promise<void> =>
+  invoke("report_plugin_ui_receipt", { receipt: { id, outcome, onScreen } });
 
 /** The generic on `listen` is a compile-time label, not a runtime check —
  * the payload is raw JSON off a terminal pipe. Drop a record whose shape
@@ -29,7 +39,12 @@ function isPluginUiRecord(value: unknown): value is PluginUiRecord {
 
 export const onPluginUi = (handler: (record: PluginUiRecord) => void): Promise<UnlistenFn> =>
   listen<PluginUiRecord>("roer://plugin-ui", (event) => {
-    if (isPluginUiRecord(event.payload)) handler(event.payload);
+    if (isPluginUiRecord(event.payload)) {
+      handler(event.payload);
+      return;
+    }
+    const id = (event.payload as { id?: unknown } | null)?.id;
+    if (typeof id === "string") void reportPluginUiReceipt(id, "invalid").catch(() => {});
   });
 
 /**

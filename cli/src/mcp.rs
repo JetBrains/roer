@@ -20,6 +20,7 @@ use std::io::{BufRead, Write};
 
 use serde_json::{json, Value};
 
+use crate::records::{await_plugin_ui, Delivery};
 use crate::{emit_plugin_ui, Fail, Roer};
 
 /// What the Generative UI panel draws: the message kinds and the catalog.
@@ -286,10 +287,11 @@ impl Server<'_> {
                 let pane = self.pane(args)?;
                 let messages = args.get("messages").and_then(Value::as_array).filter(|m| !m.is_empty());
                 let messages = messages.ok_or_else(|| Fail::new(2, "`messages` needs at least one message"))?;
+                let mut ids = Vec::new();
                 for (n, message) in messages.iter().enumerate() {
-                    emit_plugin_ui(&pane, message.clone(), n as u32 + 1)?;
+                    ids.push(emit_plugin_ui(&pane, message.clone(), n as u32 + 1)?);
                 }
-                Ok(format!("Sent {} message(s) to the Generative UI panel.", messages.len()))
+                delivered(&pane, &ids, &format!("{} message(s)", messages.len()))
             }
             "read_ui_actions" => Ok(Roer::take_actions(&self.pane(args)?)?.join("\n")),
             "save_ui" if self.here.is_some() => {
@@ -303,8 +305,9 @@ impl Server<'_> {
             }
             "load_ui" if self.here.is_some() => {
                 let name = text(args, "name");
-                self.roer.load_bundle(&self.pane(args)?, name)?;
-                Ok(format!("Showing {name}."))
+                let pane = self.pane(args)?;
+                let ids = self.roer.load_bundle(&pane, name)?;
+                delivered(&pane, &ids, name)
             }
             "add_task" if self.here.is_some() => Ok(self.roer.tasks().add(args)?.to_string()),
             "update_task" if self.here.is_some() => {
@@ -342,6 +345,54 @@ impl Server<'_> {
             None => self.here.clone().ok_or_else(|| Fail::new(2, "`session` is required outside a Roer session")),
         }
     }
+}
+
+/// What to tell the agent about records sent to `pane`'s panel: that they
+/// were shown, or why not. Every way a message can miss the panel is silent
+/// on screen, so the agent is the only one who can be told, and the one who
+/// can do something about it.
+fn delivered(pane: &str, ids: &[String], what: &str) -> Result<String, Fail> {
+    let Some(deliveries) = await_plugin_ui(ids) else {
+        return Ok(format!("Sent {what} to the Generative UI panel."));
+    };
+    let again = "and send it again";
+    for delivery in &deliveries {
+        let problem = match delivery {
+            Delivery::Unread => format!(
+                "No Roer app picked this up, so nothing was shown. Ask the user to start Roer, open this session \
+                 in it, {again}."
+            ),
+            Delivery::Answered { outcome, on_screen } => match outcome.as_str() {
+                "shown" => continue,
+                "other-pane" => format!(
+                    "Roer is showing another session (pane {}), not this one ({pane}), so its panel ignored this. \
+                     Ask the user to open this session in Roer, {again}.",
+                    on_screen.as_deref().unwrap_or("unknown")
+                ),
+                "pane-unknown" => format!(
+                    "Roer has a session on screen but does not know which pane it is, so its panel ignored this \
+                     message for {pane}. Ask the user to reopen this session in Roer, from its session list or by \
+                     running `roer` in its directory, {again}."
+                ),
+                "nothing-on-screen" => format!(
+                    "Roer has no session on screen, so its panel ignored this. Ask the user to open this session \
+                     ({pane}) in Roer, {again}."
+                ),
+                "invalid" => "Roer's panel rejected a message as not valid A2UI v1.0. Check it against the \
+                              roer:catalog/1 resource."
+                    .to_string(),
+                other => format!("Roer's panel answered '{other}', which this roer does not know; ask the user whether it shows."),
+            },
+            Delivery::Taken => {
+                return Ok(format!(
+                    "Sent {what} to the Generative UI panel. This Roer does not confirm what it showed, so ask the \
+                     user if the panel does not update."
+                ))
+            }
+        };
+        return Err(Fail::new(3, problem));
+    }
+    Ok(format!("Showing {what} in the Generative UI panel."))
 }
 
 fn text<'a>(args: &'a Value, key: &str) -> &'a str {

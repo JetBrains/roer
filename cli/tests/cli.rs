@@ -55,6 +55,9 @@ impl Env {
             .env("ROER_HOME", &self.home)
             // Something that is not an app, so a handoff never launches one.
             .env("ROER_APP", "/nonexistent/roer-test-app")
+            // No app answers for plugin UI records here, so none is waited
+            // for; the tests that play the app turn it back on.
+            .env("ROER_UI_WAIT_MS", "0")
             .env_remove("TMUX")
             .env_remove("TMUX_PANE")
             .env_remove("ROER_TMUX_CONF");
@@ -327,7 +330,11 @@ fn plugin_ui_messages_reach_the_app_tagged_with_their_pane() {
     let env = Env::new("plugin-ui");
     let out = env.run_with(&["plugin-ui", "--pane", "%4"], r#"{"version":"v1.0","deleteSurface":{"surfaceId":"s"}}"#);
     assert_eq!(code(&out), 0, "{}", stderr(&out));
-    let records = env.records("plugin-ui");
+    let mut records = env.records("plugin-ui");
+    assert_eq!(records.len(), 1);
+    // The id is the file's name, which the app names its receipt after.
+    let id = records[0].as_object_mut().unwrap().remove("id").unwrap();
+    assert!(env.home.join("plugin-ui").join(format!("{}.json", id.as_str().unwrap())).is_file(), "{id}");
     assert_eq!(
         records,
         vec![serde_json::json!({"pane": "%4", "message": {"version": "v1.0", "deleteSurface": {"surfaceId": "s"}}})]
@@ -810,6 +817,86 @@ fn mcp_shows_ui_in_its_own_session_or_a_named_one() {
     assert!(replies.iter().all(|r| r["result"]["isError"] == false), "{replies:?}");
     let panes: Vec<Value> = env.records("plugin-ui").iter().map(|r| r["pane"].clone()).collect();
     assert_eq!(panes, [here.as_str(), here.as_str(), other.as_str(), other.as_str()]);
+}
+
+/// Plays the app for `roer mcp`: takes each plugin UI record as it lands and
+/// answers for it with `answer(pane)`, or with nothing when that is None, as
+/// an app from before receipts does.
+fn fake_app(env: &Env, answer: fn(&str) -> Option<Value>) -> (Arc<AtomicBool>, std::thread::JoinHandle<()>) {
+    let (records, receipts) = (env.home.join("plugin-ui"), env.home.join("plugin-ui-receipts"));
+    std::fs::create_dir_all(&records).unwrap();
+    let stop = Arc::new(AtomicBool::new(false));
+    let stopped = stop.clone();
+    let app = std::thread::spawn(move || {
+        while !stopped.load(Ordering::Relaxed) {
+            for entry in std::fs::read_dir(&records).unwrap().flatten() {
+                let path = entry.path();
+                if path.extension().is_none_or(|e| e != "json") {
+                    continue;
+                }
+                let record: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+                std::fs::remove_file(&path).unwrap();
+                if let Some(receipt) = answer(record["pane"].as_str().unwrap()) {
+                    std::fs::create_dir_all(&receipts).unwrap();
+                    let id = record["id"].as_str().unwrap();
+                    std::fs::write(receipts.join(format!("{id}.json")), receipt.to_string()).unwrap();
+                }
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    });
+    (stop, app)
+}
+
+#[test]
+fn mcp_says_whether_the_panel_showed_it_and_why_not() {
+    let env = Env::new("mcp-receipts");
+    let here = pane(&env, "work", "sh");
+    let mut vars: Vec<(&str, String)> = in_pane(&env, &here).into_iter().collect();
+    vars.push(("ROER_UI_WAIT_MS", "3000".into()));
+    let vars: Vec<(&str, &str)> = vars.iter().map(|(k, v)| (*k, v.as_str())).collect();
+    let show = || call("show_ui", serde_json::json!({ "messages": [{ "version": "v1.0", "deleteSurface": { "surfaceId": "s" } }] }));
+    let text = |reply: &Value| reply["result"]["content"][0]["text"].as_str().unwrap().to_string();
+    let run = |answer: fn(&str) -> Option<Value>| {
+        let (stop, app) = fake_app(&env, answer);
+        let reply = mcp(&env, &vars, &[show()]).remove(0);
+        stop.store(true, Ordering::Relaxed);
+        app.join().unwrap();
+        reply
+    };
+
+    let shown = run(|_| Some(serde_json::json!({ "outcome": "shown" })));
+    assert_eq!(shown["result"]["isError"], false, "{shown}");
+    assert!(text(&shown).starts_with("Showing 1 message(s) in the Generative UI panel"), "{shown}");
+
+    let elsewhere = run(|_| Some(serde_json::json!({ "outcome": "other-pane", "onScreen": "%77" })));
+    assert_eq!(elsewhere["result"]["isError"], true, "{elsewhere}");
+    assert!(text(&elsewhere).contains("%77") && text(&elsewhere).contains(&here), "{elsewhere}");
+    assert!(!text(&elsewhere).contains("  "), "one line of prose: {elsewhere}");
+
+    let unknown = run(|_| Some(serde_json::json!({ "outcome": "pane-unknown" })));
+    assert_eq!(unknown["result"]["isError"], true, "{unknown}");
+    assert!(text(&unknown).contains("does not know which pane"), "{unknown}");
+
+    let old_app = run(|_| None);
+    assert_eq!(old_app["result"]["isError"], false, "an app from before receipts is not an error: {old_app}");
+    assert!(text(&old_app).contains("does not confirm"), "{old_app}");
+    assert!(!env.home.join("plugin-ui-receipts").read_dir().is_ok_and(|mut d| d.next().is_some()), "receipts are consumed");
+}
+
+#[test]
+fn mcp_says_when_no_app_takes_the_message() {
+    let env = Env::new("mcp-unread");
+    let here = pane(&env, "work", "sh");
+    let mut vars: Vec<(&str, String)> = in_pane(&env, &here).into_iter().collect();
+    vars.push(("ROER_UI_WAIT_MS", "300".into()));
+    let vars: Vec<(&str, &str)> = vars.iter().map(|(k, v)| (*k, v.as_str())).collect();
+    let show = call("show_ui", serde_json::json!({ "messages": [{ "version": "v1.0", "deleteSurface": { "surfaceId": "s" } }] }));
+
+    let reply = mcp(&env, &vars, &[show]).remove(0);
+    assert_eq!(reply["result"]["isError"], true, "{reply}");
+    assert!(reply["result"]["content"][0]["text"].as_str().unwrap().contains("No Roer app picked this up"), "{reply}");
+    assert!(env.records("plugin-ui").is_empty(), "a record nobody took is not left behind");
 }
 
 #[test]

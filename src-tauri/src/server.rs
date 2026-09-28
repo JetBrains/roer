@@ -336,6 +336,9 @@ fn dispatch(state: &Arc<AppState>, cmd: &str, args: Value, cid: Option<&str>) ->
         "report_plugin_ui_action" => {
             call_res!(args, crate::plugin_ui::report_plugin_ui_action, "action": crate::plugin_ui::PluginUiAction)
         }
+        "report_plugin_ui_receipt" => {
+            call_res!(args, crate::plugin_ui::report_plugin_ui_receipt, "receipt": crate::plugin_ui::PluginUiReceipt)
+        }
         "list_plugin_ui_bundles" => call!(args, crate::plugin_ui::list_plugin_ui_bundles, "cwd": String),
         "read_plugin_ui_bundle" => {
             call_res!(args, crate::plugin_ui::read_plugin_ui_bundle, "cwd": String, "name": String)

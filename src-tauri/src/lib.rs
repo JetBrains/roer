@@ -82,6 +82,7 @@ pub fn run() {
             workspaces::workspace_assign,
             workspaces::workspace_unassign,
             plugin_ui::report_plugin_ui_action,
+            plugin_ui::report_plugin_ui_receipt,
             plugin_ui::list_plugin_ui_bundles,
             plugin_ui::read_plugin_ui_bundle,
             plugin_ui::write_plugin_ui_bundle,

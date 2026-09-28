@@ -49,7 +49,7 @@ import {
   type Handoff,
   type SessionInfo,
 } from "./lib/pty";
-import { onPluginUi } from "./lib/pluginUi";
+import { onPluginUi, reportPluginUiReceipt, type PluginUiOutcome } from "./lib/pluginUi";
 
 interface SessionView extends OpenRequest {
   /** Set when this session was teleported in; a terminal is waiting on it.
@@ -412,8 +412,18 @@ export function App() {
     void onPluginUi((record) => {
       // Scoped to this session's pane: a message tagged for a pane nobody is
       // looking at would otherwise pop the panel open and overwrite whatever
-      // is on screen for the session that *is*.
-      if (!paneRef.current || record.pane !== paneRef.current) return;
+      // is on screen for the session that *is*. Whatever becomes of it, the
+      // sender hears, since nothing on screen says so.
+      const onScreen = paneRef.current;
+      const outcome: PluginUiOutcome = !onScreen
+        ? stagedRef.current
+          ? "pane-unknown"
+          : "nothing-on-screen"
+        : record.pane !== onScreen
+          ? "other-pane"
+          : "shown";
+      if (record.id) void reportPluginUiReceipt(record.id, outcome, onScreen).catch(() => {});
+      if (outcome !== "shown") return;
 
       setGenerativeUi((current) => ({
         // The fixture and a live surface are dropped together, not merged —

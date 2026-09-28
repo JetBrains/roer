@@ -82,13 +82,93 @@ fn ensure_dir(dir: &Path) -> Result<(), Fail> {
 /// `seq` orders one command's messages; the count keeps apart the records of
 /// a process that sends several in the same second, as `roer mcp` does, where
 /// the stamp alone would have a later one overwrite one not yet delivered.
-pub fn emit_plugin_ui(pane: &str, message: Value, seq: u32) -> Result<(), Fail> {
+///
+/// Returns the record's id, its file name without `.json`, which the app
+/// names the receipt it answers with after: see [`await_plugin_ui`].
+pub fn emit_plugin_ui(pane: &str, message: Value, seq: u32) -> Result<String, Fail> {
     static SENT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
     let count = SENT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let dir = home().join("plugin-ui");
     ensure_dir(&dir)?;
-    let file = dir.join(format!("{}-{count}-{seq}.json", stamp()));
-    write_atomic(&file, &format!("{}\n", json!({ "pane": pane, "message": message })))
+    let id = format!("{}-{count}-{seq}", stamp());
+    let file = dir.join(format!("{id}.json"));
+    write_atomic(&file, &format!("{}\n", json!({ "id": id, "pane": pane, "message": message })))?;
+    Ok(id)
+}
+
+/// What became of plugin UI records, as far as this side can tell.
+#[derive(Debug, PartialEq)]
+pub enum Delivery {
+    /// The app's panel answered: `outcome` is what it did with the message,
+    /// and `on_screen` the pane it was showing, when it knew one.
+    Answered { outcome: String, on_screen: Option<String> },
+    /// The app took the record but said nothing about it: an app from
+    /// before receipts, or a window that is not listening.
+    Taken,
+    /// Nothing took the record in time, so nothing is watching for it. The
+    /// record is removed: the app never replays old ones.
+    Unread,
+}
+
+/// How long an app has to take a record, and then to answer for it. An app
+/// from before receipts takes records and never answers, so the second wait
+/// is kept short: it is paid on every call there.
+/// `ROER_UI_WAIT_MS` overrides the first, and 0 skips waiting at all.
+const PICKUP: Duration = Duration::from_secs(3);
+const ANSWER: Duration = Duration::from_millis(1500);
+
+/// Waits for the app to take and answer for each of `ids`, in order,
+/// consuming the receipts. None when waiting is switched off.
+pub fn await_plugin_ui(ids: &[String]) -> Option<Vec<Delivery>> {
+    let pickup = match std::env::var("ROER_UI_WAIT_MS").ok().and_then(|ms| ms.parse().ok()) {
+        Some(0) => return None,
+        Some(ms) => Duration::from_millis(ms),
+        None => PICKUP,
+    };
+    let records = home().join("plugin-ui");
+    let receipts = home().join("plugin-ui-receipts");
+    let record = |id: &str| records.join(format!("{id}.json"));
+    let receipt = |id: &str| receipts.join(format!("{id}.json"));
+
+    let start = std::time::Instant::now();
+    let mut taken_at = None;
+    loop {
+        let all_taken = ids.iter().all(|id| !record(id).exists());
+        if all_taken && taken_at.is_none() {
+            taken_at = Some(std::time::Instant::now());
+        }
+        let answered = ids.iter().all(|id| receipt(id).exists());
+        let gave_up = match taken_at {
+            Some(at) => at.elapsed() >= ANSWER,
+            None => start.elapsed() >= pickup,
+        };
+        if answered || gave_up {
+            break;
+        }
+        std::thread::sleep(TICK);
+    }
+
+    Some(
+        ids.iter()
+            .map(|id| {
+                if let Ok(text) = std::fs::read_to_string(receipt(id)) {
+                    let _ = std::fs::remove_file(receipt(id));
+                    let answer: Value = serde_json::from_str(&text).unwrap_or_default();
+                    return Delivery::Answered {
+                        outcome: answer["outcome"].as_str().unwrap_or("unknown").to_string(),
+                        on_screen: answer["onScreen"].as_str().map(str::to_string),
+                    };
+                }
+                // Whoever removes the record first has it: the app on taking
+                // it, or this, on giving up on it.
+                if std::fs::remove_file(record(id)).is_ok() {
+                    Delivery::Unread
+                } else {
+                    Delivery::Taken
+                }
+            })
+            .collect(),
+    )
 }
 
 /// Hands a drafted PR title and body to the app's Pull Request form.
