@@ -34,7 +34,7 @@
 
 <main id="top">
 
-  <!-- Hero: the agent drafts a panel, Roer renders it -->
+  <!-- Hero -->
   <section class="hero">
     <div class="beam" aria-hidden="true"></div>
     <div class="wrap hero-copy">
@@ -46,47 +46,6 @@
         <a class="btn btn-ghost" href="{{blogUrl}}">Read the blog</a>
       </div>
       <p class="meta">macOS 15+ &nbsp;·&nbsp; Linux &nbsp;·&nbsp; Windows preview &nbsp;·&nbsp; released {{release.date}}</p>
-    </div>
-
-    <div class="wrap">
-      <figure class="app" id="demo" aria-label="Animated demo: an agent in the terminal sends UI messages and Roer renders an approval panel">
-        <div class="app-chrome">
-          <span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>
-          <span class="app-title">Roer — ~/IdeaProjects/roer</span>
-          <button class="replay" type="button" id="replay" aria-label="Replay the demo">Replay</button>
-        </div>
-        <div class="app-body">
-          <div class="term">
-            <div class="tabs" aria-hidden="true">
-              <span>Sessions</span><span class="on">Terminal</span><span>Changes</span>
-            </div>
-            <ol class="term-lines" id="term" aria-live="polite"></ol>
-          </div>
-          <div class="panel">
-            <div class="panel-head">
-              <span>Generative UI</span>
-              <span class="status" id="status" data-state="idle">Waiting</span>
-            </div>
-            <div class="surface" id="surface">
-              <div class="gc gc-card" data-id="card">
-                <p class="gc gc-text gc-heading" data-id="heading">Apply 3 pending changes?</p>
-                <p class="gc gc-text gc-muted" data-id="sub">The agent is ready to run <code>cargo fmt</code>, then commit. Uncheck anything to leave it out.</p>
-                <hr class="gc gc-divider" data-id="divider">
-                <div class="gc-list">
-                  <label class="gc gc-check" data-id="c1"><input type="checkbox" id="chg-watch" data-name="watch.rs"><span><code>src-tauri/src/watch.rs</code> batch window widened to 300ms</span></label>
-                  <label class="gc gc-check" data-id="c2"><input type="checkbox" id="chg-tabs" data-name="tabs.ts"><span><code>src/lib/tabs.ts</code> evict least-recently-used file tab</span></label>
-                  <label class="gc gc-check" data-id="c3"><input type="checkbox" id="chg-readme" data-name="README.md"><span><code>README.md</code> document the new eviction rule</span></label>
-                </div>
-                <div class="gc gc-buttons" data-id="row">
-                  <button type="button" class="gc-btn" id="gate-cancel">Cancel</button>
-                  <button type="button" class="gc-btn gc-btn-primary" id="gate-apply">Apply selected</button>
-                </div>
-              </div>
-            </div>
-            <p class="panel-foot">Drawn from Roer's own components. No agent-written code runs here.</p>
-          </div>
-        </div>
-      </figure>
     </div>
 
     <div class="wrap points">
