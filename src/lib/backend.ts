@@ -106,6 +106,11 @@ export async function invoke<T>(cmd: string, args: Record<string, unknown> = {})
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ cmd, args: toWireArgs(args) }),
   });
+  if (!res.ok) {
+    // A non-2xx here is the auth middleware or a proxy, not `invoke`'s own
+    // `{ ok: false, error }` shape — that only comes back on 200.
+    throw new Error((await res.text().catch(() => "")) || `${res.status} ${res.statusText}`);
+  }
   const body = (await res.json()) as { ok: true; value: T } | { ok: false; error: string };
   if (!body.ok) throw new Error(body.error);
   return body.value;
