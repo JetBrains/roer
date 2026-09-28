@@ -129,12 +129,16 @@ struct SessionQuery {
 /// every later call is authorized without the token being typed again. Then
 /// redirects to `/` — this is what a browser actually lands on when it
 /// opens the bootstrap link, not a page meant to be read.
-async fn session(State(state): State<Arc<AppState>>, Query(q): Query<SessionQuery>) -> Response {
+async fn session(State(state): State<Arc<AppState>>, headers: HeaderMap, Query(q): Query<SessionQuery>) -> Response {
     if q.token != state.token {
         return (StatusCode::FORBIDDEN, "bad token").into_response();
     }
     let mut res = axum::response::Redirect::to("/").into_response();
-    let cookie = format!("{TOKEN_COOKIE}={}; Path=/; HttpOnly; SameSite=Strict", state.token);
+    // The server itself only speaks HTTP; HTTPS means a TLS-terminating
+    // proxy in front, and then the cookie must never go out in the clear.
+    let https = headers.get("x-forwarded-proto").and_then(|v| v.to_str().ok()) == Some("https");
+    let secure = if https { "; Secure" } else { "" };
+    let cookie = format!("{TOKEN_COOKIE}={}; Path=/; HttpOnly; SameSite=Strict{secure}", state.token);
     if let Ok(value) = HeaderValue::from_str(&cookie) {
         res.headers_mut().insert(header::SET_COOKIE, value);
     }
@@ -423,7 +427,11 @@ async fn static_asset(uri: Uri) -> Response {
     let path = uri.path().trim_start_matches('/');
     let path = if path.is_empty() { "index.html" } else { path };
     let Some(file) = Frontend::get(path).or_else(|| Frontend::get("index.html")) else {
-        return (StatusCode::NOT_FOUND, "not found").into_response();
+        return (
+            StatusCode::NOT_FOUND,
+            "this roer-server was built without the frontend — run `npm run build`, then rebuild it",
+        )
+            .into_response();
     };
     let mime = mime_guess::from_path(path).first_or_octet_stream();
     let mut res = Response::new(Body::from(file.data.into_owned()));
@@ -502,7 +510,20 @@ impl Started {
     /// `roer_token` cookie, against this server's own address — it now
     /// serves the frontend itself, so nothing else needs to be running.
     pub fn bootstrap_url(&self) -> String {
-        format!("http://{}/api/session?token={}", self.addr, self.token)
+        let public = std::env::var("ROER_SERVER_PUBLIC_URL").ok();
+        format!("{}/api/session?token={}", public_base(self.addr, public.as_deref()), self.token)
+    }
+}
+
+/// Where a browser reaches this server. `ROER_SERVER_PUBLIC_URL` (e.g. the
+/// `https://…` of a TLS proxy in front) wins; a wildcard bind is no address
+/// a browser can open, so it falls back to `localhost`, which is right for
+/// a container publishing its port on this machine.
+fn public_base(addr: SocketAddr, public_url: Option<&str>) -> String {
+    match public_url {
+        Some(url) if !url.is_empty() => url.trim_end_matches('/').to_string(),
+        _ if addr.ip().is_unspecified() => format!("http://localhost:{}", addr.port()),
+        _ => format!("http://{addr}"),
     }
 }
 
@@ -516,6 +537,15 @@ async fn start(addr: SocketAddr) -> std::io::Result<Started> {
     // left running with nothing to shut it down.
     let listener = tokio::net::TcpListener::bind(addr).await?;
     let bound = listener.local_addr()?;
+    if !bound.ip().is_loopback() {
+        eprintln!(
+            "roer-server: WARNING: listening on {bound}, beyond this machine's loopback, over plain HTTP. \
+             The bootstrap token and session cookie give full terminal, file, Git and GitHub access, \
+             and anyone who can observe this traffic can take them. Put a TLS-terminating proxy in front \
+             (and set ROER_SERVER_PUBLIC_URL to its https:// address) unless the network is trusted, \
+             e.g. a container port published only on 127.0.0.1."
+        );
+    }
 
     let token = generate_token();
     let state = Arc::new(AppState {
@@ -565,6 +595,12 @@ pub async fn serve(addr: SocketAddr) {
     let started = start(addr).await.expect("could not bind the server's address");
     println!("roer-server: listening on http://{}", started.addr);
     println!("roer-server: open {} once per browser to authorize it", started.bootstrap_url());
+    if started.addr.ip().is_unspecified() && std::env::var_os("ROER_SERVER_PUBLIC_URL").is_none() {
+        println!(
+            "roer-server: (bound to every interface — from another machine, use this host's own address \
+             in place of localhost, or set ROER_SERVER_PUBLIC_URL)"
+        );
+    }
     // A Vite dev server proxying /api elsewhere works too, at its own
     // origin's /api/session — same path and token, different host:port.
     println!(
@@ -654,6 +690,18 @@ mod tests {
         assert!(!with(Some("null"), "127.0.0.1:4317"));
         // Not a browser page, so no ambient cookie to worry about.
         assert!(with(None, "127.0.0.1:4317"));
+    }
+
+    #[test]
+    fn advertises_an_address_a_browser_can_actually_open() {
+        let loopback: SocketAddr = "127.0.0.1:4317".parse().unwrap();
+        let wildcard: SocketAddr = "0.0.0.0:4317".parse().unwrap();
+        let wildcard_v6: SocketAddr = "[::]:4317".parse().unwrap();
+        assert_eq!(public_base(loopback, None), "http://127.0.0.1:4317");
+        assert_eq!(public_base(wildcard, None), "http://localhost:4317");
+        assert_eq!(public_base(wildcard_v6, None), "http://localhost:4317");
+        assert_eq!(public_base(wildcard, Some("https://roer.example/")), "https://roer.example");
+        assert_eq!(public_base(wildcard, Some("")), "http://localhost:4317");
     }
 
     #[test]
