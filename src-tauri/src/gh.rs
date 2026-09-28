@@ -320,10 +320,19 @@ pub fn open_url(url: String) -> Result<(), String> {
     if !is_web_link(&url) {
         return Err(format!("not a web link: {url}"));
     }
+    open_in_system_browser(&url)
+}
+
+/// The unchecked half of [`open_url`]: shells out to the OS opener with no
+/// scheme validation. Only for a URL this process built itself (never data
+/// that came back from GitHub or anywhere else outside), where `is_web_link`'s
+/// `https://`-only rule would wrongly reject a legitimate `http://127.0.0.1`
+/// address — `roer-server`'s own bootstrap link, for one.
+pub(crate) fn open_in_system_browser(url: &str) -> Result<(), String> {
     let (opener, before) = OPENER;
     let status = crate::process::command(opener)
         .args(before)
-        .arg(&url)
+        .arg(url)
         .status()
         .map_err(|e| format!("could not open {url}: {e}"))?;
     if status.success() {

@@ -1,3 +1,4 @@
+mod assets;
 mod browse;
 mod claude;
 mod claude_setup;
@@ -88,6 +89,7 @@ pub fn run() {
             projects::project_create,
             projects::project_rename,
             projects::project_delete,
+            server::start_browser_server,
         ])
         .setup(|app| {
             menu(app)?;
@@ -114,13 +116,17 @@ fn menu(app: &mut tauri::App) -> tauri::Result<()> {
         let handle = app.handle();
         let menu = Menu::default(handle)?;
         let setup = MenuItem::with_id(handle, "claude-setup", "Claude Code Integration…", true, None::<&str>)?;
+        let browser = MenuItem::with_id(handle, "browser-server", "Open This Session in a Browser…", true, None::<&str>)?;
         if let Some(app_menu) = menu.items()?.first().and_then(|item| item.as_submenu().cloned()) {
             app_menu.insert(&setup, 1)?;
+            app_menu.insert(&browser, 2)?;
         }
         app.set_menu(menu)?;
         app.on_menu_event(|app, event| {
             if event.id() == "claude-setup" {
                 let _ = app.emit("roer://claude-setup", ());
+            } else if event.id() == "browser-server" {
+                let _ = app.emit("roer://browser-server", ());
             }
         });
     }

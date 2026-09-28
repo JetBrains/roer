@@ -1,0 +1,7 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="Browser Experience" type="CompoundRunConfigurationType">
+    <toRun name="Frontend Dev (browser)" type="js.build_tools.npm" />
+    <toRun name="Roer Server (browser)" type="ShConfigurationType" />
+    <method v="2" />
+  </configuration>
+</component>
