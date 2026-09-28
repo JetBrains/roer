@@ -148,7 +148,7 @@ async function main() {
   cpSync(join(SITE, "blog"), join(OUT, "blog"), { recursive: true });
   cpSync(join(ROOT, "src-tauri/icons/128x128@2x.png"), join(OUT, "assets/roer.png"));
   cpSync(join(ROOT, "src-tauri/icons/64x64.png"), join(OUT, "assets/favicon.png"));
-  const shots = { "diff.png": "diff.png", "Go To File.png": "go-to-file.png", "markdown.png": "markdown.png" };
+  const shots = { "diff.png": "diff.png", "Go To File.png": "go-to-file.png", "markdown.png": "markdown.png", "gen-ui-dashboard-panel.png": "gen-ui-dashboard.png" };
   for (const [from, to] of Object.entries(shots)) {
     cpSync(join(ROOT, "docs/screenshots", from), join(OUT, "screenshots", to));
   }

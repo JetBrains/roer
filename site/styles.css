@@ -484,3 +484,12 @@ h3 { font-size: 1.125rem; font-weight: 700; line-height: 1.3; letter-spacing: -0
   .beam, .hop-session, .hop-key kbd, .caret { animation: none; }
   .gc { transition: none; }
 }
+
+/* "New in 0.5" strip under the dashboard shot. */
+.points-new { position: relative; padding-top: 72px; }
+.points-new::before {
+  content: "New in 0.5";
+  position: absolute; top: 32px; left: var(--gutter, 24px);
+  font: 600 0.75rem/1 "JetBrains Mono", monospace; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--lit-a);
+}
