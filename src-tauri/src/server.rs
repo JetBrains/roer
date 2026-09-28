@@ -493,16 +493,54 @@ async fn handle_ws(mut socket: WebSocket, state: Arc<AppState>, cid: String) {
     // reader thread the same way a dropped Tauri `Channel` would natively.
     // Unless the tab already reconnected under the same id — then its PTYs
     // carry on over the replacement, which this must leave alone.
-    let mut connections = state.connections.lock().unwrap();
-    if connections.get(&cid).is_some_and(|c| c.generation == generation) {
-        connections.remove(&cid);
+    let removed = {
+        let mut connections = state.connections.lock().unwrap();
+        let ours = connections.get(&cid).is_some_and(|c| c.generation == generation);
+        if ours {
+            connections.remove(&cid);
+        }
+        ours
+    };
+    if removed {
+        tokio::spawn(reap_abandoned_ptys(state, cid));
     }
+}
+
+/// How long a dropped connection has to come back before its PTYs are
+/// taken as abandoned — long enough to ride out a flaky network or a
+/// sleeping laptop, short enough that a closed tab's clients don't linger.
+const RECONNECT_GRACE: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// An idle PTY never pushes, so it never learns its tab is gone — its
+/// reader just sits in `read`. A tab that closed or reloaded (which mints
+/// a new connection id) can't `pty_close` it either, so close them here.
+async fn reap_abandoned_ptys(state: Arc<AppState>, cid: String) {
+    tokio::time::sleep(RECONNECT_GRACE).await;
+    if state.connections.lock().unwrap().contains_key(&cid) {
+        return;
+    }
+    let abandoned: Vec<String> = {
+        let mut owners = state.pty_owners.lock().unwrap();
+        let ids = owners.iter().filter(|(_, owner)| **owner == cid).map(|(id, _)| id.clone()).collect();
+        owners.retain(|_, owner| *owner != cid);
+        ids
+    };
+    if abandoned.is_empty() {
+        return;
+    }
+    let _ = tokio::task::spawn_blocking(move || {
+        for id in abandoned {
+            let _ = crate::pty::close(&state.pty, id);
+        }
+    })
+    .await;
 }
 
 /// A server bound and already accepting connections in the background.
 pub struct Started {
     pub addr: SocketAddr,
     pub token: String,
+    bus: Bus,
 }
 
 impl Started {
@@ -531,7 +569,7 @@ fn public_base(addr: SocketAddr, public_url: Option<&str>) -> String {
 /// as soon as it's listening rather than blocking for the server's whole
 /// lifetime — so a caller (the desktop app, starting this in-process) gets
 /// the bootstrap URL back right away.
-async fn start(addr: SocketAddr) -> std::io::Result<Started> {
+async fn start(addr: SocketAddr, own_watchers: bool) -> std::io::Result<Started> {
     // Bind first: if the port is already taken (e.g. a retried start after a
     // failed one), bail out before arming anything that would otherwise be
     // left running with nothing to shut it down.
@@ -560,13 +598,19 @@ async fn start(addr: SocketAddr) -> std::io::Result<Started> {
 
     // Same watchers the desktop app arms in `setup`, fed the server's bus
     // instead of an `AppHandle`. Handoff's own watcher is skipped: it exists
-    // to bring a native window forward, which has no meaning here.
-    if let Err(e) = crate::plugin_ui::watch(state.bus.clone()) {
-        eprintln!("roer-server: could not start the plugin-UI watcher: {e}");
+    // to bring a native window forward, which has no meaning here. Inside the
+    // desktop app they are already running — and each deletes a record once
+    // delivered, so a second pair would race the window for every one — so
+    // there the app's own watchers forward here instead (`DesktopWatchSink`).
+    if own_watchers {
+        if let Err(e) = crate::plugin_ui::watch(state.bus.clone()) {
+            eprintln!("roer-server: could not start the plugin-UI watcher: {e}");
+        }
+        if let Err(e) = crate::pr_draft::watch(state.bus.clone()) {
+            eprintln!("roer-server: could not start the PR-draft watcher: {e}");
+        }
     }
-    if let Err(e) = crate::pr_draft::watch(state.bus.clone()) {
-        eprintln!("roer-server: could not start the PR-draft watcher: {e}");
-    }
+    let bus = state.bus.clone();
 
     // No CORS layer: this is a same-origin browser tab talking to its own
     // server, never a cross-origin caller, and the auth cookie is scoped
@@ -586,13 +630,13 @@ async fn start(addr: SocketAddr) -> std::io::Result<Started> {
             eprintln!("roer-server: error: {e}");
         }
     });
-    Ok(Started { addr: bound, token })
+    Ok(Started { addr: bound, token, bus })
 }
 
 /// Boots the HTTP + WebSocket server and blocks until the process is
 /// killed — there is no window to close it from.
 pub async fn serve(addr: SocketAddr) {
-    let started = start(addr).await.expect("could not bind the server's address");
+    let started = start(addr, true).await.expect("could not bind the server's address");
     println!("roer-server: listening on http://{}", started.addr);
     println!("roer-server: open {} once per browser to authorize it", started.bootstrap_url());
     if started.addr.ip().is_unspecified() && std::env::var_os("ROER_SERVER_PUBLIC_URL").is_none() {
@@ -614,6 +658,25 @@ pub async fn serve(addr: SocketAddr) {
 /// (e.g. the menu action clicked twice) just hands back the same URL
 /// instead of trying to bind the port again.
 static RUNNING: OnceLock<Mutex<Option<Started>>> = OnceLock::new();
+
+/// The in-process server's bus, once the desktop app has started one.
+static IN_PROCESS_BUS: OnceLock<Bus> = OnceLock::new();
+
+/// What the desktop app's plugin-UI and PR-draft watchers deliver to: its
+/// own window, and — once "Open This Session in a Browser…" has started the
+/// in-process server — that server's tabs too, so the one watcher that
+/// consumes each record reaches both.
+#[derive(Clone)]
+pub(crate) struct DesktopWatchSink(pub tauri::AppHandle);
+
+impl crate::events::Sink for DesktopWatchSink {
+    fn emit<T: serde::Serialize>(&self, event: &str, payload: &T) {
+        crate::events::Sink::emit(&self.0, event, payload);
+        if let Some(bus) = IN_PROCESS_BUS.get() {
+            bus.emit(event, payload);
+        }
+    }
+}
 
 /// `127.0.0.1` unless overridden — safe by default, but a container or a
 /// remote-machine deployment needs to bind `0.0.0.0` (or a specific
@@ -638,7 +701,8 @@ pub async fn start_browser_server() -> Result<(), String> {
     let url = if let Some(started) = &*guard {
         started.bootstrap_url()
     } else {
-        let started = start(default_addr()).await.map_err(|e| e.to_string())?;
+        let started = start(default_addr(), false).await.map_err(|e| e.to_string())?;
+        let _ = IN_PROCESS_BUS.set(started.bus.clone());
         let url = started.bootstrap_url();
         *guard = Some(started);
         url
