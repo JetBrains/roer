@@ -95,8 +95,8 @@ pub fn run() {
             menu(app)?;
             cli_link::install();
             handoff::watch(app.handle().clone())?;
-            plugin_ui::watch(app.handle().clone())?;
-            pr_draft::watch(app.handle().clone())?;
+            plugin_ui::watch(server::DesktopWatchSink(app.handle().clone()))?;
+            pr_draft::watch(server::DesktopWatchSink(app.handle().clone()))?;
             Ok(())
         })
         .run(tauri::generate_context!())
