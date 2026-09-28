@@ -3135,7 +3135,7 @@ dependencies = [
 
 [[package]]
 name = "roer"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "axum",
  "base64 0.23.1",
