@@ -85,7 +85,7 @@ jobs:
         run: npm run build
 
       - name: Rust tests
-        run: cargo test --manifest-path src-tauri/Cargo.toml
+        run: cargo test --manifest-path src-tauri/Cargo.toml --features server-bin
 
       # The `roer` command, against a real tmux on a socket of its own. On
       # Windows only the unit tests exist: there is no tmux to drive.
