@@ -247,8 +247,8 @@ describe("filtering by project", () => {
       { id: "c1", cwd: "/tmp/one/sub", title: "under the project", updatedAt: 1 },
       { id: "c2", cwd: "/tmp/two", title: "elsewhere", updatedAt: 1 },
     ]);
-    const { result } = setUp([w]);
-    await waitFor(() => expect(result.current.workspaces).toHaveLength(1));
+    const { result } = setUp([workspace({ id: "w0", name: "Default" }), w]);
+    await waitFor(() => expect(result.current.workspaces).toHaveLength(2));
 
     act(() => result.current.setSelectedWorkspaceId("w1"));
 
@@ -256,5 +256,35 @@ describe("filtering by project", () => {
     expect(result.current.visibleSessions[0].session).toBe("roer-a");
     await waitFor(() => expect(result.current.visibleClaudeSessions).toHaveLength(1));
     expect(result.current.visibleClaudeSessions[0].title).toBe("under the project");
+  });
+
+  it("lists under Default, the first Workspace, whatever no Workspace covers", async () => {
+    const byDefault = workspace({ id: "w0", name: "Default" });
+    const other = workspace({ projects: ["p1"] });
+    vi.mocked(listProjects).mockResolvedValue([{ id: "p1", path: "/tmp/one", name: "one" }]);
+    vi.mocked(workspaceAssignments).mockResolvedValue({ "3": "w1" });
+    vi.mocked(listSessions).mockResolvedValue([
+      { id: "1", session: "roer-a", pane: "%0", attached: true, cwd: "/tmp/one/sub", command: "zsh" },
+      { id: "2", session: "roer-b", pane: "%1", attached: true, cwd: "/tmp/two", command: "zsh" },
+      { id: "3", session: "roer-c", pane: "%2", attached: true, cwd: "/tmp/three", command: "zsh" },
+    ]);
+    vi.mocked(listClaudeSessions).mockResolvedValue([
+      { id: "c1", cwd: "/tmp/one/sub", title: "under the project", updatedAt: 1 },
+      { id: "c2", cwd: "/tmp/two", title: "elsewhere", updatedAt: 1 },
+    ]);
+    const { result } = setUp([byDefault, other]);
+    await waitFor(() => expect(result.current.projects).toHaveLength(1));
+    await waitFor(() => expect(result.current.assignments).toEqual({ "3": "w1" }));
+
+    act(() => result.current.setSelectedWorkspaceId("w0"));
+
+    await waitFor(() => expect(result.current.visibleSessions.map((s) => s.session)).toEqual(["roer-b"]));
+    expect(result.current.visibleClaudeSessions.map((s) => s.title)).toEqual(["elsewhere"]);
+
+    act(() => result.current.setSelectedWorkspaceId("w1"));
+
+    await waitFor(() =>
+      expect(result.current.visibleSessions.map((s) => s.session)).toEqual(["roer-a", "roer-c"]),
+    );
   });
 });

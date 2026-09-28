@@ -477,7 +477,21 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
   // same way selecting the Project itself would show it.
   const underWorkspace = (cwd: string, id: string, workspace: Workspace) =>
     assignments[id] === workspace.id ||
-    selectedWorkspaceProjects.some((project) => underProject(cwd, project));
+    selectedWorkspaceProjects.some((project) => underProject(cwd, project)) ||
+    (workspace.id === workspaces[0]?.id && !coveredByAny(cwd, id));
+
+  // Default, the first Workspace, also takes whatever no Workspace covers, so
+  // a session is always listed somewhere. Without that, a fresh install —
+  // one Default with no Projects — lists nothing at all, however many
+  // sessions are running.
+  const coveredByAny = (cwd: string, id: string) =>
+    workspaces.some((workspace) => assignments[id] === workspace.id) ||
+    workspaces.some((workspace) =>
+      workspace.projects.some((projectId) => {
+        const project = projects.find((candidate) => candidate.id === projectId);
+        return project != null && underProject(cwd, project);
+      }),
+    );
 
   // A resumed conversation's tmux session (`<dir>-resume`, `-resume-2`, ...):
   // scaffolding the shim creates so the resume is teleportable, not something
