@@ -1,0 +1,6 @@
+{
+  "name": "roer-ui",
+  "version": "0.1.0",
+  "description": "Roer's Generative UI in a Claude Code pane: /roer <what to show>",
+  "types": "./types/index.d.ts"
+}
