@@ -10,7 +10,7 @@
 import { atom, read, update } from 'claude-code'
 import type { Register, RenderChildren } from 'claude-code'
 import type { RoerUiComponent, RoerUiSurface } from '../types'
-import { EMPTY, apply, binding, children, resolve, setAt, text } from './a2ui'
+import { EMPTY, apply, binding, children, contextOf, own, resolve, setAt, text } from './a2ui'
 
 const PANE = 'roer-ui'
 const TOOL = 'mcp__roer-ui__show'
@@ -109,12 +109,22 @@ export const register: Register = on => {
     const writeModel = (surfaceId: string, pointer: string | undefined, value: unknown) => {
       if (pointer === undefined) return undefined
       return update($, surfaces, all => {
-        const surface = all.bySurface[surfaceId]
+        const surface = own(all.bySurface, surfaceId)
         if (surface === undefined) return all
         const dataModel = setAt(surface.dataModel, pointer, value)
         return { ...all, bySurface: { ...all.bySurface, [surfaceId]: { ...surface, dataModel } } }
       })
     }
+
+    // Which tab a Tabs shows is the pane's to keep, not the data model's:
+    // nothing the agent sent says, and a press must not report it.
+    const selectTab = (surfaceId: string, tabsAt: string, index: number) =>
+      update($, surfaces, all => {
+        const surface = own(all.bySurface, surfaceId)
+        if (surface === undefined) return all
+        const tabs = { ...surface.tabs, [tabsAt]: index }
+        return { ...all, bySurface: { ...all.bySurface, [surfaceId]: { ...surface, tabs } } }
+      })
 
     // A Button's event, handed to the model as v1.0's renderer-to-agent
     // `action` message, the way Roer's panel reports it, but as a prompt.
@@ -125,13 +135,10 @@ export const register: Register = on => {
         return
       }
       // Read afresh: the drawing's copy predates whatever was typed since.
-      const surface = (await read($, surfaces)).bySurface[surfaceId]
+      const surface = own((await read($, surfaces)).bySurface, surfaceId)
       if (surface === undefined) return
       const model = surface.dataModel
-      const context: Record<string, unknown> = {}
-      if (typeof event.context === 'object' && event.context !== null) {
-        for (const [name, value] of Object.entries(event.context)) context[name] = resolve(value, model, scope)
-      }
+      const context = contextOf(event.context, model, scope)
       const userMessage = text(event.userMessage, model, scope)
       const message = {
         version: 'v1.0',
@@ -150,14 +157,20 @@ export const register: Register = on => {
       await $.prompt.submit({ text: lines.join('\n') })
     }
 
-    const draw = (surfaceId: string, surface: RoerUiSurface, id: string, scope: string, depth: number): RenderChildren => {
-      const c = surface.components[id]
-      if (c === undefined || depth > 32) return <Text dimColor>{`(missing ${id})`}</Text>
+    // `ancestors` are the components on the way down to this one. The graph
+    // is the model's, so it can loop back on itself; a loop draws as a
+    // placeholder the moment it closes, as in Roer's GenerativeSurface. A
+    // depth limit alone would first draw exponentially many nodes.
+    const draw = (surfaceId: string, surface: RoerUiSurface, id: string, scope: string, ancestors: ReadonlySet<string>): RenderChildren => {
+      if (ancestors.has(id)) return <Text dimColor>{`(cycle at ${id})`}</Text>
+      const c = own(surface.components, id)
+      if (c === undefined) return <Text dimColor>{`(missing ${id})`}</Text>
       const model = surface.dataModel
       const key = `${surfaceId}.${id}${scope}`
+      const below = new Set(ancestors).add(id)
       const kids = (list: unknown) =>
-        children(list, model, scope).map(([child, at]) => draw(surfaceId, surface, child, at, depth + 1))
-      const one = (child: unknown) => (typeof child === 'string' ? draw(surfaceId, surface, child, scope, depth + 1) : null)
+        children(list, model, scope).map(([child, at]) => draw(surfaceId, surface, child, at, below))
+      const one = (child: unknown) => (typeof child === 'string' ? draw(surfaceId, surface, child, scope, below) : null)
       const str = (prop: string) => text(c[prop], model, scope)
       const write = (pointer: string | undefined, value: unknown) => writeModel(surfaceId, pointer, value)
 
@@ -177,15 +190,29 @@ export const register: Register = on => {
             </Box>
           )
         case 'Tabs': {
+          // A row of buttons, one per tab, and only the chosen tab's child.
           const tabs = Array.isArray(c.tabs) ? (c.tabs as { title?: unknown; child?: unknown }[]) : []
+          if (tabs.length === 0) return null
+          const tabsAt = `${id}${scope}`
+          const chosen = own(surface.tabs ?? {}, tabsAt) ?? 0
+          const shown = Math.min(Math.max(0, chosen), tabs.length - 1)
           return (
             <Box flexDirection="column" gap={1}>
-              {tabs.map(tab => (
-                <Box flexDirection="column">
-                  <Text bold>{text(tab.title, model, scope)}</Text>
-                  {one(tab.child)}
-                </Box>
-              ))}
+              <Box flexDirection="row" gap={2}>
+                {tabs.map((tab, n) => {
+                  const title = text(tab.title, model, scope) || `Tab ${n + 1}`
+                  return (
+                    <Button
+                      key={`${key}.tab${n}`}
+                      plain
+                      label={n === shown ? `[${title}]` : title}
+                      dimColor={n === shown ? undefined : true}
+                      onPress={() => void selectTab(surfaceId, tabsAt, n)}
+                    />
+                  )
+                })}
+              </Box>
+              {one(tabs[shown]?.child)}
             </Box>
           )
         }
@@ -194,7 +221,7 @@ export const register: Register = on => {
         case 'Text':
           return <Text dimColor={c.variant === 'caption'}>{str('text')}</Text>
         case 'Button': {
-          const label = (typeof c.child === 'string' ? labelOf(surface.components[c.child], model, scope) : '') || id
+          const label = (typeof c.child === 'string' ? labelOf(own(surface.components, c.child), model, scope) : '') || id
           return (
             <Button
               key={key}
@@ -272,7 +299,7 @@ export const register: Register = on => {
 
     return (
       <Box flexDirection="column" gap={1}>
-        {order.map(surfaceId => draw(surfaceId, bySurface[surfaceId] as RoerUiSurface, 'root', '', 0))}
+        {order.map(surfaceId => draw(surfaceId, own(bySurface, surfaceId) as RoerUiSurface, 'root', '', new Set()))}
       </Box>
     )
   })

@@ -6,6 +6,9 @@ export type RoerUiSurface = {
   components: Record<string, RoerUiComponent>
   dataModel: Record<string, unknown>
   sendDataModel: boolean
+  /** The tab each Tabs shows, by component id and scope; the first when
+   * unset. The pane's own state: a new createSurface starts it over. */
+  tabs?: Record<string, number>
 }
 export type RoerUiSurfaces = { order: string[]; bySurface: Record<string, RoerUiSurface> }
 

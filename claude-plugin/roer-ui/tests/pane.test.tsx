@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'claude-code/testing'
-import { apply, EMPTY, getAt, setAt } from '../hooks/a2ui'
+import { apply, contextOf, EMPTY, getAt, own, setAt } from '../hooks/a2ui'
 
 const PANE = {
   component: 'Pane',
@@ -95,6 +95,48 @@ describe('roer-ui', () => {
     await ui.unmount()
   })
 
+  test('a component loop draws once, as a placeholder where it closes', async ($, on) => {
+    on('ui.open', () => ({ value: { isPlaced: true } }))
+    // Each Row names the other twice: cut only by depth, this would draw
+    // exponentially many nodes before it stopped.
+    await $.tool.call({
+      tool: 'mcp__roer-ui__show',
+      messages: [{ version: 'v1.0', createSurface: { surfaceId: 's', components: [
+        { id: 'root', component: 'Row', children: ['a', 'a'] },
+        { id: 'a', component: 'Row', children: ['root', 'root', 'leaf'] },
+        { id: 'leaf', component: 'Text', text: 'leaf' },
+      ] } }],
+    })
+    const ui = await $.ui.mount({ plugin: 'roer-ui', surface: 'terminal', ...PANE })
+    expect(await ui.find({ type: 'Text', text: '(cycle at root)' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: 'leaf' })).toBeDefined()
+    await ui.unmount()
+  })
+
+  test('Tabs show one tab at a time, and a press switches', async ($, on) => {
+    on('ui.open', () => ({ value: { isPlaced: true } }))
+    await $.tool.call({
+      tool: 'mcp__roer-ui__show',
+      messages: [{ version: 'v1.0', createSurface: { surfaceId: 's', components: [
+        { id: 'root', component: 'Tabs', tabs: [{ title: 'One', child: 'first' }, { title: 'Two', child: 'second' }] },
+        { id: 'first', component: 'Text', text: 'first tab' },
+        { id: 'second', component: 'Text', text: 'second tab' },
+      ] } }],
+    })
+    for (const surface of ['terminal', 'desktop'] as const) {
+      const ui = await $.ui.mount({ plugin: 'roer-ui', surface, ...PANE })
+      expect((await ui.find({ key: 's.root.tab0' }))?.text).toBe('[One]')
+      expect(await ui.find({ type: 'Text', text: 'first tab' })).toBeDefined()
+      expect(await ui.find({ type: 'Text', text: 'second tab' })).toBeUndefined()
+      await ui.press({ key: 's.root.tab1' })
+      expect((await ui.find({ key: 's.root.tab1' }))?.text).toBe('[Two]')
+      expect(await ui.find({ type: 'Text', text: 'second tab' })).toBeDefined()
+      expect(await ui.find({ type: 'Text', text: 'first tab' })).toBeUndefined()
+      await ui.press({ key: 's.root.tab0' })
+      await ui.unmount()
+    }
+  })
+
   test('a userMessage rides in the action as well as the prompt', async ($, on) => {
     on('ui.open', () => ({ value: { isPlaced: true } }))
     const sent: string[] = []
@@ -147,6 +189,27 @@ describe('the reducer', () => {
   test('a relative pointer keeps its first character', () => {
     expect(setAt({}, 'title', 'x')).toEqual({ title: 'x' })
     expect(getAt({ title: 'x' }, 'title')).toBe('x')
+  })
+
+  test('a component id is data, whatever it is called', () => {
+    const made = apply(EMPTY, JSON.parse(`{"version": "v1.0", "createSurface": {"surfaceId": "s", "components": [
+      {"id": "root", "component": "Column", "children": ["__proto__"]},
+      {"id": "__proto__", "component": "Text", "text": "odd id"}
+    ]}}`))
+    if (typeof made === 'string') throw new Error(made)
+    const components = made.bySurface.s?.components ?? {}
+    expect(Object.getPrototypeOf(components)).toBe(Object.prototype)
+    expect(own(components, '__proto__')?.text).toBe('odd id')
+    expect(own(components, 'toString')).toBeUndefined()
+  })
+
+  test('an action context keeps every key as data, __proto__ included', () => {
+    // Parsed, not written as a literal: a literal `__proto__:` sets the prototype.
+    const context = JSON.parse('{"__proto__": {"path": "/who"}, "plain": "too"}')
+    const out = contextOf(context, { who: 'me' }, '')
+    expect(Object.prototype.hasOwnProperty.call(out, '__proto__')).toBe(true)
+    expect(Object.getPrototypeOf(out)).toBe(Object.prototype)
+    expect(JSON.parse(JSON.stringify(out))).toEqual(JSON.parse('{"__proto__": "me", "plain": "too"}'))
   })
 
   test('never writes or reads through the prototype', () => {

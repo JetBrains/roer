@@ -47,7 +47,7 @@ export function apply(surfaces: RoerUiSurfaces, message: unknown): RoerUiSurface
     return { order: surfaces.order.filter(id => id !== surfaceId), bySurface }
   }
 
-  const surface = surfaces.bySurface[surfaceId]
+  const surface = own(surfaces.bySurface, surfaceId)
   if (!surface) return `${kind} names no surface on screen (${surfaceId})`
   if (kind === 'updateComponents') {
     if (!isComponentList(body.components)) return badComponents(kind)
@@ -77,11 +77,15 @@ function put(surfaces: RoerUiSurfaces, id: string, surface: RoerUiSurface): Roer
   return { ...surfaces, bySurface: { ...surfaces.bySurface, [id]: surface } }
 }
 
-function indexed(list: RoerUiComponent[]): Record<string, RoerUiComponent> {
-  const out: Record<string, RoerUiComponent> = {}
-  for (const one of list) out[one.id] = one
-  return out
-}
+/** Components by id. From entries, so every wire id is data: assigning
+ * `out['__proto__']` would set the index's prototype instead of an entry. */
+const indexed = (list: RoerUiComponent[]): Record<string, RoerUiComponent> =>
+  Object.fromEntries(list.map(one => [one.id, one]))
+
+/** `record[key]` when it is the record's own, never something inherited: a
+ * wire id like `__proto__` or `toString` names nothing unless it was sent. */
+export const own = <T>(record: Record<string, T>, key: string): T | undefined =>
+  Object.prototype.hasOwnProperty.call(record, key) ? record[key] : undefined
 
 /** A pointer made absolute: relative ones (no leading `/`) hang off `scope`,
  * the current template item. */
@@ -153,6 +157,14 @@ export function resolve(value: unknown, model: unknown, scope: string): unknown 
   if (isRecord(value) && typeof value.call === 'string') return undefined
   return value
 }
+
+/** An action's context with each value resolved. From entries, as Roer's
+ * panel builds it: assigning a `__proto__` key would set the object's
+ * prototype and drop that value from the action. */
+export const contextOf = (context: unknown, model: unknown, scope: string): Record<string, unknown> =>
+  isRecord(context)
+    ? Object.fromEntries(Object.entries(context).map(([name, value]) => [name, resolve(value, model, scope)]))
+    : {}
 
 export const text = (value: unknown, model: unknown, scope: string): string => {
   const v = resolve(value, model, scope)
