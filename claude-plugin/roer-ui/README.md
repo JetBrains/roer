@@ -14,8 +14,19 @@ CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1 claude --plugin-dir claude-plugin/roer-ui
 # then: /roer a form to file a bug
 ```
 
-Draws Column, Row, List, Card, Tabs, Divider, Text, Button, TextField,
-CheckBox and ChoicePicker; the rest of `roer:catalog/1` shows as a placeholder.
+Draws the whole of `roer:catalog/1`, as Roer's panel does, with what a
+terminal cannot do drawn another way:
+
+- Image, Video and AudioPlayer are named and linked rather than shown or played.
+- Icon's `svgPath` draws as a mark; a named icon draws as its name.
+- Modal opens beneath its trigger, in a frame, rather than over the pane.
+- DiffView draws each file's diff with its notes under it, unified only.
+- An obscured TextField never shows its value, only its length. The field
+  itself cannot mask what is being typed.
+- A long TextField is one line.
+
+The pane keeps its own state, as Roer's panel does: the tab showing, what is
+expanded or open, a picker's filter, and a work item's ticks and answers.
 
 ```sh
 CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1 claude plugin validate claude-plugin/roer-ui

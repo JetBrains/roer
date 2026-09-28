@@ -150,12 +150,28 @@ function writeAt(at: unknown, [head, ...rest]: string[], value: unknown): unknow
   return { ...base, [token]: value }
 }
 
-/** A dynamic value: a literal, or `{ path }` read from the data model.
- * Function calls are not evaluated in the pane yet. */
+/** A dynamic value: a literal, `{ path }` read from the data model, or a
+ * `{ call }`. `@index` is the only function, as in Roer's evaluate.ts: the
+ * template item's 0-based position, plus `args.offset`. Any other call, and
+ * `@index` outside a template, resolves to nothing. */
 export function resolve(value: unknown, model: unknown, scope: string): unknown {
   if (isRecord(value) && typeof value.path === 'string') return getAt(model, absolute(scope, value.path))
-  if (isRecord(value) && typeof value.call === 'string') return undefined
+  if (isRecord(value) && typeof value.call === 'string') {
+    if (value.call !== '@index') return undefined
+    const index = indexIn(scope)
+    if (index === undefined) return undefined
+    const args = isRecord(value.args) ? value.args : {}
+    const offset = Number(resolve(args.offset, model, scope) ?? 0)
+    return index + (Number.isFinite(offset) ? offset : 0)
+  }
   return value
+}
+
+/** The position of the template item `scope` points at: its last segment,
+ * when that is an array index. */
+function indexIn(scope: string): number | undefined {
+  const last = scope.slice(scope.lastIndexOf('/') + 1)
+  return scope !== '' && /^\d+$/.test(last) ? Number(last) : undefined
 }
 
 /** An action's context with each value resolved. From entries, as Roer's

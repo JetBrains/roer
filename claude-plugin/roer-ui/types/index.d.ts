@@ -6,9 +6,11 @@ export type RoerUiSurface = {
   components: Record<string, RoerUiComponent>
   dataModel: Record<string, unknown>
   sendDataModel: boolean
-  /** The tab each Tabs shows, by component id and scope; the first when
-   * unset. The pane's own state: a new createSurface starts it over. */
-  tabs?: Record<string, number>
+  /** The pane's own state, by what it is about: which tab a Tabs shows,
+   * which Expandable and Modal are open, a picker's filter, the person's
+   * answers in a work item. Nothing the agent sent says any of it, so it is
+   * never written to the data model, and a new createSurface starts over. */
+  view?: Record<string, unknown>
 }
 export type RoerUiSurfaces = { order: string[]; bySurface: Record<string, RoerUiSurface> }
 
