@@ -10,7 +10,7 @@ name: Release
 #   cli-linux         ubuntu-latest   the roer command for Linux
 #   bundle-windows    windows-latest  unsigned nsis and msi installers
 #   cli-windows       windows-latest  roer.exe with the psmux it drives
-#   package           macos-26        verify, hdiutil .dmg, checksums
+#   package           macos-26        verify, hdiutil .dmg, plugin zip, checksums
 #   publish           ubuntu-latest   draft release
 #
 # Until the CodeSign service account lands, set no CODESIGN_ENABLED variable and
@@ -395,6 +395,17 @@ jobs:
           set -euo pipefail
           ls -l "dist/Roer_${VERSION}_x64-setup.exe" "dist/Roer_${VERSION}_x64_en-US.msi"
 
+      # The roer-ui Claude Code plugin, as its folder: the person unzips it
+      # and points `claude --plugin-dir` at it. git archive takes the tracked
+      # files only, so nothing /plugin-types or the engine wrote gets in.
+      - name: Zip the Claude Code plugin
+        run: |
+          set -euo pipefail
+          git archive --format=zip --prefix=roer-ui/ \
+            -o "dist/roer-ui-claude-plugin-${VERSION}.zip" HEAD:claude-plugin/roer-ui
+          unzip -l "dist/roer-ui-claude-plugin-${VERSION}.zip"
+          unzip -l "dist/roer-ui-claude-plugin-${VERSION}.zip" | grep -q ' roer-ui/.claude-plugin/plugin.json$'
+
       - name: Checksums
         working-directory: dist
         run: |
@@ -508,6 +519,7 @@ jobs:
             "Roer_${VERSION}_x64-setup.exe" \
             "Roer_${VERSION}_x64_en-US.msi" \
             "roer-cli-${VERSION}-windows-x64.zip" \
+            "roer-ui-claude-plugin-${VERSION}.zip" \
             SHA256SUMS.txt
           echo "Draft release created. Review, smoke-test, then publish it."
 
