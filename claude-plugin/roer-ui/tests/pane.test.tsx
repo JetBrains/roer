@@ -378,6 +378,30 @@ describe('without a turn', () => {
     expect(readLoad({ path: '/a', file: 'docs/a b.md' }, {}, '', 's', true)).toEqual({ surfaceId: 's', path: '/a', as: 'text', run: ['cat', '--', 'docs/a b.md'] })
   })
 
+  test('a load that does not resolve says which argument, what it found, and where', () => {
+    const model = { prs: [{ number: 36 }] }
+    // The slip from a template: /number reads the root, not the item.
+    expect(readLoad({ path: '/d', run: ['gh', 'pr', 'diff', { path: '/number' }] }, model, '/prs/0', 's', true)).toBe(
+      'argument 4 of a load\'s run { "path": "/number" } found nothing at /number, not a string or a number; inside a template, "number" is the item\'s own',
+    )
+    expect(readLoad({ path: '/d', run: ['gh', 'pr', 'diff', { path: 'number' }] }, model, '/prs/0', 's', true)).toEqual({
+      surfaceId: 's', path: '/d', as: 'text', run: ['gh', 'pr', 'diff', '36'],
+    })
+    expect(readLoad({ path: '/d', run: ['ls', true] }, model, '', 's', true)).toBe('argument 2 of a load\'s run is a boolean, not a string or a number')
+    expect(readLoad({ path: '/d', file: { path: 'prs' } }, model, '', 's', true)).toBe('a load\'s file { "path": "prs" } found a list at /prs, not a path')
+  })
+
+  test('what a command takes off the data model is an id, a number or a path', () => {
+    const model = { body: 'rm -rf ~; echo hi', flag: '--output=/etc/x', branch: 'feature/a-b', n: 36, cmd: 'sh' }
+    const run = (argv: unknown[]) => readLoad({ path: '/d', run: argv }, model, '', 's', true)
+    expect(typeof run(['sh', '-c', { path: '/body' }])).toBe('string')
+    expect(run(['gh', 'pr', 'diff', { path: '/flag' }])).toBe('argument 4 of a load\'s run is bound to "--output=/etc/x", not an id, a number or a path')
+    expect(run([{ path: '/cmd' }, 'x'])).toBe('a load\'s command is written out, never bound to the data model')
+    expect(run(['git', 'log', { path: '/branch' }, { path: '/n' }])).toEqual({ surfaceId: 's', path: '/d', as: 'text', run: ['git', 'log', 'feature/a-b', '36'] })
+    // Written out by the model, an argument is its own words, spaces and all.
+    expect(run(['git', 'log', '--format=%h %s'])).toEqual({ surfaceId: 's', path: '/d', as: 'text', run: ['git', 'log', '--format=%h %s'] })
+  })
+
   test('a load carries one source, and a message cannot carry a value', () => {
     expect(typeof readLoad({ path: '/a', run: ['ls'], file: 'x' }, {}, '', 's', true)).toBe('string')
     expect(typeof readLoad({ path: '/a' }, {}, '', 's', true)).toBe('string')

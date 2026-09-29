@@ -301,6 +301,21 @@ describe('a work item in detail', () => {
     await ui.unmount()
   })
 
+  test('a second answer or a reopen sticks, compared with the agent\'s value, not the first', async ($, on) => {
+    on('ui.open', () => ({ value: { isPlaced: true } }))
+    on('prompt.submit', (_$, e) => ({ text: e.text }))
+    await $.tool.call({ tool: TOOL, messages: [create(DETAIL, { item: ITEM() })] })
+    const ui = await $.ui.mount({ plugin: 'roer-ui', surface: 'terminal', ...PANE })
+    await ui.press({ key: 's.root.decision.d1.disk' })
+    await ui.press({ key: 's.root.decision.d1.change' })
+    await ui.press({ key: 's.root.decision.d1.mem' })
+    expect(await ui.find({ text: 'Answered: Memory' })).toBeDefined()
+    await ui.press({ key: 's.root.finding.f1.resolve' })
+    await ui.press({ key: 's.root.finding.f1.reopen' })
+    expect(await ui.find({ key: 's.root.finding.f1.resolve' })).toBeDefined()
+    await ui.unmount()
+  })
+
   test("the person's value survives the agent resending the old one, and yields to a new one", async ($, on) => {
     on('ui.open', () => ({ value: { isPlaced: true } }))
     on('prompt.submit', (_$, e) => ({ text: e.text }))

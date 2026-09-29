@@ -37,8 +37,9 @@ const CATALOG = `Components (flat list, each { id, component, ...props }; one mu
 weight (flex-grow inside a Row/Column).
 Layout:
 - Column / Row { children, justify?, align? } and List { children, direction? }: children is an array of ids, or a
-  template { componentId, path } repeating one component per item of a data-model list (paths inside are relative to
-  the item; { "call": "@index", args?: { offset } } is the item's position)
+  template { componentId, path } repeating one component per item of a data-model list. Inside it, a path without a
+  leading / is the item's own ({ "path": "title" }); one with it, /title, reads the surface's root. { "call": "@index",
+  args?: { offset } } is the item's position
 - Grid { children, columns?, minItemWidth? } wraps; Card { child }; Divider { axis? }; Tabs { tabs: [{ title, child }] };
   Modal { trigger, content }; Expandable { title, child, defaultExpanded? }; Arrow { direction?, label? }
 Display:
@@ -87,13 +88,15 @@ can, and handle presses that need no judgement of yours itself:
 - Button action { local: { open?: surfaceId, load?: [{ path, run | file | value, as?, surfaceId? }] }, event? }:
   pressed, the pane itself draws the surface open names in place of the button's, and fills each load (into open's
   surface unless it names one, else the button's). run's arguments, file and value may be { "path" } off the pressed
-  item. Nothing reaches you unless event is there too. Use it for navigation (a hidden detail surface, a back button
-  opening the list again), drill-downs, and load or refresh buttons; keep event for what needs you.
+  item, relative as in a template: ["gh", "pr", "diff", { "path": "number" }]. Nothing reaches you unless event is
+  there too. Use it for navigation (a hidden detail surface, a back button opening the list again), drill-downs, and
+  load or refresh buttons; keep event for what needs you.
 - Commands in loadData and action.local run as your own Bash calls do, under the person's permissions: what their
   rules and mode allow runs at once, what needs asking opens the permission dialog when the call lands or the button
   is pressed, and what they deny is refused. So a button may merge a PR or re-run a check; the pane marks one that
   will ask. Write a command's own words out; only ids, numbers and paths may come off the data model, never text you
-  did not choose (a PR's body, a page, a file's contents).
+  did not choose (a PR's body, a page, a file's contents). The pane refuses a bound command, and a bound argument that
+  is anything else or starts with -.
 - When a press does reach you, send only what changed (updateDataModel, updateComponents), not a new createSurface.`
 
 export const register: Register = on => {
@@ -747,8 +750,12 @@ export const register: Register = on => {
     const detail = (surfaceId: string, surface: RoerUiSurface, c: RoerUiComponent, scope: string, itemKey: string) => {
       const value = (v: unknown) => resolve(v, surface.dataModel, scope)
       const goal = text(c.goal, surface.dataModel, scope)
-      const found = localized(surface, c, scope, 'state', readFindings(value(c.findings)))
-      const asked = localized(surface, c, scope, 'answer', readDecisions(value(c.decisions)))
+      // The agent's lists, and what is shown: the person's values over them.
+      // A second change compares against the agent's, never the first change.
+      const rawFound = readFindings(value(c.findings))
+      const rawAsked = readDecisions(value(c.decisions))
+      const found = localized(surface, c, scope, 'state', rawFound)
+      const asked = localized(surface, c, scope, 'answer', rawAsked)
       const reqs = readRequirements(value(c.requirements))
       const srcs = readSources(value(c.sources))
       const talk = readComments(value(c.comments))
@@ -759,8 +766,8 @@ export const register: Register = on => {
           {goal !== '' && <Text>{goal}</Text>}
           {asked.length + found.length > 0 &&
             section('Needs you', waiting > 0 ? String(waiting) : 'nothing open', [
-              decisionRows(surfaceId, c, scope, asked, itemKey),
-              findingRows(surfaceId, c, scope, found, itemKey),
+              decisionRows(surfaceId, c, scope, asked, itemKey, rawAsked),
+              findingRows(surfaceId, c, scope, found, itemKey, rawFound),
             ])}
           {reqs.length > 0 && requirements(surfaceId, surface, c, scope, reqs, itemKey)}
           {srcs.length > 0 && section('Sources', undefined, sources(srcs))}
@@ -835,9 +842,9 @@ export const register: Register = on => {
       section('Findings', undefined, findingRows(surfaceId, c, scope, localized(surface, c, scope, 'state', raw), itemKey, raw))
 
     // Open ones first: they are what the section is for.
-    const findingRows = (surfaceId: string, c: RoerUiComponent, scope: string, items: Finding[], itemKey: string | undefined, raw?: Finding[]) => {
+    const findingRows = (surfaceId: string, c: RoerUiComponent, scope: string, items: Finding[], itemKey: string | undefined, raw: Finding[]) => {
       const sorted = [...items.filter(f => f.state === 'open'), ...items.filter(f => f.state !== 'open')]
-      const base = (id: string) => (raw ?? items).find(f => f.id === id)?.state
+      const base = (id: string) => raw.find(f => f.id === id)?.state
       const settle = (f: Finding, state: FindingState) => {
         void answer(surfaceId, c, scope, 'state', f.id, base(f.id) ?? f.state, state)
         void report(surfaceId, c, 'settleFinding', { id: f.id, state }, itemKey)
@@ -873,11 +880,11 @@ export const register: Register = on => {
 
     // An option pressed is the answer, as is anything written under Other.
     // An answered one shows what it was, with Change to answer again.
-    const decisionRows = (surfaceId: string, c: RoerUiComponent, scope: string, items: Decision[], itemKey: string | undefined, raw?: Decision[]) =>
+    const decisionRows = (surfaceId: string, c: RoerUiComponent, scope: string, items: Decision[], itemKey: string | undefined, raw: Decision[]) =>
       items.map(d => {
         const keyOf = `${surfaceId}.${c.id}${scope}.decision.${d.id}`
         const editing = own(own(bySurface, surfaceId)?.view ?? {}, `editing:${c.id}${scope}:${d.id}`) === true
-        const base = (raw ?? items).find(x => x.id === d.id)?.answer
+        const base = raw.find(x => x.id === d.id)?.answer
         const decide = (value: string) => {
           if (value.trim() === '') return
           void answer(surfaceId, c, scope, 'answer', d.id, base, value.trim())

@@ -16,7 +16,7 @@
 // closures register.tsx makes over `$`.
 
 import type { RoerUiSurfaces } from '../types'
-import { own, resolve } from './a2ui'
+import { absolute, own, resolve } from './a2ui'
 
 /** Where a load's value comes from: a command's standard output (argv; a
  * file is `cat` of it, so the same permissions decide), or, in a press, a
@@ -29,6 +29,23 @@ export type LocalAction = { loads: Load[]; open?: string }
 
 const isRecord = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null && !Array.isArray(v)
+
+/** Why a wire value did not resolve to what a load needs: what it came to,
+ * and for a binding, the pointer it read. Inside a template a pointer with
+ * a leading `/` reads the surface's root, not the item: said when that is
+ * the likely slip. */
+function unlike(wire: unknown, got: unknown, scope: string, wanted: string): string {
+  const came = got === undefined ? 'nothing' : got === null ? 'null' : Array.isArray(got) ? 'a list' : `a ${typeof got}`
+  const path = isRecord(wire) && typeof wire.path === 'string' ? wire.path : undefined
+  if (path === undefined) return `is ${came}, not ${wanted}`
+  const slip = scope !== '' && path.startsWith('/') ? `; inside a template, "${path.slice(1)}" is the item's own` : ''
+  return `{ "path": ${JSON.stringify(path)} } found ${came} at ${absolute(scope, path)}, not ${wanted}${slip}`
+}
+
+/** An id, a number or a path, as a bound argument must be: nothing a shell
+ * or a command would read as more, and no leading `-` to be an option. */
+const isToken = (v: unknown): boolean =>
+  (typeof v === 'number' && Number.isFinite(v)) || (typeof v === 'string' && /^[\w@%+=:,./~#-]+$/.test(v) && !v.startsWith('-'))
 
 /** A load off the wire, each dynamic value resolved against `model` at
  * `scope`, or why it is malformed. `surfaceId` is the load's own, else
@@ -52,16 +69,23 @@ export function readLoad(
   const base = { surfaceId, path: wire.path, as } as const
   if ('run' in wire) {
     if (!Array.isArray(wire.run) || wire.run.length === 0) return 'a load\'s run is not a non-empty argv list'
+    if (typeof wire.run[0] !== 'string') return 'a load\'s command is written out, never bound to the data model'
     const argv = wire.run.map(arg => resolve(arg, model, scope))
     // A number off the data model (a PR's number) is an argument as well.
-    if (!argv.every(arg => typeof arg === 'string' || typeof arg === 'number')) return 'every argument of a load\'s run is a string'
+    const bad = argv.findIndex(arg => typeof arg !== 'string' && typeof arg !== 'number')
+    if (bad >= 0) return `argument ${bad + 1} of a load's run ${unlike(wire.run[bad], argv[bad], scope, 'a string or a number')}`
+    // What comes off the data model may have come from anywhere (a PR's
+    // body, a page), so it may be an id, a number or a path, never an option
+    // or text: a model's `['sh', '-c', { path: '/body' }]` runs nothing.
+    const loose = wire.run.findIndex((arg, n) => typeof arg !== 'string' && !isToken(argv[n]))
+    if (loose >= 0) return `argument ${loose + 1} of a load's run is bound to ${JSON.stringify(String(argv[loose]).slice(0, 40))}, not an id, a number or a path`
     const run = argv.map(String)
     if (run[0] === '') return 'a load\'s run names no command'
     return { ...base, run }
   }
   if ('file' in wire) {
     const file = resolve(wire.file, model, scope)
-    if (typeof file !== 'string' || file === '') return 'a load\'s file is not a path'
+    if (typeof file !== 'string' || file === '') return `a load's file ${unlike(wire.file, file, scope, 'a path')}`
     return { ...base, run: ['cat', '--', file] }
   }
   return { ...base, value: resolve(wire.value, model, scope) }
