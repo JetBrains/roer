@@ -63,6 +63,18 @@ alone: add `<install folder>\roer` yourself.
 its files together, since `roer.exe` finds `roer-tmux.conf` and `psmux.exe`
 beside itself.
 
+## Roer's UI in Claude Code (preview)
+
+`roer-ui-claude-plugin-__VERSION__.zip` is the roer-ui plugin: `/roer <what to
+show>` draws Roer's Generative UI in a pane of any Claude Code session, with no
+Roer app involved. It is built on Claude Code's early-access function hooks, so
+it needs the flag below and may break with a Claude Code update.
+
+```sh
+mkdir -p ~/.roer && unzip -o roer-ui-claude-plugin-__VERSION__.zip -d ~/.roer
+CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1 claude --plugin-dir ~/.roer/roer-ui
+```
+
 ## Verify the downloads
 
 ```sh
