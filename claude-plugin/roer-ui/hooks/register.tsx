@@ -25,9 +25,12 @@ import {
   statusTone,
 } from './workItem'
 import type { Comment, Decision, Finding, FindingState, Note, Requirement, SourceRef, Tone } from './workItem'
+import { bashRan, fetchLoad, opened, readLoadData, readLocal, shellCommand } from './local'
+import type { Load, LocalAction, RunIo } from './local'
 
 const PANE = 'roer-ui'
 const TOOL = 'mcp__roer-ui__show'
+const GUIDE_TOOL = 'mcp__roer-ui__guide'
 const surfaces = atom({ plugin: 'roer-ui', key: 'surfaces' } as const, EMPTY)
 
 const CATALOG = `Components (flat list, each { id, component, ...props }; one must have id "root"). Any component takes
@@ -60,14 +63,38 @@ Roer's own:
 Any string/number/boolean prop may instead be { "path": "/json/pointer" } into the surface's dataModel; bind an
 input's value that way and the person's edits write back to the data model.`
 
-const DESCRIPTION = `Show or update a UI in the Roer pane of this Claude Code session. \`messages\` is a list of A2UI v1.0
-messages, each { "version": "v1.0", <one body> }: createSurface { surfaceId, components, dataModel?, sendDataModel? },
-updateComponents { surfaceId, components }, updateDataModel { surfaceId, path?, value }, deleteSurface { surfaceId }.
+// The engine caps a tool's description at 4096 characters, so the catalog
+// and the pane-side rules are the guide tool's answer, read before drawing.
+const DESCRIPTION = `Show or update a UI in the Roer pane of this Claude Code session. Call ${GUIDE_TOOL} first, once
+per session: it answers the component catalog and how the pane fetches data and handles presses itself.
+\`messages\` is a list of A2UI v1.0 messages, each { "version": "v1.0", <one body> }: createSurface { surfaceId,
+components, dataModel?, sendDataModel?, hidden? }, updateComponents { surfaceId, components }, updateDataModel
+{ surfaceId, path?, value }, deleteSurface { surfaceId }, loadData { surfaceId, path, run | file, as? }.
 Usually one createSurface with everything inline, then updates to the same surfaceId.
 When the person presses a Button, its event arrives as a prompt starting "[roer-ui]" with the action as JSON
-(and the data model when sendDataModel is true).
+(and the data model when sendDataModel is true).`
 
-${CATALOG}`
+const GUIDE = `${CATALOG}
+
+Each press that reaches you, and every value you write out, costs the person a wait. Have the pane fetch what it
+can, and handle presses that need no judgement of yours itself:
+- { "version": "v1.0", "loadData": { surfaceId, path, run: [argv] | file, as?: "text" | "json" } } fills path with
+  a command's standard output (argv, no shell, the session's working directory) or a file's text, parsed when as is
+  "json". It lands after the messages before it; a command that fails refuses the whole call. For example
+  run ["gh", "pr", "list", "--json", "number,title"], as "json", for a list's rows; ["gh", "pr", "diff", "36"] for a
+  DiffView's diff.
+- createSurface { ..., hidden: true } keeps a surface without drawing it, until a press opens it.
+- Button action { local: { open?: surfaceId, load?: [{ path, run | file | value, as?, surfaceId? }] }, event? }:
+  pressed, the pane itself draws the surface open names in place of the button's, and fills each load (into open's
+  surface unless it names one, else the button's). run's arguments, file and value may be { "path" } off the pressed
+  item. Nothing reaches you unless event is there too. Use it for navigation (a hidden detail surface, a back button
+  opening the list again), drill-downs, and load or refresh buttons; keep event for what needs you.
+- Commands in loadData and action.local run as your own Bash calls do, under the person's permissions: what their
+  rules and mode allow runs at once, what needs asking opens the permission dialog when the call lands or the button
+  is pressed, and what they deny is refused. So a button may merge a PR or re-run a check; the pane marks one that
+  will ask. Write a command's own words out; only ids, numbers and paths may come off the data model, never text you
+  did not choose (a PR's body, a page, a file's contents).
+- When a press does reach you, send only what changed (updateDataModel, updateComponents), not a new createSurface.`
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
@@ -85,6 +112,10 @@ export const register: Register = on => {
         required: ['messages'],
       },
     })
+    await $.tool.register({
+      name: 'guide',
+      description: `The component catalog and pane-side rules for ${TOOL}. Read it before drawing.`,
+    })
     return next(e)
   })
 
@@ -93,14 +124,48 @@ export const register: Register = on => {
     const ask = e.args.trim()
     if (ask === '') return { text: 'Roer pane opened.' }
     // Not from here: a submit waits on the turn this hook is holding.
-    const text = `${ask}\n\n(Draw this in the Roer pane with the ${TOOL} tool. Its description has the component catalog.)`
+    const text = `${ask}\n\n(Draw this in the Roer pane with the ${TOOL} tool, after reading ${GUIDE_TOOL} if you have not.)`
     $.clock.after(0, () => void $.prompt.submit({ text }))
     return { text: 'Roer pane opened; asking Claude to draw it.' }
   })
 
   on('tool.call', { tool: TOOL }, async ($, e) => {
-    const messages = (e as unknown as { messages?: unknown }).messages
-    if (!Array.isArray(messages) || messages.length === 0) return { deny: '`messages` needs at least one message' }
+    const wire = (e as unknown as { messages?: unknown }).messages
+    if (!Array.isArray(wire) || wire.length === 0) return { deny: '`messages` needs at least one message' }
+    // A loadData stands for the updateDataModel its output becomes. Tried
+    // with a stand-in first, so a malformed call runs no command.
+    const loads = wire.map(readLoadData)
+    const bad = loads.findIndex(load => typeof load === 'string')
+    if (bad >= 0) return { deny: `Nothing was shown: message ${bad + 1}: ${loads[bad] as string}` }
+    const asUpdate = (load: Load, value: unknown) => ({ version: 'v1.0', updateDataModel: { surfaceId: load.surfaceId, path: load.path, value } })
+    const standIns = wire.map((message, n) => {
+      const load = loads[n] as Load | undefined
+      return load === undefined ? message : asUpdate(load, '')
+    })
+    let tried: typeof EMPTY | string = await read($, surfaces)
+    for (const [n, message] of standIns.entries()) {
+      tried = apply(tried, message)
+      if (typeof tried === 'string') return { deny: `Nothing was shown: message ${n + 1}: ${tried}` }
+    }
+    // The model's own call: its loads are asked about as its Bash calls are.
+    const io: RunIo = {
+      check: command => $.tool.check({ tool: 'Bash', input: { command } }),
+      run: argv => $.process.run(argv, { timeoutMs: 60_000 }),
+      bash: async command => {
+        return bashRan(await $.tool.call({ tool: 'Bash', command, description: 'Load data for the Roer pane' }))
+      },
+      read: path => $.fs.read(path),
+    }
+    const fetched = await Promise.all(
+      loads.map(load => (load === undefined || typeof load === 'string' ? undefined : fetchLoad(load, io))),
+    )
+    const failed = fetched.findIndex(got => typeof got === 'string')
+    if (failed >= 0) return { deny: `Nothing was shown: message ${failed + 1}: ${fetched[failed] as string}` }
+    const messages = wire.map((message, n) => {
+      const load = loads[n] as Load | undefined
+      const got = fetched[n] as { value: unknown } | undefined
+      return load === undefined || got === undefined ? message : asUpdate(load, got.value)
+    })
     let problem: string | undefined
     await update($, surfaces, before => {
       let after = before
@@ -121,6 +186,8 @@ export const register: Register = on => {
     return { result: `Sent ${messages.length} message(s) to ${where}.` }
   })
 
+  on('tool.call', { tool: GUIDE_TOOL }, async () => ({ result: GUIDE }))
+
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const el = $.ui.resolve(e)
     const { Box, Text, Button, Link, Code } = el
@@ -136,6 +203,11 @@ export const register: Register = on => {
       )
     }
     const columns = Math.max(10, (e.props as { bodyColumns?: number }).bodyColumns ?? 60)
+    // The permission decision for each command a drawn button would run.
+    // A drawing names the ones it did not know; they are asked, then drawn
+    // again.
+    const verdicts = new Map<string, 'allow' | 'ask' | 'deny'>()
+    const unchecked = new Set<string>()
 
     // Closures rather than helpers: the engine wants `$` spelled at each call
     // site, never handed to a function of the module's own.
@@ -184,17 +256,89 @@ export const register: Register = on => {
       await $.prompt.submit({ text: lines.join('\n') })
     }
 
+    // What a press does in the pane itself: open a surface in place of the
+    // pressed one at once, then fill each load. Each surface being filled
+    // says so while it is; a later press on it wins over this one.
+    const runLocal = async (from: string, local: LocalAction, label: string) => {
+      const token = `${Date.now()}.${Math.random()}`
+      const fetching = local.loads.filter(load => !('value' in load))
+      const filling = [...new Set(fetching.map(load => load.surfaceId))]
+      const into = (all: typeof EMPTY, load: Load, value: unknown) => {
+        const surface = own(all.bySurface, load.surfaceId)
+        if (surface === undefined) return all
+        return { ...all, bySurface: { ...all.bySurface, [load.surfaceId]: { ...surface, dataModel: setAt(surface.dataModel, load.path, value) } } }
+      }
+      const marked = (all: typeof EMPTY, surfaceId: string, loading: unknown) => {
+        const surface = own(all.bySurface, surfaceId)
+        if (surface === undefined) return all
+        return { ...all, bySurface: { ...all.bySurface, [surfaceId]: { ...surface, view: { ...surface.view, loading } } } }
+      }
+      await update($, surfaces, all => {
+        let next = local.open === undefined ? all : opened(all, from, local.open)
+        for (const load of local.loads) {
+          // What is being fetched is cleared, never shown under the wrong title.
+          next = into(next, load, 'value' in load ? load.value : null)
+        }
+        for (const surfaceId of filling) next = marked(next, surfaceId, { token })
+        return next
+      })
+      if (fetching.length === 0) return
+      // The person's press is theirs to vouch for, not the command: the
+      // dialog, or the auto-mode classifier, weighs one against the other.
+      const io: RunIo = {
+        check: command => $.tool.check({ tool: 'Bash', input: { command } }),
+        run: argv => $.process.run(argv, { timeoutMs: 60_000 }),
+        bash: async command => {
+          return bashRan(
+            await $.tool.call({
+              tool: 'Bash',
+              command,
+              description: `"${label}" in the Roer pane`,
+              consent: `The user pressed "${label}" in the Roer pane.`,
+            }),
+          )
+        },
+        read: path => $.fs.read(path),
+      }
+      const got = await Promise.all(fetching.map(load => fetchLoad(load, io)))
+      await update($, surfaces, all => {
+        let next = all
+        const mine = (surfaceId: string) => {
+          const loading = own(own(next.bySurface, surfaceId)?.view ?? {}, 'loading') as { token?: string } | undefined
+          return loading?.token === token
+        }
+        const current = filling.filter(mine)
+        for (const [n, load] of fetching.entries()) {
+          const one = got[n]
+          if (current.includes(load.surfaceId) && typeof one === 'object') next = into(next, load, one.value)
+        }
+        for (const surfaceId of current) {
+          const problems = fetching.flatMap((load, n) => (load.surfaceId === surfaceId && typeof got[n] === 'string' ? [got[n] as string] : []))
+          next = marked(next, surfaceId, problems.length > 0 ? { failed: problems.join('; ') } : undefined)
+        }
+        return next
+      })
+    }
+
     const press = async (surfaceId: string, c: RoerUiComponent, label: string, scope: string) => {
       const event = (c.action as { event?: { name?: unknown; context?: unknown; userMessage?: unknown } } | undefined)?.event
-      if (event === undefined || typeof event.name !== 'string') {
-        $.ui.toast(`roer-ui: "${label}" has no event to send`)
-        return
-      }
+      const hasEvent = event !== undefined && typeof event.name === 'string'
       const surface = own((await read($, surfaces)).bySurface, surfaceId)
       if (surface === undefined) return
       const model = surface.dataModel
+      const local = readLocal(c.action, model, scope, surfaceId)
+      if (typeof local === 'string') {
+        $.ui.toast(`roer-ui: "${label}": ${local}`)
+        return
+      }
+      if (local === undefined && !hasEvent) {
+        $.ui.toast(`roer-ui: "${label}" has no event to send`)
+        return
+      }
+      if (local !== undefined) await runLocal(surfaceId, local, label)
+      if (!hasEvent) return
       const said = `The person pressed "${label}" in the ${surfaceId} UI.`
-      await send(surfaceId, c.id, event.name, contextOf(event.context, model, scope), said, text(event.userMessage, model, scope))
+      await send(surfaceId, c.id, event.name as string, contextOf(event.context, model, scope), said, text(event.userMessage, model, scope))
     }
 
     // `ancestors` are the components on the way down to this one. The graph
@@ -367,12 +511,22 @@ export const register: Register = on => {
         }
         case 'Button': {
           const label = (typeof c.child === 'string' ? labelOf(own(surface.components, c.child), model, scope) : '') || id
+          // What the person's permissions say of the commands a press would
+          // run: marked when one would ask, or would be refused.
+          const local = readLocal(c.action, model, scope, surfaceId)
+          const commands = typeof local === 'object' ? local.loads.flatMap(load => ('run' in load ? [shellCommand(load.run)] : [])) : []
+          const decisions = commands.map(command => {
+            const decided = verdicts.get(command)
+            if (decided === undefined) unchecked.add(command)
+            return decided
+          })
+          const mark = decisions.includes('deny') ? ' (not allowed)' : decisions.includes('ask') ? ' (asks first)' : ''
           return (
             <Button
               key={key}
-              label={label}
+              label={`${label}${mark}`}
               variant={c.variant === 'primary' ? 'primary' : undefined}
-              dimColor={c.variant === 'borderless' ? true : undefined}
+              dimColor={c.variant === 'borderless' || decisions.includes('deny') ? true : undefined}
               onPress={() => void press(surfaceId, c, label, scope)}
             />
           )
@@ -505,7 +659,7 @@ export const register: Register = on => {
               {title !== '' && <Text bold>{title}</Text>}
               {patch.trim() === ''
                 ? <Text dimColor>{c.emptyText === undefined ? 'No changes.' : str('emptyText')}</Text>
-                : diffWithNotes(patch, readNotes(value(c.notes)))}
+                : diffWithNotes(surfaceId, at, patch, readNotes(value(c.notes)))}
             </Box>
           )
         }
@@ -629,7 +783,7 @@ export const register: Register = on => {
                 return (
                   <Box flexDirection="column">
                     <Button key={`${surfaceId}.${c.id}${scope}.change.${one.id}`} plain label={`${open ? '▾' : '▸'} ${one.title}`} onPress={() => void setView(surfaceId, at, !open)} />
-                    {open && <Box paddingLeft={2} flexDirection="column">{diffWithNotes(one.patch, notes)}</Box>}
+                    {open && <Box paddingLeft={2} flexDirection="column">{diffWithNotes(surfaceId, at, one.patch, notes)}</Box>}
                   </Box>
                 )
               }),
@@ -778,14 +932,43 @@ export const register: Register = on => {
         </Box>
       ))
 
-    // A whole `git diff`, one file at a time, each file's notes under it:
-    // by line where they name one, first where they do not.
-    const diffWithNotes = (patch: string, notes: Note[]) =>
-      splitPatch(patch).map(file => {
+    // The engine refuses a drawing of more than 100000 characters of text,
+    // so the diffs on screen share a budget under that, leaving the rest
+    // room. Each drawing starts it over.
+    let diffRoom = DIFF_BUDGET
+
+    // A whole `git diff`, one file at a time under a header that opens and
+    // closes it, each file's notes under it: by line where they name one,
+    // first where they do not. The files the person opened take the budget
+    // first, then the rest are open while they fit; an open one that does
+    // not fit says so.
+    const diffWithNotes = (surfaceId: string, at: string, patch: string, notes: Note[]) => {
+      const files = splitPatch(patch).map(file => {
+        const where = `file:${at}:${file.path}`
+        const set = own(own(bySurface, surfaceId)?.view ?? {}, where)
+        return { ...file, where, set: typeof set === 'boolean' ? set : undefined, drawn: false }
+      })
+      for (const asked of [true, undefined])
+        for (const file of files)
+          if (file.set === asked && file.text.length <= diffRoom) {
+            file.drawn = true
+            diffRoom -= file.text.length
+          }
+      return files.map(file => {
         const mine = notes.filter(note => note.path === file.path)
+        const where = file.where
+        const open = file.set ?? file.drawn
+        const fits = file.drawn
+        const { added, removed } = counts(file.text)
         return (
           <Box flexDirection="column">
-            <Code source={file.text} format="diff" />
+            <Button key={`${surfaceId}.${at}.file.${file.path}`} plain label={`${open ? '▾' : '▸'} ${file.path}  +${added} −${removed}`} onPress={() => void setView(surfaceId, where, !open)} />
+            {open &&
+              (fits ? (
+                diffPieces(file.text).map(text => <Code source={text} format="diff" path={file.path} />)
+              ) : (
+                <Text dimColor>{'  Too long to draw with the other open files: close one to see this one.'}</Text>
+              ))}
             {mine
               .sort((a, b) => (a.line ?? 0) - (b.line ?? 0))
               .map(note => (
@@ -794,12 +977,32 @@ export const register: Register = on => {
           </Box>
         )
       })
+    }
 
-    return (
+    const drawing = () => {
+      diffRoom = DIFF_BUDGET
+      return (
       <Box flexDirection="column" gap={1}>
-        {order.map(surfaceId => draw(surfaceId, own(bySurface, surfaceId) as RoerUiSurface, 'root', '', new Set()))}
+        {order.flatMap(surfaceId => {
+          const surface = own(bySurface, surfaceId) as RoerUiSurface
+          if (surface.hidden === true) return []
+          const loading = own(surface.view ?? {}, 'loading') as { token?: string; failed?: string } | undefined
+          return [
+            <Box flexDirection="column">
+              {loading?.token !== undefined && <Text key={`${surfaceId}.loading`} dimColor>Loading…</Text>}
+              {loading?.failed !== undefined && <Text key={`${surfaceId}.failed`} color="red">{loading.failed}</Text>}
+              {draw(surfaceId, surface, 'root', '', new Set())}
+            </Box>,
+          ]
+        })}
       </Box>
-    )
+      )
+    }
+    const first = drawing()
+    if (unchecked.size === 0) return first
+    const asked = await Promise.all([...unchecked].map(command => $.tool.check({ tool: 'Bash', input: { command } })))
+    for (const [n, command] of [...unchecked].entries()) verdicts.set(command, asked[n]?.decision ?? 'ask')
+    return drawing()
   })
 }
 
@@ -853,6 +1056,88 @@ const toneColor = (tone: Tone) => TONE_COLORS[tone]
 function bar(progress: number): string {
   const filled = Math.round(progress / 5)
   return `${'█'.repeat(filled)}${'░'.repeat(20 - filled)} ${Math.round(progress)}%`
+}
+
+/** The engine refuses a Code source past 10000 characters. */
+const CODE_LIMIT = 10_000
+
+/** Characters of diff one drawing holds, under the engine's 100000 for all
+ * its text. */
+const DIFF_BUDGET = 60_000
+
+/** A file's diff's added and removed lines, read from its first hunk on. */
+function counts(text: string): { added: number; removed: number } {
+  let added = 0
+  let removed = 0
+  let hunks = false
+  for (const line of text.split('\n')) {
+    if (line.startsWith('@@')) hunks = true
+    else if (hunks && line.startsWith('+')) added++
+    else if (hunks && line.startsWith('-')) removed++
+  }
+  return { added, removed }
+}
+
+/** One file's diff in pieces a Code takes: each a whole diff of its own,
+ * the file's header over as many hunks as fit. A hunk too long for one
+ * piece is cut into hunks with their own counts, and a line too long for
+ * any is cut short. */
+function diffPieces(text: string): string[] {
+  if (text.length <= CODE_LIMIT) return [text]
+  const lines = text.split('\n')
+  const first = lines.findIndex(line => line.startsWith('@@'))
+  if (first < 0) return [text.slice(0, CODE_LIMIT)]
+  const header = lines.slice(0, first).join('\n')
+  // Room for a hunk under the header, and for its lines under an @@ line.
+  const room = CODE_LIMIT - header.length - 1
+  const body = room - 64
+  const hunks: string[] = []
+  let old = 0
+  let now = 0
+  let rows: string[] = []
+  let size = 0
+  let from = { old: 0, now: 0 }
+  const flush = () => {
+    if (rows.length === 0) return
+    const oldCount = rows.filter(row => !row.startsWith('+') && !row.startsWith('\\')).length
+    const nowCount = rows.filter(row => !row.startsWith('-') && !row.startsWith('\\')).length
+    // An empty side names the line before it, as git writes it.
+    const at = (start: number, count: number) => `${count === 0 ? start - 1 : start},${count}`
+    hunks.push(`@@ -${at(from.old, oldCount)} +${at(from.now, nowCount)} @@\n${rows.join('\n')}`)
+    rows = []
+    size = 0
+  }
+  for (const line of lines.slice(first)) {
+    const opened = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/.exec(line)
+    if (opened) {
+      flush()
+      old = Number(opened[1]) + (opened[2] === '0' ? 1 : 0)
+      now = Number(opened[3]) + (opened[4] === '0' ? 1 : 0)
+      from = { old, now }
+      continue
+    }
+    const row = line.length > body ? `${line.slice(0, body - 1)}…` : line
+    if (size + row.length + 1 > body) {
+      flush()
+      from = { old, now }
+    }
+    rows.push(row)
+    size += row.length + 1
+    if (!line.startsWith('+') && !line.startsWith('\\')) old++
+    if (!line.startsWith('-') && !line.startsWith('\\')) now++
+  }
+  flush()
+  const pieces: string[] = []
+  let piece = ''
+  for (const hunk of hunks) {
+    if (piece !== '' && piece.length + 1 + hunk.length > room) {
+      pieces.push(`${header}\n${piece}`)
+      piece = ''
+    }
+    piece = piece === '' ? hunk : `${piece}\n${hunk}`
+  }
+  if (piece !== '') pieces.push(`${header}\n${piece}`)
+  return pieces
 }
 
 /** A whole `git diff` split into its files, each with its own header. */

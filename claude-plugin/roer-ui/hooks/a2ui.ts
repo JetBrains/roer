@@ -29,13 +29,15 @@ export function apply(surfaces: RoerUiSurfaces, message: unknown): RoerUiSurface
   if (typeof surfaceId !== 'string' || surfaceId === '') return `${kind} needs a surfaceId`
 
   if (kind === 'createSurface') {
-    const { components, dataModel, sendDataModel } = body
+    const { components, dataModel, sendDataModel, hidden } = body
     if (components !== undefined && !isComponentList(components)) return badComponents(kind)
     if (dataModel !== undefined && !isRecord(dataModel)) return 'createSurface.dataModel is not an object'
     const surface: RoerUiSurface = {
       components: indexed(components ?? []),
       dataModel: dataModel ?? {},
       sendDataModel: sendDataModel === true,
+      // Roer-only (see local.ts): kept, not drawn, until a press opens it.
+      ...(hidden === true ? { hidden: true } : {}),
     }
     return {
       order: [...surfaces.order.filter(id => id !== surfaceId), surfaceId],

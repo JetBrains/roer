@@ -6,6 +6,8 @@ export type RoerUiSurface = {
   components: Record<string, RoerUiComponent>
   dataModel: Record<string, unknown>
   sendDataModel: boolean
+  /** Kept but not drawn, until a press's `action.local.open` names it. */
+  hidden?: boolean
   /** The pane's own state, by what it is about: which tab a Tabs shows,
    * which Expandable and Modal are open, a picker's filter, the person's
    * answers in a work item. Nothing the agent sent says any of it, so it is

@@ -25,6 +25,33 @@ terminal cannot do drawn another way:
   itself cannot mask what is being typed.
 - A long TextField is one line.
 
+Beyond A2UI v1.0, and not in Roer's panel yet, the pane can work without a
+turn of Claude's, which is where the waiting was (`hooks/local.ts`):
+
+- A `loadData` message fills a data-model path from a command's output (argv,
+  no shell) or a file, so Claude names where a diff or a list comes from
+  instead of writing it out.
+- `createSurface { hidden: true }` keeps a surface without drawing it.
+- A Button's `action.local` opens another surface in place of its own and
+  fills loads, off the pressed item, in the pane itself. An `event` beside it
+  still reaches Claude.
+
+Commands, and files (read as `cat`), run under the person's permissions, as
+Claude's own Bash calls do: what their rules and mode allow runs at once, what
+needs asking opens the permission dialog when the call lands or the button is
+pressed, and what they deny is refused. So a button may merge a PR, and the
+pane marks it "(asks first)" when it will ask, or "(not allowed)". An allowed
+command runs directly rather than as a Bash tool call; PreToolUse hooks see
+only the ones that ask. Either way its output comes whole: what the Bash tool
+keeps in a file for being too long for Claude is read from there.
+
+A DiffView draws each file under a header that opens and closes it, and
+colours the code by the file's path. The engine refuses a drawing of more
+than 100000 characters of text, so the diffs on screen share about 60000:
+files are open while they fit, one the person opens takes the room first, and
+one that does not fit says so. A file longer than one `Code` takes (10000
+characters) is drawn in pieces, cut between hunks.
+
 The pane keeps its own state, as Roer's panel does: the tab showing, what is
 expanded or open, a picker's filter, and a work item's ticks and answers.
 
