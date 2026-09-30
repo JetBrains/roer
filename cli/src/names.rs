@@ -61,10 +61,22 @@ pub fn is_agent_id(id: &str) -> bool {
     !id.is_empty() && id.chars().all(|c| c.is_ascii_hexdigit() || c == '-')
 }
 
-/// A pane id exactly as tmux prints one: `%` and digits.
+/// A pane id exactly as tmux prints one, `%` and digits, or as roer names a
+/// psmux pane, `=session:.%3` (see tmux.rs). Written into records, passed as
+/// a target and quoted into M-h's PowerShell, so held to that shape: a session
+/// name of anything but `:`, quotes and control characters.
 pub fn is_pane_id(pane: &str) -> bool {
-    pane.strip_prefix('%')
-        .is_some_and(|digits| !digits.is_empty() && digits.chars().all(|c| c.is_ascii_digit()))
+    let bare = |id: &str| {
+        id.strip_prefix('%').is_some_and(|digits| !digits.is_empty() && digits.chars().all(|c| c.is_ascii_digit()))
+    };
+    match pane.strip_prefix('=').and_then(|rest| rest.split_once(":.")) {
+        Some((session, id)) => {
+            !session.is_empty()
+                && !session.chars().any(|c| c == ':' || c == '\'' || c == '"' || c == '`' || c.is_control())
+                && bare(id)
+        }
+        None => bare(pane),
+    }
 }
 
 /// A bundle name is a single path segment on disk. Matches the app's own
@@ -133,6 +145,15 @@ mod tests {
         assert!(is_pane_id("%12"));
         assert!(!is_pane_id("%"));
         assert!(!is_pane_id("12"));
+        // psmux's, named with the session it is in.
+        assert!(is_pane_id("=home-ce36:.%1"));
+        assert!(!is_pane_id("=:.%1"));
+        assert!(!is_pane_id("=home:%1"));
+        assert!(!is_pane_id("=home:.%"));
+        assert!(is_pane_id("=my proj.v2:.%1"), "any name roer shell <name> takes");
+        assert!(!is_pane_id("=a';x:.%1"));
+        assert!(!is_pane_id("=a:b:.%1"));
+        assert!(!is_pane_id("=a\nb:.%1"));
         assert!(is_bundle_name("issues_v2-1"));
         assert!(!is_bundle_name("../x"));
     }

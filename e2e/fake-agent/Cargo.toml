@@ -1,0 +1,9 @@
+[package]
+name = "claude"
+version = "0.0.0"
+edition = "2021"
+publish = false
+description = "The e2e tests' fake claude.exe for Windows: runs agent.mjs. See e2e/README.md."
+
+# Its own workspace: nothing else in the repo builds it.
+[workspace]

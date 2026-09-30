@@ -15,7 +15,8 @@ import { currentTheme, onThemeChange, terminalTheme } from "./lib/theme";
 const ATTACH_GRACE_MS = 250;
 
 /** The private OSC `roer` writes, when the app runs it, just before attaching:
- * `ESC ] 7717 ; pane=%N BEL`. */
+ * `ESC ] 7717 ; pane=%N BEL`, or `pane==session:.%N` on psmux, where a pane id
+ * alone does not say which session's pane it is. */
 const PANE_OSC = 7717;
 
 /** Writes and resizes race with the session ending; that rejection is normal. */
@@ -73,7 +74,9 @@ export function TerminalView({ args, cwd, onAttached, onPane, onExit }: Terminal
     });
     // Handled, so never drawn, whatever it says; only a pane id is passed on.
     const paneSub = terminal.parser.registerOscHandler(PANE_OSC, (data) => {
-      const pane = /^pane=(%\d+)$/.exec(data)?.[1];
+      // The session part as roer's is_pane_id holds it: no `:`, quotes or
+      // control characters.
+      const pane = /^pane=((?:=[^:'"`\x00-\x1f]+:\.)?%\d+)$/.exec(data)?.[1];
       logLine(`terminal ${target}: roer reported ${pane ?? `an unreadable pane (${data})`}`);
       if (pane) onPaneRef.current?.(pane);
       return true;
@@ -89,10 +92,33 @@ export function TerminalView({ args, cwd, onAttached, onPane, onExit }: Terminal
     let attaching: ReturnType<typeof setTimeout> | null = null;
     // Keystrokes arriving between open and spawn would otherwise be lost.
     let pending = "";
+    // One write at a time, each once the last has landed: every keystroke is
+    // an IPC call of its own, and on Windows typed text reached the session
+    // out of order ("hello" as "helol"). What is typed meanwhile goes out
+    // together in the next one, so a burst costs one round trip, not one per
+    // key.
+    let writing = false;
+    let queued = "";
+    const write = (id: string, data: string) => {
+      queued += data;
+      if (writing) return;
+      const next = () => {
+        const chunk = queued;
+        queued = "";
+        writing = true;
+        void writePty(id, chunk)
+          .catch(ignoreClosed)
+          .finally(() => {
+            writing = false;
+            if (queued) next();
+          });
+      };
+      next();
+    };
 
     const dataSub = terminal.onData((data) => {
       if (ptyId) {
-        void writePty(ptyId, data).catch(ignoreClosed);
+        write(ptyId, data);
       } else {
         pending += data;
       }
@@ -157,7 +183,7 @@ export function TerminalView({ args, cwd, onAttached, onPane, onExit }: Terminal
           }
           ptyId = id;
           if (pending) {
-            void writePty(id, pending).catch(ignoreClosed);
+            write(id, pending);
             pending = "";
           }
           // The window may have been resized while the PTY was starting.

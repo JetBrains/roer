@@ -7,6 +7,13 @@
 //! chained commands (`a ; b`) are dropped without an error, a *global* user
 //! option is invisible to formats, `#{socket_path}` names psmux's default
 //! server whatever `-L` says, and `prefix None` is refused.
+//!
+//! And a pane id is not a pane there. psmux runs a server per session, each
+//! numbering its panes from `%1`, and a bare `-t %1` goes to whichever
+//! session was active last. So on psmux roer names a pane `=session:.%1`,
+//! which psmux resolves exactly, and hands out and takes back that name
+//! wherever tmux would use the id: `roer list`, handoff records, M-h, a
+//! pane's own answer to where it is.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -64,8 +71,20 @@ impl Tmux {
         } else {
             sh_word(&bin)
         };
-        let handoff = format!("{} handoff --pane #{{pane_id}}", call.replace('#', "##"));
+        let pane = if is_psmux(&program) { format!("'{PSMUX_PANE}'") } else { "#{pane_id}".to_string() };
+        let handoff = format!("{} handoff --pane {pane}", call.replace('#', "##"));
         Tmux { program, socket: socket(), conf, handoff }
+    }
+
+    /// Whether the engine is psmux: see the top of this file.
+    pub fn is_psmux(&self) -> bool {
+        is_psmux(&self.program)
+    }
+
+    /// The format that names a pane, as the rest of roer and the app know it:
+    /// see the top of this file for why psmux's needs its session.
+    pub fn pane_format(&self) -> &'static str {
+        if is_psmux(&self.program) { PSMUX_PANE } else { "#{pane_id}" }
     }
 
     fn command(&self) -> Command {
@@ -150,10 +169,19 @@ impl Tmux {
             // No trustworthy socket_path, so ask our own server about the pane
             // this shell says it is in. A pane of some other server is either
             // unknown here or, by chance, a different pane with the same id.
+            //
+            // The session is asked for without -t: then psmux answers for the
+            // server `$TMUX` names, which is this pane's own. A bare `-t %1`
+            // would go to whichever session was active last instead, and every
+            // session has a %1.
             let pane = std::env::var("TMUX_PANE").unwrap_or_default();
-            let known = !pane.is_empty() && self.read(&["display-message", "-p", "-t", &pane, "#{pane_id}"]) == pane;
+            let session = self.read(&["display-message", "-p", "#{session_name}"]);
+            let named = format!("={session}:.{pane}");
+            let known = !pane.is_empty()
+                && !session.is_empty()
+                && self.read(&["display-message", "-p", "-t", &named, "#{pane_id}"]) == pane;
             return if known {
-                Ok(pane)
+                Ok(named)
             } else {
                 Err(Fail::new(3, "inside a psmux session that is not on the roer socket"))
             };
@@ -201,7 +229,7 @@ impl Tmux {
             "-t",
             &target,
             "-F",
-            "#{pane_id}",
+            self.pane_format(),
             "-f",
             "#{&&:#{pane_active},#{window_active}}",
         ]);
@@ -242,6 +270,20 @@ impl Tmux {
     }
 }
 
+/// Whether a pane's title is only what Windows titles a console with: the
+/// path of the program that opened it, `Administrator: ` in front when that
+/// runs elevated. psmux reports that for a pane nothing has titled, where tmux
+/// would report the hostname.
+pub fn is_console_title(title: &str) -> bool {
+    let path = title.strip_prefix("Administrator: ").unwrap_or(title);
+    let name = path.rsplit(['\\', '/']).next().unwrap_or_default();
+    name.len() > ".exe".len() && name.to_ascii_lowercase().ends_with(".exe") && !name.contains(' ')
+}
+
+/// A pane as psmux can find it again: in its own session, by id. See the top
+/// of this file.
+const PSMUX_PANE: &str = "=#{session_name}:.#{pane_id}";
+
 #[cfg(unix)]
 fn replace_with(mut command: Command, program: &str) -> String {
     use std::os::unix::process::CommandExt;
@@ -281,7 +323,21 @@ fn sh_word(word: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{lines, sh_word};
+    use super::{is_console_title, lines, sh_word};
+
+    #[test]
+    fn a_console_left_untitled_has_no_title() {
+        assert!(is_console_title(r"C:\Program Files\PowerShell\7\pwsh.exe"));
+        assert!(is_console_title(r"Administrator: C:\Program Files\PowerShell\7\pwsh.exe"));
+        assert!(is_console_title(r"C:\WINDOWS\system32\cmd.exe"));
+        assert!(is_console_title("powershell.EXE"));
+        // What an agent sets is kept.
+        assert!(!is_console_title("✳ Fix the login bug"));
+        assert!(!is_console_title("Fake task"));
+        assert!(!is_console_title("Build roer.exe"));
+        assert!(!is_console_title(""));
+        assert!(!is_console_title(".exe"));
+    }
 
     #[test]
     fn output_lines_lose_crlf() {
