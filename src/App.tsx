@@ -15,6 +15,7 @@ import { FileView } from "./FileView";
 import { GenerativeUITab } from "./generative-ui/GenerativeUITab";
 import { applyAll, applyMessage } from "./generative-ui/apply";
 import { emptyState, surfaceIdOf, type A2uiMessage, type RenderState } from "./generative-ui/schema";
+import { AgentsDialog, type AgentsDialogStart } from "./AgentsDialog";
 import { ClaudeSetup } from "./ClaudeSetup";
 import { GoToFile } from "./GoToFile";
 import { NewSessionButton } from "./NewSessionButton";
@@ -25,7 +26,8 @@ import { WorkspaceSidebar } from "./WorkspaceSidebar";
 import { claudeSetupStatus, onClaudeSetupMenu, type SetupStatus } from "./lib/claudeSetup";
 import { onBrowserServerMenu, startBrowserServer } from "./lib/browserServer";
 import { onFilesChanged, type FilesChanged } from "./lib/files";
-import { isGoToFile, isMac, isNewSession, useHotkey } from "./lib/keys";
+import { listAgents, onAgentsMenu, type AgentList } from "./lib/agents";
+import { isGoToFile, isMac, isManageAgents, isNewSession, isPickAgent, useHotkey } from "./lib/keys";
 import { nextChoice, useThemeChoice } from "./lib/theme";
 import { useSessionBrowser } from "./lib/useSessionBrowser";
 import {
@@ -88,6 +90,11 @@ export function App() {
   // The Claude Code setup on screen, if it is: put there by the app on the
   // first launch that finds Claude Code, or asked for from the menu.
   const [setup, setSetup] = useState<{ status: SetupStatus; firstRun: boolean } | null>(null);
+  // The agents New session offers, read for the directory it would start in,
+  // and the editor when it is open.
+  const [agents, setAgents] = useState<AgentList | null>(null);
+  const [agentPickerOpen, setAgentPickerOpen] = useState(false);
+  const [agentsDialog, setAgentsDialog] = useState<{ start: AgentsDialogStart; startAfterSave: boolean } | null>(null);
   // The changes view stays mounted once opened, so switching back to the
   // terminal and away again keeps the file that was selected. File tabs get
   // this for free: being open is being in `tabs.files`.
@@ -598,6 +605,63 @@ export function App() {
     useCallback(() => openNewRef.current(), []),
   );
 
+  // Read again whenever they may have changed: on opening the picker or the
+  // editor, and for a different directory, whose project has its own.
+  const agentsCwdRef = useRef<string | undefined>(undefined);
+  agentsCwdRef.current = browser.newSessionCwd();
+  const refreshAgents = useCallback(
+    () =>
+      listAgents(agentsCwdRef.current)
+        .then((list) => {
+          setAgents(list);
+          return list;
+        })
+        .catch((cause: unknown) => {
+          console.warn("could not list agents", cause);
+        }),
+    [],
+  );
+  const agentsCwd = agentsCwdRef.current;
+  useEffect(() => {
+    void refreshAgents();
+  }, [agentsCwd, refreshAgents]);
+
+  const openAgentPicker = useCallback(
+    (open: boolean) => {
+      setAgentPickerOpen(open);
+      if (open) void refreshAgents();
+    },
+    [refreshAgents],
+  );
+  const openAgents = useCallback(
+    (start: AgentsDialogStart, startAfterSave = false) => {
+      void refreshAgents().then(() => setAgentsDialog({ start, startAfterSave }));
+    },
+    [refreshAgents],
+  );
+  useHotkey(
+    isPickAgent,
+    useCallback(() => openAgentPicker(true), [openAgentPicker]),
+  );
+  useHotkey(
+    isManageAgents,
+    useCallback(() => openAgents({ mode: "edit" }), [openAgents]),
+  );
+  useEffect(() => {
+    let cancelled = false;
+    let unlisten: (() => void) | undefined;
+    void onAgentsMenu(() => openAgents({ mode: "edit" }))
+      .then((fn) => {
+        if (cancelled) fn();
+        else unlisten = fn;
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, [openAgents]);
+
   // Picking a Workspace is asking to see what's in it — if the diff or a
   // file is up instead, that answer is hidden behind a tab nothing else
   // points at.
@@ -797,6 +861,11 @@ export function App() {
               attachNewProjectForNewSession={
                 browser.attachNewProjectForNewSession
               }
+              agents={agents}
+              pickerOpen={agentPickerOpen}
+              onPickerOpenChange={openAgentPicker}
+              onNewAgent={() => openAgents({ mode: "new" }, true)}
+              onManageAgents={() => openAgents({ mode: "edit" })}
             />
           </div>
 
@@ -870,6 +939,9 @@ export function App() {
                 <PullRequestView
                   cwd={session?.cwd}
                   pane={session?.pane}
+                  agent={
+                    browser.visibleSessions.find((live) => live.pane === session?.pane)?.agent || undefined
+                  }
                   active={tabs.active === "pullRequest"}
                   onSent={showTerminal}
                   onReviewLanded={markReviewLanded}
@@ -941,6 +1013,18 @@ export function App() {
             status={setup.status}
             firstRun={setup.firstRun}
             onClose={() => setSetup(null)}
+          />
+        ) : null}
+
+        {agentsDialog && agents ? (
+          <AgentsDialog
+            list={agents}
+            cwd={agentsCwd}
+            start={agentsDialog.start}
+            startAfterSave={agentsDialog.startAfterSave}
+            onChanged={refreshAgents}
+            onStart={(id) => browser.openNew(id)}
+            onClose={() => setAgentsDialog(null)}
           />
         ) : null}
 

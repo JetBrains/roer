@@ -276,6 +276,21 @@ fn dispatch(state: &Arc<AppState>, cmd: &str, args: Value, cid: Option<&str>) ->
         "roer_send" => call_res!(args, crate::roer::roer_send, "pane": String, "text": String),
         "roer_claude_threads" => call!(args, crate::claude::roer_claude_threads, "cwds": Vec<String>),
 
+        // agents
+        "agents_list" => call_res!(args, crate::agents::agents_list, "cwd": Option<String>),
+        "agent_save" => call_res!(
+            args, crate::agents::agent_save,
+            "cwd": Option<String>, "agent": Value, "scope": String, "from": Option<String>
+        ),
+        "agent_remove" => {
+            call_res!(args, crate::agents::agent_remove, "cwd": Option<String>, "id": String, "scope": String)
+        }
+        "agent_set_default" => call_res!(
+            args, crate::agents::agent_set_default, "cwd": Option<String>, "id": Option<String>, "scope": String
+        ),
+        "agent_command" => call_res!(args, crate::agents::agent_command, "agent": Value),
+        "agent_models" => call!(args, crate::agents::agent_models, "cli": String),
+
         // claude code setup
         "claude_setup_status" => call_res!(args, crate::claude_setup::claude_setup_status,),
         "claude_setup_apply" => {

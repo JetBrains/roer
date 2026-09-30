@@ -17,6 +17,8 @@ export interface SessionInfo {
   attached: boolean;
   cwd: string;
   command: string;
+  /** The name of the agent roer started in the session, if it started one. */
+  agent?: string;
   /** What the program in the pane last titled it — Claude Code keeps a
    * summary of the task there. Empty when nothing has. */
   title?: string;
@@ -38,12 +40,15 @@ export interface PastSession {
 }
 
 /**
- * A past Claude Code conversation, resumable with `roer resume <id>`. Read
- * straight from Claude's own on-disk transcripts under `~/.claude` — roer
- * never writes there.
+ * A past agent conversation, resumable with `roer resume <id> --agent
+ * <cli>`. Read straight from the CLI's own on-disk transcripts (Claude
+ * Code's under `~/.claude`, Codex's under `~/.codex`) — roer never writes
+ * there.
  */
 export interface ClaudeSession {
   id: string;
+  /** The CLI that wrote it: claude or codex. Absent means claude. */
+  agent?: string;
   cwd: string;
   title: string;
   /** Seconds since the epoch (the transcript file's mtime). */

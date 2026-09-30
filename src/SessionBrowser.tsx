@@ -76,24 +76,30 @@ export function paneLabel(title: string | undefined, command: string): string {
   return text === command ? "" : text;
 }
 
+const SHELLS = new Set(["zsh", "bash", "fish", "sh", "dash", "ksh", "tcsh", "nu", "pwsh", "powershell"]);
+
 /** A live row's name: what the agent says it is doing, when it says, with
- * the command beside it; otherwise just the command, named exactly as the
- * terminal would show it. The session's own name (`roer-2`) says only which
- * directory it is in, which the group headings show wherever there is more
- * than one, so it is left to the row's tooltip. */
+ * who is doing it beside it; otherwise just who. That is the agent roer
+ * started, by the name it was saved under, while it runs — most agents never
+ * title their pane, and a CLI runs as `node` as often as not — and the
+ * command, named exactly as the terminal would show it, once only the shell
+ * is left. The session's own name (`roer-2`) says only which directory it is
+ * in, which the group headings show wherever there is more than one, so it
+ * is left to the row's tooltip. */
 function LiveName({ session }: { session: SessionInfo }) {
+  const who = session.agent && !SHELLS.has(session.command) ? session.agent : session.command;
   const label = paneLabel(session.title, session.command);
-  return label ? (
+  return label && label !== who ? (
     <>
       <strong>{label}</strong>
-      <span className="muted">{session.command}</span>
+      <span className="muted">{who}</span>
     </>
   ) : (
-    <strong>{session.command}</strong>
+    <strong>{who}</strong>
   );
 }
 
-/** How long ago a Claude conversation was last updated, roughly. */
+/** How long ago a past conversation was last updated, roughly. */
 function relativeAge(updatedAt: number): string {
   const seconds = Math.max(0, Math.floor(Date.now() / 1000) - updatedAt);
   if (seconds < 60) return "just now";
@@ -352,7 +358,7 @@ export function SessionBrowser({
                           <strong>{entry.session.title}</strong>
                           {/* Named the same way live rows name themselves: the
                               agent that will run, not an icon for it. */}
-                          <span className="muted">claude</span>
+                          <span className="muted">{entry.session.agent ?? "claude"}</span>
                           <span className="badge resume">{relativeAge(entry.session.updatedAt)}</span>
                       </button>
                     </span>

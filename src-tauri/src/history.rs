@@ -198,6 +198,7 @@ mod tests {
             attached: true,
             cwd: "/tmp".to_string(),
             command: "zsh".to_string(),
+            agent: String::new(),
             title: String::new(),
         }
     }

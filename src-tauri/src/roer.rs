@@ -124,6 +124,9 @@ pub struct SessionInfo {
     pub attached: bool,
     pub cwd: String,
     pub command: String,
+    /// The name of the agent roer started in the session, when it started
+    /// one: most agents never title their pane.
+    pub agent: String,
     /// What the program in the pane last titled it — Claude Code's summary of
     /// the task. Empty when nothing has, or when the shim predates the column.
     pub title: String,
@@ -224,10 +227,11 @@ fn live_sessions() -> Result<Vec<SessionInfo>, String> {
         .collect())
 }
 
-/// One TSV row: id, session, pane, attached|detached, cwd, command, title.
+/// One TSV row: id, session, pane, attached|detached, cwd, command, agent,
+/// title.
 fn parse_line(line: &str) -> Option<SessionInfo> {
     // The title is free text and comes last, so it keeps any tab it contains.
-    let mut f = line.splitn(7, '\t');
+    let mut f = line.splitn(8, '\t');
     let info = SessionInfo {
         id: f.next()?.to_string(),
         session: f.next()?.to_string(),
@@ -235,6 +239,7 @@ fn parse_line(line: &str) -> Option<SessionInfo> {
         attached: f.next()? == "attached",
         cwd: f.next().unwrap_or_default().to_string(),
         command: command_name(f.next().unwrap_or_default()),
+        agent: f.next().unwrap_or_default().to_string(),
         title: f.next().unwrap_or_default().to_string(),
     };
     (!info.session.is_empty()).then_some(info)
@@ -361,8 +366,9 @@ mod tests {
 
     #[test]
     fn reads_the_pane_title_and_keeps_its_tabs() {
-        let got = parse_line("id\ts\t%0\tattached\t/tmp\tclaude\t\u{2733} fix\tit").expect("row");
+        let got = parse_line("id\ts\t%0\tattached\t/tmp\tclaude\tClaude Code\t\u{2733} fix\tit").expect("row");
         assert_eq!(got.command, "claude");
+        assert_eq!(got.agent, "Claude Code");
         assert_eq!(got.title, "\u{2733} fix\tit");
     }
 

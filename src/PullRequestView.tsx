@@ -48,6 +48,8 @@ export const POLL_FOR_MS = 20 * 60_000;
 export interface PullRequestViewProps {
   cwd?: string;
   pane?: string;
+  /** Who runs in the session, for the buttons that hand it work. */
+  agent?: string;
   active: boolean;
   /** A prompt went to the session; the stage should show it. */
   onSent?: () => void;
@@ -60,7 +62,7 @@ export interface PullRequestViewProps {
  * there is none, ask Copilot to review it, read what came back, and hand the
  * threads worth fixing to the session's agent.
  */
-export function PullRequestView({ cwd, pane, active, onSent, onReviewLanded }: PullRequestViewProps) {
+export function PullRequestView({ cwd, pane, agent = "Claude", active, onSent, onReviewLanded }: PullRequestViewProps) {
   const [dir, setDir] = useState<string | null>(null);
   const [status, setStatus] = useState<GhStatus | null>(null);
   // `undefined` until asked; `null` once GitHub says the branch has none.
@@ -335,7 +337,7 @@ export function PullRequestView({ cwd, pane, active, onSent, onReviewLanded }: P
               title={noPane}
               onClick={askForDraft}
             >
-              {drafting ? "Waiting for Claude…" : "Draft with Claude"}
+              {drafting ? `Waiting for ${agent}…` : `Draft with ${agent}`}
             </button>
           </div>
           <input aria-label="Title" placeholder="Title" value={title} onChange={(e) => setTitle(e.target.value)} />
@@ -403,7 +405,7 @@ export function PullRequestView({ cwd, pane, active, onSent, onReviewLanded }: P
               title={noPane}
               onClick={fix}
             >
-              Fix with Claude ({picked.length})
+              Fix with {agent} ({picked.length})
             </button>
           </div>
 
