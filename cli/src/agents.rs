@@ -1151,21 +1151,32 @@ mod tests {
     fn instructions_are_read_by_the_shell_not_typed() {
         let text = "Review the diff.\nSay \"why\" and it's $HOME.";
         let prompt = Prompt::for_text(text);
+        // PowerShell under psmux, sh everywhere else.
+        let read = |path: &Path| {
+            let path = quote(&path.to_string_lossy());
+            if cfg!(windows) { format!("$(Get-Content -Raw {path})") } else { format!("$(cat {path})") }
+        };
         let mut junie = agent("junie");
         junie.instructions = text.into();
         let line = junie.command_line(None, false).unwrap();
-        assert_eq!(line, format!("junie \"--system-prompt=$(cat {})\"", prompt.text.display()));
+        assert_eq!(line, format!("junie \"--system-prompt={}\"", read(&prompt.text)));
 
         let mut codex = agent("codex");
         codex.instructions = text.into();
         let line = codex.command_line(None, false).unwrap();
-        assert_eq!(line, format!("codex -c \"developer_instructions=$(cat {})\"", prompt.toml.display()));
+        assert_eq!(line, format!("codex -c \"developer_instructions={}\"", read(&prompt.toml)));
 
         let mut claude = agent("claude");
         claude.instructions = text.into();
         let line = claude.command_line(None, false).unwrap();
-        assert_eq!(line, format!("claude --append-system-prompt-file {}", prompt.text.display()));
+        assert_eq!(line, format!("claude --append-system-prompt-file {}", quote(&prompt.text.to_string_lossy())));
+    }
 
+    /// What the shell reads back for Codex is the text as TOML reads it.
+    #[cfg(unix)]
+    #[test]
+    fn the_toml_copy_reads_back_through_the_shell() {
+        let text = "Review the diff.\nSay \"why\" and it's $HOME.";
         let dir = std::env::temp_dir().join(format!("roer-prompt-{}", std::process::id()));
         let written = Prompt { text: dir.join("p.md"), toml: dir.join("p.toml") };
         written.write(text).unwrap();
