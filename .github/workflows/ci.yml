@@ -127,6 +127,135 @@ jobs:
       - name: Smoke-test roer on psmux
         run: bash .github/windows/smoke.sh cli/target/debug
 
+  # The app itself, driven over WebDriver the way a person uses it, with a
+  # fake `claude` in place of the agent: see e2e/README.md. tauri-driver has
+  # no macOS backend, so Linux and Windows only.
+  e2e:
+    name: E2E (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        # Not windows-latest: on its Server 2025 image msedgedriver never gets
+        # a DevTools port from WebView2 ("DevToolsActivePort file doesn't
+        # exist"), for other Tauri apps too, while 2022 works:
+        # https://github.com/actions/runner-images/issues/14738
+        os: [ubuntu-latest, windows-2022]
+    runs-on: ${{ matrix.os }}
+    # Builds take ~15 minutes cold and the tests under one: anything longer is
+    # a hang, which would otherwise hold a runner for six hours.
+    timeout-minutes: 40
+    # Reported, not gating, like the other Windows jobs.
+    continue-on-error: ${{ startsWith(matrix.os, 'windows') }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # As in Checks, plus the WebDriver for WebKitGTK, a display for it, and
+      # ffmpeg to record that display.
+      - name: Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev libssl-dev librsvg2-dev tmux webkit2gtk-driver xvfb ffmpeg
+
+      - name: ffmpeg, to record the run
+        if: runner.os == 'Windows'
+        run: command -v ffmpeg || choco install ffmpeg -y --no-progress
+
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: |
+            src-tauri -> target
+            cli -> target
+          # A debug app build, which neither Checks nor the bundles make.
+          key: e2e
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            e2e/package-lock.json
+
+      # Pinned: the WebDriver server between the tests and the app. Kept in
+      # ~/.cargo/bin, which rust-cache restores, so it builds once.
+      - name: tauri-driver
+        run: cargo install tauri-driver --version 2.1.0 --locked
+
+      - run: npm ci
+
+      - name: Build the app and roer
+        run: |
+          npx tauri build --debug --no-bundle
+          cargo build --locked --manifest-path cli/Cargo.toml
+
+      # The fake agent's claude.exe: see e2e/fake-agent/src/main.rs.
+      - name: psmux beside roer, and the fake claude.exe
+        if: runner.os == 'Windows'
+        run: |
+          bash .github/windows/fetch-psmux.sh cli/target/debug
+          cargo build --locked --manifest-path e2e/fake-agent/Cargo.toml
+
+      # A pane's PATH on Windows is the registry's, not the app's: psmux
+      # builds each pane's environment afresh. So the fake claude.exe goes
+      # into a folder on the user PATH, which is what installers do.
+      - name: A folder on the user PATH for the fake claude.exe
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $bin = Join-Path $env:RUNNER_TEMP 'e2e-bin'
+          New-Item -ItemType Directory -Force $bin | Out-Null
+          $path = [Environment]::GetEnvironmentVariable('Path', 'User')
+          [Environment]::SetEnvironmentVariable('Path', "$bin;$path", 'User')
+          "ROER_E2E_BIN=$bin" >> $env:GITHUB_ENV
+
+      # msedgedriver of WebView2's own version: the image's follows Edge,
+      # which on 2022 is well ahead of the WebView2 runtime. Microsoft
+      # publishes no checksums for these, so the version is the pin.
+      - name: Edge driver for this WebView2
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $key = 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
+          $version = (Get-ItemProperty $key).pv
+          "WebView2 $version"
+          $dir = Join-Path $env:RUNNER_TEMP 'edgedriver'
+          $zip = Join-Path $env:RUNNER_TEMP 'edgedriver.zip'
+          Invoke-WebRequest "https://msedgedriver.microsoft.com/$version/edgedriver_win64.zip" -OutFile $zip
+          Expand-Archive $zip -DestinationPath $dir -Force
+          $driver = Join-Path $dir 'msedgedriver.exe'
+          & $driver --version
+          "ROER_E2E_EDGEDRIVER=$driver" >> $env:GITHUB_ENV
+
+      # Recorded, in slow motion and captioned with each test's name, so a
+      # run can be watched step by step from its artifact.
+      - name: E2E tests
+        working-directory: e2e
+        env:
+          ROER_E2E_RECORD: ${{ github.workspace }}/e2e/artifacts/e2e-${{ runner.os }}.mp4
+          ROER_E2E_PAUSE: 800
+        run: |
+          npm ci
+          if [ "$RUNNER_OS" = Linux ]; then
+            dbus-run-session -- xvfb-run -a -s "-screen 0 1280x800x24" npm test
+          else
+            npm test
+          fi
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: e2e-${{ runner.os }}
+          path: e2e/artifacts
+          if-no-files-found: ignore
+          retention-days: 7
+
   workflows:
     name: Workflows
     runs-on: ubuntu-latest
@@ -171,7 +300,7 @@ jobs:
 
   check:
     name: Full gate
-    needs: [checks, windows-cli, workflows]
+    needs: [checks, windows-cli, e2e, workflows]
     if: always()
     runs-on: ubuntu-latest
     steps:

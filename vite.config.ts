@@ -30,7 +30,8 @@ export default defineConfig({
     globals: true,
     setupFiles: ["./src/test/setup.ts"],
     // claude-plugin/ tests import claude-code/testing, which only exists under
-    // `claude plugin test`.
-    exclude: [...configDefaults.exclude, "claude-plugin/**"],
+    // `claude plugin test`; e2e/ is node:test driving the built app, run by
+    // its own package (e2e/README.md).
+    exclude: [...configDefaults.exclude, "claude-plugin/**", "e2e/**"],
   },
 });
