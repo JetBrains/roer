@@ -33,7 +33,9 @@ out=$("$ROER" app 2>&1); code=$?
 [ $code -eq 0 ] && ok "roer app exits 0" || bad "roer app exits 0 (got $code)" "$out"
 has "roer app says it is open in Roer" "$out" "is open in Roer"
 has "the app got an attach record" "$(seen)" '"attach"'
-PANE=$(seen | grep -o '%[0-9]*' | head -1); echo "      pane=$PANE"
+# Named with its session, as roer names a psmux pane: =name:.%N.
+PANE=$(seen | grep -oE '=[^"]+:\.%[0-9]+' | head -1); echo "      pane=$PANE"
+has "the record names the pane with its session" "$PANE" ":.%"
 
 list=$("$ROER" list 2>&1)
 has "roer list shows the session detached" "$list" "detached"
@@ -51,7 +53,7 @@ has "  ...its record names the pane" "$(seen)" "\"$PANE\""
 rm -f "$RUNNER_TEMP"/seen/*.json
 MH=$(m list-keys 2>&1 | grep 'M-h'); echo "      M-h: $MH"
 has "roer bound M-h for PowerShell" "$MH" "run-shell -b &"
-CMD=$(printf '%s' "$MH" | sed -e "s/.*run-shell -b //" -e "s/^[\"']//" -e "s/[\"']\$//" -e "s/#{pane_id}/$PANE/")
+CMD=$(printf '%s' "$MH" | sed -e "s/.*run-shell -b //" -e "s/^[\"']//" -e "s/[\"']\$//" -e "s/=#{session_name}:\.#{pane_id}/$PANE/")
 echo "      runs: $CMD"
 rs=$(m run-shell -t "$PANE" "$CMD" 2>&1); echo "      run-shell exit=$? out=[$(printf '%s' "$rs" | tr '\n' '|')]"
 echo "      run-shell env: [$(m run-shell -t "$PANE" 'cmd /c echo ROER_SOCKET=%ROER_SOCKET% ROER_HOME=%ROER_HOME%' 2>&1 | tr '\n' '|')]"

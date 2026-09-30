@@ -441,14 +441,13 @@ impl Roer {
         // The agent is named only while it runs: tmux is asked for the process
         // names it runs as, and the column is left empty once the pane runs
         // anything else, so nothing takes a shell or an editor for an agent.
-        let rows = self.tmux.read(&[
-            "list-panes",
-            "-a",
-            "-F",
-            "#{@roer_id}\t#{session_name}\t#{pane_id}\t#{?session_attached,attached,detached}\t\
-             #{pane_current_path}\t#{pane_current_command}\t#{@roer_agent_procs}\t#{@roer_agent}\t\
-             #{?#{||:#{==:#{pane_title},#{host}},#{==:#{pane_title},#{host_short}}},,#{pane_title}}",
-        ]);
+        let format = format!(
+            "#{{@roer_id}}\t#{{session_name}}\t{}\t#{{?session_attached,attached,detached}}\t\
+             #{{pane_current_path}}\t#{{pane_current_command}}\t#{{@roer_agent_procs}}\t#{{@roer_agent}}\t\
+             #{{?#{{||:#{{==:#{{pane_title}},#{{host}}}},#{{==:#{{pane_title}},#{{host_short}}}}}},,#{{pane_title}}}}",
+            self.tmux.pane_format()
+        );
+        let rows = self.tmux.read(&["list-panes", "-a", "-F", &format]);
         for row in rows.lines().filter(|row| !row.is_empty()) {
             let f: Vec<&str> = row.splitn(9, '\t').collect();
             let [id, session, pane, attached, cwd, command, procs, agent, title] = f[..] else {
@@ -544,7 +543,7 @@ impl Roer {
     /// directory, so nothing here may come from the environment.
     fn handoff_key(&self, pane: &str) -> Outcome {
         if !is_pane_id(pane) {
-            return Err(Fail::new(2, "--pane needs a pane id like %3"));
+            return Err(Fail::new(2, "--pane needs a pane id like %3 (=session:.%3 on psmux)"));
         }
         let session = self.tmux.read(&["display-message", "-p", "-t", pane, "#{session_name}"]);
         if session.is_empty() {
@@ -818,7 +817,7 @@ fn resolve_pane(tmux: &Tmux, args: &[&str]) -> Result<String, Fail> {
         let pane = rest.first().copied().unwrap_or_default();
         // Written into a record, so held to the shape tmux produces.
         if !is_pane_id(pane) {
-            return Err(Fail::new(2, "--pane needs a pane id like %3"));
+            return Err(Fail::new(2, "--pane needs a pane id like %3 (=session:.%3 on psmux)"));
         }
         return Ok(pane.to_string());
     }
