@@ -78,19 +78,19 @@
       </figure>
     </div>
 
-    <div class="wrap"><p class="eyebrow new-in" id="new-in">New in 0.5</p></div>
+    <div class="wrap"><p class="eyebrow new-in" id="new-in">New in 0.6 and 0.7</p></div>
     <div class="wrap points points-new" role="group" aria-labelledby="new-in">
       <div class="point">
-        <h3>Open a session in your browser</h3>
-        <p>Pick <em>Open This Session in a Browser&hellip;</em> and the same session runs in a Chrome tab, terminal and panels included. Or run <code>roer-server</code> on its own, from a container.</p>
+        <h3>Bring any agent</h3>
+        <p>New session starts Claude Code, Codex, pi, Gemini CLI, Junie or opencode. The arrow beside it (<kbd>⌥⌘T</kbd>) picks one, and the Resume list reopens Codex conversations as well as Claude&rsquo;s.</p>
       </div>
       <div class="point">
-        <h3>Boards and personal tasks</h3>
-        <p>Tell the agent to note something and it lands in the project&rsquo;s task store (<code>roer task</code>). Boards draw your tasks next to GitHub, YouTrack or Jira issues, in the same lanes.</p>
+        <h3>Agents you can commit</h3>
+        <p>Save an agent with its model, reasoning effort, permissions and instructions. It is a Markdown file: keep it in <code>~/.roer/agents</code>, or commit it to <code>.roer/agents</code> so the whole team starts the same one.</p>
       </div>
       <div class="point">
-        <h3>Speaks A2UI v1.0</h3>
-        <p>Panels follow the open A2UI v1.0 message format, so any agent that can call an MCP tool can draw them.</p>
+        <h3>Roer&rsquo;s UI in Claude Code</h3>
+        <p>The roer-ui plugin (preview) draws the same panels in a Claude Code pane: <code>/roer</code> and what you want to see, no Roer app needed.</p>
       </div>
     </div>
   </section>
@@ -122,10 +122,10 @@
         <p>The Pull Request tab uses your own GitHub login. Review comments go straight back into the running session.</p>
       </div>
       <ol class="flow">
-        <li><b>Draft</b><span>Claude writes the title and description.</span></li>
+        <li><b>Draft</b><span>Your agent writes the title and description.</span></li>
         <li><b>Push</b><span>Roer pushes the branch and opens the PR.</span></li>
         <li><b>Review</b><span>Request a Copilot review. Roer waits for it.</span></li>
-        <li><b>Fix</b><span>Pick threads and hit <em>Fix with Claude</em>.</span></li>
+        <li><b>Fix</b><span>Pick threads and hand them to the agent with <em>Fix</em>.</span></li>
       </ol>
     </div>
   </section>
@@ -137,7 +137,7 @@
         <p class="eyebrow">Session teleport</p>
         <h2>Leave the terminal. Keep the session.</h2>
         <p class="body">Start in any terminal with <code>roer shell</code>. Press <kbd>M-h</kbd> and the live session moves into Roer, mid-thought. Same process, same scrollback, nothing restarts. Press it again to take it back.</p>
-        <p class="body dim">Works for anything that runs in a terminal: Claude Code, vim, a dev server.</p>
+        <p class="body dim">Works for anything that runs in a terminal: Claude Code, Codex, vim, a dev server.</p>
       </div>
       <div class="hop" aria-label="Animation: a running session moves from a terminal window into the Roer app and back">
         <div class="hop-win hop-term"><span class="hop-label">Terminal</span></div>
