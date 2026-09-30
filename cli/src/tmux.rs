@@ -260,6 +260,16 @@ impl Tmux {
     }
 }
 
+/// Whether a pane's title is only what Windows titles a console with: the
+/// path of the program that opened it, `Administrator: ` in front when that
+/// runs elevated. psmux reports that for a pane nothing has titled, where tmux
+/// would report the hostname.
+pub fn is_console_title(title: &str) -> bool {
+    let path = title.strip_prefix("Administrator: ").unwrap_or(title);
+    let name = path.rsplit(['\\', '/']).next().unwrap_or_default();
+    name.len() > ".exe".len() && name.to_ascii_lowercase().ends_with(".exe") && !name.contains(' ')
+}
+
 /// A pane as psmux can find it again: in its own session, by id. See the top
 /// of this file.
 const PSMUX_PANE: &str = "=#{session_name}:.#{pane_id}";
@@ -303,7 +313,21 @@ fn sh_word(word: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{lines, sh_word};
+    use super::{is_console_title, lines, sh_word};
+
+    #[test]
+    fn a_console_left_untitled_has_no_title() {
+        assert!(is_console_title(r"C:\Program Files\PowerShell\7\pwsh.exe"));
+        assert!(is_console_title(r"Administrator: C:\Program Files\PowerShell\7\pwsh.exe"));
+        assert!(is_console_title(r"C:\WINDOWS\system32\cmd.exe"));
+        assert!(is_console_title("powershell.EXE"));
+        // What an agent sets is kept.
+        assert!(!is_console_title("✳ Fix the login bug"));
+        assert!(!is_console_title("Fake task"));
+        assert!(!is_console_title("Build roer.exe"));
+        assert!(!is_console_title(""));
+        assert!(!is_console_title(".exe"));
+    }
 
     #[test]
     fn output_lines_lose_crlf() {

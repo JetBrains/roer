@@ -434,9 +434,10 @@ impl Roer {
         }
         // The title is whatever the program in the pane last set with OSC 2 —
         // Claude Code keeps a summary of the task there. tmux defaults it to
-        // the hostname, which says nothing, so that prints as empty. It goes
-        // last because it is free text: a tab in it must not shift the columns
-        // before it.
+        // the hostname, and psmux to the console's own title (the shell's
+        // path), neither of which says anything, so those print as empty. It
+        // goes last because it is free text: a tab in it must not shift the
+        // columns before it.
         //
         // The agent is named only while it runs: tmux is asked for the process
         // names it runs as, and the column is left empty once the pane runs
@@ -455,6 +456,7 @@ impl Roer {
                 continue;
             };
             let agent = if agents::is_live(command, procs) { agent } else { "" };
+            let title = if tmux::is_console_title(title) { "" } else { title };
             println!("{id}\t{session}\t{pane}\t{attached}\t{cwd}\t{command}\t{agent}\t{title}");
         }
         Ok(())

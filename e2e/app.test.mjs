@@ -108,6 +108,10 @@ test("Sessions lists both, and picking the other one brings it back", async () =
   await app.tab("Sessions");
   await app.waitForText("open here", ".sessions-view");
   await app.waitForText("idle", ".sessions-view");
+  // Named by what the agent titled its terminal; the plain shell by nothing
+  // it did not set, not the console's own title (the shell's path) on Windows.
+  await app.waitForText("Fake task", ".sessions-view");
+  assert.doesNotMatch(await app.text(".sessions-view"), /\.exe\b/i);
 
   const idle = await app.until("the idle session's row", () =>
     app.driver.executeScript(

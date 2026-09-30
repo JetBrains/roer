@@ -60,7 +60,7 @@ A preview, natively in PowerShell (no WSL). Sessions run on [psmux](https://gith
 
 The `.msi` installs the same files but does not touch `PATH`: add `<install folder>\roer` yourself. `roer-cli-<version>-windows-x64.zip` is the command alone, for use without the app; keep its four files together, since `roer.exe` finds `roer-tmux.conf` and `psmux.exe` beside itself.
 
-Shortcuts are as on Linux. Not there yet on Windows: session titles (psmux reports the console's title rather than the one Claude Code sets), and `C-b` is taken off psmux's prefix but not yet checked with real keypresses. Between releases, the `roer-windows` artifact of a [Nightly bundles](../../actions/workflows/nightly-bundles.yml) run has the installers and the CLI zip.
+Shortcuts are as on Linux. Not there yet on Windows: `C-b` is taken off psmux's prefix but not yet checked with real keypresses. Between releases, the `roer-windows` artifact of a [Nightly bundles](../../actions/workflows/nightly-bundles.yml) run has the installers and the CLI zip.
 
 ## Agents
 
