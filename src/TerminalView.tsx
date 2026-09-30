@@ -74,7 +74,9 @@ export function TerminalView({ args, cwd, onAttached, onPane, onExit }: Terminal
     });
     // Handled, so never drawn, whatever it says; only a pane id is passed on.
     const paneSub = terminal.parser.registerOscHandler(PANE_OSC, (data) => {
-      const pane = /^pane=((?:=[\w+@-]+:\.)?%\d+)$/.exec(data)?.[1];
+      // The session part as roer's is_pane_id holds it: no `:`, quotes or
+      // control characters.
+      const pane = /^pane=((?:=[^:'"`\x00-\x1f]+:\.)?%\d+)$/.exec(data)?.[1];
       logLine(`terminal ${target}: roer reported ${pane ?? `an unreadable pane (${data})`}`);
       if (pane) onPaneRef.current?.(pane);
       return true;
@@ -92,10 +94,26 @@ export function TerminalView({ args, cwd, onAttached, onPane, onExit }: Terminal
     let pending = "";
     // One write at a time, each once the last has landed: every keystroke is
     // an IPC call of its own, and on Windows typed text reached the session
-    // out of order ("hello" as "helol").
-    let writes: Promise<void> = Promise.resolve();
+    // out of order ("hello" as "helol"). What is typed meanwhile goes out
+    // together in the next one, so a burst costs one round trip, not one per
+    // key.
+    let writing = false;
+    let queued = "";
     const write = (id: string, data: string) => {
-      writes = writes.then(() => writePty(id, data)).catch(ignoreClosed);
+      queued += data;
+      if (writing) return;
+      const next = () => {
+        const chunk = queued;
+        queued = "";
+        writing = true;
+        void writePty(id, chunk)
+          .catch(ignoreClosed)
+          .finally(() => {
+            writing = false;
+            if (queued) next();
+          });
+      };
+      next();
     };
 
     const dataSub = terminal.onData((data) => {

@@ -76,6 +76,11 @@ impl Tmux {
         Tmux { program, socket: socket(), conf, handoff }
     }
 
+    /// Whether the engine is psmux: see the top of this file.
+    pub fn is_psmux(&self) -> bool {
+        is_psmux(&self.program)
+    }
+
     /// The format that names a pane, as the rest of roer and the app know it:
     /// see the top of this file for why psmux's needs its session.
     pub fn pane_format(&self) -> &'static str {
@@ -164,11 +169,16 @@ impl Tmux {
             // No trustworthy socket_path, so ask our own server about the pane
             // this shell says it is in. A pane of some other server is either
             // unknown here or, by chance, a different pane with the same id.
-            // From inside a pane `$TMUX` points psmux at that pane's own
-            // session, which is what makes the bare id good enough to ask with.
+            //
+            // The session is asked for without -t: then psmux answers for the
+            // server `$TMUX` names, which is this pane's own. A bare `-t %1`
+            // would go to whichever session was active last instead, and every
+            // session has a %1.
             let pane = std::env::var("TMUX_PANE").unwrap_or_default();
-            let named = if pane.is_empty() { String::new() } else { self.read(&["display-message", "-p", "-t", &pane, PSMUX_PANE]) };
-            let known = named.ends_with(&format!(":.{pane}"))
+            let session = self.read(&["display-message", "-p", "#{session_name}"]);
+            let named = format!("={session}:.{pane}");
+            let known = !pane.is_empty()
+                && !session.is_empty()
                 && self.read(&["display-message", "-p", "-t", &named, "#{pane_id}"]) == pane;
             return if known {
                 Ok(named)

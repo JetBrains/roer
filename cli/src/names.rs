@@ -62,8 +62,9 @@ pub fn is_agent_id(id: &str) -> bool {
 }
 
 /// A pane id exactly as tmux prints one, `%` and digits, or as roer names a
-/// psmux pane, `=session:.%3` (see tmux.rs). Written into records and passed
-/// as a target, so held to that shape: no quotes, no spaces, one session.
+/// psmux pane, `=session:.%3` (see tmux.rs). Written into records, passed as
+/// a target and quoted into M-h's PowerShell, so held to that shape: a session
+/// name of anything but `:`, quotes and control characters.
 pub fn is_pane_id(pane: &str) -> bool {
     let bare = |id: &str| {
         id.strip_prefix('%').is_some_and(|digits| !digits.is_empty() && digits.chars().all(|c| c.is_ascii_digit()))
@@ -71,7 +72,7 @@ pub fn is_pane_id(pane: &str) -> bool {
     match pane.strip_prefix('=').and_then(|rest| rest.split_once(":.")) {
         Some((session, id)) => {
             !session.is_empty()
-                && session.chars().all(|c| c.is_ascii_alphanumeric() || "_-+@".contains(c))
+                && !session.chars().any(|c| c == ':' || c == '\'' || c == '"' || c == '`' || c.is_control())
                 && bare(id)
         }
         None => bare(pane),
@@ -149,8 +150,10 @@ mod tests {
         assert!(!is_pane_id("=:.%1"));
         assert!(!is_pane_id("=home:%1"));
         assert!(!is_pane_id("=home:.%"));
-        assert!(!is_pane_id("=a b:.%1"));
+        assert!(is_pane_id("=my proj.v2:.%1"), "any name roer shell <name> takes");
         assert!(!is_pane_id("=a';x:.%1"));
+        assert!(!is_pane_id("=a:b:.%1"));
+        assert!(!is_pane_id("=a\nb:.%1"));
         assert!(is_bundle_name("issues_v2-1"));
         assert!(!is_bundle_name("../x"));
     }

@@ -456,7 +456,7 @@ impl Roer {
                 continue;
             };
             let agent = if agents::is_live(command, procs) { agent } else { "" };
-            let title = if tmux::is_console_title(title) { "" } else { title };
+            let title = if self.tmux.is_psmux() && tmux::is_console_title(title) { "" } else { title };
             println!("{id}\t{session}\t{pane}\t{attached}\t{cwd}\t{command}\t{agent}\t{title}");
         }
         Ok(())
