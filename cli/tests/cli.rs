@@ -584,7 +584,9 @@ fn resume_types_the_command_into_a_shell_that_survives_it() {
     in_a_terminal(&env, &["resume", "0f3c-9a"], &name);
     let mut typed = String::new();
     for _ in 0..50 {
-        typed = env.tmux(&["capture-pane", "-pJ", "-t", &format!("={name}:")]);
+        // Without line breaks: a shell wraps a long line by itself, which
+        // tmux cannot join back.
+        typed = env.tmux(&["capture-pane", "-pJ", "-t", &format!("={name}:")]).replace('\n', "");
         if typed.contains("claude --resume 0f3c-9a --permission-mode manual") {
             break;
         }
@@ -597,7 +599,7 @@ fn resume_types_the_command_into_a_shell_that_survives_it() {
 fn typed_into(env: &Env, name: &str, expected: &str) -> String {
     let mut typed = String::new();
     for _ in 0..50 {
-        typed = env.tmux(&["capture-pane", "-pJ", "-t", &format!("={name}:")]);
+        typed = env.tmux(&["capture-pane", "-pJ", "-t", &format!("={name}:")]).replace('\n', "");
         if typed.contains(expected) {
             break;
         }

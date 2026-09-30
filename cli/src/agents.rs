@@ -113,7 +113,9 @@ pub const CLIS: &[Cli] = &[
         ask: &[],
         auto: None,
         full: Some(&["--brave"]),
-        instructions: &[],
+        // Put before the project's own guidelines. Junie's --system-prompt
+        // takes the text itself, which would have to be typed.
+        instructions: &["--ide-guidelines={}"],
         resume: &["--resume", "--session-id={}"],
         models: &[],
     },
@@ -1082,6 +1084,10 @@ mod tests {
         junie.effort = "low".into();
         junie.permissions = "full".into();
         assert_eq!(junie.command_line(None, false).unwrap(), "junie --model=gpt-5.5 --effort=low --brave");
+        junie.instructions = "Be brief.".into();
+        let line = junie.command_line(None, false).unwrap();
+        assert!(line.starts_with("junie --model=gpt-5.5 --effort=low --brave --ide-guidelines="), "{line}");
+        assert!(line.ends_with(".md"), "{line}");
 
         let mut claude = agent("claude");
         claude.env.insert("FOO".into(), "a b".into());
