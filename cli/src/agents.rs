@@ -38,7 +38,10 @@ pub struct Cli {
     ask: &'static [&'static str],
     auto: Option<&'static [&'static str]>,
     full: Option<&'static [&'static str]>,
-    /// Takes a file, so instructions never have to survive being typed.
+    /// How extra instructions are passed: `{}` is the path of a file that
+    /// holds them, `{text}` the file's contents and `{toml}` the same as a
+    /// TOML string, both read by the session's shell. Never the text itself:
+    /// typed, it would submit the line at its first newline.
     instructions: &'static [&'static str],
     /// Goes first, since for codex it is a subcommand.
     resume: &'static [&'static str],
@@ -71,7 +74,9 @@ pub const CLIS: &[Cli] = &[
         ask: &["-a", "untrusted"],
         auto: Some(&["--approve-for-me"]),
         full: Some(&["--dangerously-bypass-approvals-and-sandbox"]),
-        instructions: &[],
+        // Added to Codex's own instructions, where model_instructions_file
+        // would replace them.
+        instructions: &["-c", "developer_instructions={toml}"],
         resume: &["resume", "{}"],
         models: &["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex"],
     },
@@ -113,9 +118,7 @@ pub const CLIS: &[Cli] = &[
         ask: &[],
         auto: None,
         full: Some(&["--brave"]),
-        // Put before the project's own guidelines. Junie's --system-prompt
-        // takes the text itself, which would have to be typed.
-        instructions: &["--ide-guidelines={}"],
+        instructions: &["--system-prompt={text}"],
         resume: &["--resume", "--session-id={}"],
         models: &[],
     },
@@ -296,14 +299,14 @@ impl Agent {
 
     /// The words that start this agent, program first. `prompt` is where the
     /// instructions are, when there are any.
-    fn words(&self, resume: Option<&str>, prompt: Option<&Path>) -> Result<Vec<String>, Fail> {
+    fn words(&self, resume: Option<&str>, prompt: Option<&Prompt>) -> Result<Vec<Word>, Fail> {
         if self.cli == "custom" {
             if resume.is_some() {
                 return Err(Fail::new(2, format!("{} cannot resume a conversation", self.name)));
             }
             let mut words = vec![self.command.clone()];
             words.extend(self.args.iter().cloned());
-            return Ok(words);
+            return Ok(words.into_iter().map(Word::Plain).collect());
         }
         let cli = cli(&self.cli).ok_or_else(|| Fail::new(2, format!("unknown cli: {}", self.cli)))?;
         let fill = |template: &[&str], value: &str| -> Vec<String> {
@@ -332,10 +335,13 @@ impl Agent {
             (None, _) => &[],
         };
         words.extend(permissions.iter().map(|word| word.to_string()));
-        if let (Some(prompt), false) = (prompt, cli.instructions.is_empty()) {
-            words.extend(fill(cli.instructions, &prompt.to_string_lossy()));
+        let mut words: Vec<Word> = words.into_iter().map(Word::Plain).collect();
+        if let Some(prompt) = prompt {
+            for template in cli.instructions {
+                words.push(prompt.word(template));
+            }
         }
-        words.extend(self.args.iter().cloned());
+        words.extend(self.args.iter().cloned().map(Word::Plain));
         Ok(words)
     }
 
@@ -345,15 +351,13 @@ impl Agent {
         let prompt = if self.instructions.is_empty() {
             None
         } else {
-            let path = prompt_path(&self.instructions);
+            let prompt = Prompt::for_text(&self.instructions);
             if write_prompt {
-                let _ = std::fs::create_dir_all(path.parent().unwrap_or(Path::new(".")));
-                std::fs::write(&path, format!("{}\n", self.instructions))
-                    .map_err(|e| Fail::new(1, format!("could not write {}: {e}", path.display())))?;
+                prompt.write(&self.instructions)?;
             }
-            Some(path)
+            Some(prompt)
         };
-        let words = self.words(resume, prompt.as_deref())?;
+        let words = self.words(resume, prompt.as_ref())?;
         let mut line = String::new();
         for (key, value) in &self.env {
             if cfg!(windows) {
@@ -364,19 +368,74 @@ impl Agent {
         }
         // A custom command is typed as the person wrote it, pipes and all.
         let (program, rest) = words.split_first().expect("words start with the program");
-        line.push_str(if self.cli == "custom" { program.clone() } else { quote(program) }.as_str());
+        match program {
+            Word::Plain(program) if self.cli == "custom" => line.push_str(program),
+            program => line.push_str(&program.typed()),
+        }
         for word in rest {
             line.push(' ');
-            line.push_str(&quote(word));
+            line.push_str(&word.typed());
         }
         Ok(line)
     }
 }
 
-/// Instructions are kept by what they say, so two agents with the same ones,
-/// or one run twice, share a file.
-fn prompt_path(text: &str) -> PathBuf {
-    records::home().join("agents").join(".prompts").join(format!("{:08x}.md", crate::names::cksum(text.as_bytes())))
+/// One word of the command line.
+enum Word {
+    Plain(String),
+    /// `before` followed by the contents of `path`, which the session's shell
+    /// reads when it runs the line.
+    Read { before: String, path: PathBuf },
+}
+
+impl Word {
+    fn typed(&self) -> String {
+        match self {
+            Word::Plain(word) => quote(word),
+            // Inside double quotes, so the contents stay one word; the text
+            // before them is a flag's name and never needs escaping there.
+            Word::Read { before, path } if cfg!(windows) => {
+                format!("\"{before}$(Get-Content -Raw {})\"", quote(&path.to_string_lossy()))
+            }
+            Word::Read { before, path } => format!("\"{before}$(cat {})\"", quote(&path.to_string_lossy())),
+        }
+    }
+}
+
+/// Where an agent's instructions are put for its CLI to read. Kept by what
+/// they say, so two agents with the same ones, or one run twice, share them.
+struct Prompt {
+    /// The text as it is.
+    text: PathBuf,
+    /// The text as a TOML string, for a CLI that reads instructions as
+    /// configuration: JSON's escapes are TOML's too.
+    toml: PathBuf,
+}
+
+impl Prompt {
+    fn for_text(text: &str) -> Prompt {
+        let dir = records::home().join("agents").join(".prompts");
+        let stem = format!("{:08x}", crate::names::cksum(text.as_bytes()));
+        Prompt { text: dir.join(format!("{stem}.md")), toml: dir.join(format!("{stem}.toml")) }
+    }
+
+    fn write(&self, text: &str) -> Result<(), Fail> {
+        let fail = |path: &Path, e: std::io::Error| Fail::new(1, format!("could not write {}: {e}", path.display()));
+        if let Some(dir) = self.text.parent() {
+            std::fs::create_dir_all(dir).map_err(|e| fail(dir, e))?;
+        }
+        std::fs::write(&self.text, format!("{text}\n")).map_err(|e| fail(&self.text, e))?;
+        std::fs::write(&self.toml, Value::String(text.to_string()).to_string()).map_err(|e| fail(&self.toml, e))
+    }
+
+    fn word(&self, template: &str) -> Word {
+        for (placeholder, path) in [("{text}", &self.text), ("{toml}", &self.toml)] {
+            if let Some((before, _)) = template.split_once(placeholder) {
+                return Word::Read { before: before.to_string(), path: path.clone() };
+            }
+        }
+        Word::Plain(template.replace("{}", &self.text.to_string_lossy()))
+    }
 }
 
 /// A word as the session's shell reads it back: left bare when that is safe,
@@ -1084,10 +1143,38 @@ mod tests {
         junie.effort = "low".into();
         junie.permissions = "full".into();
         assert_eq!(junie.command_line(None, false).unwrap(), "junie --model=gpt-5.5 --effort=low --brave");
-        junie.instructions = "Be brief.".into();
+    }
+
+    /// Only the path is typed; the shell reads the text in when it runs the
+    /// line, as one word however many lines it has.
+    #[test]
+    fn instructions_are_read_by_the_shell_not_typed() {
+        let text = "Review the diff.\nSay \"why\" and it's $HOME.";
+        let prompt = Prompt::for_text(text);
+        let mut junie = agent("junie");
+        junie.instructions = text.into();
         let line = junie.command_line(None, false).unwrap();
-        assert!(line.starts_with("junie --model=gpt-5.5 --effort=low --brave --ide-guidelines="), "{line}");
-        assert!(line.ends_with(".md"), "{line}");
+        assert_eq!(line, format!("junie \"--system-prompt=$(cat {})\"", prompt.text.display()));
+
+        let mut codex = agent("codex");
+        codex.instructions = text.into();
+        let line = codex.command_line(None, false).unwrap();
+        assert_eq!(line, format!("codex -c \"developer_instructions=$(cat {})\"", prompt.toml.display()));
+
+        let mut claude = agent("claude");
+        claude.instructions = text.into();
+        let line = claude.command_line(None, false).unwrap();
+        assert_eq!(line, format!("claude --append-system-prompt-file {}", prompt.text.display()));
+
+        let dir = std::env::temp_dir().join(format!("roer-prompt-{}", std::process::id()));
+        let written = Prompt { text: dir.join("p.md"), toml: dir.join("p.toml") };
+        written.write(text).unwrap();
+        let out = std::process::Command::new("sh")
+            .args(["-c", &format!("printf %s \"$(cat '{}')\"", written.toml.display())])
+            .output()
+            .unwrap();
+        assert_eq!(String::from_utf8_lossy(&out.stdout), r#""Review the diff.\nSay \"why\" and it's $HOME.""#);
+        let _ = std::fs::remove_dir_all(dir);
 
         let mut claude = agent("claude");
         claude.env.insert("FOO".into(), "a b".into());
@@ -1112,9 +1199,9 @@ mod tests {
         let mut gemini = agent("gemini");
         gemini.effort = "high".into();
         assert!(gemini.check().is_err());
-        let mut codex = agent("codex");
-        codex.instructions = "Be brief.".into();
-        assert!(codex.check().is_err());
+        let mut gemini = agent("gemini");
+        gemini.instructions = "Be brief.".into();
+        assert!(gemini.check().is_err());
         let mut pi = agent("pi");
         pi.effort = "max".into();
         pi.instructions = "Be brief.".into();
@@ -1123,12 +1210,12 @@ mod tests {
 
     #[test]
     fn a_hand_written_file_starts_without_what_its_cli_cannot_take() {
-        let mut codex = agent("codex");
-        codex.effort = "max".into();
-        codex.instructions = "Be brief.".into();
-        assert_eq!(codex.sanitize().len(), 2);
-        assert!(codex.check().is_ok());
-        assert!(codex.effort.is_empty() && codex.instructions.is_empty());
+        let mut gemini = agent("gemini");
+        gemini.effort = "max".into();
+        gemini.instructions = "Be brief.".into();
+        assert_eq!(gemini.sanitize().len(), 2);
+        assert!(gemini.check().is_ok());
+        assert!(gemini.effort.is_empty() && gemini.instructions.is_empty());
     }
 
     #[test]

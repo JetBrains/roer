@@ -79,7 +79,7 @@ args: ["--search"]
 Review the diff. Report bugs first, style last.
 ```
 
-`~/.roer/agents/<id>.md` is yours alone; `<project>/.roer/agents/<id>.md` is committed and shared. The body is added to the system prompt where the CLI has a flag for it (Claude Code and pi add it to the system prompt, Junie puts it before the project's guidelines). Keys roer does not know are kept when the app saves the file.
+`~/.roer/agents/<id>.md` is yours alone; `<project>/.roer/agents/<id>.md` is committed and shared. The body is added to the agent's instructions where the CLI takes extra ones: Claude Code and pi read it from a file, Junie gets it as `--system-prompt` and Codex as `developer_instructions`, both read in by the shell (`$(cat …)`) so the text itself is never typed. Gemini CLI and opencode take none. Keys roer does not know are kept when the app saves the file.
 
 - `roer agents` lists them, `*` marking the default; `roer agents default <id>` changes it (`ROER_AGENT` overrides it for one shell).
 - `roer agents command <id>` prints exactly what the agent types into its session.
