@@ -5,6 +5,11 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  # Nightly on main, for the Windows E2E that pull requests skip: the runner
+  # image and its WebView2 move on their own, and a quiet main would never
+  # notice. 03:47 UTC, clear of Nightly bundles' 03:17.
+  schedule:
+    - cron: "47 3 * * *"
 
 concurrency:
   # event_name is in the key so a push to main cannot cancel a dispatched run
@@ -135,11 +140,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # Windows only off pull requests: on main, nightly and when dispatched.
+        # It is the slow half (its minutes count double) and gates nothing.
+        #
         # Not windows-latest: on its Server 2025 image msedgedriver never gets
         # a DevTools port from WebView2 ("DevToolsActivePort file doesn't
         # exist"), for other Tauri apps too, while 2022 works:
         # https://github.com/actions/runner-images/issues/14738
-        os: [ubuntu-latest, windows-2022]
+        os: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-latest"]' || '["ubuntu-latest", "windows-2022"]') }}
     runs-on: ${{ matrix.os }}
     # Builds take ~15 minutes cold and the tests under one: anything longer is
     # a hang, which would otherwise hold a runner for six hours.

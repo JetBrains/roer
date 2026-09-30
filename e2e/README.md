@@ -15,7 +15,9 @@ and reads the clicks back, through `roer plugin-ui` like a real agent.
 WebDriver for a Tauri app is [`tauri-driver`](https://v2.tauri.app/develop/tests/webdriver/),
 which fronts WebKitWebDriver on Linux and msedgedriver on Windows. macOS has no
 WebDriver for WKWebView, so these run on Linux and Windows only. CI runs them in
-the `E2E` jobs.
+the `E2E` jobs: Linux on every pull request; Windows on pushes to `main`,
+nightly, and on a dispatched run, which is how to try a branch on Windows
+(`gh workflow run ci.yml --ref <branch>`).
 
 ## Running them
 
