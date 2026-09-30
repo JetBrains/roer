@@ -45,6 +45,10 @@ struct Session {
     master: Box<dyn MasterPty + Send>,
     writer: Box<dyn Write + Send>,
     child: Arc<Mutex<Box<dyn Child + Send + Sync>>>,
+    /// Log every write, under `ROER_TRACE_PTY`: the order input reached the
+    /// PTY in, to tell a keystroke lost or reordered before the app's side
+    /// from one lost after it.
+    trace_input: bool,
 }
 
 pub struct PtyState {
@@ -82,12 +86,20 @@ fn utf8_locale(get: impl Fn(&str) -> Option<String>) -> Option<(&'static str, &'
 /// shows how far an attach got, and short enough to hold no screen of text.
 const FIRST_OUTPUT: usize = 160;
 
+/// Whether `ROER_TRACE_PTY` asks for the terminals' bytes to be kept.
+fn tracing() -> bool {
+    std::env::var_os("ROER_TRACE_PTY").is_some_and(|v| !v.is_empty())
+}
+
 /// With `ROER_TRACE_PTY` set, everything a terminal receives is also written
 /// to a file of its own beside the log: the exact bytes, to replay into a
 /// terminal when it draws something wrong. Opt-in, since it records whatever
-/// was on screen.
+/// was on screen. What is typed goes into the log itself, one line per
+/// write (see `write`).
 fn trace(id: &str) -> Option<std::fs::File> {
-    std::env::var_os("ROER_TRACE_PTY").filter(|v| !v.is_empty())?;
+    if !tracing() {
+        return None;
+    }
     let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
     let path = logfile::dir().join(format!("{id}-{stamp}.pty"));
     logfile::line(&format!("{id}: tracing output to {}", path.display()));
@@ -203,6 +215,7 @@ pub(crate) fn spawn<P: PtySink>(
             master: pair.master,
             writer,
             child: Arc::clone(&child),
+            trace_input: tracing(),
         },
     );
 
@@ -282,6 +295,9 @@ pub(crate) fn write(state: &PtyState, id: String, data: String) -> Result<(), St
     let session = sessions
         .get_mut(&id)
         .ok_or_else(|| format!("no such session: {id}"))?;
+    if session.trace_input {
+        logfile::line(&format!("{id}: input {}", escaped(data.as_bytes())));
+    }
     session
         .writer
         .write_all(data.as_bytes())

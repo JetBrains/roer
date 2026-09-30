@@ -63,8 +63,13 @@ test("New session starts the default agent in a terminal", async () => {
 });
 
 test("what is typed in the terminal reaches the agent", async () => {
-  await app.type(`hello from e2e${Key.ENTER}`);
-  await app.waitForTerminal("echo: hello from e2e");
+  // Several lines, each as fast as WebDriver types: on Windows keys have
+  // arrived reordered or doubled ("helol", "ehello"), and one line seldom shows it.
+  const lines = ["hello from e2e", "the quick brown fox jumps", "over the lazy dog 0123456789"];
+  for (const line of lines) {
+    await app.type(`${line}${Key.ENTER}`);
+    await app.waitForTerminal(`echo: ${line}`);
+  }
 });
 
 test("the agent's Generative UI shows in the panel, and a click goes back to it", async () => {

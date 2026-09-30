@@ -120,6 +120,9 @@ export class Roer {
       ROER_BIN: ROER,
       // The running app picks every handoff up; a second one must not start.
       ROER_APP: join(this.root, "no-such-app"),
+      // Every terminal's output, and each write typed into it, kept with the
+      // artifacts: what to read when typed text arrives wrong.
+      ROER_TRACE_PTY: "1",
     };
     // A terminal the app was started from, or a CI step's, is no session.
     delete this.env.TMUX;
