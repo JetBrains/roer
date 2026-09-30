@@ -89,9 +89,11 @@ test("roer app hands a terminal's session to the app", async () => {
   app.roer(["send", "--pane", pane], "echo handed-over-ok");
   await app.waitForTerminal("handed-over-ok");
 
-  // The session it replaced keeps running, with no client.
-  const home = app.sessions().find((row) => row.pane !== pane);
-  assert.equal(home?.attached, "detached");
+  // The session it replaced keeps running, with no client, once the app has
+  // let go of it.
+  await app.untilSessions("the replaced session to be detached", (rows) =>
+    rows.find((row) => row.pane !== pane)?.attached === "detached",
+  );
 });
 
 test("Changes shows the project's local edits", async () => {

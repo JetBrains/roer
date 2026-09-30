@@ -6,7 +6,7 @@
 // own driver: WebKitWebDriver on Linux, msedgedriver on Windows. There is
 // none for WKWebView, which is why this runs on Linux and Windows only.
 import { spawn, spawnSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -59,6 +59,7 @@ function fakeClaude(bin, env) {
     if (!existsSync(CLAUDE_EXE)) throw new Error(`no fake claude.exe at ${CLAUDE_EXE}: build it first (see e2e/README.md)`);
     copyFileSync(CLAUDE_EXE, join(bin, "claude.exe"));
     Object.assign(env, { ROER_E2E_AGENT: agent, ROER_E2E_NODE: node });
+    return join(bin, "claude.exe");
   } else {
     const q = (s) => `'${s.replaceAll("'", `'\\''`)}'`;
     const sets = Object.entries(env).map(([k, v]) => `export ${k}=${q(v)}`).join("\n");
@@ -107,7 +108,9 @@ export class Roer {
     // each pane's environment afresh. So there the fake goes into a folder CI
     // has put on the user PATH, as an installer would.
     const bin = process.env.ROER_E2E_BIN || join(this.root, "bin");
-    fakeClaude(bin, own);
+    // Removed again in stop(): on Windows it sits in a folder on the user's
+    // PATH, where it would stand in for the real claude from then on.
+    this.fake = fakeClaude(bin, own);
     this.env = {
       ...process.env,
       ...own,
@@ -206,6 +209,16 @@ export class Roer {
     // The sessions' server, which outlives the app on purpose.
     const engine = windows ? join(dirname(ROER), "psmux.exe") : "tmux";
     spawnSync(engine, ["-L", this.socket, "kill-server"], { env: this.env });
+    // What the run leaves behind: the fake, wherever it went, and the
+    // directory everything else is in. Best effort: a process still holding
+    // a file on Windows only means it stays in the temp folder.
+    for (const path of [this.fake, this.root]) {
+      try {
+        if (path) rmSync(path, { recursive: true, force: true, maxRetries: 3 });
+      } catch (e) {
+        console.error(`could not remove ${path}: ${e.message}`);
+      }
+    }
   }
 
   /** Records the whole screen, the app's launch included: gdigrab is the

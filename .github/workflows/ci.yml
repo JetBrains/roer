@@ -7,7 +7,9 @@ on:
   workflow_dispatch:
   # Nightly on main, for the Windows E2E that pull requests skip: the runner
   # image and its WebView2 move on their own, and a quiet main would never
-  # notice. 03:47 UTC, clear of Nightly bundles' 03:17.
+  # notice. Only that job runs, and there it fails the run rather than being
+  # reported, so a broken night mails whoever maintains the schedule. 03:47
+  # UTC, clear of Nightly bundles' 03:17.
   schedule:
     - cron: "47 3 * * *"
 
@@ -22,6 +24,7 @@ permissions:
 
 jobs:
   checks:
+    if: github.event_name != 'schedule'
     name: Checks (${{ matrix.os }})
     strategy:
       # One platform failing says nothing about the others; let all finish.
@@ -106,6 +109,7 @@ jobs:
   # the way the app and a terminal do. The Unix counterpart is the CLI tests
   # in Checks.
   windows-cli:
+    if: github.event_name != 'schedule'
     name: Windows CLI on psmux
     runs-on: windows-latest
     # Reported, not gating, like the Windows checks: Windows is a preview.
@@ -140,20 +144,25 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Windows only off pull requests: on main, nightly and when dispatched.
-        # It is the slow half (its minutes count double) and gates nothing.
+        # Windows only off pull requests: on main, nightly (alone) and when
+        # dispatched. It is the slow half, its minutes count double, and it
+        # gates nothing but the nightly run.
         #
         # Not windows-latest: on its Server 2025 image msedgedriver never gets
         # a DevTools port from WebView2 ("DevToolsActivePort file doesn't
         # exist"), for other Tauri apps too, while 2022 works:
         # https://github.com/actions/runner-images/issues/14738
-        os: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-latest"]' || '["ubuntu-latest", "windows-2022"]') }}
+        os: >-
+          ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-latest"]'
+          || github.event_name == 'schedule' && '["windows-2022"]'
+          || '["ubuntu-latest", "windows-2022"]') }}
     runs-on: ${{ matrix.os }}
     # Builds take ~15 minutes cold and the tests under one: anything longer is
     # a hang, which would otherwise hold a runner for six hours.
     timeout-minutes: 40
-    # Reported, not gating, like the other Windows jobs.
-    continue-on-error: ${{ startsWith(matrix.os, 'windows') }}
+    # Reported, not gating, like the other Windows jobs; except nightly, which
+    # runs for this alone.
+    continue-on-error: ${{ startsWith(matrix.os, 'windows') && github.event_name != 'schedule' }}
     defaults:
       run:
         shell: bash
@@ -265,6 +274,7 @@ jobs:
           retention-days: 7
 
   workflows:
+    if: github.event_name != 'schedule'
     name: Workflows
     runs-on: ubuntu-latest
     env:
@@ -309,7 +319,8 @@ jobs:
   check:
     name: Full gate
     needs: [checks, windows-cli, e2e, workflows]
-    if: always()
+    # Not nightly: that runs E2E alone, and a failure there fails the run.
+    if: always() && github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
       # The single required status check. It exists as an aggregate so a

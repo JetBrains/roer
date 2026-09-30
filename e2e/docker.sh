@@ -18,12 +18,14 @@ docker build -q -t roer-e2e -f "$repo/e2e/Dockerfile" "$repo/e2e" >/dev/null
 
 rm -rf "$repo/e2e/artifacts"
 cd "$repo"
-# What git would commit, edits included, and nothing it ignores. Without
-# COPYFILE_DISABLE, macOS's tar adds a ._ file of metadata beside each one.
+# What git would commit, edits included, and nothing it ignores: a tracked
+# file deleted but not yet committed is left out, as tar would fail on it.
+# Without COPYFILE_DISABLE, macOS's tar adds a ._ file beside each one.
 export COPYFILE_DISABLE=1
 git ls-files -z --cached --others --exclude-standard | grep -z -v '^e2e/artifacts/' |
+    while IFS= read -r -d '' f; do if [ -e "$f" ]; then printf '%s\0' "$f"; fi; done |
     tar --null -T - -cf - |
-    docker run --rm -i ${record[@]+"${record[@]}"} \
+    docker run --rm -i ${record[@]+"${record[@]}"} -e HOST_ID="$(id -u):$(id -g)" \
         -v roer-e2e-src-tauri-target:/roer/src-tauri/target \
         -v roer-e2e-cli-target:/roer/cli/target \
         -v roer-e2e-node-modules:/roer/node_modules \
@@ -40,5 +42,8 @@ git ls-files -z --cached --others --exclude-standard | grep -z -v '^e2e/artifact
             status=0
             dbus-run-session -- xvfb-run -a -s "-screen 0 1280x800x24" npm test || status=$?
             cp -r artifacts/. /artifacts/ 2>/dev/null || true
+            # Owned by the host user, not root: on a Linux host the next run
+            # must be able to delete them.
+            chown -R "$HOST_ID" /artifacts 2>/dev/null || true
             exit $status
         '
