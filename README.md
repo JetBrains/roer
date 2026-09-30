@@ -62,6 +62,29 @@ The `.msi` installs the same files but does not touch `PATH`: add `<install fold
 
 Shortcuts are as on Linux. Not there yet on Windows: session titles (psmux reports the console's title rather than the one Claude Code sets), and `C-b` is taken off psmux's prefix but not yet checked with real keypresses. Between releases, the `roer-windows` artifact of a [Nightly bundles](../../actions/workflows/nightly-bundles.yml) run has the installers and the CLI zip.
 
+## Agents
+
+`roer new` starts the default agent in the new session's shell; `roer new --agent <id>` starts another, and `--model`/`--effort` override it once. Every installed CLI is an agent as it comes (`claude`, `codex`, `pi`, `gemini`, `junie`, `opencode`). A saved agent is a Markdown file with YAML frontmatter, the format Claude Code, opencode and Copilot use for their own agents:
+
+```markdown
+---
+name: Reviewer
+description: Careful reviewer for PR feedback
+cli: codex              # claude | codex | pi | gemini | junie | opencode | custom
+model: gpt-5.5
+effort: high            # translated to each CLI's own flag
+permissions: ask        # ask | auto | full
+args: ["--search"]
+---
+Review the diff. Report bugs first, style last.
+```
+
+`~/.roer/agents/<id>.md` is yours alone; `<project>/.roer/agents/<id>.md` is committed and shared. The body is added to the agent's instructions where the CLI takes extra ones: Claude Code and pi read it from a file, Junie gets it as `--system-prompt` and Codex as `developer_instructions`, both read in by the shell (`$(cat …)`) so the text itself is never typed. Gemini CLI and opencode take none. Keys roer does not know are kept when the app saves the file.
+
+- `roer agents` lists them, `*` marking the default; `roer agents default <id>` changes it (`ROER_AGENT` overrides it for one shell).
+- `roer agents command <id>` prints exactly what the agent types into its session.
+- `roer resume <id> --agent codex` resumes a Codex conversation; the Resume list shows Codex conversations beside Claude Code's.
+
 ## Screenshots
 
 **Generative UI** — a plugin drafts a UI as A2UI v1.0 JSON and shows it live in Roer's panel; save it as a project-local bundle to reload later.
@@ -88,6 +111,7 @@ Shortcuts are as on Linux. Not there yet on Windows: session titles (psmux repor
 
 - **Session teleport (`M-h`)** — hand a running terminal session (`claude`, `vim`, a dev server) off to the Roer app mid-flight, and back again, with the process never restarting.
 - **New session launcher** — one button starts `roer new`; the launcher lists what's already running.
+- **Agents** — New session starts Claude Code, Codex, pi, Gemini CLI, Junie or opencode; the chevron beside it (`⌥⌘T`) picks one, and **Roer › Agents…** (`⌘,`) saves named setups with a model, reasoning effort, permissions and instructions. See [Agents](#agents).
 - **Branch diff view** — browse a branch's commits against its base, step through them, and view each commit's file diff.
 - **Pull Request tab** — for the session's branch, through your own `gh` login: let Claude draft the title and description, push and open the PR, request a Copilot review (Roer polls until it lands), then pick review threads and send them to the session with **Fix with Claude**. Under the hood the tab uses `roer send` (type a prompt into a session) and `roer pr-draft` (the agent hands a draft back).
 - **tmux-backed sessions** — sessions live in tmux on a private socket, a swappable detail behind the `roer` CLI.

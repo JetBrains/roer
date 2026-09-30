@@ -2879,3 +2879,316 @@ button.link.pr-title:hover {
 .pr-merge-option .muted {
   font-size: 11px;
 }
+
+/* Agents --------------------------------------------------------------- */
+
+/* New session and its chevron read as one control: the button starts the
+   default agent, the chevron picks another. */
+.split-button {
+  display: inline-flex;
+  align-items: stretch;
+}
+
+.split-button > button:first-child {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.split-button > button.chevron {
+  display: inline-flex;
+  align-items: center;
+  border-left-color: var(--roer-selected);
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  padding: 0 8px;
+}
+
+.agent-picker {
+  min-width: 300px;
+}
+
+.agent-item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.agent-item-name {
+  white-space: nowrap;
+}
+
+.agent-item-detail {
+  margin-left: auto;
+  padding-left: 16px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.agent-group {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* Roer › Agents…: the list of agents beside the form for the one picked. */
+.popup.agents {
+  flex-direction: row;
+  width: min(860px, 94vw);
+  height: min(640px, 82vh);
+  max-height: none;
+  font-size: 13px;
+  color: var(--ide-text);
+}
+
+.agents-list {
+  flex: 0 0 230px;
+  overflow-y: auto;
+  padding: 14px 10px;
+  border-right: 1px solid var(--ide-border);
+  background: var(--ide-editor);
+}
+
+.agents-list-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 0 6px 8px;
+}
+
+.agents-list h2 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.agents-list h3 {
+  margin: 12px 6px 4px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.agents-list ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+button.agent-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  padding: 6px 8px;
+  text-align: left;
+  background: none;
+  border: 1px solid transparent;
+}
+
+button.agent-row strong {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 500;
+}
+
+button.agent-row .muted {
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+button.agent-row:hover {
+  background: var(--roer-hover);
+  border-color: transparent;
+}
+
+button.agent-row.on {
+  background: var(--roer-selected);
+}
+
+.agents-form {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  overflow-y: auto;
+  padding: 18px 20px;
+}
+
+.agents-form p {
+  margin: 0;
+  line-height: 1.45;
+}
+
+.agents-builtin {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.agents-builtin h2 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.agents-field {
+  display: grid;
+  grid-template-columns: 96px 1fr;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.agents-label {
+  color: var(--roer-muted);
+  font-size: 12px;
+}
+
+.agents-control {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.agents-hint {
+  font-size: 11px;
+}
+
+.agents-form input:not([type="checkbox"]),
+.agents-form textarea {
+  font: inherit;
+  font-size: 12.5px;
+  padding: 6px 8px;
+  color: var(--roer-fg);
+  background: var(--roer-panel);
+  border: 1px solid var(--roer-border);
+  border-radius: 6px;
+  min-width: 0;
+}
+
+.agents-form textarea {
+  resize: vertical;
+}
+
+.agents-form input:focus,
+.agents-form textarea:focus {
+  outline: none;
+  border-color: var(--roer-accent);
+}
+
+.agents-form textarea:disabled {
+  opacity: 0.5;
+}
+
+.agents-form .mono {
+  font-family: var(--ide-mono);
+  font-size: 12px;
+}
+
+.segmented {
+  display: inline-flex;
+  flex-wrap: nowrap;
+  align-self: flex-start;
+  border: 1px solid var(--roer-border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.segmented.wrap {
+  flex-wrap: wrap;
+}
+
+.segmented > button {
+  border: none;
+  border-radius: 0;
+  border-right: 1px solid var(--roer-border);
+  padding: 4px 10px;
+  font-size: 12px;
+  background: var(--roer-panel);
+  color: var(--roer-muted);
+}
+
+.segmented > button:last-child {
+  border-right: none;
+}
+
+.segmented > button:hover:not(:disabled) {
+  color: var(--roer-fg);
+}
+
+.segmented > button.on {
+  background: var(--roer-selected);
+  color: var(--roer-fg);
+}
+
+.segmented > button:disabled {
+  color: var(--roer-disabled);
+  cursor: default;
+}
+
+.agents-advanced summary {
+  cursor: pointer;
+  color: var(--roer-muted);
+  font-size: 12px;
+  margin-bottom: 8px;
+}
+
+.agents-advanced[open] {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* What the agent will type: the one line that says exactly what saving means. */
+.agents-preview {
+  display: grid;
+  grid-template-columns: 96px 1fr;
+  gap: 10px;
+  align-items: baseline;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--ide-editor);
+  font-size: 12px;
+}
+
+.agents-preview code {
+  font-family: var(--ide-mono);
+  word-break: break-all;
+  white-space: pre-wrap;
+}
+
+.agents-save-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.agents-default {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.agents-path {
+  font-family: var(--ide-mono);
+  font-size: 11px;
+  word-break: break-all;
+}
+
+.setup-actions .spacer {
+  flex: 1;
+}
+
+.setup-actions.start {
+  justify-content: flex-start;
+  align-items: center;
+}
+
+button.danger:hover {
+  border-color: var(--roer-minus);
+  color: var(--roer-minus);
+}

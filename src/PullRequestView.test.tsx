@@ -166,6 +166,18 @@ describe("PullRequestView", () => {
     expect(screen.getByLabelText("Description")).toHaveValue("Why and what.");
   });
 
+  it("names the session's agent, and hands nothing to a plain shell", async () => {
+    vi.mocked(ghPrForBranch).mockResolvedValue(null);
+    const { rerender } = view({ agent: "Reviewer" });
+    expect(await screen.findByRole("button", { name: "Draft with Reviewer" })).toBeEnabled();
+
+    rerender(<PullRequestView cwd="/work/r" pane="%3" active agent={null} />);
+    const draft = screen.getByRole("button", { name: "Draft with an agent" });
+    expect(draft).toBeDisabled();
+    fireEvent.click(draft);
+    expect(sendToSession).not.toHaveBeenCalled();
+  });
+
   it("creates the pull request against the chosen base", async () => {
     vi.mocked(ghPrForBranch).mockResolvedValue(null);
     vi.mocked(ghPrCreate).mockResolvedValue(pr);

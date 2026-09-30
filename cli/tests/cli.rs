@@ -226,7 +226,7 @@ fn app_opens_this_directorys_session_and_hands_it_over() {
     // M-h should find this binary.
     let list = String::from_utf8_lossy(&env.run(&["list"]).stdout).into_owned();
     let row: Vec<&str> = list.lines().next().unwrap().split('\t').collect();
-    assert_eq!(row.len(), 7, "{list}");
+    assert_eq!(row.len(), 8, "{list}");
     assert_eq!(row[0].len(), 36, "a uuid: {}", row[0]);
     assert_eq!(row[1], name);
     assert_eq!(row[3], "detached");
@@ -561,7 +561,7 @@ fn new_always_makes_another_session_and_starts_claude_in_it() {
     in_a_terminal(&env, &["new"], &format!("{name}-2"));
     let mut typed = String::new();
     for _ in 0..50 {
-        typed = env.tmux(&["capture-pane", "-p", "-t", &format!("={name}-2:")]);
+        typed = env.tmux(&["capture-pane", "-pJ", "-t", &format!("={name}-2:")]);
         if typed.contains("claude") {
             break;
         }
@@ -584,7 +584,9 @@ fn resume_types_the_command_into_a_shell_that_survives_it() {
     in_a_terminal(&env, &["resume", "0f3c-9a"], &name);
     let mut typed = String::new();
     for _ in 0..50 {
-        typed = env.tmux(&["capture-pane", "-p", "-t", &format!("={name}:")]);
+        // Without line breaks: a shell wraps a long line by itself, which
+        // tmux cannot join back.
+        typed = env.tmux(&["capture-pane", "-pJ", "-t", &format!("={name}:")]).replace('\n', "");
         if typed.contains("claude --resume 0f3c-9a --permission-mode manual") {
             break;
         }
@@ -592,6 +594,75 @@ fn resume_types_the_command_into_a_shell_that_survives_it() {
     }
     assert!(typed.contains("claude --resume 0f3c-9a --permission-mode manual"), "typed into the shell: {typed}");
     kill_outer(&env);
+}
+
+fn typed_into(env: &Env, name: &str, expected: &str) -> String {
+    let mut typed = String::new();
+    for _ in 0..50 {
+        typed = env.tmux(&["capture-pane", "-pJ", "-t", &format!("={name}:")]).replace('\n', "");
+        if typed.contains(expected) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    typed
+}
+
+/// A saved agent is started with its own flags, and the session is named by
+/// it in `list`, whether or not the agent ever titles its pane.
+#[test]
+fn new_starts_a_saved_agent_and_resume_another_cli() {
+    let env = Env::new("agent");
+    std::fs::create_dir_all(env.home.join("agents")).unwrap();
+    std::fs::write(
+        env.home.join("agents/reviewer.md"),
+        "---\nname: Reviewer\ncli: codex\nmodel: gpt-5.5\neffort: high\n---\nReview it.\n",
+    )
+    .unwrap();
+
+    in_a_terminal(&env, &["new", "--agent", "reviewer", "rev"], "rev");
+    let expected = "codex -m gpt-5.5 -c model_reasoning_effort=high";
+    let typed = typed_into(&env, "rev", expected);
+    assert!(typed.contains(expected), "typed into the shell: {typed}");
+    kill_outer(&env);
+
+    // An agent that has quit leaves its shell behind, and is not named.
+    std::fs::write(env.home.join("agents/quitter.md"), "---\nname: Quitter\ncli: custom\ncommand: true\n---\n").unwrap();
+    in_a_terminal(&env, &["new", "--agent", "quitter", "quit"], "quit");
+    std::thread::sleep(Duration::from_millis(500));
+    let list = String::from_utf8_lossy(&env.run(&["list"]).stdout).into_owned();
+    let row = list.lines().find(|row| row.contains("\tquit\t")).expect("quit is listed");
+    assert_eq!(row.split('\t').nth(6), Some(""), "{list}");
+    kill_outer(&env);
+
+    // A running agent is named, and only while it runs.
+    std::fs::write(env.home.join("agents/waiter.md"), "---\nname: Waiter\ncli: custom\ncommand: sleep 30\n---\n").unwrap();
+    in_a_terminal(&env, &["new", "--agent", "waiter", "wait"], "wait");
+    let mut agent = String::new();
+    for _ in 0..50 {
+        let list = String::from_utf8_lossy(&env.run(&["list"]).stdout).into_owned();
+        let row = list.lines().find(|row| row.contains("\twait\t")).unwrap_or_default().to_string();
+        agent = row.split('\t').nth(6).unwrap_or_default().to_string();
+        if agent == "Waiter" {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    assert_eq!(agent, "Waiter");
+    kill_outer(&env);
+
+    // An unknown agent, or a setting given on the command line that the CLI
+    // has no flag for, is refused before anything starts.
+    assert_eq!(code(&env.run(&["new", "--agent", "nobody"])), 3);
+    assert_eq!(code(&env.run(&["new", "--agent", "gemini", "--effort", "high"])), 2);
+
+    let name = format!("{}-resume", shim_name(&env.dir));
+    in_a_terminal(&env, &["resume", "0f3c-9a", "--agent", "codex"], &name);
+    let expected = "codex resume 0f3c-9a -a untrusted";
+    let typed = typed_into(&env, &name, expected);
+    assert!(typed.contains(expected), "typed into the shell: {typed}");
+    kill_outer(&env);
+    assert_eq!(code(&env.run(&["resume", "0f3c-9a", "--agent", "gemini"])), 2);
 }
 
 #[test]

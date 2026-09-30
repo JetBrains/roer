@@ -1,7 +1,9 @@
+mod agents;
 mod assets;
 mod browse;
 mod claude;
 mod claude_setup;
+mod codex;
 mod cli_link;
 pub mod events;
 mod files;
@@ -69,6 +71,12 @@ pub fn run() {
             roer::roer_status,
             roer::roer_send,
             claude::roer_claude_threads,
+            agents::agents_list,
+            agents::agent_save,
+            agents::agent_remove,
+            agents::agent_set_default,
+            agents::agent_command,
+            agents::agent_models,
             claude_setup::claude_setup_status,
             claude_setup::claude_setup_apply,
             claude_setup::claude_setup_dismiss,
@@ -121,9 +129,13 @@ fn menu(app: &mut tauri::App) -> tauri::Result<()> {
         let menu = Menu::default(handle)?;
         let setup = MenuItem::with_id(handle, "claude-setup", "Claude Code Integration…", true, None::<&str>)?;
         let browser = MenuItem::with_id(handle, "browser-server", "Open This Session in a Browser…", true, None::<&str>)?;
+        // Where a Mac app keeps its settings, and on the key every Mac app
+        // opens them with.
+        let agents = MenuItem::with_id(handle, "agents", "Agents…", true, Some("CmdOrCtrl+,"))?;
         if let Some(app_menu) = menu.items()?.first().and_then(|item| item.as_submenu().cloned()) {
-            app_menu.insert(&setup, 1)?;
-            app_menu.insert(&browser, 2)?;
+            app_menu.insert(&agents, 1)?;
+            app_menu.insert(&setup, 2)?;
+            app_menu.insert(&browser, 3)?;
         }
         // Where a user reporting a problem finds the log to send with it.
         let logs = MenuItem::with_id(handle, "show-logs", "Show Logs in Finder", true, None::<&str>)?;
@@ -134,6 +146,8 @@ fn menu(app: &mut tauri::App) -> tauri::Result<()> {
         app.on_menu_event(|app, event| {
             if event.id() == "claude-setup" {
                 let _ = app.emit("roer://claude-setup", ());
+            } else if event.id() == "agents" {
+                let _ = app.emit("roer://agents", ());
             } else if event.id() == "browser-server" {
                 let _ = app.emit("roer://browser-server", ());
             } else if event.id() == "show-logs" {

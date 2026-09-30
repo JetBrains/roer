@@ -6,6 +6,7 @@
 //! exit code is the one the shell shim had; the app, the skills and the M-h
 //! binding all depend on them.
 
+mod agents;
 mod mcp;
 mod mcp_install;
 mod names;
@@ -53,16 +54,23 @@ usage:
   roer shell [name]     attach this directory's session to this terminal,
                         detaching any other client (terminal or app)
   roer new [name]       create a session that is always a new one, suffixing
-                        the name until it is free, with `claude` started in
-                        its shell
+                        the name until it is free, with the default agent
+                        (`roer agents default`) started in its shell
+  roer new --agent <id> [--model <m>] [--effort <e>] [name]
+                        same, with that agent: a saved one or a CLI's name
   roer new --shell [name]
                         same, with just the shell
   roer attach [name]    take a session back, detaching whoever holds it;
                         with no name, lists sessions
   roer list             list sessions as TSV:
-                        id<TAB>session<TAB>pane<TAB>attached|detached<TAB>cwd<TAB>command<TAB>title
+                        id<TAB>session<TAB>pane<TAB>attached|detached<TAB>cwd<TAB>command<TAB>agent<TAB>title
   roer detach [name]    release the session; it keeps running with no client
-  roer resume <id>      resume a Claude conversation inside a new session
+  roer resume <id> [--agent <id>]
+                        resume an agent's conversation inside a new session
+                        (Claude Code's unless --agent names another)
+  roer agents           the agents `new` can start: saved ones in
+                        ~/.roer/agents and the project's .roer/agents, and
+                        every installed CLI (`roer agents help` for more)
   roer handoff          teleport this session into the Roer app (used by the skill)
   roer handoff --pane <id>
                         same, for the M-h key binding, which has no session
@@ -193,7 +201,20 @@ impl Roer {
             "attach" => self.attach(args.first().copied()),
             "list" | "ls" => self.list(),
             "detach" => self.detach(args.first().copied()),
-            "resume" => self.resume(args.first().copied()),
+            "resume" => self.resume(args),
+            "agents" | "agent" => match args {
+                ["help" | "--help" | "-h"] => {
+                    println!("{}", agents::USAGE);
+                    Ok(())
+                }
+                // The app, asking where no project is chosen yet, lists only
+                // what is certain: the person's agents and the CLIs.
+                _ if args.contains(&"--no-project") => {
+                    let args: Vec<&str> = args.iter().copied().filter(|arg| *arg != "--no-project").collect();
+                    agents::run(&agents::Store::new(None), &args)
+                }
+                _ => agents::run(&self.agents(), args),
+            },
             "handoff" => self.handoff(args),
             "plugin-ui" => match args.first() {
                 Some(&"save") => self.plugin_ui_save(&args[1..]),
@@ -342,14 +363,37 @@ impl Roer {
     /// `shell` reuses the session for a directory on purpose.
     ///
     /// An agent session is what roer is for, so `new` starts one unless
-    /// --shell asks otherwise. `claude` is typed into the new shell rather than
-    /// made the pane's command: the agent then starts with everything the
-    /// interactive shell sets up (a server started by the app has only
-    /// Finder's PATH), and quitting it leaves a shell behind.
+    /// --shell asks otherwise: the default agent, or the one --agent names.
+    /// The agent is typed into the new shell rather than made the pane's
+    /// command: it then starts with everything the interactive shell sets up
+    /// (a server started by the app has only Finder's PATH), and quitting it
+    /// leaves a shell behind.
     fn new_session(&self, args: &[&str]) -> Outcome {
-        let (agent, args) = match args.first() {
-            Some(&"--shell") => (None, &args[1..]),
-            _ => (Some("claude"), args),
+        let (agent_id, args) = agents::take_flag(args, "--agent")?;
+        let (model, args) = agents::take_flag(&args, "--model")?;
+        let (effort, args) = agents::take_flag(&args, "--effort")?;
+        let (shell, args): (bool, Vec<&str>) = match args.first() {
+            Some(&"--shell") => (true, args[1..].to_vec()),
+            _ => (false, args),
+        };
+        let agent = if shell {
+            None
+        } else {
+            let store = self.agents();
+            let id = agent_id.map_or_else(|| store.default_id(), str::to_string);
+            let mut agent = store.find(&id).ok_or_else(|| Fail::new(3, format!("no agent called {id}")))?;
+            for why in agent.sanitize() {
+                eprintln!("roer: {why}, so {} starts without it", agent.name);
+            }
+            agent.check().map_err(|why| Fail::new(2, why))?;
+            if let Some(model) = model {
+                agent.model = model.to_string();
+            }
+            if let Some(effort) = effort {
+                agent.effort = effort.to_string();
+            }
+            agent.check().map_err(|why| Fail::new(2, why))?;
+            Some(agent)
         };
         let base = args.first().map_or_else(|| session_name(&self.cwd), |name| (*name).to_string());
         let name = self.free_name(&base);
@@ -359,9 +403,27 @@ impl Roer {
         // a new session, never a surprise attach to an old one.
         self.create_detached(&name)?;
         if let Some(agent) = agent {
-            self.tmux.ok(&["send-keys", "-t", &format!("={name}:"), agent, "Enter"]);
+            self.start_agent(&name, &agent, None)?;
         }
         self.attach_session(&name, false)
+    }
+
+    /// Types `agent`'s command into the session's shell, and remembers which
+    /// agent it was: not every agent titles its pane, and the app names a
+    /// session by the agent it runs.
+    fn start_agent(&self, name: &str, agent: &agents::Agent, resume: Option<&str>) -> Outcome {
+        let command = agent.command_line(resume, true)?;
+        let target = format!("={name}:");
+        self.tmux.ok(&["set-option", "-t", &target, "@roer_agent", &agent.name]);
+        self.tmux.ok(&["set-option", "-t", &target, "@roer_agent_procs", &agent.procs()]);
+        self.tmux.ok(&["send-keys", "-t", &target, &command, "Enter"]);
+        Ok(())
+    }
+
+    /// Saved agents, with the project's own among them.
+    fn agents(&self) -> agents::Store {
+        let root = self.project_root();
+        agents::Store::new(Some(&root))
     }
 
     fn list(&self) -> Outcome {
@@ -375,16 +437,26 @@ impl Roer {
         // the hostname, which says nothing, so that prints as empty. It goes
         // last because it is free text: a tab in it must not shift the columns
         // before it.
+        //
+        // The agent is named only while it runs: tmux is asked for the process
+        // names it runs as, and the column is left empty once the pane runs
+        // anything else, so nothing takes a shell or an editor for an agent.
         let rows = self.tmux.read(&[
             "list-panes",
             "-a",
             "-F",
             "#{@roer_id}\t#{session_name}\t#{pane_id}\t#{?session_attached,attached,detached}\t\
-             #{pane_current_path}\t#{pane_current_command}\t\
+             #{pane_current_path}\t#{pane_current_command}\t#{@roer_agent_procs}\t#{@roer_agent}\t\
              #{?#{||:#{==:#{pane_title},#{host}},#{==:#{pane_title},#{host_short}}},,#{pane_title}}",
         ]);
-        if !rows.is_empty() {
-            println!("{rows}");
+        for row in rows.lines().filter(|row| !row.is_empty()) {
+            let f: Vec<&str> = row.splitn(9, '\t').collect();
+            let [id, session, pane, attached, cwd, command, procs, agent, title] = f[..] else {
+                println!("{row}");
+                continue;
+            };
+            let agent = if agents::is_live(command, procs) { agent } else { "" };
+            println!("{id}\t{session}\t{pane}\t{attached}\t{cwd}\t{command}\t{agent}\t{title}");
         }
         Ok(())
     }
@@ -413,33 +485,38 @@ impl Roer {
         if ok { Ok(()) } else { Err(Fail::new(1, "")) }
     }
 
-    /// Resumes a Claude conversation inside a roer session: the fallback when
-    /// the agent was started in a plain terminal Roer can never attach to.
-    /// Landing in a roer session makes it teleportable from then on.
-    fn resume(&self, agent: Option<&str>) -> Outcome {
-        let agent = agent.ok_or_else(|| Fail::new(2, "resume needs an agent session id"))?;
+    /// Resumes an agent's conversation inside a roer session: the fallback
+    /// when the agent was started in a plain terminal Roer can never attach
+    /// to. Landing in a roer session makes it teleportable from then on.
+    fn resume(&self, args: &[&str]) -> Outcome {
+        let (agent_id, args) = agents::take_flag(args, "--agent")?;
+        let id = args.first().copied().ok_or_else(|| Fail::new(2, "resume needs an agent session id"))?;
         // Interpolated into a shell command below.
-        if !is_agent_id(agent) {
-            return Err(Fail::new(2, format!("not an agent session id: {agent}")));
+        if !is_agent_id(id) {
+            return Err(Fail::new(2, format!("not an agent session id: {id}")));
         }
-        // Always in manual mode. A transcript carries no permission mode of its
-        // own, and a turn that was mid-flight when it was abandoned can start
-        // acting the moment it is restored; the person teleporting has not
-        // seen what it wants to do. They can switch modes once it is on screen.
-        //
+        let agent_id = agent_id.unwrap_or(agents::FALLBACK);
+        let agent = self.agents().find(agent_id).ok_or_else(|| Fail::new(3, format!("no agent called {agent_id}")))?;
         // A free name, not -A: with -A an existing "<dir>-resume" session is
         // attached instead, and tmux discards the command that comes with it.
         //
         // Typed into the session's shell, as `new` does, rather than given to
         // tmux as the pane's command: tmux runs that with the server's own
         // PATH, and a server the app started from Finder has no directory
-        // `claude` is in, so the pane died at once and there was nothing left
+        // the agent is in, so the pane died at once and there was nothing left
         // to attach. The login shell sets PATH up the way the user's terminal
-        // does, and says so on screen if `claude` is missing after all.
+        // does, and says so on screen if the agent is missing after all.
+        //
+        // Always asking first, whatever the agent is set to: a transcript
+        // carries no permission mode of its own, and a turn that was
+        // mid-flight when it was abandoned can start acting the moment it is
+        // restored; the person teleporting has not seen what it wants to do.
         let name = self.free_name(&format!("{}-resume", session_name(&self.cwd)));
-        let command = format!("claude --resume {agent} --permission-mode manual");
+        // Checked before a session exists, so a CLI that cannot resume leaves
+        // nothing behind.
+        agent.command_line(Some(id), false)?;
         self.create_detached(&name)?;
-        self.tmux.ok(&["send-keys", "-t", &format!("={name}:"), &command, "Enter"]);
+        self.start_agent(&name, &agent, Some(id))?;
         self.attach_session(&name, false)
     }
 

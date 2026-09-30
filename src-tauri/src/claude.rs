@@ -33,6 +33,8 @@ const TITLE_CHARS: usize = 80;
 #[serde(rename_all = "camelCase")]
 pub struct ClaudeThread {
     pub id: String,
+    /// The CLI whose conversation this is, and so which one resumes it.
+    pub agent: String,
     pub cwd: String,
     pub title: String,
     /// Seconds since the epoch, taken from the transcript file's mtime.
@@ -180,6 +182,7 @@ fn threads_for_home(home: &Path, cwds: &[String]) -> Vec<ClaudeThread> {
                 let title = title_for(&path).unwrap_or_else(|| id.to_string());
                 threads.push(ClaudeThread {
                     id: id.to_string(),
+                    agent: "claude".to_string(),
                     cwd: actual_cwd,
                     title,
                     updated_at,
@@ -208,7 +211,7 @@ fn title_for(path: &Path) -> Option<String> {
         .map(|title| truncate(&title))
 }
 
-fn read_head(path: &Path, bytes: u64) -> String {
+pub(crate) fn read_head(path: &Path, bytes: u64) -> String {
     let Ok(mut file) = std::fs::File::open(path) else {
         return String::new();
     };
@@ -285,7 +288,7 @@ fn message_text(content: &Value) -> Option<String> {
     })
 }
 
-fn truncate(title: &str) -> String {
+pub(crate) fn truncate(title: &str) -> String {
     let title = title.trim();
     if title.chars().count() <= TITLE_CHARS {
         return title.to_string();
@@ -295,9 +298,15 @@ fn truncate(title: &str) -> String {
     truncated
 }
 
-#[tauri::command]
+/// Every resumable conversation under `cwds`: Claude Code's and Codex's,
+/// most recently updated first.
+#[tauri::command(async)]
 pub fn roer_claude_threads(cwds: Vec<String>) -> Vec<ClaudeThread> {
-    threads_for(&cwds)
+    let mut threads = threads_for(&cwds);
+    threads.extend(crate::codex::threads_for(&cwds));
+    threads.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+    threads.truncate(MAX_THREADS);
+    threads
 }
 
 #[cfg(test)]

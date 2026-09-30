@@ -385,7 +385,11 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
   // terminal mounted.
   const openedRef = useRef(0);
 
-  const startNewSession = (cwd: string | undefined, workspace: Workspace | null) => {
+  // The agent the next session starts, kept across the Project picker that
+  // may come up between choosing it and the session starting.
+  const pendingAgentRef = useRef<string | undefined>(undefined);
+
+  const startNewSession = (cwd: string | undefined, workspace: Workspace | null, agent?: string) => {
     openedRef.current += 1;
     const known = sessions.map((session) => session.pane);
     pendingAssignRef.current = workspace ? { known, workspaceId: workspace.id } : null;
@@ -394,7 +398,7 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
     // the view filter, which always starts fresh on launch.
     if (cwd) localStorage.setItem("roer:last-new-session-cwd", cwd);
     onOpen({
-      args: ["new"],
+      args: agent === SHELL ? ["new", "--shell"] : agent ? ["new", "--agent", agent] : ["new"],
       cwd,
       title: "new session",
       nonce: `new-${openedRef.current}`,
@@ -409,12 +413,16 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
   // the last new session was started, otherwise the home directory. A
   // Workspace with several Projects asks which one, rather than guessing —
   // `pickingProjectFor` holds the Workspace while that picker is up.
-  const openNew = () => {
+  //
+  // `agent` is an agent's id, or `SHELL` for just a shell; without one the
+  // shim starts the default agent.
+  const openNew = (agent?: string) => {
     if (selectedProject) {
-      startNewSession(selectedProject.path, selectedWorkspace);
+      startNewSession(selectedProject.path, selectedWorkspace, agent);
       return;
     }
     if (selectedWorkspace && selectedWorkspaceProjects.length > 1) {
+      pendingAgentRef.current = agent;
       setPickingProjectFor(selectedWorkspace);
       return;
     }
@@ -423,6 +431,21 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
         localStorage.getItem("roer:last-new-session-cwd") ??
         status?.home,
       selectedWorkspace,
+      agent,
+    );
+  };
+
+  /** Where a new session would start, when that is known without asking:
+   * the directory whose project's own agents apply to it. `undefined` while
+   * a Workspace with several Projects has yet to ask which, so that no one
+   * Project's agents are offered for all of them. */
+  const newSessionCwd = (): string | undefined => {
+    if (selectedProject) return selectedProject.path;
+    if (selectedWorkspace && selectedWorkspaceProjects.length > 1) return undefined;
+    return (
+      selectedWorkspaceProjects[0]?.path ??
+      localStorage.getItem("roer:last-new-session-cwd") ??
+      status?.home
     );
   };
 
@@ -431,7 +454,7 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
   const pickProjectForNewSession = (path: string) => {
     const workspace = pickingProjectFor;
     setPickingProjectFor(null);
-    startNewSession(path, workspace);
+    startNewSession(path, workspace, pendingAgentRef.current);
   };
 
   /** The picker's "Attach a new project…" escape hatch: registers and
@@ -455,18 +478,19 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
             current.map((existing) => (existing.id === updated.id ? updated : existing)),
           );
         }
-        startNewSession(path, workspace);
+        startNewSession(path, workspace, pendingAgentRef.current);
       })
       .catch((cause: unknown) => setFailure(String(cause)));
   };
 
-  // Resuming a past Claude conversation goes through the shim's own
-  // `resume`, not `new` — the transcript, not just the directory, is what's
-  // being reopened.
+  // Resuming a past conversation goes through the shim's own `resume`, not
+  // `new` — the transcript, not just the directory, is what's being
+  // reopened, by the CLI that wrote it.
   const openClaudeSession = (session: ClaudeSession) => {
     openedRef.current += 1;
+    const agent = session.agent && session.agent !== "claude" ? ["--agent", session.agent] : [];
     onOpen({
-      args: ["resume", session.id],
+      args: ["resume", session.id, ...agent],
       cwd: session.cwd,
       title: session.title,
       nonce: `resume-${openedRef.current}`,
@@ -552,6 +576,7 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
     visibleClaudeSessions,
     activePane,
     openNew,
+    newSessionCwd,
     pickingProjectFor,
     cancelProjectPick,
     pickProjectForNewSession,
@@ -560,5 +585,8 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
     refresh,
   };
 }
+
+/** What `openNew` takes to start a session with just a shell. */
+export const SHELL = "--shell";
 
 export type SessionBrowserState = ReturnType<typeof useSessionBrowser>;

@@ -50,6 +50,8 @@ const navChord = (event: KeyboardEvent): boolean =>
 /** How each shortcut is written on this platform, for titles and hints. */
 export const shortcutLabel = {
   newSession: () => (isMac() ? "⌘T" : "Ctrl+Shift+T"),
+  pickAgent: () => (isMac() ? "⌥⌘T" : "Ctrl+Alt+Shift+T"),
+  agents: () => (isMac() ? "⌘," : "Ctrl+,"),
   prevCommit: () => (isMac() ? "⌘←" : "Alt+←"),
   nextCommit: () => (isMac() ? "⌘→" : "Alt+→"),
 };
@@ -74,6 +76,27 @@ export const isGoToFile = (event: KeyboardEvent): boolean =>
 export const isNewSession = (event: KeyboardEvent): boolean =>
   appChord(event, false) &&
   (event.code === "KeyT" || (!event.code && event.key.toLowerCase() === "t"));
+
+/**
+ * Start a session with an agent other than the default: `Cmd+Option+T`, the
+ * new-session key with Option for "the other kind".
+ */
+export const isPickAgent = (event: KeyboardEvent): boolean =>
+  (isMac()
+    ? event.metaKey && event.altKey && !event.ctrlKey && !event.shiftKey
+    : event.ctrlKey && event.altKey && event.shiftKey && !event.metaKey) &&
+  (event.code === "KeyT" || (!event.code && event.key.toLowerCase() === "t"));
+
+/**
+ * Manage agents: `Cmd+,`, where every Mac app keeps its settings. The menu
+ * item carries the key on macOS; this is for the other platforms, which have
+ * no menu, and for a browser tab.
+ */
+export const isManageAgents = (event: KeyboardEvent): boolean =>
+  (isMac()
+    ? event.metaKey && !event.altKey && !event.ctrlKey && !event.shiftKey
+    : event.ctrlKey && !event.altKey && !event.shiftKey && !event.metaKey) &&
+  (event.code === "Comma" || (!event.code && event.key === ","));
 
 /**
  * Step to the previous commit in a branch diff: `Cmd+Left`, the same key a

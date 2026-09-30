@@ -2,12 +2,12 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { gitRoot } from "./lib/git";
-import { listClaudeSessions, listPastSessions, listSessions, roerStatus } from "./lib/pty";
+import { listClaudeSessions, listPastSessions, listSessions, roerStatus, type SessionInfo } from "./lib/pty";
 import { useSessionBrowser } from "./lib/useSessionBrowser";
 import { listProjects } from "./lib/projects";
 import { assignSession, listWorkspaces, unassignSession, workspaceAssignments } from "./lib/workspaces";
 import { NewSessionButton } from "./NewSessionButton";
-import { paneLabel, SessionBrowser, type OpenRequest } from "./SessionBrowser";
+import { paneLabel, runningAgent, SessionBrowser, type OpenRequest } from "./SessionBrowser";
 import { WorkspaceSidebar } from "./WorkspaceSidebar";
 
 vi.mock("./lib/pty", () => ({
@@ -421,5 +421,18 @@ describe("assigning a session to a workspace", () => {
     fireEvent.click(screen.getByText("Unassign"));
 
     expect(unassignSession).toHaveBeenCalledWith("1");
+  });
+});
+
+describe("runningAgent", () => {
+  const live = (command: string, agent = "") =>
+    ({ id: "i", session: "s", pane: "%1", attached: false, cwd: "/w", command, agent }) as SessionInfo;
+
+  it("is only ever an agent, never a shell, an editor or a dev server", () => {
+    expect(runningAgent(live("node", "Fast pi"))).toBe("Fast pi");
+    expect(runningAgent(live("claude"))).toBe("claude");
+    expect(runningAgent(live("zsh"))).toBeNull();
+    expect(runningAgent(live("vim"))).toBeNull();
+    expect(runningAgent(live("node"))).toBeNull();
   });
 });
