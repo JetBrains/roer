@@ -45,11 +45,14 @@ import { resolveDir } from "./lib/session";
 export const POLL_MS = 30_000;
 export const POLL_FOR_MS = 20 * 60_000;
 
+const NO_AGENT = "Only a shell is running in this session: start an agent in it first";
+
 export interface PullRequestViewProps {
   cwd?: string;
   pane?: string;
-  /** Who runs in the session, for the buttons that hand it work. */
-  agent?: string;
+  /** Who runs in the session, for the buttons that hand it work; `null`
+   * when only a shell does, which must never be typed prose into. */
+  agent?: string | null;
   active: boolean;
   /** A prompt went to the session; the stage should show it. */
   onSent?: () => void;
@@ -62,7 +65,9 @@ export interface PullRequestViewProps {
  * there is none, ask Copilot to review it, read what came back, and hand the
  * threads worth fixing to the session's agent.
  */
-export function PullRequestView({ cwd, pane, agent = "Claude", active, onSent, onReviewLanded }: PullRequestViewProps) {
+export function PullRequestView({ cwd, pane, agent: running, active, onSent, onReviewLanded }: PullRequestViewProps) {
+  const agent = running ?? "Claude";
+  const noAgent = running === null;
   const [dir, setDir] = useState<string | null>(null);
   const [status, setStatus] = useState<GhStatus | null>(null);
   // `undefined` until asked; `null` once GitHub says the branch has none.
@@ -333,11 +338,11 @@ export function PullRequestView({ cwd, pane, agent = "Claude", active, onSent, o
             <button
               type="button"
               className="primary"
-              disabled={busy !== null || !base || !branch || !pane}
-              title={noPane}
+              disabled={busy !== null || !base || !branch || !pane || noAgent}
+              title={noAgent ? NO_AGENT : noPane}
               onClick={askForDraft}
             >
-              {drafting ? `Waiting for ${agent}…` : `Draft with ${agent}`}
+              {drafting ? `Waiting for ${agent}…` : noAgent ? "Draft with an agent" : `Draft with ${agent}`}
             </button>
           </div>
           <input aria-label="Title" placeholder="Title" value={title} onChange={(e) => setTitle(e.target.value)} />
@@ -401,11 +406,11 @@ export function PullRequestView({ cwd, pane, agent = "Claude", active, onSent, o
             <button
               type="button"
               className="primary"
-              disabled={busy !== null || picked.length === 0 || !pane}
-              title={noPane}
+              disabled={busy !== null || picked.length === 0 || !pane || noAgent}
+              title={noAgent ? NO_AGENT : noPane}
               onClick={fix}
             >
-              Fix with {agent} ({picked.length})
+              Fix with {noAgent ? "an agent" : agent} ({picked.length})
             </button>
           </div>
 

@@ -76,6 +76,14 @@ export function paneLabel(title: string | undefined, command: string): string {
   return text === command ? "" : text;
 }
 
+/** Who is running in the session: the agent roer started, or whatever the
+ * pane runs if roer started none, and `null` once only a shell is left —
+ * nothing a prompt can be sent to. */
+export function runningAgent(session: SessionInfo): string | null {
+  if (SHELLS.has(session.command)) return null;
+  return session.agent || session.command;
+}
+
 const SHELLS = new Set(["zsh", "bash", "fish", "sh", "dash", "ksh", "tcsh", "nu", "pwsh", "powershell"]);
 
 /** A live row's name: what the agent says it is doing, when it says, with
@@ -87,7 +95,7 @@ const SHELLS = new Set(["zsh", "bash", "fish", "sh", "dash", "ksh", "tcsh", "nu"
  * in, which the group headings show wherever there is more than one, so it
  * is left to the row's tooltip. */
 function LiveName({ session }: { session: SessionInfo }) {
-  const who = session.agent && !SHELLS.has(session.command) ? session.agent : session.command;
+  const who = runningAgent(session) ?? session.command;
   const label = paneLabel(session.title, session.command);
   return label && label !== who ? (
     <>

@@ -363,9 +363,9 @@ impl Roer {
     /// (a server started by the app has only Finder's PATH), and quitting it
     /// leaves a shell behind.
     fn new_session(&self, args: &[&str]) -> Outcome {
-        let (agent_id, args) = agents::take_flag(args, "--agent");
-        let (model, args) = agents::take_flag(&args, "--model");
-        let (effort, args) = agents::take_flag(&args, "--effort");
+        let (agent_id, args) = agents::take_flag(args, "--agent")?;
+        let (model, args) = agents::take_flag(&args, "--model")?;
+        let (effort, args) = agents::take_flag(&args, "--effort")?;
         let (shell, args): (bool, Vec<&str>) = match args.first() {
             Some(&"--shell") => (true, args[1..].to_vec()),
             _ => (false, args),
@@ -472,7 +472,7 @@ impl Roer {
     /// when the agent was started in a plain terminal Roer can never attach
     /// to. Landing in a roer session makes it teleportable from then on.
     fn resume(&self, args: &[&str]) -> Outcome {
-        let (agent_id, args) = agents::take_flag(args, "--agent");
+        let (agent_id, args) = agents::take_flag(args, "--agent")?;
         let id = args.first().copied().ok_or_else(|| Fail::new(2, "resume needs an agent session id"))?;
         // Interpolated into a shell command below.
         if !is_agent_id(id) {

@@ -74,6 +74,7 @@ describe("AgentsDialog", () => {
     expect(screen.queryByRole("radio", { name: "max" })).toBeNull();
     fireEvent.click(screen.getByRole("radio", { name: "high" }));
     fireEvent.click(screen.getByRole("radio", { name: "This project" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Make default" }));
     await screen.findByText("codex -c model_reasoning_effort=high");
 
     fireEvent.click(screen.getByRole("button", { name: "Save & start" }));
@@ -83,6 +84,40 @@ describe("AgentsDialog", () => {
     expect(scope).toBe("project");
     expect(saved).toMatchObject({ name: "Reviewer", cli: "codex", effort: "high" });
     expect(onClose).toHaveBeenCalled();
+    // The default for the project it was shared in, not for everyone.
+    expect(setDefaultAgent).toHaveBeenCalledWith("/work", "reviewer", "project");
+  });
+
+  it("never drops what a hand-written file asks for without being asked", async () => {
+    vi.mocked(agentCommand).mockImplementation(async (agent) =>
+      agent.effort === "max" ? Promise.reject("Codex takes effort minimal, high, xhigh") : "codex",
+    );
+    const handWritten = {
+      ...blankAgent("codex"),
+      id: "old",
+      name: "Old",
+      effort: "max",
+      source: "user" as const,
+      path: "/home/.roer/agents/old.md",
+    };
+    render(
+      <AgentsDialog
+        list={{ ...list, agents: [handWritten, ...list.agents] }}
+        start={{ mode: "edit", id: "old" }}
+        onChanged={async () => list}
+        onStart={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+    fireEvent.change(screen.getByDisplayValue("Old"), { target: { value: "Older" } });
+    await screen.findByText(/takes effort/);
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+
+    fireEvent.click(screen.getByRole("button", { name: /Drop what Codex can't take/ }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Save" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(saveAgent).toHaveBeenCalled());
+    expect(vi.mocked(saveAgent).mock.calls[0][1]).toMatchObject({ name: "Older", effort: "" });
   });
 
   it("shows what the shim refuses instead of saving", async () => {

@@ -37,7 +37,9 @@ fn threads_for_home(home: &Path, cwds: &[String]) -> Vec<ClaudeThread> {
     for path in newest_rollouts(&home.join("sessions")) {
         let head = read_head(&path, HEAD_BYTES);
         let Some(cwd) = string_field(&head, "cwd") else { continue };
-        if !cwds.iter().any(|root| cwd == *root || cwd.starts_with(&format!("{root}/"))) {
+        // By component, so `C:\work\repo\sub` is under `C:\work\repo`, `/`
+        // holds everything, and `/work/roer2` is not under `/work/roer`.
+        if !cwds.iter().any(|root| Path::new(&cwd).starts_with(root)) {
             continue;
         }
         let Some(id) = rollout_id(&path) else { continue };
@@ -175,6 +177,14 @@ mod tests {
         assert_eq!(threads[0].agent, "codex");
         assert_eq!(threads[0].cwd, "/work/roer/cli");
         assert_eq!(threads[0].title, "fix the build");
+        let _ = std::fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn the_root_directory_holds_every_conversation() {
+        let home = temp_home();
+        write_rollout(&home, "2026/09/25", ID, "/work/roer", "fix the build");
+        assert_eq!(threads_for_home(&home, &["/".to_string()]).len(), 1);
         let _ = std::fs::remove_dir_all(home);
     }
 

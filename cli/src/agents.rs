@@ -248,51 +248,80 @@ impl Agent {
 
     /// Whether the agent can be run as it is written, and if not, why.
     pub fn check(&self) -> Result<(), String> {
+        match self.problems().into_iter().next() {
+            Some((why, _)) => Err(why),
+            None => Ok(()),
+        }
+    }
+
+    /// Everything wrong with the agent as written, each with the field that
+    /// dropping would put right, when dropping one would.
+    fn problems(&self) -> Vec<(String, Option<Field>)> {
+        let mut problems = Vec::new();
+        // Typed into a shell as `NAME=value`, so a name is held to the one
+        // shape every shell reads as nothing but a name.
+        for key in self.env.keys().filter(|key| !is_env_name(key)) {
+            problems.push((format!("not an environment variable name: {key:?}"), Some(Field::Env(key.clone()))));
+        }
+        let unsupported = |what: &str, label: &str| format!("{label} takes no {what}");
         if self.cli == "custom" {
-            return if self.command.is_empty() { Err("a custom agent needs a command".into()) } else { Ok(()) };
+            if self.command.is_empty() {
+                problems.insert(0, ("a custom agent needs a command".into(), None));
+            }
+            // A custom command is run as it is written, with nothing added.
+            let label = "a custom agent";
+            if !self.model.is_empty() {
+                problems.push((unsupported("model", label), Some(Field::Model)));
+            }
+            if !self.effort.is_empty() {
+                problems.push((unsupported("reasoning effort", label), Some(Field::Effort)));
+            }
+            if !self.permissions.is_empty() {
+                problems.push((unsupported("permission level", label), Some(Field::Permissions)));
+            }
+            if !self.instructions.is_empty() {
+                problems.push((unsupported("extra instructions", label), Some(Field::Instructions)));
+            }
+            return problems;
         }
         let Some(cli) = cli(&self.cli) else {
-            return Err(format!("unknown cli: {}", self.cli));
+            problems.insert(0, (format!("unknown cli: {}", self.cli), None));
+            return problems;
         };
         if !self.effort.is_empty() && !cli.efforts.contains(&self.effort.as_str()) {
-            return Err(if cli.efforts.is_empty() {
+            let why = if cli.efforts.is_empty() {
                 format!("{} has no reasoning effort setting", cli.label)
             } else {
                 format!("{} takes effort {}", cli.label, cli.efforts.join(", "))
-            });
+            };
+            problems.push((why, Some(Field::Effort)));
         }
         if !self.permissions.is_empty() && !cli.permissions().contains(&self.permissions.as_str()) {
-            return Err(format!("{} has no \"{}\" permission level", cli.label, self.permissions));
+            let why = format!("{} has no \"{}\" permission level", cli.label, self.permissions);
+            problems.push((why, Some(Field::Permissions)));
         }
         if !self.instructions.is_empty() && cli.instructions.is_empty() {
-            return Err(format!("{} takes no extra instructions", cli.label));
+            problems.push((unsupported("extra instructions", cli.label), Some(Field::Instructions)));
         }
-        Ok(())
+        problems
     }
 
     /// Drops what the CLI cannot take, saying what went, so a file edited by
     /// hand or brought from elsewhere still starts. The editor never saves one.
     pub fn sanitize(&mut self) -> Vec<String> {
         let mut dropped = Vec::new();
-        while let Err(why) = self.check() {
-            let before = self.clone();
-            if self.cli != "custom" && cli(&self.cli).is_none() {
-                return vec![why];
-            }
-            let known = cli(&self.cli);
-            if !self.effort.is_empty() && known.is_some_and(|cli| !cli.efforts.contains(&self.effort.as_str())) {
-                self.effort.clear();
-            } else if !self.permissions.is_empty()
-                && known.is_some_and(|cli| !cli.permissions().contains(&self.permissions.as_str()))
-            {
-                self.permissions.clear();
-            } else {
-                self.instructions.clear();
+        for (why, field) in self.problems() {
+            match field {
+                None => return vec![why],
+                Some(Field::Model) => self.model.clear(),
+                Some(Field::Effort) => self.effort.clear(),
+                Some(Field::Permissions) => self.permissions.clear(),
+                Some(Field::Instructions) => self.instructions.clear(),
+                Some(Field::Env(key)) => {
+                    self.env.remove(&key);
+                }
             }
             dropped.push(why);
-            if *self == before {
-                break;
-            }
         }
         dropped
     }
@@ -341,7 +370,8 @@ impl Agent {
                 words.push(prompt.word(template));
             }
         }
-        words.extend(self.args.iter().cloned().map(Word::Plain));
+        let args = if resume.is_some() { without_permission_flags(&self.args) } else { self.args.clone() };
+        words.extend(args.into_iter().map(Word::Plain));
         Ok(words)
     }
 
@@ -357,6 +387,9 @@ impl Agent {
             }
             Some(prompt)
         };
+        if let Some(key) = self.env.keys().find(|key| !is_env_name(key)) {
+            return Err(Fail::new(2, format!("not an environment variable name: {key:?}")));
+        }
         let words = self.words(resume, prompt.as_ref())?;
         let mut line = String::new();
         for (key, value) in &self.env {
@@ -378,6 +411,60 @@ impl Agent {
         }
         Ok(line)
     }
+}
+
+/// A setting `sanitize` can drop.
+enum Field {
+    Model,
+    Effort,
+    Permissions,
+    Instructions,
+    Env(String),
+}
+
+/// A portable environment variable name.
+fn is_env_name(key: &str) -> bool {
+    let mut chars = key.chars();
+    chars.next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// Flags that change what an agent may do unasked, in every CLI roer knows,
+/// with whether each takes the next word as its value. A resume drops them
+/// from an agent's extra arguments, so that nothing an agent file says can
+/// undo the asking a resume promises.
+const PERMISSION_FLAGS: &[(&str, bool)] = &[
+    ("--dangerously-skip-permissions", false),
+    ("--allow-dangerously-skip-permissions", false),
+    ("--permission-mode", true),
+    ("--dangerously-bypass-approvals-and-sandbox", false),
+    ("--approve-for-me", false),
+    ("--full-auto", false),
+    ("-a", true),
+    ("--ask-for-approval", true),
+    ("-s", true),
+    ("--sandbox", true),
+    ("-y", false),
+    ("--yolo", false),
+    ("--approval-mode", true),
+    ("--brave", false),
+];
+
+fn without_permission_flags(args: &[String]) -> Vec<String> {
+    let mut kept = Vec::new();
+    let mut iter = args.iter();
+    while let Some(arg) = iter.next() {
+        let flag = arg.split_once('=').map_or(arg.as_str(), |(flag, _)| flag);
+        match PERMISSION_FLAGS.iter().find(|(name, _)| *name == flag) {
+            Some((_, takes_value)) => {
+                if *takes_value && !arg.contains('=') {
+                    iter.next();
+                }
+            }
+            None => kept.push(arg.clone()),
+        }
+    }
+    kept
 }
 
 /// One word of the command line.
@@ -993,7 +1080,7 @@ usage: roer agents [list] [--json]
        roer agents default [<id> | --clear] [--scope user|project]";
 
 pub fn run(store: &Store, args: &[&str]) -> Result<(), Fail> {
-    let (scope, args) = take_flag(args, "--scope");
+    let (scope, args) = take_flag(args, "--scope")?;
     let scope = scope.unwrap_or("user");
     match args.as_slice() {
         [] | ["list" | "ls"] => {
@@ -1036,7 +1123,7 @@ pub fn run(store: &Store, args: &[&str]) -> Result<(), Fail> {
             Ok(())
         }
         ["save", rest @ ..] => {
-            let (from, rest) = take_flag(rest, "--from");
+            let (from, rest) = take_flag(rest, "--from")?;
             if !rest.is_empty() {
                 return Err(Fail::new(2, USAGE));
             }
@@ -1073,21 +1160,28 @@ fn print_list(store: &Store) {
     }
 }
 
-/// Removes `--flag value` from anywhere in `args`.
-pub fn take_flag<'a>(args: &[&'a str], flag: &str) -> (Option<&'a str>, Vec<&'a str>) {
+/// Removes `--flag value` (or `--flag=value`) from anywhere in `args`. A
+/// flag with no value is a usage error, never taken as absent.
+pub fn take_flag<'a>(args: &[&'a str], flag: &str) -> Result<(Option<&'a str>, Vec<&'a str>), Fail> {
     let mut value = None;
     let mut rest = Vec::new();
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
         if *arg == flag {
-            value = iter.next().copied();
+            match iter.next() {
+                Some(next) if !next.starts_with("--") => value = Some(*next),
+                _ => return Err(Fail::new(2, format!("{flag} needs a value"))),
+            }
         } else if let Some(v) = arg.strip_prefix(flag).and_then(|v| v.strip_prefix('=')) {
+            if v.is_empty() {
+                return Err(Fail::new(2, format!("{flag} needs a value")));
+            }
             value = Some(v);
         } else {
             rest.push(*arg);
         }
     }
-    (value, rest)
+    Ok((value, rest))
 }
 
 fn stdin_json() -> Result<Value, Fail> {
@@ -1227,6 +1321,54 @@ mod tests {
         assert_eq!(gemini.sanitize().len(), 2);
         assert!(gemini.check().is_ok());
         assert!(gemini.effort.is_empty() && gemini.instructions.is_empty());
+    }
+
+    #[test]
+    fn a_resume_drops_extra_arguments_that_would_skip_asking() {
+        let mut claude = agent("claude");
+        claude.args = vec!["--dangerously-skip-permissions".into(), "--permission-mode".into(), "auto".into(), "--verbose".into()];
+        assert_eq!(
+            claude.command_line(Some("abc"), false).unwrap(),
+            "claude --resume abc --permission-mode manual --verbose"
+        );
+        let mut codex = agent("codex");
+        codex.args = vec!["--ask-for-approval=never".into(), "-s".into(), "danger-full-access".into(), "--search".into()];
+        assert_eq!(codex.command_line(Some("abc"), false).unwrap(), "codex resume abc -a untrusted --search");
+        // A new session keeps them: the agent asked for them.
+        assert!(claude.command_line(None, false).unwrap().contains("--dangerously-skip-permissions"));
+    }
+
+    #[test]
+    fn an_environment_name_can_never_carry_a_command() {
+        let mut claude = agent("claude");
+        claude.env.insert("X=1;touch /tmp/pwn;#".into(), "v".into());
+        assert!(claude.check().is_err());
+        assert!(claude.command_line(None, false).is_err());
+        assert_eq!(claude.sanitize().len(), 1);
+        assert!(claude.env.is_empty());
+        claude.env.insert("_OK_1".into(), "v".into());
+        assert!(claude.check().is_ok());
+    }
+
+    #[test]
+    fn a_custom_agent_takes_nothing_but_its_command_and_arguments() {
+        let mut custom = agent("custom");
+        custom.command = "aider".into();
+        assert!(custom.check().is_ok());
+        custom.model = "sonnet".into();
+        custom.instructions = "Be brief.".into();
+        assert!(custom.check().is_err());
+        assert_eq!(custom.sanitize().len(), 2);
+        assert!(custom.check().is_ok());
+    }
+
+    #[test]
+    fn a_flag_without_its_value_is_a_usage_error() {
+        assert!(take_flag(&["--agent"], "--agent").is_err());
+        assert!(take_flag(&["--agent", "--shell"], "--agent").is_err());
+        assert!(take_flag(&["--agent="], "--agent").is_err());
+        let (value, rest) = take_flag(&["x", "--agent=codex"], "--agent").unwrap();
+        assert_eq!((value, rest), (Some("codex"), vec!["x"]));
     }
 
     #[test]

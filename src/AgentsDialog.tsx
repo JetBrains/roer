@@ -10,6 +10,7 @@ import {
   saveAgent,
   setDefaultAgent,
   type Agent,
+  type AgentCli,
   type AgentList,
   type AgentScope,
 } from "./lib/agents";
@@ -94,19 +95,12 @@ export function AgentsDialog({ list, cwd, start, startAfterSave, onChanged, onSt
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // What is saved: instructions a CLI cannot take stay in the form, greyed,
-  // in case the CLI is switched back, but are not written.
-  const effective = useMemo(
-    () => (cli && !cli.instructions ? { ...draft, instructions: "" } : draft),
-    [cli, draft],
-  );
-
   // The line this agent will type, asked of the shim as the form changes.
   const [preview, setPreview] = useState<{ line?: string; error?: string }>({});
   useEffect(() => {
     let cancelled = false;
     const timer = window.setTimeout(() => {
-      agentCommand(effective)
+      agentCommand(draft)
         .then((line) => !cancelled && setPreview({ line }))
         .catch((cause: unknown) => !cancelled && setPreview({ error: String(cause) }));
     }, 120);
@@ -114,7 +108,7 @@ export function AgentsDialog({ list, cwd, start, startAfterSave, onChanged, onSt
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [effective]);
+  }, [draft]);
 
   // Model suggestions: the CLI's own list where it has one.
   const [models, setModels] = useState<Record<string, string[]>>({});
@@ -132,19 +126,26 @@ export function AgentsDialog({ list, cwd, start, startAfterSave, onChanged, onSt
 
   const update = (change: Partial<Agent>) => setDraft((current) => ({ ...current, ...change }));
 
-  // A new CLI keeps only what it can take.
+  // Instructions put aside by switching to a CLI that takes none, given
+  // back on switching to one that does.
+  const setAside = useRef("");
+
+  // A new CLI keeps only what it can take: switching is the person saying
+  // so. A file that asks for more than its CLI takes is only ever changed
+  // by asking, below.
   const changeCli = (id: string) => {
     const next = list.clis.find((candidate) => candidate.id === id);
-    setDraft((current) => ({
-      ...current,
-      cli: id,
-      model: "",
-      effort: next?.efforts.includes(current.effort) ? current.effort : "",
-      permissions: next?.permissions.includes(current.permissions) ? current.permissions : "",
-    }));
+    const takesInstructions = next?.instructions === true;
+    setDraft((current) => {
+      if (!takesInstructions && current.instructions) setAside.current = current.instructions;
+      const instructions = takesInstructions ? current.instructions || setAside.current : "";
+      return { ...unsupportedDropped({ ...current, cli: id, model: "" }, next), instructions };
+    });
   };
 
   const moved = !isNew && scope !== selected.source;
+  const dropped = unsupportedDropped(draft, cli);
+  const droppable = JSON.stringify(dropped) !== JSON.stringify(draft) ? dropped : null;
   const dirty = JSON.stringify(draft) !== JSON.stringify(selected) || makeDefault || moved;
   const valid = draft.name.trim() !== "" && !preview.error;
   const canSave = valid && (dirty || isNew);
@@ -163,10 +164,18 @@ export function AgentsDialog({ list, cwd, start, startAfterSave, onChanged, onSt
     try {
       // A rename is a new file: the id follows the name unless it was set.
       const renamed = !isNew && draft.name !== selected.name;
-      const toSave = { ...effective, id: renamed || isNew ? "" : draft.id };
+      const toSave = { ...draft, id: renamed || isNew ? "" : draft.id };
       const saved = await saveAgent(cwd, toSave, scope, isNew ? undefined : selected.path);
-      if (makeDefault || (list.default === selected.id && saved.id !== selected.id && !isNew)) {
-        await setDefaultAgent(cwd, saved.id, "user");
+      // Made the default where it was saved: a project's agent is the
+      // project's default, never everyone's.
+      if (makeDefault) await setDefaultAgent(cwd, saved.id, scope);
+      // A renamed default stays the default wherever it was one.
+      if (!isNew && saved.id !== selected.id) {
+        for (const where of ["user", "project"] as const) {
+          if (list.defaults[where] === selected.id && !(makeDefault && where === scope)) {
+            await setDefaultAgent(cwd, saved.id, where);
+          }
+        }
       }
       const refreshed = await onChanged();
       if (andStart) {
@@ -462,7 +471,17 @@ export function AgentsDialog({ list, cwd, start, startAfterSave, onChanged, onSt
               <div className="agents-preview" aria-live="polite">
                 <span className="muted">Will run</span>
                 {preview.error ? (
-                  <code className="setup-error">{preview.error}</code>
+                  <span className="agents-problem">
+                    <code className="setup-error">{preview.error}</code>
+                    {droppable ? (
+                      <button type="button" className="link" onClick={() => {
+                          setDraft(droppable);
+                          setEnvText(envToText(droppable.env));
+                        }}>
+                        Drop what {cli?.label ?? "a custom agent"} can't take
+                      </button>
+                    ) : null}
+                  </span>
                 ) : (
                   <code>{preview.line ?? "…"}</code>
                 )}
@@ -623,6 +642,20 @@ export function splitArgs(text: string): string[] {
 
 export function joinArgs(args: string[]): string {
   return args.map((arg) => (/^[\w./=:@%+,-]+$/.test(arg) ? arg : `"${arg.replace(/"/g, "'")}"`)).join(" ");
+}
+
+/** `agent` without what its CLI takes no setting for; a custom agent takes
+ * none, only its command. */
+function unsupportedDropped(agent: Agent, cli: AgentCli | undefined): Agent {
+  if (agent.cli === "custom") return { ...agent, model: "", effort: "", permissions: "", instructions: "" };
+  if (!cli) return agent;
+  return {
+    ...agent,
+    effort: cli.efforts.includes(agent.effort) ? agent.effort : "",
+    permissions: cli.permissions.includes(agent.permissions) ? agent.permissions : "",
+    instructions: cli.instructions ? agent.instructions : "",
+    env: Object.fromEntries(Object.entries(agent.env).filter(([key]) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(key))),
+  };
 }
 
 function envToText(env: Record<string, string>): string {

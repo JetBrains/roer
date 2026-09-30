@@ -20,7 +20,7 @@ import { ClaudeSetup } from "./ClaudeSetup";
 import { GoToFile } from "./GoToFile";
 import { NewSessionButton } from "./NewSessionButton";
 import { PullRequestView } from "./PullRequestView";
-import { SessionBrowser, type OpenRequest } from "./SessionBrowser";
+import { SessionBrowser, runningAgent, type OpenRequest } from "./SessionBrowser";
 import { TerminalView } from "./TerminalView";
 import { WorkspaceSidebar } from "./WorkspaceSidebar";
 import { claudeSetupStatus, onClaudeSetupMenu, type SetupStatus } from "./lib/claudeSetup";
@@ -607,22 +607,29 @@ export function App() {
 
   // Read again whenever they may have changed: on opening the picker or the
   // editor, and for a different directory, whose project has its own.
+  //
+  // Only the newest request is kept: a slower answer for the directory before
+  // must not replace the list for this one.
   const agentsCwdRef = useRef<string | undefined>(undefined);
   agentsCwdRef.current = browser.newSessionCwd();
-  const refreshAgents = useCallback(
-    () =>
-      listAgents(agentsCwdRef.current)
-        .then((list) => {
-          setAgents(list);
-          return list;
-        })
-        .catch((cause: unknown) => {
-          console.warn("could not list agents", cause);
-        }),
-    [],
-  );
+  const agentsRequestRef = useRef(0);
+  const refreshAgents = useCallback(() => {
+    const request = ++agentsRequestRef.current;
+    return listAgents(agentsCwdRef.current)
+      .then((list) => {
+        if (request !== agentsRequestRef.current) return undefined;
+        setAgents(list);
+        return list;
+      })
+      .catch((cause: unknown) => {
+        console.warn("could not list agents", cause);
+        return undefined;
+      });
+  }, []);
   const agentsCwd = agentsCwdRef.current;
   useEffect(() => {
+    // Another directory's project agents are not this one's.
+    setAgents(null);
     void refreshAgents();
   }, [agentsCwd, refreshAgents]);
 
@@ -635,7 +642,9 @@ export function App() {
   );
   const openAgents = useCallback(
     (start: AgentsDialogStart, startAfterSave = false) => {
-      void refreshAgents().then(() => setAgentsDialog({ start, startAfterSave }));
+      void refreshAgents().then((list) => {
+        if (list) setAgentsDialog({ start, startAfterSave });
+      });
     },
     [refreshAgents],
   );
@@ -939,9 +948,12 @@ export function App() {
                 <PullRequestView
                   cwd={session?.cwd}
                   pane={session?.pane}
-                  agent={
-                    browser.visibleSessions.find((live) => live.pane === session?.pane)?.agent || undefined
-                  }
+                  agent={(() => {
+                    // Unknown until the session is listed: then the buttons
+                    // keep their default rather than going dead.
+                    const live = browser.visibleSessions.find((listed) => listed.pane === session?.pane);
+                    return live ? runningAgent(live) : undefined;
+                  })()}
                   active={tabs.active === "pullRequest"}
                   onSent={showTerminal}
                   onReviewLanded={markReviewLanded}
