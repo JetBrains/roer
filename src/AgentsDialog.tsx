@@ -208,10 +208,10 @@ export function AgentsDialog({ list, cwd, start, startAfterSave, onChanged, onSt
     }
   };
 
-  const makeBuiltinDefault = async () => {
+  const makeBuiltinDefault = async (where: AgentScope) => {
     setBusy(true);
     try {
-      await setDefaultAgent(cwd, draft.id, "user");
+      await setDefaultAgent(cwd, draft.id, where);
       await onChanged();
     } catch (cause) {
       setError(String(cause));
@@ -311,14 +311,19 @@ export function AgentsDialog({ list, cwd, start, startAfterSave, onChanged, onSt
                 <button type="button" className="primary" onClick={() => startNew(draft)}>
                   Customize…
                 </button>
-                {list.default !== draft.id ? (
-                  <button type="button" onClick={() => void makeBuiltinDefault()} disabled={busy || !cli?.installed}>
-                    Make default
+                {list.defaults.user !== draft.id ? (
+                  <button type="button" onClick={() => void makeBuiltinDefault("user")} disabled={busy || !cli?.installed}>
+                    Make my default
                   </button>
-                ) : (
-                  <span className="muted">The default for New session</span>
-                )}
+                ) : null}
+                {list.project && list.defaults.project !== draft.id ? (
+                  <button type="button" onClick={() => void makeBuiltinDefault("project")} disabled={busy || !cli?.installed}>
+                    Make this project's default
+                  </button>
+                ) : null}
               </div>
+              {list.default === draft.id ? <p className="muted">The default for New session here.</p> : null}
+              <DefaultNote list={list} id={draft.id} scope="user" />
             </div>
           ) : (
             <>
@@ -443,9 +448,10 @@ export function AgentsDialog({ list, cwd, start, startAfterSave, onChanged, onSt
 
               <details className="agents-advanced" open={draft.args.length > 0 || Object.keys(draft.env).length > 0}>
                 <summary>Advanced</summary>
-                <Field label="Extra arguments" hint="Added after everything else, as typed.">
-                  <input
+                <Field label="Extra arguments" hint="One argument per line, exactly as the CLI should get it: no quoting.">
+                  <textarea
                     className="mono"
+                    rows={2}
                     value={argsText}
                     placeholder="--search"
                     onChange={(event) => {
@@ -520,6 +526,7 @@ export function AgentsDialog({ list, cwd, start, startAfterSave, onChanged, onSt
                   </label>
                 )}
               </div>
+              {makeDefault ? <DefaultNote list={list} id={draft.id} scope={scope} /> : null}
               {moved ? <p className="muted">Saving moves the file to {scope === "project" ? "the project" : "your agents"}.</p> : null}
               {!isNew && selected.path ? <p className="muted agents-path">{selected.path}</p> : null}
 
@@ -614,34 +621,23 @@ function Segmented({
   );
 }
 
-/** Words as a shell splits them, quotes kept together. */
+/** One argument per line: exact both ways, with nothing to quote or escape.
+ * A blank line is no argument. */
 export function splitArgs(text: string): string[] {
-  const words: string[] = [];
-  let current = "";
-  let quote: string | null = null;
-  let started = false;
-  for (const c of text) {
-    if (quote) {
-      if (c === quote) quote = null;
-      else current += c;
-    } else if (c === '"' || c === "'") {
-      quote = c;
-      started = true;
-    } else if (/\s/.test(c)) {
-      if (started) words.push(current);
-      current = "";
-      started = false;
-    } else {
-      current += c;
-      started = true;
-    }
-  }
-  if (started) words.push(current);
-  return words;
+  return text.split("\n").filter((line) => line !== "");
 }
 
 export function joinArgs(args: string[]): string {
-  return args.map((arg) => (/^[\w./=:@%+,-]+$/.test(arg) ? arg : `"${arg.replace(/"/g, "'")}"`)).join(" ");
+  return args.join("\n");
+}
+
+/** Where the default comes from, when the one being set would not be it
+ * here: a project's default comes before the person's. */
+function DefaultNote({ list, id, scope }: { list: AgentList; id: string; scope: AgentScope }) {
+  const project = list.defaults.project;
+  if (scope !== "user" || !project || project === id) return null;
+  const name = list.agents.find((agent) => agent.id === project)?.name ?? project;
+  return <p className="muted">This project's default, {name}, still comes first in this project.</p>;
 }
 
 /** `agent` without what its CLI takes no setting for; a custom agent takes

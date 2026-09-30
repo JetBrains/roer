@@ -10,13 +10,23 @@ use serde_json::Value;
 use crate::roer::bin;
 
 /// Runs `roer agents <args>` in `cwd`, whose project's own agents are listed
-/// beside the person's, with `input` on stdin.
+/// beside the person's, with `input` on stdin. Without a `cwd` there is no
+/// project: never the app's own working directory, whatever that is.
 fn agents(cwd: Option<&str>, args: &[&str], input: Option<&str>) -> Result<String, String> {
     let mut command = crate::process::command(bin());
-    command.arg("agents").args(args);
-    if let Some(cwd) = cwd.filter(|cwd| !cwd.is_empty() && std::path::Path::new(cwd).is_dir()) {
-        command.current_dir(cwd).env("PWD", cwd);
+    command.arg("agents");
+    match cwd.filter(|cwd| !cwd.is_empty()) {
+        // One that is gone must not become somewhere else, where saving or
+        // removing would change another `.roer`.
+        Some(cwd) if !std::path::Path::new(cwd).is_dir() => return Err(format!("no such directory: {cwd}")),
+        Some(cwd) => {
+            command.current_dir(cwd).env("PWD", cwd);
+        }
+        None => {
+            command.arg("--no-project");
+        }
     }
+    command.args(args);
     let mut child = command
         .stdin(if input.is_some() { Stdio::piped() } else { Stdio::null() })
         .stdout(Stdio::piped())

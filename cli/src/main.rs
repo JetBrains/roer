@@ -207,6 +207,12 @@ impl Roer {
                     println!("{}", agents::USAGE);
                     Ok(())
                 }
+                // The app, asking where no project is chosen yet, lists only
+                // what is certain: the person's agents and the CLIs.
+                _ if args.contains(&"--no-project") => {
+                    let args: Vec<&str> = args.iter().copied().filter(|arg| *arg != "--no-project").collect();
+                    agents::run(&agents::Store::new(None), &args)
+                }
                 _ => agents::run(&self.agents(), args),
             },
             "handoff" => self.handoff(args),
@@ -409,6 +415,7 @@ impl Roer {
         let command = agent.command_line(resume, true)?;
         let target = format!("={name}:");
         self.tmux.ok(&["set-option", "-t", &target, "@roer_agent", &agent.name]);
+        self.tmux.ok(&["set-option", "-t", &target, "@roer_agent_procs", &agent.procs()]);
         self.tmux.ok(&["send-keys", "-t", &target, &command, "Enter"]);
         Ok(())
     }
@@ -430,16 +437,26 @@ impl Roer {
         // the hostname, which says nothing, so that prints as empty. It goes
         // last because it is free text: a tab in it must not shift the columns
         // before it.
+        //
+        // The agent is named only while it runs: tmux is asked for the process
+        // names it runs as, and the column is left empty once the pane runs
+        // anything else, so nothing takes a shell or an editor for an agent.
         let rows = self.tmux.read(&[
             "list-panes",
             "-a",
             "-F",
             "#{@roer_id}\t#{session_name}\t#{pane_id}\t#{?session_attached,attached,detached}\t\
-             #{pane_current_path}\t#{pane_current_command}\t#{@roer_agent}\t\
+             #{pane_current_path}\t#{pane_current_command}\t#{@roer_agent_procs}\t#{@roer_agent}\t\
              #{?#{||:#{==:#{pane_title},#{host}},#{==:#{pane_title},#{host_short}}},,#{pane_title}}",
         ]);
-        if !rows.is_empty() {
-            println!("{rows}");
+        for row in rows.lines().filter(|row| !row.is_empty()) {
+            let f: Vec<&str> = row.splitn(9, '\t').collect();
+            let [id, session, pane, attached, cwd, command, procs, agent, title] = f[..] else {
+                println!("{row}");
+                continue;
+            };
+            let agent = if agents::is_live(command, procs) { agent } else { "" };
+            println!("{id}\t{session}\t{pane}\t{attached}\t{cwd}\t{command}\t{agent}\t{title}");
         }
         Ok(())
     }

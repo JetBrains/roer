@@ -624,9 +624,31 @@ fn new_starts_a_saved_agent_and_resume_another_cli() {
     let expected = "codex -m gpt-5.5 -c model_reasoning_effort=high";
     let typed = typed_into(&env, "rev", expected);
     assert!(typed.contains(expected), "typed into the shell: {typed}");
+    kill_outer(&env);
+
+    // An agent that has quit leaves its shell behind, and is not named.
+    std::fs::write(env.home.join("agents/quitter.md"), "---\nname: Quitter\ncli: custom\ncommand: true\n---\n").unwrap();
+    in_a_terminal(&env, &["new", "--agent", "quitter", "quit"], "quit");
+    std::thread::sleep(Duration::from_millis(500));
     let list = String::from_utf8_lossy(&env.run(&["list"]).stdout).into_owned();
-    let row = list.lines().find(|row| row.contains("\trev\t")).expect("rev is listed");
-    assert_eq!(row.split('\t').nth(6), Some("Reviewer"), "{list}");
+    let row = list.lines().find(|row| row.contains("\tquit\t")).expect("quit is listed");
+    assert_eq!(row.split('\t').nth(6), Some(""), "{list}");
+    kill_outer(&env);
+
+    // A running agent is named, and only while it runs.
+    std::fs::write(env.home.join("agents/waiter.md"), "---\nname: Waiter\ncli: custom\ncommand: sleep 30\n---\n").unwrap();
+    in_a_terminal(&env, &["new", "--agent", "waiter", "wait"], "wait");
+    let mut agent = String::new();
+    for _ in 0..50 {
+        let list = String::from_utf8_lossy(&env.run(&["list"]).stdout).into_owned();
+        let row = list.lines().find(|row| row.contains("\twait\t")).unwrap_or_default().to_string();
+        agent = row.split('\t').nth(6).unwrap_or_default().to_string();
+        if agent == "Waiter" {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    assert_eq!(agent, "Waiter");
     kill_outer(&env);
 
     // An unknown agent, or a setting given on the command line that the CLI

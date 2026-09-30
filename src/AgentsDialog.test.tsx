@@ -139,8 +139,9 @@ describe("AgentsDialog", () => {
 });
 
 describe("extra arguments", () => {
-  it("split the way a shell would and join back", () => {
-    expect(splitArgs(`--search -c 'a b' ""`)).toEqual(["--search", "-c", "a b", ""]);
-    expect(joinArgs(["--search", "a b"])).toBe(`--search "a b"`);
+  it("are one per line, exactly as given", () => {
+    const args = [`a"b`, "with space", "back\\slash", "'quoted'"];
+    expect(splitArgs(joinArgs(args))).toEqual(args);
+    expect(splitArgs("--search\n\n-v")).toEqual(["--search", "-v"]);
   });
 });

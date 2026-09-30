@@ -76,15 +76,18 @@ export function paneLabel(title: string | undefined, command: string): string {
   return text === command ? "" : text;
 }
 
-/** Who is running in the session: the agent roer started, or whatever the
- * pane runs if roer started none, and `null` once only a shell is left —
- * nothing a prompt can be sent to. */
+/** The CLIs roer knows, by the command tmux reports for them. */
+const AGENT_COMMANDS = new Set(["claude", "codex", "pi", "gemini", "junie", "opencode"]);
+
+/** Who is running in the session, when that is known to be an agent: the one
+ * roer started, which the shim names only while it runs, or a CLI started by
+ * hand. `null` for anything else — a shell, an editor, a dev server —
+ * nothing a prompt should ever be typed into. */
 export function runningAgent(session: SessionInfo): string | null {
-  if (SHELLS.has(session.command)) return null;
-  return session.agent || session.command;
+  if (session.agent) return session.agent;
+  return AGENT_COMMANDS.has(session.command) ? session.command : null;
 }
 
-const SHELLS = new Set(["zsh", "bash", "fish", "sh", "dash", "ksh", "tcsh", "nu", "pwsh", "powershell"]);
 
 /** A live row's name: what the agent says it is doing, when it says, with
  * who is doing it beside it; otherwise just who. That is the agent roer

@@ -47,6 +47,10 @@ pub struct Cli {
     resume: &'static [&'static str],
     /// Offered while nothing better is known: see `models`.
     models: &'static [&'static str],
+    /// What tmux calls the agent's process while it runs, which is how
+    /// `roer list` tells a running agent from one that has quit. Claude Code
+    /// sets its process title to its version: see `is_live`.
+    procs: &'static [&'static str],
 }
 
 pub const CLIS: &[Cli] = &[
@@ -63,6 +67,7 @@ pub const CLIS: &[Cli] = &[
         instructions: &["--append-system-prompt-file", "{}"],
         resume: &["--resume", "{}"],
         models: &["opus", "sonnet", "haiku", "claude-opus-5-5", "claude-sonnet-5-5", "claude-fable-5-1"],
+        procs: &["claude"],
     },
     Cli {
         id: "codex",
@@ -79,6 +84,7 @@ pub const CLIS: &[Cli] = &[
         instructions: &["-c", "developer_instructions={toml}"],
         resume: &["resume", "{}"],
         models: &["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex"],
+        procs: &["codex"],
     },
     Cli {
         id: "pi",
@@ -93,6 +99,7 @@ pub const CLIS: &[Cli] = &[
         instructions: &["--append-system-prompt", "{}"],
         resume: &["--session", "{}"],
         models: &[],
+        procs: &["pi", "node"],
     },
     Cli {
         id: "gemini",
@@ -107,6 +114,7 @@ pub const CLIS: &[Cli] = &[
         instructions: &[],
         resume: &[],
         models: &["gemini-2.5-pro", "gemini-2.5-flash"],
+        procs: &["gemini", "node"],
     },
     Cli {
         id: "junie",
@@ -121,6 +129,7 @@ pub const CLIS: &[Cli] = &[
         instructions: &["--system-prompt={text}"],
         resume: &["--resume", "--session-id={}"],
         models: &[],
+        procs: &["junie"],
     },
     Cli {
         id: "opencode",
@@ -135,6 +144,7 @@ pub const CLIS: &[Cli] = &[
         instructions: &[],
         resume: &["-s", "{}"],
         models: &[],
+        procs: &["opencode"],
     },
 ];
 
@@ -244,6 +254,17 @@ impl Agent {
             source: text("source"),
             path: text("path"),
         }
+    }
+
+    /// The process names `is_live` looks for, as recorded on the session.
+    pub fn procs(&self) -> String {
+        if self.cli == "custom" {
+            // The program the command starts, as tmux would name it.
+            let program = self.command.split_whitespace().find(|word| !word.contains('=')).unwrap_or_default();
+            let name = Path::new(program).file_name().and_then(|n| n.to_str()).unwrap_or(program);
+            return name.trim_end_matches(".exe").to_string();
+        }
+        cli(&self.cli).map(|cli| cli.procs.join(" ")).unwrap_or_default()
     }
 
     /// Whether the agent can be run as it is written, and if not, why.
@@ -411,6 +432,15 @@ impl Agent {
         }
         Ok(line)
     }
+}
+
+/// Whether a pane running `command` is running the agent whose process names
+/// are `procs`: once it quits, the pane runs the shell again, and whatever the
+/// person starts next is not the agent.
+pub fn is_live(command: &str, procs: &str) -> bool {
+    let is_version = command.contains('.')
+        && command.split('.').all(|part| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit()));
+    procs.split(' ').any(|proc| !proc.is_empty() && (proc == command || (proc == "claude" && is_version)))
 }
 
 /// A setting `sanitize` can drop.
@@ -800,7 +830,10 @@ pub struct Store {
 
 impl Store {
     pub fn new(project_root: Option<&str>) -> Store {
-        Store { user: records::home(), project: project_root.map(|root| Path::new(root).join(".roer")) }
+        let user = records::home();
+        // A home directory is not a project: its `.roer` is the person's own.
+        let project = project_root.map(|root| Path::new(root).join(".roer")).filter(|dir| !same_dir(dir, &user));
+        Store { user, project }
     }
 
     fn dir(&self, scope: &str) -> Result<PathBuf, Fail> {
@@ -962,6 +995,10 @@ impl Store {
         let dirs = ["user", "project"].into_iter().filter_map(|scope| self.dir(scope).ok());
         is_md && dirs.into_iter().any(|dir| path.parent() == Some(dir.as_path()))
     }
+}
+
+fn same_dir(a: &Path, b: &Path) -> bool {
+    a == b || matches!((std::fs::canonicalize(a), std::fs::canonicalize(b)), (Ok(a), Ok(b)) if a == b)
 }
 
 fn write(path: &Path, text: &str) -> Result<(), Fail> {
@@ -1369,6 +1406,19 @@ mod tests {
         assert!(take_flag(&["--agent="], "--agent").is_err());
         let (value, rest) = take_flag(&["x", "--agent=codex"], "--agent").unwrap();
         assert_eq!((value, rest), (Some("codex"), vec!["x"]));
+    }
+
+    #[test]
+    fn an_agent_is_live_only_while_its_own_program_runs() {
+        assert!(is_live("codex", &agent("codex").procs()));
+        assert!(is_live("node", &agent("pi").procs()));
+        assert!(is_live("2.1.284", &agent("claude").procs()));
+        assert!(!is_live("zsh", &agent("codex").procs()));
+        assert!(!is_live("vim", &agent("claude").procs()));
+        assert!(!is_live("vim", ""));
+        let mut custom = agent("custom");
+        custom.command = "FOO=1 /usr/local/bin/aider --model x".into();
+        assert_eq!(custom.procs(), "aider");
     }
 
     #[test]

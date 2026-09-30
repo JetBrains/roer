@@ -426,16 +426,28 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
       setPickingProjectFor(selectedWorkspace);
       return;
     }
-    startNewSession(newSessionCwd(), selectedWorkspace, agent);
+    startNewSession(
+      selectedWorkspaceProjects[0]?.path ??
+        localStorage.getItem("roer:last-new-session-cwd") ??
+        status?.home,
+      selectedWorkspace,
+      agent,
+    );
   };
 
   /** Where a new session would start, when that is known without asking:
-   * the directory whose project's own agents apply to it. */
-  const newSessionCwd = (): string | undefined =>
-    selectedProject?.path ??
-    selectedWorkspaceProjects[0]?.path ??
-    localStorage.getItem("roer:last-new-session-cwd") ??
-    status?.home;
+   * the directory whose project's own agents apply to it. `undefined` while
+   * a Workspace with several Projects has yet to ask which, so that no one
+   * Project's agents are offered for all of them. */
+  const newSessionCwd = (): string | undefined => {
+    if (selectedProject) return selectedProject.path;
+    if (selectedWorkspace && selectedWorkspaceProjects.length > 1) return undefined;
+    return (
+      selectedWorkspaceProjects[0]?.path ??
+      localStorage.getItem("roer:last-new-session-cwd") ??
+      status?.home
+    );
+  };
 
   const cancelProjectPick = () => setPickingProjectFor(null);
 
