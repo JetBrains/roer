@@ -1,9 +1,20 @@
+import { ChevronDownIcon, TerminalIcon } from "lucide-react";
+
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  AGENT_KINDS,
+  agentCommand,
+  defaultAgent,
+  newSessionArgs,
+  type AgentSettings,
+} from "./lib/agents";
 import { pickFolder } from "./lib/folderPicker";
 import { shortcutLabel } from "./lib/keys";
 import type { Project } from "./lib/projects";
@@ -17,7 +28,11 @@ export type NewSessionButtonProps = Pick<
   | "cancelProjectPick"
   | "pickProjectForNewSession"
   | "attachNewProjectForNewSession"
->;
+> & {
+  agents: AgentSettings;
+  /** Opens the dialog the saved agents are edited in. */
+  manageAgents: () => void;
+};
 
 /**
  * Lives on the stage's own tab bar rather than the sidebar: a new session
@@ -32,7 +47,11 @@ export function NewSessionButton({
   cancelProjectPick,
   pickProjectForNewSession,
   attachNewProjectForNewSession,
+  agents,
+  manageAgents,
 }: NewSessionButtonProps) {
+  const chosen = defaultAgent(agents);
+
   const pickedProjects = pickingProjectFor
     ? pickingProjectFor.projects
         .map((id) => projects.find((project) => project.id === id))
@@ -51,6 +70,7 @@ export function NewSessionButton({
   };
 
   return (
+    <div className="new-session-group">
     <DropdownMenu
       open={pickingProjectFor != null}
       onOpenChange={(next) => {
@@ -61,10 +81,11 @@ export function NewSessionButton({
         <button
           type="button"
           className="primary new-session"
-          title={`New session (${shortcutLabel.newSession()})`}
-          onClick={openNew}
+          title={`New session with ${chosen.name}: ${agentCommand(chosen)} (${shortcutLabel.newSession()})`}
+          onClick={() => openNew(newSessionArgs(chosen))}
         >
-          New session <span className="hotkey">{shortcutLabel.newSession()}</span>
+          New session <span className="new-session-agent">{chosen.name}</span>
+          <span className="hotkey">{shortcutLabel.newSession()}</span>
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
@@ -86,5 +107,49 @@ export function NewSessionButton({
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
+
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          className="primary new-session-more"
+          aria-label="Choose an agent"
+          title="Start another agent, or manage agents"
+        >
+          <ChevronDownIcon className="size-3.5" />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="agent-menu">
+        <DropdownMenuLabel className="agent-menu-label">New session with</DropdownMenuLabel>
+        {agents.agents.map((agent) => (
+          <DropdownMenuItem key={agent.id} onSelect={() => openNew(newSessionArgs(agent))}>
+            <span className={`agent-badge agent-${agent.kind}`}>
+              {AGENT_KINDS[agent.kind].badge}
+            </span>
+            <span className="agent-menu-text">
+              <span className="agent-menu-name">
+                {agent.name}
+                {agent.id === agents.defaultId ? (
+                  <span className="agent-default">default</span>
+                ) : null}
+              </span>
+              <code className="agent-menu-command">{agentCommand(agent) || "—"}</code>
+            </span>
+          </DropdownMenuItem>
+        ))}
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onSelect={() => openNew(newSessionArgs(null))}>
+          <span className="agent-badge agent-shell">
+            <TerminalIcon className="size-3" />
+          </span>
+          <span className="agent-menu-text">
+            <span className="agent-menu-name">Shell only</span>
+          </span>
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onSelect={manageAgents}>Manage agents…</DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+    </div>
   );
 }

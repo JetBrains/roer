@@ -335,7 +335,7 @@ describe("App", () => {
     const [args, cwd] = vi.mocked(spawnPty).mock.calls[0] ?? [];
     // `new`, not `shell`: `shell` reuses the session for a directory, so the
     // launcher would hand back the session from the last click.
-    expect(args).toEqual(["new"]);
+    expect(args).toEqual(["new", "--agent", "claude"]);
     // The app's own working directory is an accident of how it was launched,
     // so a new session starts at home rather than there.
     expect(cwd).toBe("/Users/test");
@@ -850,7 +850,7 @@ describe("App", () => {
     });
 
     await waitFor(() => expect(spawnPty).toHaveBeenCalled());
-    expect(vi.mocked(spawnPty).mock.calls[0]?.[0]).toEqual(["new"]);
+    expect(vi.mocked(spawnPty).mock.calls[0]?.[0]).toEqual(["new", "--agent", "claude"]);
   });
 
   /** Open a file through Go to File, as a user would. */

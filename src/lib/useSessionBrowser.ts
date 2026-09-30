@@ -385,6 +385,10 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
   // terminal mounted.
   const openedRef = useRef(0);
 
+  // What the session is started with — which agent, or just a shell — held
+  // across the Project picker, which asks where before the session can start.
+  const newArgsRef = useRef<string[]>(["new"]);
+
   const startNewSession = (cwd: string | undefined, workspace: Workspace | null) => {
     openedRef.current += 1;
     const known = sessions.map((session) => session.pane);
@@ -394,7 +398,7 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
     // the view filter, which always starts fresh on launch.
     if (cwd) localStorage.setItem("roer:last-new-session-cwd", cwd);
     onOpen({
-      args: ["new"],
+      args: newArgsRef.current,
       cwd,
       title: "new session",
       nonce: `new-${openedRef.current}`,
@@ -409,7 +413,8 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
   // the last new session was started, otherwise the home directory. A
   // Workspace with several Projects asks which one, rather than guessing —
   // `pickingProjectFor` holds the Workspace while that picker is up.
-  const openNew = () => {
+  const openNew = (args: string[] = ["new"]) => {
+    newArgsRef.current = args;
     if (selectedProject) {
       startNewSession(selectedProject.path, selectedWorkspace);
       return;

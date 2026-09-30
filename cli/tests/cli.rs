@@ -574,6 +574,27 @@ fn new_always_makes_another_session_and_starts_claude_in_it() {
     kill_outer(&env);
 }
 
+#[test]
+fn new_starts_the_agent_it_is_told_to() {
+    let env = Env::new("new-agent");
+    // `in_a_terminal` joins these into a shell command, hence the quotes.
+    in_a_terminal(&env, &["new", "--agent", "'codex -m gpt-5'", "agent"], "agent");
+    let mut typed = String::new();
+    for _ in 0..50 {
+        typed = env.tmux(&["capture-pane", "-p", "-t", "=agent:"]);
+        if typed.contains("codex -m gpt-5") {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert!(typed.contains("codex -m gpt-5"), "the whole command was typed: {typed}");
+    assert!(!typed.contains("claude"), "and not the default: {typed}");
+    kill_outer(&env);
+
+    let out = env.roer(&["new", "--agent", ""]).output().unwrap();
+    assert_eq!(out.status.code(), Some(2), "an empty command is refused");
+}
+
 /// With a PATH that has no `claude` on it, as a server the app starts from
 /// Finder has: the session must still be there to attach, with the command
 /// typed into its shell rather than run as a pane that dies at once.

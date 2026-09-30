@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { defaultAgentSettings } from "./lib/agents";
 import { gitRoot } from "./lib/git";
 import { listClaudeSessions, listPastSessions, listSessions, roerStatus } from "./lib/pty";
 import { useSessionBrowser } from "./lib/useSessionBrowser";
@@ -84,6 +85,8 @@ function Harness({ onOpen }: { onOpen: (request: OpenRequest) => void }) {
         cancelProjectPick={browser.cancelProjectPick}
         pickProjectForNewSession={browser.pickProjectForNewSession}
         attachNewProjectForNewSession={browser.attachNewProjectForNewSession}
+        agents={defaultAgentSettings()}
+        manageAgents={() => undefined}
       />
       <SessionBrowser
         status={browser.status}

@@ -15,6 +15,7 @@ import { FileView } from "./FileView";
 import { GenerativeUITab } from "./generative-ui/GenerativeUITab";
 import { applyAll, applyMessage } from "./generative-ui/apply";
 import { emptyState, surfaceIdOf, type A2uiMessage, type RenderState } from "./generative-ui/schema";
+import { AgentsDialog } from "./AgentsDialog";
 import { ClaudeSetup } from "./ClaudeSetup";
 import { GoToFile } from "./GoToFile";
 import { NewSessionButton } from "./NewSessionButton";
@@ -22,6 +23,13 @@ import { PullRequestView } from "./PullRequestView";
 import { SessionBrowser, type OpenRequest } from "./SessionBrowser";
 import { TerminalView } from "./TerminalView";
 import { WorkspaceSidebar } from "./WorkspaceSidebar";
+import {
+  defaultAgent,
+  loadAgentSettings,
+  newSessionArgs,
+  saveAgentSettings,
+  type AgentSettings,
+} from "./lib/agents";
 import { claudeSetupStatus, onClaudeSetupMenu, type SetupStatus } from "./lib/claudeSetup";
 import { onBrowserServerMenu, startBrowserServer } from "./lib/browserServer";
 import { onFilesChanged, type FilesChanged } from "./lib/files";
@@ -591,8 +599,10 @@ export function App() {
   // Cmd+T (Ctrl+Shift+T off macOS) for a new session, the same key a browser binds to a new tab. Read
   // through a ref for the same reason as Go to File: the listener is
   // registered once, so it must not close over a stale `openNew`.
-  const openNewRef = useRef(browser.openNew);
-  openNewRef.current = browser.openNew;
+  const [agents, setAgents] = useState<AgentSettings>(loadAgentSettings);
+  const [managingAgents, setManagingAgents] = useState(false);
+  const openNewRef = useRef(() => browser.openNew(newSessionArgs(defaultAgent(agents))));
+  openNewRef.current = () => browser.openNew(newSessionArgs(defaultAgent(agents)));
   useHotkey(
     isNewSession,
     useCallback(() => openNewRef.current(), []),
@@ -797,6 +807,8 @@ export function App() {
               attachNewProjectForNewSession={
                 browser.attachNewProjectForNewSession
               }
+              agents={agents}
+              manageAgents={() => setManagingAgents(true)}
             />
           </div>
 
@@ -941,6 +953,17 @@ export function App() {
             status={setup.status}
             firstRun={setup.firstRun}
             onClose={() => setSetup(null)}
+          />
+        ) : null}
+
+        {managingAgents ? (
+          <AgentsDialog
+            settings={agents}
+            onSave={(next) => {
+              saveAgentSettings(next);
+              setAgents(next);
+            }}
+            onClose={() => setManagingAgents(false)}
           />
         ) : null}
 

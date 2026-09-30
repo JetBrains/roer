@@ -400,9 +400,285 @@ code {
   scrollbar-width: thin;
 }
 
-.tab-bar .new-session {
+.tab-bar .new-session-group {
   flex: none;
+  display: flex;
   margin-right: 8px;
+}
+
+/* A split button: the left half starts the default agent, the chevron picks
+   another one. */
+.new-session-group .new-session {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.new-session-agent {
+  margin-left: 4px;
+  color: var(--roer-fg);
+}
+
+.new-session-group .new-session-more {
+  display: flex;
+  align-items: center;
+  margin-left: -1px;
+  padding: 5px 6px;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+
+.agent-menu {
+  min-width: 260px;
+}
+
+.agent-menu .agent-menu-label {
+  font-size: 11px;
+  color: var(--roer-muted);
+  font-weight: normal;
+}
+
+.agent-menu-text,
+.agents-row-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 1px;
+}
+
+.agent-menu-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.agent-menu-command {
+  font-size: 11px;
+  color: var(--roer-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.agent-default {
+  padding: 0 5px;
+  border: 1px solid var(--roer-border);
+  border-radius: 4px;
+  font-size: 10px;
+  color: var(--roer-muted);
+}
+
+/* A letter in a coloured square per CLI, so the rows are told apart at a
+   glance rather than by reading. */
+.agent-badge {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 5px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: #fff;
+  background: var(--roer-disabled);
+}
+
+.agent-claude {
+  background: #c96442;
+}
+
+.agent-codex {
+  background: #10a37f;
+}
+
+.agent-junie {
+  background: #7b3ff2;
+}
+
+.agent-gemini {
+  background: #3b7bf6;
+}
+
+.agent-pi {
+  background: #d0a215;
+}
+
+.agent-shell {
+  background: var(--roer-control);
+  border: 1px solid var(--roer-border);
+  color: var(--roer-fg);
+}
+
+/* Agents ------------------------------------------------------------------ */
+
+.popup.setup.agents {
+  align-self: flex-start;
+  width: min(760px, 94vw);
+}
+
+.agents-body {
+  display: flex;
+  gap: 14px;
+  min-height: 330px;
+}
+
+.agents-list {
+  flex: 0 0 220px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-right: 12px;
+  border-right: 1px solid var(--ide-border);
+}
+
+.agents-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  background: none;
+  text-align: left;
+}
+
+.agents-row:hover {
+  border-color: transparent;
+  background: var(--roer-hover);
+}
+
+.agents-row.selected {
+  background: var(--roer-tree-selected);
+  border-color: var(--roer-tree-selected-ring);
+}
+
+.agents-row-text {
+  flex: 1 1 auto;
+}
+
+.agents-row-name {
+  font-size: 13px;
+}
+
+.agents-row-meta {
+  font-size: 11px;
+  color: var(--roer-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.agents-add {
+  margin-top: 6px;
+  background: none;
+  border-style: dashed;
+  color: var(--roer-muted);
+  font-size: 12px;
+}
+
+.agents-form {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.agents-field {
+  display: grid;
+  grid-template-columns: 90px 1fr;
+  align-items: center;
+  gap: 10px;
+}
+
+.agents-field > span:first-child {
+  color: var(--roer-muted);
+  font-size: 12px;
+}
+
+.agents-field input,
+.agents-field select {
+  font: inherit;
+  font-size: 13px;
+  padding: 6px 8px;
+  color: var(--ide-text);
+  background: var(--ide-editor);
+  border: 1px solid var(--ide-border);
+  border-radius: 6px;
+}
+
+.agents-field input::placeholder {
+  color: var(--ide-gutter);
+}
+
+.agents-field input:focus,
+.agents-field select:focus {
+  outline: none;
+  border-color: var(--roer-accent);
+}
+
+.segmented {
+  display: flex;
+  flex-wrap: wrap;
+}
+
+.segmented button {
+  padding: 4px 9px;
+  font-size: 12px;
+  border-radius: 0;
+  margin-left: -1px;
+  color: var(--roer-muted);
+}
+
+.segmented button:first-child {
+  border-radius: 6px 0 0 6px;
+  margin-left: 0;
+}
+
+.segmented button:last-child {
+  border-radius: 0 6px 6px 0;
+}
+
+.segmented button.on {
+  position: relative;
+  color: var(--roer-fg);
+  background: var(--roer-selected);
+  border-color: var(--roer-accent);
+}
+
+.agents-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 4px;
+  padding: 8px 10px;
+  background: var(--ide-editor);
+  border: 1px solid var(--ide-border);
+  border-radius: 6px;
+  font-size: 11px;
+}
+
+.agents-preview code {
+  font-size: 12px;
+  color: var(--ide-text);
+  overflow-wrap: anywhere;
+}
+
+.agents-row-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: auto;
+}
+
+.agents-row-actions button {
+  padding: 5px 10px;
+  font-size: 12px;
+}
+
+.agents-row-actions button:disabled {
+  color: var(--roer-muted);
+  cursor: default;
+  border-color: var(--roer-control-border);
 }
 
 .tabs button.tab,

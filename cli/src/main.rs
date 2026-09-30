@@ -53,8 +53,11 @@ usage:
   roer shell [name]     attach this directory's session to this terminal,
                         detaching any other client (terminal or app)
   roer new [name]       create a session that is always a new one, suffixing
-                        the name until it is free, with `claude` started in
-                        its shell
+                        the name until it is free, with the default agent
+                        started in its shell: $ROER_AGENT, else `claude`
+  roer new --agent <command> [name]
+                        same, starting <command> instead (e.g. `codex`,
+                        `junie`, `pi`, `gemini`, with any flags)
   roer new --shell [name]
                         same, with just the shell
   roer attach [name]    take a session back, detaching whoever holds it;
@@ -168,6 +171,14 @@ struct Roer {
     /// Run by the app, which wants to hear which pane it attached: see
     /// `attach_session`.
     report_pane: bool,
+}
+
+/// The agent `roer new` starts when not told which: a command line, typed
+/// into the shell as it is, so it can carry flags (`codex -m gpt-5`).
+const AGENT: &str = "ROER_AGENT";
+
+fn default_agent() -> String {
+    std::env::var(AGENT).ok().filter(|v| !v.trim().is_empty()).unwrap_or_else(|| "claude".to_string())
 }
 
 /// Set by the app on the `roer` it runs in its own terminal. Read once and
@@ -342,14 +353,17 @@ impl Roer {
     /// `shell` reuses the session for a directory on purpose.
     ///
     /// An agent session is what roer is for, so `new` starts one unless
-    /// --shell asks otherwise. `claude` is typed into the new shell rather than
+    /// --shell asks otherwise. Which agent is --agent's command, else
+    /// $ROER_AGENT, else `claude`. It is typed into the new shell rather than
     /// made the pane's command: the agent then starts with everything the
     /// interactive shell sets up (a server started by the app has only
     /// Finder's PATH), and quitting it leaves a shell behind.
     fn new_session(&self, args: &[&str]) -> Outcome {
-        let (agent, args) = match args.first() {
-            Some(&"--shell") => (None, &args[1..]),
-            _ => (Some("claude"), args),
+        let (agent, args) = match args {
+            ["--shell", rest @ ..] => (None, rest),
+            ["--agent", command, rest @ ..] if !command.trim().is_empty() => (Some((*command).to_string()), rest),
+            ["--agent", ..] => return Err(Fail::new(2, "--agent needs a command")),
+            _ => (Some(default_agent()), args),
         };
         let base = args.first().map_or_else(|| session_name(&self.cwd), |name| (*name).to_string());
         let name = self.free_name(&base);
@@ -359,7 +373,7 @@ impl Roer {
         // a new session, never a surprise attach to an old one.
         self.create_detached(&name)?;
         if let Some(agent) = agent {
-            self.tmux.ok(&["send-keys", "-t", &format!("={name}:"), agent, "Enter"]);
+            self.tmux.ok(&["send-keys", "-t", &format!("={name}:"), &agent, "Enter"]);
         }
         self.attach_session(&name, false)
     }
