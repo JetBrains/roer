@@ -349,6 +349,30 @@ fn list_json_says_when_a_window_last_printed_and_whether_it_rang() {
 }
 
 #[test]
+#[cfg(unix)]
+fn list_keeps_its_columns_without_a_locale() {
+    // As an app started from Finder runs it: no LANG or LC_*, so tmux takes
+    // the client for one that cannot show tabs or anything past ASCII.
+    let env = Env::new("listlocale");
+    let pane = pane(&env, "nolocale", "printf '\\033]2;✳ Fix it\\033\\\\'; exec cat");
+    std::thread::sleep(Duration::from_millis(300));
+
+    let bare = |args: &[&str]| {
+        let mut roer = env.roer(args);
+        for var in ["LANG", "LC_ALL", "LC_CTYPE"] {
+            roer.env_remove(var);
+        }
+        String::from_utf8_lossy(&roer.stdin(Stdio::null()).output().unwrap().stdout).into_owned()
+    };
+    let json = bare(&["list", "--json"]);
+    let row: serde_json::Value = serde_json::from_str(json.lines().next().unwrap()).unwrap_or_else(|e| panic!("{e}: {json}"));
+    assert_eq!(row["pane"], pane.as_str());
+    assert_eq!(row["title"], "✳ Fix it");
+    let tsv = bare(&["list"]);
+    assert_eq!(tsv.lines().next().unwrap().split('\t').count(), 8, "{tsv}");
+}
+
+#[test]
 fn a_hook_says_what_the_agent_is_doing_and_list_reports_it() {
     let env = Env::new("status");
     let bin = env!("CARGO_BIN_EXE_roer");
