@@ -418,6 +418,16 @@ describe("what the agent is doing", () => {
     expect(isWorking({ ...claude("\u2802 fixing tests"), state: "waiting" })).toBe(false);
   });
 
+  it("takes a hooked turn that has gone quiet for a stop, as Esc leaves it", () => {
+    const now = 1_790_000_000;
+    const working: SessionInfo = { ...claude("\u2802 fixing tests"), state: "working", activity: now - 10 };
+    expect(isWorking(working, now)).toBe(true);
+    // Esc ends the turn without a Stop hook: `working` stays, the output stops.
+    expect(isWorking({ ...working, activity: now - 31 }, now)).toBe(false);
+    // An older shim reports no activity; the hook is all there is.
+    expect(isWorking({ ...working, activity: undefined }, now)).toBe(true);
+  });
+
   it("says a session is held up on you, in Claude's words, once its hooks say so", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {

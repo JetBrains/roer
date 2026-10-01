@@ -84,16 +84,26 @@ export function paneLabel(title: string | undefined, command: string): string {
  * moment between reads is not taken for a stop. */
 export const ACTIVE_SECS = 5;
 
+/** How long a session its hooks call working may go without printing before
+ * it is taken for stopped: Claude Code runs no hook when Esc interrupts a
+ * turn, so `working` outlives it. Its spinner and timer redraw for as long
+ * as it really works, a slow tool included, so this only outlasts a stall. */
+export const HOOKED_QUIET_SECS = 30;
+
 /**
  * Whether the agent in the pane is at work. Best is what its own hooks said,
- * which Claude Code started by roer has. Without them, Claude Code still says
+ * which Claude Code started by roer has, short of a `working` that has gone
+ * quiet for too long to be true. Without them, Claude Code still says
  * so in its title: a braille spinner frame while it works, `✳` once it waits
  * for input. Any other agent is at work while it keeps printing. Never true
  * for a shell or anything else that is not an agent, whose output means
  * nothing of the kind.
  */
 export function isWorking(session: SessionInfo, now = Date.now() / 1000): boolean {
-  if (session.state) return session.state === "working";
+  // A turn interrupted with Esc never says so; its silence does. The title
+  // can lag a turn that has just begun, so it does not count against a hook.
+  if (session.state === "working") return !session.activity || now - session.activity <= HOOKED_QUIET_SECS;
+  if (session.state) return false;
   const title = session.title ?? "";
   if (/^[\u2801-\u28ff]/u.test(title)) return true;
   if (/^\u2733/u.test(title)) return false;
