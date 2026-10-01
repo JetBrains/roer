@@ -10,13 +10,16 @@ import { useEffect } from "react";
  * descendant. The handler stops the event there, so the key never reaches the
  * PTY.
  */
-export function useHotkey(match: (event: KeyboardEvent) => boolean, handler: () => void): void {
+export function useHotkey(
+  match: (event: KeyboardEvent) => boolean,
+  handler: (event: KeyboardEvent) => void,
+): void {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (!match(event)) return;
       event.preventDefault();
       event.stopPropagation();
-      handler();
+      handler(event);
     };
     window.addEventListener("keydown", onKeyDown, { capture: true });
     return () => window.removeEventListener("keydown", onKeyDown, { capture: true });
@@ -52,9 +55,27 @@ export const shortcutLabel = {
   newSession: () => (isMac() ? "⌘T" : "Ctrl+Shift+T"),
   pickAgent: () => (isMac() ? "⌥⌘T" : "Ctrl+Alt+Shift+T"),
   agents: () => (isMac() ? "⌘," : "Ctrl+,"),
+  goToFile: () => (isMac() ? "⌘⇧O" : "Ctrl+Shift+O"),
+  tab: (n: number) => (isMac() ? `⌘${n}` : `Ctrl+Shift+${n}`),
+  shortcuts: () => (isMac() ? "⌘/" : "Ctrl+Shift+/"),
   prevCommit: () => (isMac() ? "⌘←" : "Alt+←"),
   nextCommit: () => (isMac() ? "⌘→" : "Alt+→"),
 };
+
+/** Every shortcut, in the words the shortcut sheet lists them in. */
+export const allShortcuts = (): Array<[string, string]> => [
+  ["New session", shortcutLabel.newSession()],
+  ["New session with another agent", shortcutLabel.pickAgent()],
+  ["Go to File", shortcutLabel.goToFile()],
+  ["Sessions", shortcutLabel.tab(1)],
+  ["Terminal", shortcutLabel.tab(2)],
+  ["Changes", shortcutLabel.tab(3)],
+  ["Pull Request", shortcutLabel.tab(4)],
+  ["Agents", shortcutLabel.agents()],
+  ["Previous commit", shortcutLabel.prevCommit()],
+  ["Next commit", shortcutLabel.nextCommit()],
+  ["Keyboard shortcuts", shortcutLabel.shortcuts()],
+];
 
 /**
  * IntelliJ's Go to File: `Cmd+Shift+O` (`Ctrl+Shift+O` off macOS).
@@ -111,3 +132,21 @@ export const isPrevCommit = (event: KeyboardEvent): boolean =>
 export const isNextCommit = (event: KeyboardEvent): boolean =>
   navChord(event) &&
   (event.code === "ArrowRight" || (!event.code && event.key === "ArrowRight"));
+
+/**
+ * Which of the stage's fixed tabs to bring up: `Cmd+1` to `Cmd+4`, the keys a
+ * browser and a terminal use for their tabs (`Ctrl+Shift` and a digit off
+ * macOS). Matched on `code`, since `key` under Shift is the digit's symbol.
+ * `null` for anything else.
+ */
+export const tabNumber = (event: KeyboardEvent): number | null => {
+  if (!appChord(event, false)) return null;
+  const digit = /^Digit([1-4])$/.exec(event.code)?.[1] ?? (!event.code && /^[1-4]$/.test(event.key) ? event.key : null);
+  return digit ? Number(digit) : null;
+};
+
+export const isTabNumber = (event: KeyboardEvent): boolean => tabNumber(event) !== null;
+
+/** The shortcut sheet: `Cmd+/` (`Ctrl+Shift+/`). */
+export const isShortcuts = (event: KeyboardEvent): boolean =>
+  appChord(event, false) && (event.code === "Slash" || (!event.code && event.key === "/"));

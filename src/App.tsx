@@ -6,6 +6,7 @@ import {
   PanelLeftOpen,
   PanelRightClose,
   PanelRightOpen,
+  Search,
   Sun,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -20,14 +21,26 @@ import { ClaudeSetup } from "./ClaudeSetup";
 import { GoToFile } from "./GoToFile";
 import { NewSessionButton } from "./NewSessionButton";
 import { PullRequestView } from "./PullRequestView";
-import { SessionBrowser, runningAgent, type OpenRequest } from "./SessionBrowser";
+import { SessionBrowser, paneLabel, runningAgent, type OpenRequest } from "./SessionBrowser";
+import { ShortcutsDialog } from "./ShortcutsDialog";
 import { TerminalView } from "./TerminalView";
 import { WorkspaceSidebar } from "./WorkspaceSidebar";
 import { claudeSetupStatus, onClaudeSetupMenu, type SetupStatus } from "./lib/claudeSetup";
 import { onBrowserServerMenu, startBrowserServer } from "./lib/browserServer";
 import { onFilesChanged, type FilesChanged } from "./lib/files";
 import { listAgents, onAgentsMenu, type AgentList } from "./lib/agents";
-import { isGoToFile, isMac, isManageAgents, isNewSession, isPickAgent, useHotkey } from "./lib/keys";
+import {
+  isGoToFile,
+  isMac,
+  isManageAgents,
+  isNewSession,
+  isPickAgent,
+  isShortcuts,
+  isTabNumber,
+  shortcutLabel,
+  tabNumber,
+  useHotkey,
+} from "./lib/keys";
 import { nextChoice, useThemeChoice } from "./lib/theme";
 import { useSessionBrowser } from "./lib/useSessionBrowser";
 import {
@@ -53,6 +66,9 @@ import {
 } from "./lib/pty";
 import { logLine } from "./lib/log";
 import { onPluginUi, reportPluginUiReceipt, type PluginUiOutcome } from "./lib/pluginUi";
+
+/** The stage's fixed tabs, in the order Cmd+1 to Cmd+4 bring them up. */
+const FIXED_TABS = ["sessions", "terminal", "changes", "pullRequest"] as const;
 
 interface SessionView extends OpenRequest {
   /** Set when this session was teleported in; a terminal is waiting on it.
@@ -87,6 +103,7 @@ export function App() {
   const [notice, setNotice] = useState<string | null>(null);
   const [tabs, setTabs] = useState<Tabs>(noTabs);
   const [finding, setFinding] = useState(false);
+  const [showingShortcuts, setShowingShortcuts] = useState(false);
   // The Claude Code setup on screen, if it is: put there by the app on the
   // first launch that finds Claude Code, or asked for from the menu.
   const [setup, setSetup] = useState<{ status: SetupStatus; firstRun: boolean } | null>(null);
@@ -656,6 +673,38 @@ export function App() {
     isManageAgents,
     useCallback(() => openAgents({ mode: "edit" }), [openAgents]),
   );
+  useHotkey(
+    isShortcuts,
+    useCallback(() => setShowingShortcuts((open) => !open), []),
+  );
+
+  // Cmd+1 to Cmd+4 for the fixed tabs, in the strip's order. Changes and
+  // Pull Request need a session, as their tabs do.
+  useHotkey(
+    isTabNumber,
+    useCallback((event: KeyboardEvent) => {
+      const id = FIXED_TABS[(tabNumber(event) ?? 0) - 1];
+      if (!id) return;
+      if (id === "changes" || id === "pullRequest") {
+        if (!stagedRef.current) return;
+        if (id === "changes") setEverChanges(true);
+        else setEverPr(true);
+      }
+      setTabs((current) => activate(current, id));
+    }, []),
+  );
+
+  // What the stage shows, named the way its row in Sessions names it, for
+  // the title bar and the window's own title.
+  const onStage = browser.visibleSessions.find((live) => live.pane === session?.pane);
+  const stageName = !session
+    ? ""
+    : onStage
+      ? paneLabel(onStage.title, onStage.command) || (runningAgent(onStage) ?? onStage.command)
+      : session.title;
+  useEffect(() => {
+    document.title = stageName ? `${stageName} — Roer` : "Roer";
+  }, [stageName]);
   useEffect(() => {
     let cancelled = false;
     let unlisten: (() => void) | undefined;
@@ -703,6 +752,7 @@ export function App() {
           type="button"
           className="sidebar-toggle"
           aria-label={sidebarCollapsed ? "Show sidebar" : "Hide sidebar"}
+          title={sidebarCollapsed ? "Show sidebar" : "Hide sidebar"}
           aria-pressed={sidebarCollapsed}
           onClick={() => setSidebarCollapsed((current) => !current)}
         >
@@ -711,6 +761,21 @@ export function App() {
           ) : (
             <PanelLeftClose size={15} />
           )}
+        </button>
+
+        <span className="titlebar-name" data-tauri-drag-region="" title={session?.cwd}>
+          {stageName}
+        </span>
+
+        <button
+          type="button"
+          className="find-toggle"
+          aria-label="Go to File"
+          title={`Go to File (${shortcutLabel.goToFile()})`}
+          disabled={!session}
+          onClick={() => setFinding(true)}
+        >
+          <Search size={15} />
         </button>
 
         <button
@@ -735,6 +800,7 @@ export function App() {
           aria-label={
             generativePanelCollapsed ? "Show Generative UI panel" : "Hide Generative UI panel"
           }
+          title={generativePanelCollapsed ? "Show Generative UI panel" : "Hide Generative UI panel"}
           aria-pressed={!generativePanelCollapsed}
           onClick={() => {
             setEverGenerativeUI(true);
@@ -775,6 +841,7 @@ export function App() {
                 role="tab"
                 aria-selected={tabs.active === "sessions"}
                 className={tabs.active === "sessions" ? "tab on" : "tab"}
+                title={shortcutLabel.tab(1)}
                 onClick={() =>
                   setTabs((current) => activate(current, "sessions"))
                 }
@@ -792,6 +859,7 @@ export function App() {
                 role="tab"
                 aria-selected={tabs.active === "terminal"}
                 className={tabs.active === "terminal" ? "tab on" : "tab"}
+                title={shortcutLabel.tab(2)}
                 onClick={() =>
                   setTabs((current) => activate(current, "terminal"))
                 }
@@ -803,6 +871,7 @@ export function App() {
                 role="tab"
                 aria-selected={tabs.active === "changes"}
                 className={tabs.active === "changes" ? "tab on" : "tab"}
+                title={shortcutLabel.tab(3)}
                 disabled={!session}
                 onClick={() => {
                   setEverChanges(true);
@@ -816,6 +885,7 @@ export function App() {
                 role="tab"
                 aria-selected={tabs.active === "pullRequest"}
                 className={tabs.active === "pullRequest" ? "tab on" : "tab"}
+                title={shortcutLabel.tab(4)}
                 disabled={!session}
                 onClick={() => {
                   setEverPr(true);
@@ -897,7 +967,10 @@ export function App() {
             ) : (
               <div className="empty">
                 {notice ? <p className="notice">{notice}</p> : null}
-                <p className="muted">Pick a session, or start a new one.</p>
+                <p className="muted">
+                  Pick a session, or start a new one with {shortcutLabel.newSession()}.{" "}
+                  {shortcutLabel.shortcuts()} lists every shortcut.
+                </p>
               </div>
             )}
 
@@ -1046,6 +1119,8 @@ export function App() {
             onClose={() => setAgentsDialog(null)}
           />
         ) : null}
+
+        {showingShortcuts ? <ShortcutsDialog onClose={() => setShowingShortcuts(false)} /> : null}
 
         {finding ? (
           <GoToFile
