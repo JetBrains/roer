@@ -262,7 +262,13 @@ jobs:
           if [ "$RUNNER_OS" = Linux ]; then
             dbus-run-session -- xvfb-run -a -s "-screen 0 1280x800x24" npm test
           else
-            npm test
+            # TEMPORARY, this branch only: four rounds, to catch the flaky
+            # keystroke corruption with ROER_TRACE_PTY on.
+            failed=0
+            for round in 1 2 3 4; do
+              ROER_E2E_ROUND=round-$round ROER_E2E_RECORD="$GITHUB_WORKSPACE/e2e/artifacts/round-$round/e2e-Windows.mp4" npm test || failed=1
+            done
+            exit $failed
           fi
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

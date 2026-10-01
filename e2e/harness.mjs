@@ -25,7 +25,7 @@ export const ROER = process.env.ROER_E2E_ROER || join(repo, "cli/target/debug", 
 /** Windows only: `cargo build --manifest-path e2e/fake-agent/Cargo.toml`. */
 const CLAUDE_EXE = join(here, "fake-agent/target/debug/claude.exe");
 /** Screenshots, the page source and the app's log from a failed run. */
-export const ARTIFACTS = join(here, "artifacts");
+export const ARTIFACTS = join(here, "artifacts", process.env.ROER_E2E_ROUND ?? "");
 
 const PORT = 4444;
 /** `ROER_E2E_RECORD`: a file to record the screen into, with ffmpeg. */
