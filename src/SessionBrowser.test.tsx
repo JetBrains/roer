@@ -497,6 +497,21 @@ describe("what the agent is doing", () => {
     });
   });
 
+  it("lists the most recently opened first among ones doing the same", async () => {
+    vi.mocked(listSessions).mockResolvedValue([
+      { ...claude("✳ old one"), pane: "%0", session: "a", opened: 1_790_000_000 },
+      { ...claude("✳ never opened"), pane: "%1", session: "b" },
+      { ...claude("✳ new one"), pane: "%2", session: "c", opened: 1_790_000_500 },
+      { ...claude("⠂ busy one"), pane: "%3", session: "d", opened: 1_780_000_000 },
+    ]);
+    renderList();
+
+    await waitFor(() => {
+      const rows = [...document.querySelectorAll(".sessions-view button.row")].map((row) => row.getAttribute("title"));
+      expect(rows.map((title) => title?.split(" ")[0])).toEqual(["d", "c", "a", "b"]);
+    });
+  });
+
   it("shows the branch, what is uncommitted on it, and when it last printed", async () => {
     vi.mocked(gitChanges).mockResolvedValue({
       root: "/Users/test/project",

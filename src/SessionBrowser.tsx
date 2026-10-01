@@ -124,8 +124,8 @@ export function needsYou(session: SessionInfo): boolean {
 }
 
 /** Where a live row goes in its group: what is held up on you, what has
- * finished and waits, what is at work, then the rest, each in the order
- * tmux listed them. */
+ * finished and waits, what is at work, then the rest, each the most
+ * recently opened first. */
 function liveRank(session: SessionInfo, waiting: ReadonlySet<string>): number {
   if (waiting.has(session.pane)) return needsYou(session) ? 0 : 1;
   return isWorking(session) ? 2 : 3;
@@ -165,13 +165,15 @@ function LiveName({ session }: { session: SessionInfo }) {
   );
 }
 
-/** Live rows in the order they matter: waiting, working, the rest. Past
- * conversations stay after them, as they were. */
+/** Live rows in the order they matter: waiting, working, the rest, each
+ * the most recently opened first. Past conversations stay after them, as
+ * they were. */
 function byRank(items: SessionEntry[], waiting: ReadonlySet<string>): SessionEntry[] {
   const rank = (entry: SessionEntry) => (entry.kind === "live" ? liveRank(entry.session, waiting) : 4);
+  const opened = (entry: SessionEntry) => (entry.kind === "live" ? (entry.session.opened ?? 0) : 0);
   return items
     .map((entry, index) => ({ entry, index }))
-    .sort((a, b) => rank(a.entry) - rank(b.entry) || a.index - b.index)
+    .sort((a, b) => rank(a.entry) - rank(b.entry) || opened(b.entry) - opened(a.entry) || a.index - b.index)
     .map(({ entry }) => entry);
 }
 

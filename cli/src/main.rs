@@ -462,18 +462,19 @@ impl Roer {
         //
         // `--json` adds when the window last printed anything and whether it
         // rang the bell unseen, which is how the app tells an agent at work
-        // from one waiting on an answer when the agent says neither itself.
+        // from one waiting on an answer when the agent says neither itself,
+        // and when the session was last opened, which orders its rows.
         let format = format!(
             "#{{@roer_id}}\t#{{session_name}}\t{}\t#{{?session_attached,attached,detached}}\t\
              #{{pane_current_path}}\t#{{pane_current_command}}\t#{{@roer_agent_procs}}\t#{{@roer_agent}}\t\
-             #{{window_activity}}\t#{{window_bell_flag}}\t#{{@roer_state}}\t#{{@roer_note}}\t\
+             #{{window_activity}}\t#{{window_bell_flag}}\t#{{@roer_state}}\t#{{@roer_note}}\t#{{session_last_attached}}\t\
              #{{?#{{||:#{{==:#{{pane_title}},#{{host}}}},#{{==:#{{pane_title}},#{{host_short}}}}}},,#{{pane_title}}}}",
             self.tmux.pane_format()
         );
         let rows = self.tmux.read(&["list-panes", "-a", "-F", &format]);
         for row in rows.lines().filter(|row| !row.is_empty()) {
-            let f: Vec<&str> = row.splitn(13, '\t').collect();
-            let [id, session, pane, attached, cwd, command, procs, agent, activity, bell, state, note, title] = f[..] else {
+            let f: Vec<&str> = row.splitn(14, '\t').collect();
+            let [id, session, pane, attached, cwd, command, procs, agent, activity, bell, state, note, opened, title] = f[..] else {
                 println!("{row}");
                 continue;
             };
@@ -495,6 +496,9 @@ impl Roer {
                     // What the agent's own hooks last said, while it runs.
                     "state": if agent.is_empty() { "" } else { state },
                     "note": note,
+                    // Seconds since the epoch; 0 where it never was, or the
+                    // engine does not say.
+                    "opened": opened.parse::<u64>().unwrap_or(0),
                 });
                 println!("{row}");
             } else {
