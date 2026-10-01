@@ -150,6 +150,19 @@ function renderList(onOpen: (request: OpenRequest) => void = vi.fn()) {
   return render(<Harness onOpen={onOpen} />);
 }
 
+describe("a resumed conversation", () => {
+  it("is listed while its agent runs, and left to its conversation once it quits", async () => {
+    vi.mocked(listSessions).mockResolvedValue([
+      { id: "1", session: "roer-resume-5", pane: "%0", attached: true, cwd: "/Users/test/project", command: "claude", title: "\u2733 UX review" },
+      { id: "2", session: "roer-resume-6", pane: "%1", attached: false, cwd: "/Users/test/project", command: "zsh" },
+    ]);
+    renderList();
+
+    expect(await screen.findByTitle(/^roer-resume-5 /)).toHaveTextContent("UX review");
+    expect(screen.queryByTitle(/^roer-resume-6 /)).not.toBeInTheDocument();
+  });
+});
+
 describe("worktrees", () => {
   it("counts a session in another worktree as its Project's, and says which worktree", async () => {
     vi.mocked(listWorkspaces).mockResolvedValue([

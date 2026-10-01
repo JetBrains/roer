@@ -745,10 +745,13 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
     );
 
   // A resumed conversation's tmux session (`<dir>-resume`, `-resume-2`, ...):
-  // scaffolding the shim creates so the resume is teleportable, not something
-  // the user asked to open as its own session. It's already represented by
-  // the Claude conversation the user clicked to get here.
-  const isResumeScaffold = (session: SessionInfo) => /-resume(-\d+)?$/.test(session.session);
+  // scaffolding the shim creates so the resume is teleportable. Once its
+  // agent has quit, the conversation's own row stands for it, and the shell
+  // left behind is not worth a row. While the agent runs it is the only row
+  // there is — a conversation being had is never offered for resuming — so
+  // it is listed like any other session.
+  const isResumeScaffold = (session: SessionInfo) =>
+    /-resume(-\d+)?$/.test(session.session) && !runningAgent(session);
 
   const visibleSessions = (
     selectedProject
