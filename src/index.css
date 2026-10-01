@@ -794,6 +794,14 @@ button.row.active {
   border-color: var(--roer-accent);
 }
 
+/* Held up on a permission or a question: more urgent than a finished turn. */
+.badge.needs {
+  color: var(--roer-bg);
+  border-color: var(--roer-warn);
+  background: var(--roer-warn);
+  font-weight: 600;
+}
+
 /* An agent that finished out of sight: the one row worth looking at. */
 .badge.waiting {
   color: var(--roer-bg);

@@ -144,6 +144,7 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
   }, []);
   const workingRef = useRef(new Map<string, boolean>());
   const bellRef = useRef(new Map<string, boolean>());
+  const stateRef = useRef(new Map<string, string>());
   // The first list only says how things stand: nothing in it is news.
   const firstListRef = useRef(true);
   const activePaneRef = useRef(activePane);
@@ -160,17 +161,21 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
     const now = Date.now() / 1000;
     const wasWorking = workingRef.current;
     const hadRung = bellRef.current;
+    const wasState = stateRef.current;
+    stateRef.current = new Map(live.map((session) => [session.pane, session.state ?? ""]));
     const working = new Map(live.map((session) => [session.pane, isWorking(session, now)]));
     workingRef.current = working;
     bellRef.current = new Map(live.map((session) => [session.pane, Boolean(session.bell)]));
     const seen = (pane: string) => pane === activePaneRef.current && document.hasFocus();
 
-    // An agent that stopped, or a program that rang for attention.
+    // An agent that stopped, asked for something, or rang for attention.
     const turned = live.filter(
       (session) =>
         !seen(session.pane) &&
         !working.get(session.pane) &&
-        (wasWorking.get(session.pane) || (session.bell && !hadRung.get(session.pane))),
+        (wasWorking.get(session.pane) ||
+          (session.state === "waiting" && wasState.get(session.pane) !== "waiting") ||
+          (session.bell && !hadRung.get(session.pane))),
     );
     const before = waitingRef.current;
     setWaiting(
@@ -188,7 +193,10 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
         if (before.has(session.pane)) continue;
         const who = runningAgent(session) ?? session.command;
         const name = paneLabel(session.title, session.command) || who;
-        void notify(name, `${who} is waiting for you · ${shorten(session.cwd, homeRef.current)}`, () =>
+        // Claude's own words when its hooks gave them: "Claude needs your
+        // permission to use Bash" says what to do, not only where.
+        const what = session.note || `${who} is waiting for you`;
+        void notify(name, `${what} · ${shorten(session.cwd, homeRef.current)}`, () =>
           onOpenRef.current({
             args: ["attach", session.pane],
             cwd: session.cwd,

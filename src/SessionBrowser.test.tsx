@@ -359,6 +359,36 @@ describe("what the agent is doing", () => {
     expect(isWorking({ ...codex, command: "zsh" }, now)).toBe(false);
   });
 
+  it("goes by what the agent's hooks said over anything its title shows", () => {
+    expect(isWorking({ ...claude("\u2733 fixing tests"), state: "working" })).toBe(true);
+    expect(isWorking({ ...claude("\u2802 fixing tests"), state: "done" })).toBe(false);
+    expect(isWorking({ ...claude("\u2802 fixing tests"), state: "waiting" })).toBe(false);
+  });
+
+  it("says a session is held up on you, in Claude's words, once its hooks say so", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      vi.mocked(listSessions).mockResolvedValue([{ ...claude("\u2802 fixing tests"), state: "working" }]);
+      renderList();
+      await screen.findByText("working");
+
+      vi.mocked(listSessions).mockResolvedValue([
+        { ...claude("\u2733 fixing tests"), state: "waiting", note: "Claude needs your permission to use Bash" },
+      ]);
+      await vi.advanceTimersByTimeAsync(3000);
+
+      const badge = await screen.findByText("needs you");
+      expect(badge).toHaveAttribute("title", "Claude needs your permission to use Bash");
+      expect(notify).toHaveBeenCalledWith(
+        "fixing tests",
+        expect.stringContaining("Claude needs your permission to use Bash"),
+        expect.any(Function),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("marks a session that rang the bell out of sight as waiting", async () => {
     vi.mocked(listSessions).mockResolvedValue([{ ...claude(""), command: "codex", bell: true }]);
     renderList();

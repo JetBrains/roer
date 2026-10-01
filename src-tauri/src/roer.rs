@@ -135,6 +135,11 @@ pub struct SessionInfo {
     pub activity: u64,
     /// Whether it rang the bell where nobody was looking.
     pub bell: bool,
+    /// What the agent's own hooks last said it is doing — `working`,
+    /// `waiting` or `done` — while it runs; empty when it has no hooks.
+    pub state: String,
+    /// Its words for what it is waiting for, with `waiting`.
+    pub note: String,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -268,6 +273,10 @@ struct JsonRow {
     activity: u64,
     #[serde(default)]
     bell: bool,
+    #[serde(default)]
+    state: String,
+    #[serde(default)]
+    note: String,
 }
 
 /// One row of `roer list`: JSON from a shim that knows `--json`, otherwise
@@ -286,6 +295,8 @@ fn parse_line(line: &str) -> Option<SessionInfo> {
             title: row.title,
             activity: row.activity,
             bell: row.bell,
+            state: row.state,
+            note: row.note,
         };
         return (!info.session.is_empty()).then_some(info);
     }
@@ -302,6 +313,8 @@ fn parse_line(line: &str) -> Option<SessionInfo> {
         title: f.next().unwrap_or_default().to_string(),
         activity: 0,
         bell: false,
+        state: String::new(),
+        note: String::new(),
     };
     (!info.session.is_empty()).then_some(info)
 }

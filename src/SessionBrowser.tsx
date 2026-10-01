@@ -84,12 +84,15 @@ export function paneLabel(title: string | undefined, command: string): string {
 export const ACTIVE_SECS = 5;
 
 /**
- * Whether the agent in the pane is at work. Claude Code says so in its title:
- * a braille spinner frame while it works, `✳` once it waits for input. Any
- * other agent is at work while it keeps printing. Never true for a shell or
- * anything else that is not an agent, whose output means nothing of the kind.
+ * Whether the agent in the pane is at work. Best is what its own hooks said,
+ * which Claude Code started by roer has. Without them, Claude Code still says
+ * so in its title: a braille spinner frame while it works, `✳` once it waits
+ * for input. Any other agent is at work while it keeps printing. Never true
+ * for a shell or anything else that is not an agent, whose output means
+ * nothing of the kind.
  */
 export function isWorking(session: SessionInfo, now = Date.now() / 1000): boolean {
+  if (session.state) return session.state === "working";
   const title = session.title ?? "";
   if (/^[\u2801-\u28ff]/u.test(title)) return true;
   if (/^\u2733/u.test(title)) return false;
@@ -97,11 +100,18 @@ export function isWorking(session: SessionInfo, now = Date.now() / 1000): boolea
   return !!session.activity && now - session.activity <= ACTIVE_SECS;
 }
 
-/** Where a live row goes in its group: what needs you, then what is at
- * work, then the rest, each in the order tmux listed them. */
+/** Whether the agent is held up on you — a permission prompt, a question —
+ * rather than done with its turn. Only its hooks can tell those apart. */
+export function needsYou(session: SessionInfo): boolean {
+  return session.state === "waiting";
+}
+
+/** Where a live row goes in its group: what is held up on you, what has
+ * finished and waits, what is at work, then the rest, each in the order
+ * tmux listed them. */
 function liveRank(session: SessionInfo, waiting: ReadonlySet<string>): number {
-  if (waiting.has(session.pane)) return 0;
-  return isWorking(session) ? 1 : 2;
+  if (waiting.has(session.pane)) return needsYou(session) ? 0 : 1;
+  return isWorking(session) ? 2 : 3;
 }
 
 /** The CLIs roer knows, by the command tmux reports for them. */
@@ -141,7 +151,7 @@ function LiveName({ session }: { session: SessionInfo }) {
 /** Live rows in the order they matter: waiting, working, the rest. Past
  * conversations stay after them, as they were. */
 function byRank(items: SessionEntry[], waiting: ReadonlySet<string>): SessionEntry[] {
-  const rank = (entry: SessionEntry) => (entry.kind === "live" ? liveRank(entry.session, waiting) : 3);
+  const rank = (entry: SessionEntry) => (entry.kind === "live" ? liveRank(entry.session, waiting) : 4);
   return items
     .map((entry, index) => ({ entry, index }))
     .sort((a, b) => rank(a.entry) - rank(b.entry) || a.index - b.index)
@@ -409,7 +419,13 @@ export function SessionBrowser({
                           {entry.session.pane === activePane ? null : isWorking(entry.session) ? (
                             <span className="badge working">working</span>
                           ) : waiting.has(entry.session.pane) ? (
-                            <span className="badge waiting">waiting</span>
+                            needsYou(entry.session) ? (
+                              <span className="badge needs" title={entry.session.note || undefined}>
+                                needs you
+                              </span>
+                            ) : (
+                              <span className="badge waiting">waiting</span>
+                            )
                           ) : null}
                           {/* Attaching takes a session over from whoever holds it,
                               which may be a terminal or another window of this app. */}

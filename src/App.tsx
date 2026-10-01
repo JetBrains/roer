@@ -785,7 +785,9 @@ export function App() {
             : isWorking(live)
               ? "working"
               : browser.waiting.has(live.pane)
-                ? "waiting"
+                ? live.state === "waiting"
+                  ? "needs you"
+                  : "waiting"
                 : undefined,
         fields: [paneLabel(live.title, live.command), who, live.command, live.session, live.cwd],
         open: () =>

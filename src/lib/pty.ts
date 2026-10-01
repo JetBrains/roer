@@ -27,6 +27,12 @@ export interface SessionInfo {
   activity?: number;
   /** Whether it rang the bell where nobody was looking. */
   bell?: boolean;
+  /** What the agent's own hooks last said, while it runs: Claude Code
+   * started by roer reports `working`, `waiting` (for a permission or an
+   * answer) and `done` (a turn ended). Empty for anything without hooks. */
+  state?: "working" | "waiting" | "done" | "";
+  /** Its words for what it waits for, with `waiting`. */
+  note?: string;
 }
 
 /**

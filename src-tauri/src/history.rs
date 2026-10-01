@@ -202,6 +202,8 @@ mod tests {
             title: String::new(),
             activity: 0,
             bell: false,
+            state: String::new(),
+            note: String::new(),
         }
     }
 
