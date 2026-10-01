@@ -332,12 +332,12 @@ fn repo(cwd: &str) -> Result<Repo, String> {
 }
 
 /// The checkout a git dir names as its own in `core.worktree`, relative to
-/// the git dir as git reads it. A submodule's has one.
+/// the git dir as git reads it. A submodule's has one. Spelled as git
+/// spells its own paths, which `canonicalize` on Windows does not.
 fn recorded_checkout(root: &str, common: &str) -> Option<String> {
     let config = Path::new(common).join("config");
     let recorded = git(root, &["config", "--file", &config.to_string_lossy(), "core.worktree"]).ok()?;
-    let checkout = std::fs::canonicalize(Path::new(common).join(recorded.trim())).ok()?;
-    Some(checkout.to_string_lossy().into_owned())
+    self::root(&Path::new(common).join(recorded.trim()).to_string_lossy()).ok()
 }
 
 /// Every local branch, for the branch-diff view's two pickers.
