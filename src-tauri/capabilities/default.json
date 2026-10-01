@@ -9,6 +9,7 @@
     "core:window:allow-set-theme",
     "core:window:allow-set-badge-count",
     "dialog:allow-open",
-    "dialog:allow-ask"
+    "dialog:allow-ask",
+    "notification:default"
   ]
 }

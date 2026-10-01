@@ -36,6 +36,7 @@ pub fn run() {
             handoff::focus(app);
         }))
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
         .manage(pty::PtyState::default())
         .manage(files::FileIndex::default())
         .invoke_handler(tauri::generate_handler![
