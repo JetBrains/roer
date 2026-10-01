@@ -376,6 +376,33 @@ fn a_hook_says_what_the_agent_is_doing_and_list_reports_it() {
 }
 
 #[test]
+fn a_reminder_that_a_turn_is_unanswered_leaves_it_done() {
+    let env = Env::new("reminder");
+    let bin = env!("CARGO_BIN_EXE_roer");
+    let input = r#"{"notification_type":"idle_prompt","message":"Claude is waiting for your input"}"#;
+    let ran = env.dir.join("ran");
+    let pane = pane(
+        &env,
+        "agent",
+        &format!("'{bin}' status done; printf '%s' '{input}' | '{bin}' status waiting --hook; : > '{}'; exec cat", ran.display()),
+    );
+    env.tmux(&["set-option", "-t", "=agent:", "@roer_agent", "claude"]);
+    env.tmux(&["set-option", "-t", "=agent:", "@roer_agent_procs", "cat"]);
+
+    for _ in 0..50 {
+        if ran.exists() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert!(ran.exists(), "the hooks never ran");
+    let out = env.run(&["list", "--json"]);
+    let row: serde_json::Value = serde_json::from_str(String::from_utf8_lossy(&out.stdout).lines().next().unwrap_or("null")).unwrap();
+    assert_eq!(row["pane"], pane.as_str());
+    assert_eq!(row["state"], "done", "{row}");
+}
+
+#[test]
 fn kill_ends_the_session_a_pane_is_in() {
     let env = Env::new("kill");
     let doomed = pane(&env, "doomed", "cat");

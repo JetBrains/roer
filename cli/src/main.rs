@@ -513,13 +513,15 @@ impl Roer {
         let Some(state) = args.first().copied().filter(|state| status_hooks::STATES.contains(state)) else {
             return Err(Fail::new(2, format!("status needs one of: {}", status_hooks::STATES.join(", "))));
         };
-        let note = if args.contains(&"--hook") {
+        let input = args.contains(&"--hook").then(|| {
             let mut text = String::new();
             let _ = std::io::stdin().read_to_string(&mut text);
-            serde_json::from_str::<Value>(&text).map(|input| status_hooks::note(&input)).unwrap_or_default()
-        } else {
-            String::new()
-        };
+            serde_json::from_str::<Value>(&text).unwrap_or_default()
+        });
+        if state == "waiting" && input.as_ref().is_some_and(status_hooks::asks_nothing) {
+            return Ok(());
+        }
+        let note = input.as_ref().map(status_hooks::note).unwrap_or_default();
         let Ok(pane) = self.tmux.inside_roer() else { return Ok(()) };
         if state == "clear" {
             self.tmux.ok(&["set-option", "-p", "-u", "-t", &pane, "@roer_state"]);

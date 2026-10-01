@@ -60,6 +60,20 @@ pub fn note(input: &Value) -> String {
     flat.chars().take(NOTE_CHARS).collect()
 }
 
+/// Whether a `Notification` hook asks the person for nothing: Claude Code's
+/// reminder that a finished turn is still unanswered, a minute after `Stop`,
+/// or word that a login worked. The turn stays as it was. Told by its type
+/// where Claude Code sends one, and by its words where it does not.
+pub fn asks_nothing(input: &Value) -> bool {
+    match input.get("notification_type").and_then(Value::as_str) {
+        Some(kind) => matches!(kind, "idle_prompt" | "auth_success"),
+        None => input
+            .get("message")
+            .and_then(Value::as_str)
+            .is_some_and(|text| text.contains("waiting for your input")),
+    }
+}
+
 /// A path as one shell word. Claude Code runs a hook's command through a
 /// shell, and an app's path can have spaces in it.
 fn quote(word: &str) -> String {
@@ -79,6 +93,16 @@ mod tests {
         let input = json!({ "message": "Claude needs your\npermission to use\tBash" });
         assert_eq!(note(&input), "Claude needs your permission to use Bash");
         assert_eq!(note(&json!({})), "");
+    }
+
+    #[test]
+    fn tells_a_request_from_a_reminder() {
+        assert!(asks_nothing(&json!({ "notification_type": "idle_prompt", "message": "Claude is waiting for your input" })));
+        assert!(asks_nothing(&json!({ "message": "Claude is waiting for your input" })));
+        assert!(asks_nothing(&json!({ "notification_type": "auth_success", "message": "Authenticated" })));
+        assert!(!asks_nothing(&json!({ "notification_type": "permission_prompt", "message": "Claude needs your permission to use Bash" })));
+        assert!(!asks_nothing(&json!({ "message": "Claude needs your permission to use Bash" })));
+        assert!(!asks_nothing(&json!({})));
     }
 
     #[test]
