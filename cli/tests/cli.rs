@@ -771,7 +771,7 @@ fn new_starts_a_saved_agent_and_resume_another_cli() {
     // An unknown agent, or a setting given on the command line that the CLI
     // has no flag for, is refused before anything starts.
     assert_eq!(code(&env.run(&["new", "--agent", "nobody"])), 3);
-    assert_eq!(code(&env.run(&["new", "--agent", "gemini", "--effort", "high"])), 2);
+    assert_eq!(code(&env.run(&["new", "--agent", "junie", "--effort", "max"])), 2);
 
     let name = format!("{}-resume", shim_name(&env.dir));
     in_a_terminal(&env, &["resume", "0f3c-9a", "--agent", "codex"], &name);
@@ -779,7 +779,6 @@ fn new_starts_a_saved_agent_and_resume_another_cli() {
     let typed = typed_into(&env, &name, expected);
     assert!(typed.contains(expected), "typed into the shell: {typed}");
     kill_outer(&env);
-    assert_eq!(code(&env.run(&["resume", "0f3c-9a", "--agent", "gemini"])), 2);
 }
 
 #[test]

@@ -14,7 +14,7 @@ export interface Agent {
   id: string;
   name: string;
   description: string;
-  /** claude, codex, pi, gemini, junie, opencode or custom. */
+  /** claude, codex, pi, junie or custom. */
   cli: string;
   /** Only for `cli: custom`. */
   command: string;

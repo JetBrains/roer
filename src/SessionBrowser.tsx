@@ -132,7 +132,7 @@ function liveRank(session: SessionInfo, waiting: ReadonlySet<string>): number {
 }
 
 /** The CLIs roer knows, by the command tmux reports for them. */
-const AGENT_COMMANDS = new Set(["claude", "codex", "pi", "gemini", "junie", "opencode"]);
+const AGENT_COMMANDS = new Set(["claude", "codex", "pi", "junie"]);
 
 /** Who is running in the session, when that is known to be an agent: the one
  * roer started, which the shim names only while it runs, or a CLI started by

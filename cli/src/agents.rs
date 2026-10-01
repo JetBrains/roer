@@ -1,7 +1,7 @@
 //! Which coding agent a session starts, and how.
 //!
 //! A *CLI* is a program roer knows how to drive — `claude`, `codex`, `pi`,
-//! `gemini`, `junie`, `opencode` — and what it knows is each one's flags: for
+//! `junie` — and what it knows is each one's flags: for
 //! the model, the reasoning effort, how much it may do unasked, extra
 //! instructions, and resuming a conversation. An *agent* is a saved setup for
 //! one of them: a Markdown file with YAML frontmatter, the shape Claude Code,
@@ -109,22 +109,6 @@ pub const CLIS: &[Cli] = &[
         procs: &["pi", "node"],
     },
     Cli {
-        id: "gemini",
-        label: "Gemini CLI",
-        bin: "gemini",
-        model: &["-m", "{}"],
-        effort: &[],
-        efforts: &[],
-        ask: &[],
-        auto: None,
-        full: Some(&["--yolo"]),
-        instructions: &[],
-        resume: &[],
-        status: &[],
-        models: &["gemini-2.5-pro", "gemini-2.5-flash"],
-        procs: &["gemini", "node"],
-    },
-    Cli {
         id: "junie",
         label: "Junie",
         bin: "junie",
@@ -139,22 +123,6 @@ pub const CLIS: &[Cli] = &[
         status: &["--config-location={}"],
         models: &[],
         procs: &["junie"],
-    },
-    Cli {
-        id: "opencode",
-        label: "opencode",
-        bin: "opencode",
-        model: &["-m", "{}"],
-        effort: &[],
-        efforts: &[],
-        ask: &[],
-        auto: None,
-        full: None,
-        instructions: &[],
-        resume: &["-s", "{}"],
-        status: &[],
-        models: &[],
-        procs: &["opencode"],
     },
 ];
 
@@ -1077,8 +1045,8 @@ fn on_path(name: &str) -> bool {
     std::env::split_paths(&path).any(|dir| names.iter().any(|file| dir.join(file).is_file()))
 }
 
-/// The models a CLI knows of, as it lists them itself where it can: pi and
-/// opencode print them, codex keeps a cache of the ones the account has.
+/// The models a CLI knows of, as it lists them itself where it can: pi
+/// prints them, codex keeps a cache of the ones the account has.
 pub fn models(id: &str) -> Vec<String> {
     let fixed = || cli(id).map(|cli| cli.models.iter().map(|m| m.to_string()).collect()).unwrap_or_default();
     let listed = match id {
@@ -1105,10 +1073,6 @@ pub fn models(id: &str) -> Vec<String> {
                 let mut columns = line.split_whitespace();
                 Some(format!("{}/{}", columns.next()?, columns.next()?))
             })
-            .collect(),
-        "opencode" => login_shell_lines("opencode models")
-            .into_iter()
-            .filter(|line| line.contains('/') && !line.contains(' '))
             .collect(),
         _ => Vec::new(),
     };
@@ -1358,7 +1322,6 @@ mod tests {
             "claude --resume abc-123 --permission-mode manual"
         );
         assert_eq!(agent("codex").command_line(Some("abc"), false).unwrap(), "codex resume abc -a untrusted");
-        assert!(agent("gemini").command_line(Some("abc"), false).is_err());
     }
 
     #[test]
@@ -1384,12 +1347,12 @@ mod tests {
 
     #[test]
         fn refuses_settings_a_cli_would_ignore() {
-        let mut gemini = agent("gemini");
-        gemini.effort = "high".into();
-        assert!(gemini.check().is_err());
-        let mut gemini = agent("gemini");
-        gemini.instructions = "Be brief.".into();
-        assert!(gemini.check().is_err());
+        let mut junie = agent("junie");
+        junie.effort = "max".into();
+        assert!(junie.check().is_err());
+        let mut pi = agent("pi");
+        pi.permissions = "full".into();
+        assert!(pi.check().is_err());
         let mut pi = agent("pi");
         pi.effort = "max".into();
         pi.instructions = "Be brief.".into();
@@ -1398,12 +1361,14 @@ mod tests {
 
     #[test]
     fn a_hand_written_file_starts_without_what_its_cli_cannot_take() {
-        let mut gemini = agent("gemini");
-        gemini.effort = "max".into();
-        gemini.instructions = "Be brief.".into();
-        assert_eq!(gemini.sanitize().len(), 2);
-        assert!(gemini.check().is_ok());
-        assert!(gemini.effort.is_empty() && gemini.instructions.is_empty());
+        let mut pi = agent("pi");
+        pi.effort = "ultra".into();
+        pi.permissions = "full".into();
+        pi.instructions = "Be brief.".into();
+        assert_eq!(pi.sanitize().len(), 2);
+        assert!(pi.check().is_ok());
+        assert!(pi.effort.is_empty() && pi.permissions.is_empty());
+        assert_eq!(pi.instructions, "Be brief.");
     }
 
     #[test]
