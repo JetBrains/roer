@@ -105,9 +105,17 @@ impl Tmux {
 
     /// Runs one tmux command for its output: trimmed of the trailing newline,
     /// and empty when tmux failed, as `$(tm ... 2>/dev/null)` was.
+    ///
+    /// With `-u`: a tmux client that thinks its locale is not UTF-8 prints
+    /// every tab and non-ASCII character of a format as `_`, and an app
+    /// started from Finder has no locale at all. Then `roer list` came out as
+    /// one column, which the app could not read, and it saw no live session.
     pub fn read(&self, args: &[&str]) -> String {
-        self.command()
-            .args(args)
+        let mut tmux = self.command();
+        if !self.is_psmux() {
+            tmux.arg("-u");
+        }
+        tmux.args(args)
             .stderr(Stdio::null())
             .output()
             .ok()
