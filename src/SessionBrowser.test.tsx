@@ -14,7 +14,7 @@ import {
   workspaceAssignments,
 } from "./lib/workspaces";
 import { NewSessionButton } from "./NewSessionButton";
-import { isWorking, paneLabel, runningAgent, SessionBrowser, type OpenRequest } from "./SessionBrowser";
+import { isWorking, matchesQuery, paneLabel, runningAgent, SessionBrowser, type OpenRequest } from "./SessionBrowser";
 import { WorkspaceSidebar } from "./WorkspaceSidebar";
 
 vi.mock("./lib/pty", () => ({
@@ -314,6 +314,43 @@ describe("session labels", () => {
     expect(paneLabel("\u2802 fixing tests", "claude")).toBe("fixing tests");
     expect(paneLabel("zsh", "zsh")).toBe("");
     expect(paneLabel(undefined, "zsh")).toBe("");
+  });
+});
+
+describe("filtering the list", () => {
+  it("matches every word, in any case and order", () => {
+    const fields = ["Fixing the flaky test", "claude", "/work/roer"];
+    expect(matchesQuery(fields, "")).toBe(true);
+    expect(matchesQuery(fields, "ROER flaky")).toBe(true);
+    expect(matchesQuery(fields, "roer dark")).toBe(false);
+  });
+
+  it("narrows live sessions and past conversations alike, and says when nothing is left", async () => {
+    vi.mocked(listSessions).mockResolvedValue([
+      { id: "1", session: "roer-a", pane: "%0", attached: false, cwd: "/Users/test/project", command: "claude", title: "\u2733 Fixing the flaky test" },
+      { id: "2", session: "roer-b", pane: "%1", attached: false, cwd: "/Users/test/project", command: "claude", title: "\u2733 Add dark mode" },
+    ]);
+    vi.mocked(listPastSessions).mockResolvedValue([
+      { id: "past-1", name: "roer-c", cwd: "/Users/test/project", createdAt: 1, updatedAt: 1, endedAt: 2 },
+    ]);
+    vi.mocked(listClaudeSessions).mockResolvedValue([
+      { id: "c1", cwd: "/Users/test/project", title: "Dark mode follow-up", updatedAt: 1 },
+    ]);
+    renderList();
+    await screen.findByText("Fixing the flaky test");
+    await screen.findByText("Dark mode follow-up");
+
+    const filter = screen.getByRole("searchbox", { name: "Filter sessions" });
+    fireEvent.change(filter, { target: { value: "dark" } });
+    expect(screen.queryByText("Fixing the flaky test")).not.toBeInTheDocument();
+    expect(screen.getByText("Add dark mode")).toBeInTheDocument();
+    expect(screen.getByText("Dark mode follow-up")).toBeInTheDocument();
+
+    fireEvent.change(filter, { target: { value: "nothing like it" } });
+    expect(screen.getByText("No sessions match “nothing like it”.")).toBeInTheDocument();
+
+    fireEvent.keyDown(filter, { key: "Escape" });
+    expect(screen.getByText("Fixing the flaky test")).toBeInTheDocument();
   });
 });
 
