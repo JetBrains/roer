@@ -326,6 +326,45 @@ fn send_pastes_the_text_and_submits_it() {
 }
 
 #[test]
+fn list_json_says_when_a_window_last_printed_and_whether_it_rang() {
+    let env = Env::new("listjson");
+    let pane = pane(&env, "ringer", "printf '\\a'; exec cat");
+    std::thread::sleep(Duration::from_millis(300));
+
+    let out = env.run(&["list", "--json"]);
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    let rows: Vec<serde_json::Value> = String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_eq!(rows[0]["pane"], pane.as_str());
+    assert_eq!(rows[0]["session"], "ringer");
+    assert_eq!(rows[0]["bell"], true, "rang in a session nobody watches");
+    assert!(rows[0]["activity"].as_u64().unwrap() > 1_700_000_000, "{}", rows[0]);
+
+    // The TSV is what it was, for whoever reads it.
+    let tsv = String::from_utf8_lossy(&env.run(&["list"]).stdout).into_owned();
+    assert_eq!(tsv.lines().next().unwrap().split('\t').count(), 8, "{tsv}");
+}
+
+#[test]
+fn kill_ends_the_session_a_pane_is_in() {
+    let env = Env::new("kill");
+    let doomed = pane(&env, "doomed", "cat");
+    pane(&env, "kept", "cat");
+
+    let out = env.run(&["kill", "--pane", &doomed]);
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    let list = String::from_utf8_lossy(&env.run(&["list"]).stdout).into_owned();
+    assert!(!list.contains("doomed"), "{list}");
+    assert!(list.contains("kept"), "{list}");
+
+    assert_eq!(code(&env.run(&["kill"])), 2, "needs a pane");
+    assert_eq!(code(&env.run(&["kill", "--pane", &doomed])), 1, "already gone");
+}
+
+#[test]
 fn plugin_ui_messages_reach_the_app_tagged_with_their_pane() {
     let env = Env::new("plugin-ui");
     let out = env.run_with(&["plugin-ui", "--pane", "%4"], r#"{"version":"v1.0","deleteSurface":{"surfaceId":"s"}}"#);
