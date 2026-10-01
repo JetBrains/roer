@@ -92,8 +92,8 @@ export const HOOKED_QUIET_SECS = 30;
 
 /**
  * Whether the agent in the pane is at work. Best is what its own hooks said,
- * which Claude Code started by roer has, short of a `working` that has gone
- * quiet for too long to be true. Without them, Claude Code still says
+ * which Claude Code and Junie started by roer have, short of a `working` that
+ * has gone quiet for too long to be true. Without them, Claude Code still says
  * so in its title: a braille spinner frame while it works, `✳` once it waits
  * for input. Any other agent is at work while it keeps printing. Never true
  * for a shell or anything else that is not an agent, whose output means

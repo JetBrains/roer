@@ -136,7 +136,7 @@ pub const CLIS: &[Cli] = &[
         full: Some(&["--brave"]),
         instructions: &["--system-prompt={text}"],
         resume: &["--resume", "--session-id={}"],
-        status: &[],
+        status: &["--config-location={}"],
         models: &[],
         procs: &["junie"],
     },
@@ -1362,13 +1362,20 @@ mod tests {
     }
 
     #[test]
-    fn hands_claude_the_status_hooks_and_no_one_else() {
+    fn hands_the_status_hooks_to_claude_and_junie_only() {
         let path = std::path::Path::new("/home/me/.roer/claude-status.json");
         let claude = agent("claude");
         assert!(claude.takes_status());
         assert_eq!(
             claude.command_line_with(None, false, Some(path)).unwrap(),
             "claude --settings /home/me/.roer/claude-status.json"
+        );
+        let path = std::path::Path::new("/home/me/.roer/junie-status.json");
+        let junie = agent("junie");
+        assert!(junie.takes_status());
+        assert_eq!(
+            junie.command_line_with(None, false, Some(path)).unwrap(),
+            "junie --config-location=/home/me/.roer/junie-status.json"
         );
         let codex = agent("codex");
         assert!(!codex.takes_status());
