@@ -47,7 +47,16 @@ pub fn write(bin: &str) -> Result<PathBuf, Fail> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(fail)?;
     }
-    std::fs::write(&path, format!("{}\n", serde_json::to_string_pretty(&settings).unwrap_or_default())).map_err(fail)?;
+    // Whole or not at all: another session starting at the same moment may
+    // be handing this file to its own Claude Code, which must never read it
+    // half written. A rename replaces it in one step.
+    let partial = path.with_extension(format!("json.{}.partial", std::process::id()));
+    let text = format!("{}\n", serde_json::to_string_pretty(&settings).unwrap_or_default());
+    std::fs::write(&partial, text).map_err(fail)?;
+    std::fs::rename(&partial, &path).map_err(|e| {
+        let _ = std::fs::remove_file(&partial);
+        fail(e)
+    })?;
     Ok(path)
 }
 
