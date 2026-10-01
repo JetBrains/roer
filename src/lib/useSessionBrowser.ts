@@ -609,6 +609,10 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
         ? sessions.filter((session) => underWorkspace(session.cwd, session.id, selectedWorkspace))
         : sessions
   ).filter((session) => !isResumeScaffold(session));
+  // Search looks past the selected Workspace: finding a session is the
+  // point when you don't know where it is.
+  const allSessions = sessions.filter((session) => !isResumeScaffold(session));
+
   const visibleClaudeSessions = selectedProject
     ? claudeSessions.filter((session) => underProject(session.cwd, selectedProject))
     : selectedWorkspace
@@ -646,6 +650,8 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
     handleRemoveItem,
     roots,
     waiting,
+    allSessions,
+    claudeSessions,
     visibleSessions,
     visibleClaudeSessions,
     activePane,

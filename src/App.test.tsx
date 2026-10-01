@@ -815,13 +815,15 @@ describe("App", () => {
     expect(screen.queryByTestId("go-to-file")).not.toBeInTheDocument();
   });
 
-  it("has nothing to search without a session", async () => {
+  it("searches only sessions without one on the stage", async () => {
     render(<App />);
     await screen.findByRole("button", { name: /new session/i });
 
     goToFile(window);
 
-    expect(screen.queryByTestId("go-to-file")).not.toBeInTheDocument();
+    expect(await screen.findByTestId("go-to-file")).toBeInTheDocument();
+    expect(screen.getByRole("combobox")).toHaveAttribute("placeholder", "Search sessions");
+    expect(filesSearch).not.toHaveBeenCalled();
   });
 
   it("closes Go to File when the session ends under it", async () => {

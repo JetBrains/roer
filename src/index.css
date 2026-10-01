@@ -547,24 +547,6 @@ button.tab:disabled {
 }
 
 .sidebar ul,
-/* Same field as the Agents form's, across the list it narrows. */
-.sessions-filter {
-  width: 100%;
-  margin: 0 0 10px;
-  font: inherit;
-  font-size: 12.5px;
-  padding: 6px 8px;
-  color: var(--roer-fg);
-  background: var(--roer-panel);
-  border: 1px solid var(--roer-border);
-  border-radius: 6px;
-}
-
-.sessions-filter:focus {
-  outline: none;
-  border-color: var(--roer-accent);
-}
-
 .sessions-view ul {
   list-style: none;
   margin: 0;
@@ -1427,6 +1409,22 @@ button.tree-row.selected {
 
 .hit.on .hit-dir {
   color: var(--ide-hit-dir);
+}
+
+/* Where sessions end and files begin. */
+.hit-group {
+  padding: 6px 14px 2px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--roer-muted);
+}
+
+.hit-badge {
+  margin-left: auto;
+  flex: none;
+  font-size: 11px;
+  color: var(--roer-muted);
 }
 
 /* The characters the query matched. */

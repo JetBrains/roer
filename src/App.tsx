@@ -18,10 +18,18 @@ import { applyAll, applyMessage } from "./generative-ui/apply";
 import { emptyState, surfaceIdOf, type A2uiMessage, type RenderState } from "./generative-ui/schema";
 import { AgentsDialog, type AgentsDialogStart } from "./AgentsDialog";
 import { ClaudeSetup } from "./ClaudeSetup";
-import { GoToFile } from "./GoToFile";
+import { GoToFile, type SessionHit } from "./GoToFile";
 import { NewSessionButton } from "./NewSessionButton";
 import { PullRequestView } from "./PullRequestView";
-import { SessionBrowser, paneLabel, runningAgent, type OpenRequest } from "./SessionBrowser";
+import {
+  SessionBrowser,
+  isWorking,
+  paneLabel,
+  relativeAge,
+  runningAgent,
+  shorten,
+  type OpenRequest,
+} from "./SessionBrowser";
 import { ShortcutsDialog } from "./ShortcutsDialog";
 import { TerminalView } from "./TerminalView";
 import { WorkspaceSidebar } from "./WorkspaceSidebar";
@@ -219,9 +227,7 @@ export function App() {
   // function across renders and the listener is registered once.
   useHotkey(
     isGoToFile,
-    useCallback(() => {
-      if (stagedRef.current) setFinding(true);
-    }, []),
+    useCallback(() => setFinding(true), []),
   );
 
   // A different target is a different terminal, and it has not attached yet.
@@ -718,6 +724,39 @@ export function App() {
   useEffect(() => {
     document.title = stageName ? `${stageName} — Roer` : "Roer";
   }, [stageName]);
+
+  // What the search popup offers besides files: every live session, then
+  // the past conversations, each opened the way its row in Sessions opens it.
+  const home = browser.status?.home;
+  const sessionHits: SessionHit[] = [
+    ...browser.allSessions.map((live): SessionHit => {
+      const who = runningAgent(live) ?? live.command;
+      return {
+        key: `live:${live.pane}`,
+        name: paneLabel(live.title, live.command) || who,
+        detail: `${who} · ${shorten(live.cwd, home)}`,
+        badge:
+          live.pane === session?.pane
+            ? "open here"
+            : isWorking(live.title)
+              ? "working"
+              : browser.waiting.has(live.pane)
+                ? "waiting"
+                : undefined,
+        fields: [paneLabel(live.title, live.command), who, live.command, live.session, live.cwd],
+        open: () =>
+          show({ args: ["attach", live.pane], cwd: live.cwd, title: live.session, pane: live.pane }),
+      };
+    }),
+    ...browser.claudeSessions.map((past): SessionHit => ({
+      key: `resume:${past.id}`,
+      name: past.title,
+      detail: `${past.agent ?? "claude"} · ${shorten(past.cwd, home)}`,
+      badge: relativeAge(past.updatedAt),
+      fields: [past.title, past.agent ?? "claude", past.cwd],
+      open: () => browser.openClaudeSession(past),
+    })),
+  ];
   useEffect(() => {
     let cancelled = false;
     let unlisten: (() => void) | undefined;
@@ -783,9 +822,8 @@ export function App() {
         <button
           type="button"
           className="find-toggle"
-          aria-label="Go to File"
-          title={`Go to File (${shortcutLabel.goToFile()})`}
-          disabled={!session}
+          aria-label="Search sessions and files"
+          title={`Search sessions and files (${shortcutLabel.goToFile()})`}
           onClick={() => setFinding(true)}
         >
           <Search size={15} />
@@ -1140,6 +1178,8 @@ export function App() {
           <GoToFile
             cwd={session?.cwd}
             pane={session?.pane}
+            noFiles={!session}
+            sessions={sessionHits}
             recent={recent(tabs)}
             onOpen={openInTab}
             onClose={() => setFinding(false)}

@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { GoToFile } from "./GoToFile";
+import { GoToFile, matchesQuery, type SessionHit } from "./GoToFile";
 import { filesSearch } from "./lib/files";
 import type { Hit, Hits } from "./lib/files";
 
@@ -303,5 +303,56 @@ describe("GoToFile", () => {
 
     expect(screen.getAllByRole("option")).toHaveLength(1);
     expect(screen.getByRole("option")).toHaveTextContent("second.ts");
+  });
+});
+
+describe("GoToFile — sessions", () => {
+  const session = (name: string, cwd: string, open = vi.fn()): SessionHit => ({
+    key: name,
+    name,
+    detail: `claude · ${cwd}`,
+    fields: [name, "claude", cwd],
+    open,
+  });
+
+  it("matches every word, in any case and order", () => {
+    const fields = ["Fixing the flaky test", "claude", "/work/roer"];
+    expect(matchesQuery(fields, "")).toBe(true);
+    expect(matchesQuery(fields, "ROER flaky")).toBe(true);
+    expect(matchesQuery(fields, "roer dark")).toBe(false);
+  });
+
+  it("lists the matching sessions above the files, under their own headings", async () => {
+    asked.mockResolvedValue(answer([hit("src/theme/dark.ts")]));
+    await open({ sessions: [session("Add dark mode", "/work/roer"), session("Fix login", "/work/api")] });
+    await type("dark");
+
+    const rows = screen.getAllByRole("option");
+    expect(rows.map((row) => row.textContent)).toEqual([
+      "Add dark modeclaude · /work/roer",
+      "dark.tssrc/theme/",
+    ]);
+    expect(screen.getByText("Sessions")).toBeInTheDocument();
+    expect(screen.getByText("Files")).toBeInTheDocument();
+  });
+
+  it("opens a session on Enter, and closes", async () => {
+    const opened = vi.fn();
+    const { onClose, onOpen } = await open({ sessions: [session("Add dark mode", "/work/roer", opened)] });
+    await type("dark");
+
+    fireEvent.keyDown(screen.getByRole("combobox"), { key: "Enter" });
+    expect(opened).toHaveBeenCalled();
+    expect(onClose).toHaveBeenCalled();
+    expect(onOpen).not.toHaveBeenCalled();
+  });
+
+  it("searches no files with nothing on the stage", async () => {
+    render(
+      <GoToFile noFiles sessions={[session("Add dark mode", "/work/roer")]} onOpen={vi.fn()} onClose={vi.fn()} />,
+    );
+    fireEvent.change(screen.getByRole("combobox"), { target: { value: "login" } });
+    expect(await screen.findByText("No matches")).toBeInTheDocument();
+    expect(asked).not.toHaveBeenCalled();
   });
 });

@@ -1,4 +1,5 @@
 import {
+  Fragment,
   useCallback,
   useEffect,
   useMemo,
@@ -24,6 +25,41 @@ const POLL_GROWTH = 1.6;
 /** Rows shown at most; the backend caps what it returns as well. */
 const LIMIT = 50;
 
+/** Sessions shown before anything is typed, and at most once something is. */
+const SESSIONS_IDLE = 6;
+const SESSIONS_MAX = 20;
+
+/**
+ * A session the popup can offer: how it reads, what it is found by, and how
+ * to open it. Built by the caller, which knows what opening one means.
+ */
+export interface SessionHit {
+  key: string;
+  name: string;
+  /** Who runs it and where, dimmed after the name. */
+  detail: string;
+  /** "working", "waiting", "open here", or how old a past conversation is. */
+  badge?: string;
+  /** Everything a query is matched against. */
+  fields: Array<string | null | undefined>;
+  open: () => void;
+}
+
+/**
+ * Whether a session is one the query asks for: every word typed appears
+ * somewhere in its fields, in any case and any order — "roer fix" finds the
+ * fixing task in the roer checkout.
+ */
+export function matchesQuery(fields: Array<string | null | undefined>, query: string): boolean {
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return true;
+  const haystack = fields.filter(Boolean).join(" ").toLowerCase();
+  return words.every((word) => haystack.includes(word));
+}
+
+/** One row of the list: a session or a file, keyed so the two never clash. */
+type Row = { kind: "session"; key: string; session: SessionHit } | { kind: "file"; key: string; hit: Hit };
+
 export interface GoToFileProps {
   /** Directory the session was opened in; the repository is whatever holds it. */
   cwd?: string;
@@ -31,6 +67,10 @@ export interface GoToFileProps {
   pane?: string;
   /** Recently opened paths, which is what an empty query shows. */
   recent?: readonly string[];
+  /** Sessions to offer above the files, matched here as the query changes. */
+  sessions?: readonly SessionHit[];
+  /** No session on the stage, so no repository: sessions only. */
+  noFiles?: boolean;
   onOpen: (root: string, path: string, line?: number) => void;
   onClose: () => void;
 }
@@ -38,7 +78,7 @@ export interface GoToFileProps {
 /** A row for a recent path: no match to emphasise, just the path. */
 const asHit = (path: string): Hit => ({ path, nameAt: 0, score: 0, at: [] });
 
-function Row({ hit }: { hit: Hit }) {
+function FileRow({ hit }: { hit: Hit }) {
   const { dir, name } = useMemo(() => parts(hit), [hit]);
   const runs = (list: typeof dir) =>
     list.map((run, i) => (run.hit ? <b key={i}>{run.text}</b> : <span key={i}>{run.text}</span>));
@@ -53,12 +93,21 @@ function Row({ hit }: { hit: Hit }) {
 
 /**
  * IntelliJ's Go to File, over the flat list of everything in the session's
- * repository.
+ * repository, with the sessions that match listed first: one place to look
+ * for anything.
  *
  * Mounted only while it is open, so closing it drops the query and the
  * selection, and the element that had the keyboard gets it back.
  */
-export function GoToFile({ cwd, pane, recent = [], onOpen, onClose }: GoToFileProps) {
+export function GoToFile({
+  cwd,
+  pane,
+  recent = [],
+  sessions = [],
+  noFiles = false,
+  onOpen,
+  onClose,
+}: GoToFileProps) {
   const [query, setQuery] = useState("");
   const [dir, setDir] = useState<string | null>(null);
   const [hits, setHits] = useState<Hits | null>(null);
@@ -93,6 +142,7 @@ export function GoToFile({ cwd, pane, recent = [], onOpen, onClose }: GoToFilePr
   // Which repository, asked on the way in rather than held: a `cd` in the
   // terminal since the last time this was open has moved it.
   useEffect(() => {
+    if (noFiles) return;
     let cancelled = false;
     void resolveDir(cwd, pane).then((next) => {
       if (!cancelled) setDir(next);
@@ -100,7 +150,7 @@ export function GoToFile({ cwd, pane, recent = [], onOpen, onClose }: GoToFilePr
     return () => {
       cancelled = true;
     };
-  }, [cwd, pane]);
+  }, [cwd, pane, noFiles]);
 
   useEffect(() => {
     if (dir === null) return;
@@ -158,21 +208,43 @@ export function GoToFile({ cwd, pane, recent = [], onOpen, onClose }: GoToFilePr
   // moves the selection on its own.
   useEffect(() => setChosen(null), [query]);
 
-  const rows: Hit[] = useMemo(
-    () => (query.trim() ? (hits?.hits ?? []) : recent.slice(0, LIMIT).map(asHit)),
-    [hits, query, recent],
+  const sessionRows: Row[] = useMemo(
+    () =>
+      (query.trim()
+        ? sessions.filter((session) => matchesQuery(session.fields, query)).slice(0, SESSIONS_MAX)
+        : sessions.slice(0, SESSIONS_IDLE)
+      ).map((session) => ({ kind: "session", key: `session:${session.key}`, session })),
+    [query, sessions],
   );
+  const fileRows: Row[] = useMemo(
+    () =>
+      noFiles
+        ? []
+        : (query.trim() ? (hits?.hits ?? []) : recent.slice(0, LIMIT).map(asHit)).map((hit) => ({
+            kind: "file",
+            key: `file:${hit.path}`,
+            hit,
+          })),
+    [hits, noFiles, query, recent],
+  );
+  const rows = useMemo(() => [...sessionRows, ...fileRows], [sessionRows, fileRows]);
 
   const at = useMemo(() => {
-    const found = rows.findIndex((row) => row.path === chosen);
+    const found = rows.findIndex((row) => row.key === chosen);
     return found === -1 ? 0 : found;
   }, [chosen, rows]);
 
   const root = hits?.root;
   const open = useCallback(
-    (hit: Hit | undefined) => {
-      if (!hit || !root) return;
-      onOpen(root, hit.path, hits?.line ?? undefined);
+    (row: Row | undefined) => {
+      if (!row) return;
+      if (row.kind === "session") {
+        onClose();
+        row.session.open();
+        return;
+      }
+      if (!root) return;
+      onOpen(root, row.hit.path, hits?.line ?? undefined);
       onClose();
     },
     [hits, onClose, onOpen, root],
@@ -181,7 +253,7 @@ export function GoToFile({ cwd, pane, recent = [], onOpen, onClose }: GoToFilePr
   const step = useCallback(
     (delta: number) => {
       if (rows.length === 0) return;
-      setChosen(rows[(at + delta + rows.length) % rows.length].path);
+      setChosen(rows[(at + delta + rows.length) % rows.length].key);
     },
     [at, rows],
   );
@@ -191,11 +263,11 @@ export function GoToFile({ cwd, pane, recent = [], onOpen, onClose }: GoToFilePr
   // made — which would hand the selection straight back to whatever sits
   // under the cursor, on every press.
   const wasAtRef = useRef<{ x: number; y: number } | null>(null);
-  const hover = useCallback((event: MouseEvent, path: string) => {
+  const hover = useCallback((event: MouseEvent, key: string) => {
     const last = wasAtRef.current;
     if (last && last.x === event.clientX && last.y === event.clientY) return;
     wasAtRef.current = { x: event.clientX, y: event.clientY };
-    setChosen(path);
+    setChosen(key);
   }, []);
 
   const onKeyDown = (event: KeyboardEvent) => {
@@ -222,6 +294,11 @@ export function GoToFile({ cwd, pane, recent = [], onOpen, onClose }: GoToFilePr
 
   /** The line above the list: what was searched, and how it went. */
   const status = () => {
+    if (noFiles) {
+      const count = sessionRows.length;
+      if (!query.trim()) return count ? "Sessions" : "No sessions yet";
+      return count === 0 ? "No matches" : `${count} ${count === 1 ? "session" : "sessions"}`;
+    }
     if (error) return error;
     if (!query.trim()) {
       const known = hits?.total ?? 0;
@@ -245,7 +322,7 @@ export function GoToFile({ cwd, pane, recent = [], onOpen, onClose }: GoToFilePr
         className="popup"
         role="dialog"
         aria-modal="true"
-        aria-label="Go to file"
+        aria-label={noFiles ? "Search sessions" : "Search sessions and files"}
         data-testid="go-to-file"
         // The scrim closes on a click through it; a click on the popup is not
         // a click through it.
@@ -259,8 +336,8 @@ export function GoToFile({ cwd, pane, recent = [], onOpen, onClose }: GoToFilePr
           aria-expanded
           aria-controls="go-to-file-list"
           aria-activedescendant={rows[at] ? `go-to-file-${at}` : undefined}
-          aria-label="File name"
-          placeholder="Go to file"
+          aria-label="Search"
+          placeholder={noFiles ? "Search sessions" : "Search sessions and files"}
           spellCheck={false}
           autoComplete="off"
           value={query}
@@ -274,27 +351,43 @@ export function GoToFile({ cwd, pane, recent = [], onOpen, onClose }: GoToFilePr
           id="go-to-file-list"
           className="popup-list"
           role="listbox"
-          aria-label="Files"
+          aria-label="Sessions and files"
           ref={listRef}
         >
-          {rows.map((hit, i) => (
-            <div
-              key={hit.path}
-              id={`go-to-file-${i}`}
-              role="option"
-              aria-selected={i === at}
-              className={i === at ? "hit on" : "hit"}
-              title={hit.path}
-              // Not onClick: the input keeps the keyboard, and mousedown on a
-              // row must not take it away before the open lands.
-              onMouseDown={(event) => {
-                event.preventDefault();
-                open(hit);
-              }}
-              onMouseMove={(event) => hover(event, hit.path)}
-            >
-              <Row hit={hit} />
-            </div>
+          {rows.map((row, i) => (
+            <Fragment key={row.key}>
+              {/* A heading only where the two kinds meet, so a list of one
+                  kind reads exactly as it did before. */}
+              {sessionRows.length > 0 && fileRows.length > 0 && (i === 0 || i === sessionRows.length) ? (
+                <div className="hit-group" role="presentation">
+                  {row.kind === "session" ? "Sessions" : "Files"}
+                </div>
+              ) : null}
+              <div
+                id={`go-to-file-${i}`}
+                role="option"
+                aria-selected={i === at}
+                className={i === at ? "hit on" : "hit"}
+                title={row.kind === "file" ? row.hit.path : row.session.detail}
+                // Not onClick: the input keeps the keyboard, and mousedown on a
+                // row must not take it away before the open lands.
+                onMouseDown={(event) => {
+                  event.preventDefault();
+                  open(row);
+                }}
+                onMouseMove={(event) => hover(event, row.key)}
+              >
+                {row.kind === "file" ? (
+                  <FileRow hit={row.hit} />
+                ) : (
+                  <>
+                    <span className="hit-name">{row.session.name}</span>
+                    <span className="hit-dir">{row.session.detail}</span>
+                    {row.session.badge ? <span className="hit-badge">{row.session.badge}</span> : null}
+                  </>
+                )}
+              </div>
+            </Fragment>
           ))}
         </div>
       </div>

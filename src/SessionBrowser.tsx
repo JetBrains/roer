@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import type { ReactNode } from "react";
 
 import {
   ContextMenu,
@@ -37,7 +37,7 @@ export interface OpenRequest {
 }
 
 /** A session's directory, in the form a person recognises it. */
-function shorten(cwd: string, home: string | undefined): string {
+export function shorten(cwd: string, home: string | undefined): string {
   if (!cwd) return "";
   if (home && cwd === home) return "~";
   if (home && cwd.startsWith(`${home}/`)) return `~${cwd.slice(home.length)}`;
@@ -121,36 +121,8 @@ function LiveName({ session }: { session: SessionInfo }) {
   );
 }
 
-/**
- * Whether a row is one the filter asks for: every word typed appears
- * somewhere in what the row shows or its tooltip holds, in any case and any
- * order — "roer fix" finds the fixing task in the roer checkout.
- */
-export function matchesQuery(fields: Array<string | null | undefined>, query: string): boolean {
-  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
-  if (words.length === 0) return true;
-  const haystack = fields.filter(Boolean).join(" ").toLowerCase();
-  return words.every((word) => haystack.includes(word));
-}
-
-/** What a row is found by: the words it shows, the session's own name, and
- * its directory. */
-function searchFields(entry: SessionEntry): Array<string | null | undefined> {
-  if (entry.kind === "live") {
-    const { session } = entry;
-    return [
-      paneLabel(session.title, session.command),
-      runningAgent(session),
-      session.command,
-      session.session,
-      session.cwd,
-    ];
-  }
-  return [entry.session.title, entry.session.agent ?? "claude", entry.session.cwd];
-}
-
 /** How long ago a past conversation was last updated, roughly. */
-function relativeAge(updatedAt: number): string {
+export function relativeAge(updatedAt: number): string {
   const seconds = Math.max(0, Math.floor(Date.now() / 1000) - updatedAt);
   if (seconds < 60) return "just now";
   const minutes = Math.floor(seconds / 60);
@@ -299,8 +271,6 @@ export function SessionBrowser({
   refresh,
   onOpen,
 }: SessionBrowserProps) {
-  const [query, setQuery] = useState("");
-
   const attachableProjects: Project[] = selectedWorkspace
     ? projects.filter((project) => !selectedWorkspace.projects.includes(project.id))
     : [];
@@ -315,11 +285,10 @@ export function SessionBrowser({
   // One list, one heading per root — a running session and a resumable
   // conversation in the same repo are both just "Roer here", not two
   // differently-worded things.
-  const allEntries: SessionEntry[] = [
+  const entries: SessionEntry[] = [
     ...visibleSessions.map((session): SessionEntry => ({ kind: "live", session })),
     ...visibleClaudeSessions.map((session): SessionEntry => ({ kind: "resume", session })),
   ];
-  const entries = allEntries.filter((entry) => matchesQuery(searchFields(entry), query));
   const groups = groupByRoot(entries, (entry: SessionEntry) => entry.session.cwd, roots);
   const headings = distinctLabels(groups.flatMap((group) => (group.root ? [group.root] : [])));
 
@@ -332,23 +301,7 @@ export function SessionBrowser({
         </button>
       </h2>
 
-      {allEntries.length > 0 || query ? (
-        <input
-          type="search"
-          className="sessions-filter"
-          placeholder="Filter sessions"
-          aria-label="Filter sessions"
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Escape") setQuery("");
-          }}
-        />
-      ) : null}
-
-      {allEntries.length > 0 && entries.length === 0 ? (
-        <p className="muted">No sessions match “{query.trim()}”.</p>
-      ) : allEntries.length === 0 ? (
+      {visibleSessions.length === 0 && visibleClaudeSessions.length === 0 ? (
         <p className="muted">
           {selectedWorkspace ? (
             "Nothing running in this Workspace's projects yet."

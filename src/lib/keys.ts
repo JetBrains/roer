@@ -66,7 +66,7 @@ export const shortcutLabel = {
 export const allShortcuts = (): Array<[string, string]> => [
   ["New session", shortcutLabel.newSession()],
   ["New session with another agent", shortcutLabel.pickAgent()],
-  ["Go to File", shortcutLabel.goToFile()],
+  ["Search sessions and files", shortcutLabel.goToFile()],
   ["Sessions", shortcutLabel.tab(1)],
   ["Terminal", shortcutLabel.tab(2)],
   ["Changes", shortcutLabel.tab(3)],
