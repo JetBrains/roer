@@ -504,6 +504,8 @@ export function DiffPane({
         <p className="muted pad">{emptyMessage}</p>
       ) : null}
 
+      {!files && !error ? <p className="muted pad">Loading changes…</p> : null}
+
       {count > 0 ? (
         <div className="changes-body">
           <ul className="tree" aria-label="Changed files">
@@ -581,6 +583,10 @@ export function DiffPane({
             ) : null}
 
             {diffError ? <p className="error">{diffError}</p> : null}
+
+            {selected && !diffError && diff?.path !== selected.path ? (
+              <p className="muted pad">Loading diff…</p>
+            ) : null}
 
             {parsed?.binary ? (
               <p className="muted pad">Binary file — nothing to show.</p>

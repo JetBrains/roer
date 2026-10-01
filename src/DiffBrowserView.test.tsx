@@ -135,6 +135,14 @@ const batch = (paths: string[], over: Partial<FilesChanged> = {}): FilesChanged 
   ...over,
 });
 
+describe("DiffBrowserView — outside a repository", () => {
+  it("says the folder is not a git repository instead of showing nothing", async () => {
+    vi.mocked(gitRoot).mockResolvedValue(null);
+    view();
+    expect(await screen.findByText(/not a git repository/)).toBeInTheDocument();
+  });
+});
+
 describe("DiffBrowserView — local changes (the merged tab's default view)", () => {
   it("groups the changed files into a folder tree", async () => {
     view();

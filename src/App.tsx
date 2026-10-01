@@ -630,16 +630,19 @@ export function App() {
   const agentsCwdRef = useRef<string | undefined>(undefined);
   agentsCwdRef.current = browser.newSessionCwd();
   const agentsRequestRef = useRef(0);
+  const agentsErrorRef = useRef<string | null>(null);
   const refreshAgents = useCallback(() => {
     const request = ++agentsRequestRef.current;
     return listAgents(agentsCwdRef.current)
       .then((list) => {
         if (request !== agentsRequestRef.current) return undefined;
+        agentsErrorRef.current = null;
         setAgents(list);
         return list;
       })
       .catch((cause: unknown) => {
         console.warn("could not list agents", cause);
+        agentsErrorRef.current = String(cause);
         return undefined;
       });
   }, []);
@@ -661,6 +664,12 @@ export function App() {
     (start: AgentsDialogStart, startAfterSave = false) => {
       void refreshAgents().then((list) => {
         if (list) setAgentsDialog({ start, startAfterSave });
+        // Asked for, the dialog not opening is an answer only with a reason.
+        else if (agentsErrorRef.current) {
+          void message(agentsErrorRef.current, { title: "Could not list agents", kind: "error" }).catch(
+            () => {},
+          );
+        }
       });
     },
     [refreshAgents],
