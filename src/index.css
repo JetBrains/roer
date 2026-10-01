@@ -322,8 +322,8 @@ code {
   position: absolute;
   top: 0;
   bottom: 0;
-  left: -3px;
-  width: 6px;
+  left: -5px;
+  width: 10px;
   cursor: col-resize;
   z-index: 1;
 }
@@ -332,7 +332,6 @@ code {
   background: var(--roer-border);
 }
 
-/* Sits at the far end of the title bar, just before the panel toggle. */
 /* What the stage shows, between the window's own controls. */
 .titlebar-name {
   flex: 1 1 auto;
@@ -1449,8 +1448,15 @@ button.tab.file {
   color: var(--roer-fg);
 }
 
+/* At least 20px each way: the glyph is small, the target need not be. */
 button.tab-x {
-  padding: 0 7px 0 2px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  min-height: 20px;
+  margin-right: 3px;
+  padding: 0 4px;
   background: none;
   border: none;
   border-radius: 3px;
