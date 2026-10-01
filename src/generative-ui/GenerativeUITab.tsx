@@ -1,13 +1,12 @@
 /**
- * The "plan review before execution" ADLC scenario from the research draft,
- * wired end to end: messages -> the same reducer a real drafting call feeds
- * -> the trusted renderer -> a result an agent would read back.
+ * The panel an agent's `show_ui` draws in: messages -> the reducer -> the
+ * trusted renderer -> the actions the agent reads back.
  *
  * State lives in the parent (`App`), because the live bridge needs to reach
  * it from outside a render: a `roer plugin-ui` message arrives as a Tauri
  * event, not a prop, and has to update the same reducer a checkbox flip does.
  * This component owns only the one piece of state nothing outside it cares
- * about — the approve/cancel result banner.
+ * about — the line saying a click reached the agent.
  */
 import { useEffect, useState } from "react";
 
@@ -105,21 +104,9 @@ export function GenerativeUITab({
   };
 
   const handleAction = (event: ResolvedEvent, sourceComponentId: ComponentId) => {
-    const action = event.name;
-    if (action === "approve") {
-      const chosen = Object.entries((dataModel.changes as Record<string, boolean>) ?? {})
-        .filter(([, on]) => on)
-        .map(([id]) => id);
-      setResult(
-        chosen.length > 0
-          ? `Approved: ${chosen.join(", ")}`
-          : "Approved, but nothing was checked — nothing to apply.",
-      );
-    } else if (action === "reject") {
-      setResult("Cancelled. Nothing was applied.");
-    } else {
-      setResult(null);
-    }
+    // What the click means is the agent's to say; all this can tell is that
+    // it went where the agent reads.
+    setResult(pane ? `Sent “${event.name}” to the agent.` : null);
 
     if (pane) {
       reportPluginUiAction({
@@ -217,7 +204,8 @@ export function GenerativeUITab({
         />
       ) : (
         <p className="gen-text muted">
-          Canvas for the agent's <code>show_ui</code>
+          Nothing here yet. When an agent shows you something to look at or answer, such as a
+          plan to approve or a dashboard, it appears here.
         </p>
       )}
 

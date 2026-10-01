@@ -7,6 +7,7 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
+import { confirmAction } from "./lib/confirm";
 import { pickFolder } from "./lib/folderPicker";
 import {
   DropdownMenu,
@@ -15,9 +16,10 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import type { Repo } from "./lib/git";
 import type { Project } from "./lib/projects";
 import type { ClaudeSession, SessionInfo } from "./lib/pty";
-import type { SessionBrowserState } from "./lib/useSessionBrowser";
+import type { DirStats, SessionBrowserState } from "./lib/useSessionBrowser";
 import type { Workspace } from "./lib/workspaces";
 
 export interface OpenRequest {
@@ -36,7 +38,7 @@ export interface OpenRequest {
 }
 
 /** A session's directory, in the form a person recognises it. */
-function shorten(cwd: string, home: string | undefined): string {
+export function shorten(cwd: string, home: string | undefined): string {
   if (!cwd) return "";
   if (home && cwd === home) return "~";
   if (home && cwd.startsWith(`${home}/`)) return `~${cwd.slice(home.length)}`;
@@ -76,6 +78,53 @@ export function paneLabel(title: string | undefined, command: string): string {
   return text === command ? "" : text;
 }
 
+/** How recently an agent that titles nothing must have printed to count as
+ * at work: its spinner redraws several times a second while it works, and
+ * it falls quiet once it waits. Longer than the list's poll, so one quiet
+ * moment between reads is not taken for a stop. */
+export const ACTIVE_SECS = 5;
+
+/** How long a session its hooks call working may go without printing before
+ * it is taken for stopped: Claude Code runs no hook when Esc interrupts a
+ * turn, so `working` outlives it. Its spinner and timer redraw for as long
+ * as it really works, a slow tool included, so this only outlasts a stall. */
+export const HOOKED_QUIET_SECS = 30;
+
+/**
+ * Whether the agent in the pane is at work. Best is what its own hooks said,
+ * which Claude Code started by roer has, short of a `working` that has gone
+ * quiet for too long to be true. Without them, Claude Code still says
+ * so in its title: a braille spinner frame while it works, `✳` once it waits
+ * for input. Any other agent is at work while it keeps printing. Never true
+ * for a shell or anything else that is not an agent, whose output means
+ * nothing of the kind.
+ */
+export function isWorking(session: SessionInfo, now = Date.now() / 1000): boolean {
+  // A turn interrupted with Esc never says so; its silence does. The title
+  // can lag a turn that has just begun, so it does not count against a hook.
+  if (session.state === "working") return !session.activity || now - session.activity <= HOOKED_QUIET_SECS;
+  if (session.state) return false;
+  const title = session.title ?? "";
+  if (/^[\u2801-\u28ff]/u.test(title)) return true;
+  if (/^\u2733/u.test(title)) return false;
+  if (!runningAgent(session)) return false;
+  return !!session.activity && now - session.activity <= ACTIVE_SECS;
+}
+
+/** Whether the agent is held up on you — a permission prompt, a question —
+ * rather than done with its turn. Only its hooks can tell those apart. */
+export function needsYou(session: SessionInfo): boolean {
+  return session.state === "waiting";
+}
+
+/** Where a live row goes in its group: what is held up on you, what has
+ * finished and waits, what is at work, then the rest, each in the order
+ * tmux listed them. */
+function liveRank(session: SessionInfo, waiting: ReadonlySet<string>): number {
+  if (waiting.has(session.pane)) return needsYou(session) ? 0 : 1;
+  return isWorking(session) ? 2 : 3;
+}
+
 /** The CLIs roer knows, by the command tmux reports for them. */
 const AGENT_COMMANDS = new Set(["claude", "codex", "pi", "gemini", "junie", "opencode"]);
 
@@ -110,8 +159,73 @@ function LiveName({ session }: { session: SessionInfo }) {
   );
 }
 
+/** Live rows in the order they matter: waiting, working, the rest. Past
+ * conversations stay after them, as they were. */
+function byRank(items: SessionEntry[], waiting: ReadonlySet<string>): SessionEntry[] {
+  const rank = (entry: SessionEntry) => (entry.kind === "live" ? liveRank(entry.session, waiting) : 4);
+  return items
+    .map((entry, index) => ({ entry, index }))
+    .sort((a, b) => rank(a.entry) - rank(b.entry) || a.index - b.index)
+    .map(({ entry }) => entry);
+}
+
+/** What tells one row from the next without opening it: the branch, what
+ * is uncommitted on it, and when the session last printed anything. */
+function RowMeta({
+  session,
+  stats,
+  worktree,
+}: {
+  session: SessionInfo;
+  stats: DirStats | undefined;
+  worktree: string | null;
+}) {
+  const parts: ReactNode[] = [];
+  // What the checkout is on now, read again every so often: a session can
+  // switch branch. A detached one goes by its commit, never the word, which
+  // on a row says nobody holds the session. A linked worktree's folder only
+  // when there is neither, and nothing at all outside a repository.
+  const head = checkoutLabel(stats, worktree);
+  if (head) {
+    parts.push(
+      <span key="head" className={worktree ? "worktree" : undefined} title={head.title}>
+        {head.text}
+      </span>,
+    );
+  }
+  if (stats && stats.files > 0) {
+    parts.push(
+      <span key="changes" className="counts" title={`${stats.files} ${stats.files === 1 ? "file" : "files"} changed`}>
+        <span className="plus">+{stats.added}</span> <span className="minus">−{stats.deleted}</span>
+      </span>,
+    );
+  }
+  if (session.activity) parts.push(<span key="age">{relativeAge(session.activity)}</span>);
+  return parts.length > 0 ? <span className="row-meta">{parts}</span> : null;
+}
+
+/** What a row names its checkout by: its branch, else its commit, else a
+ * linked worktree's folder; `null` with none of them. */
+export function checkoutLabel(
+  stats: DirStats | undefined,
+  worktree: string | null,
+): { text: string; title: string } | null {
+  const where = worktree ? ` in the worktree ${worktree}` : "";
+  if (stats?.branch && stats.branch !== "(detached)") return { text: stats.branch, title: `On ${stats.branch}${where}` };
+  if (stats?.commit) return { text: stats.commit, title: `No branch: at commit ${stats.commit}${where}` };
+  if (worktree) return { text: worktree, title: `In the worktree ${worktree}` };
+  return null;
+}
+
+/** A linked worktree's folder name, for a row grouped with the main
+ * checkout's; `null` in the main checkout or outside a repository. */
+function worktreeName(repo: Repo | undefined): string | null {
+  if (!repo || repo.root === repo.main) return null;
+  return repo.root.replace(/\/+$/, "").split("/").pop() ?? repo.root;
+}
+
 /** How long ago a past conversation was last updated, roughly. */
-function relativeAge(updatedAt: number): string {
+export function relativeAge(updatedAt: number): string {
   const seconds = Math.max(0, Math.floor(Date.now() / 1000) - updatedAt);
   if (seconds < 60) return "just now";
   const minutes = Math.floor(seconds / 60);
@@ -166,15 +280,18 @@ function AssignMenu({
   workspaces,
   assignedTo,
   handleAssign,
+  onEnd,
   children,
 }: {
   sessionId: string;
   workspaces: Workspace[];
   assignedTo: string | undefined;
   handleAssign: (sessionId: string, workspaceId: string | null) => void;
+  /** A live session's End session; a past conversation has none. */
+  onEnd?: () => void;
   children: ReactNode;
 }) {
-  if (workspaces.length === 0 && !assignedTo) return <>{children}</>;
+  if (workspaces.length === 0 && !assignedTo && !onEnd) return <>{children}</>;
   return (
     <ContextMenu>
       <ContextMenuTrigger asChild>{children}</ContextMenuTrigger>
@@ -190,7 +307,17 @@ function AssignMenu({
         ))}
         {workspaces.length > 0 && assignedTo ? <ContextMenuSeparator /> : null}
         {assignedTo ? (
-          <ContextMenuItem onSelect={() => handleAssign(sessionId, null)}>Unassign</ContextMenuItem>
+          <ContextMenuItem onSelect={() => handleAssign(sessionId, null)}>
+            Remove from {workspaces.find((workspace) => workspace.id === assignedTo)?.name ?? "Workspace"}
+          </ContextMenuItem>
+        ) : null}
+        {onEnd ? (
+          <>
+            {workspaces.length > 0 || assignedTo ? <ContextMenuSeparator /> : null}
+            <ContextMenuItem variant="destructive" onSelect={onEnd}>
+              End session…
+            </ContextMenuItem>
+          </>
         ) : null}
       </ContextMenuContent>
     </ContextMenu>
@@ -216,6 +343,10 @@ export type SessionBrowserProps = Pick<
   | "handleAddItem"
   | "handleRemoveItem"
   | "roots"
+  | "repos"
+  | "waiting"
+  | "stats"
+  | "handleEndSession"
   | "visibleSessions"
   | "visibleClaudeSessions"
   | "activePane"
@@ -249,6 +380,10 @@ export function SessionBrowser({
   handleAddItem,
   handleRemoveItem,
   roots,
+  repos,
+  waiting,
+  stats,
+  handleEndSession,
   visibleSessions,
   visibleClaudeSessions,
   activePane,
@@ -306,7 +441,7 @@ export function SessionBrowser({
               </h3>
             ) : null}
             <ul>
-              {group.items.map((entry) =>
+              {byRank(group.items, waiting).map((entry) =>
                 entry.kind === "live" ? (
                   <li key={`live-${entry.session.pane}`}>
                     <AssignMenu
@@ -314,6 +449,7 @@ export function SessionBrowser({
                       workspaces={workspaces}
                       assignedTo={assignments[entry.session.id]}
                       handleAssign={handleAssign}
+                      onEnd={() => handleEndSession(entry.session)}
                     >
                       <span className="workspace-row">
                         <button
@@ -331,6 +467,22 @@ export function SessionBrowser({
                           }
                         >
                           <LiveName session={entry.session} />
+                          <RowMeta
+                            session={entry.session}
+                            stats={stats[entry.session.cwd]}
+                            worktree={worktreeName(repos[entry.session.cwd])}
+                          />
+                          {entry.session.pane === activePane ? null : isWorking(entry.session) ? (
+                            <span className="badge working">working</span>
+                          ) : waiting.has(entry.session.pane) ? (
+                            needsYou(entry.session) ? (
+                              <span className="badge needs" title={entry.session.note || undefined}>
+                                needs you
+                              </span>
+                            ) : (
+                              <span className="badge waiting">waiting</span>
+                            )
+                          ) : null}
                           {/* Attaching takes a session over from whoever holds it,
                               which may be a terminal or another window of this app. */}
                           <span
@@ -346,7 +498,7 @@ export function SessionBrowser({
                               ? "open here"
                               : entry.session.attached
                                 ? "attached"
-                                : "idle"}
+                                : "detached"}
                           </span>
                         </button>
                       </span>
@@ -459,6 +611,10 @@ export function SessionBrowser({
                 placeholder="Title"
                 value={itemTitle}
                 onChange={(event) => setItemTitle(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") handleAddItem();
+                  if (event.key === "Escape") setAddingItem(false);
+                }}
                 autoFocus
               />
               <button type="button" className="primary" disabled={!itemTitle.trim()} onClick={handleAddItem}>
@@ -482,7 +638,11 @@ export function SessionBrowser({
                       type="button"
                       className="tab-x"
                       aria-label={`Remove ${item.title}`}
-                      onClick={() => handleRemoveItem(item.id)}
+                      onClick={() =>
+                        void confirmAction(`Remove "${item.title}"?`, "Remove item").then(
+                          (confirmed) => confirmed && handleRemoveItem(item.id),
+                        )
+                      }
                     >
                       ×
                     </button>

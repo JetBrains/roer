@@ -10,6 +10,9 @@ import {
   setDefaultAgent,
   type AgentList,
 } from "./lib/agents";
+import { confirmAction } from "./lib/confirm";
+
+vi.mock("./lib/confirm", () => ({ confirmAction: vi.fn() }));
 
 vi.mock("./lib/agents", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./lib/agents")>()),
@@ -53,6 +56,49 @@ beforeEach(() => {
 });
 
 describe("AgentsDialog", () => {
+  it("asks before Esc throws away an unsaved edit, and not before that", async () => {
+    const onClose = vi.fn();
+    render(
+      <AgentsDialog
+        list={list}
+        cwd="/work"
+        start={{ mode: "new" }}
+        onChanged={async () => list}
+        onStart={vi.fn()}
+        onClose={onClose}
+      />,
+    );
+    const dialog = screen.getByRole("dialog");
+    fireEvent.change(screen.getByPlaceholderText(/reviewer/), { target: { value: "Reviewer" } });
+
+    vi.mocked(confirmAction).mockReset().mockResolvedValue(false);
+    fireEvent.keyDown(dialog, { key: "Escape" });
+    await waitFor(() => expect(confirmAction).toHaveBeenCalled());
+    expect(onClose).not.toHaveBeenCalled();
+
+    vi.mocked(confirmAction).mockResolvedValue(true);
+    fireEvent.keyDown(dialog, { key: "Escape" });
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+  });
+
+  it("closes on Esc without asking when nothing changed", async () => {
+    const onClose = vi.fn();
+    vi.mocked(confirmAction).mockReset();
+    render(
+      <AgentsDialog
+        list={list}
+        cwd="/work"
+        start={{ mode: "edit", id: "claude" }}
+        onChanged={async () => list}
+        onStart={vi.fn()}
+        onClose={onClose}
+      />,
+    );
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    expect(confirmAction).not.toHaveBeenCalled();
+  });
+
   it("saves a new agent with only what its CLI takes, then starts it", async () => {
     const onStart = vi.fn();
     const onClose = vi.fn();

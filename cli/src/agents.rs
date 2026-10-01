@@ -45,6 +45,10 @@ pub struct Cli {
     instructions: &'static [&'static str],
     /// Goes first, since for codex it is a subcommand.
     resume: &'static [&'static str],
+    /// How to hand the CLI a settings file of roer's own, for the hooks that
+    /// report what it is doing (see `status_hooks`); empty for a CLI with no
+    /// such thing.
+    status: &'static [&'static str],
     /// Offered while nothing better is known: see `models`.
     models: &'static [&'static str],
     /// What tmux calls the agent's process while it runs, which is how
@@ -66,6 +70,7 @@ pub const CLIS: &[Cli] = &[
         full: Some(&["--dangerously-skip-permissions"]),
         instructions: &["--append-system-prompt-file", "{}"],
         resume: &["--resume", "{}"],
+        status: &["--settings", "{}"],
         models: &["opus", "sonnet", "haiku", "claude-opus-5-5", "claude-sonnet-5-5", "claude-fable-5-1"],
         procs: &["claude"],
     },
@@ -83,6 +88,7 @@ pub const CLIS: &[Cli] = &[
         // would replace them.
         instructions: &["-c", "developer_instructions={toml}"],
         resume: &["resume", "{}"],
+        status: &[],
         models: &["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex"],
         procs: &["codex"],
     },
@@ -98,6 +104,7 @@ pub const CLIS: &[Cli] = &[
         full: None,
         instructions: &["--append-system-prompt", "{}"],
         resume: &["--session", "{}"],
+        status: &[],
         models: &[],
         procs: &["pi", "node"],
     },
@@ -113,6 +120,7 @@ pub const CLIS: &[Cli] = &[
         full: Some(&["--yolo"]),
         instructions: &[],
         resume: &[],
+        status: &[],
         models: &["gemini-2.5-pro", "gemini-2.5-flash"],
         procs: &["gemini", "node"],
     },
@@ -128,6 +136,7 @@ pub const CLIS: &[Cli] = &[
         full: Some(&["--brave"]),
         instructions: &["--system-prompt={text}"],
         resume: &["--resume", "--session-id={}"],
+        status: &[],
         models: &[],
         procs: &["junie"],
     },
@@ -143,6 +152,7 @@ pub const CLIS: &[Cli] = &[
         full: None,
         instructions: &[],
         resume: &["-s", "{}"],
+        status: &[],
         models: &[],
         procs: &["opencode"],
     },
@@ -348,8 +358,9 @@ impl Agent {
     }
 
     /// The words that start this agent, program first. `prompt` is where the
-    /// instructions are, when there are any.
-    fn words(&self, resume: Option<&str>, prompt: Option<&Prompt>) -> Result<Vec<Word>, Fail> {
+    /// instructions are, when there are any; `status` is roer's settings file
+    /// for the CLI, when it takes one.
+    fn words(&self, resume: Option<&str>, prompt: Option<&Prompt>, status: Option<&Path>) -> Result<Vec<Word>, Fail> {
         if self.cli == "custom" {
             if resume.is_some() {
                 return Err(Fail::new(2, format!("{} cannot resume a conversation", self.name)));
@@ -391,6 +402,9 @@ impl Agent {
                 words.push(prompt.word(template));
             }
         }
+        if let Some(status) = status {
+            words.extend(fill(cli.status, &status.to_string_lossy()).into_iter().map(Word::Plain));
+        }
         let args = if resume.is_some() { without_permission_flags(&self.args) } else { self.args.clone() };
         words.extend(args.into_iter().map(Word::Plain));
         Ok(words)
@@ -399,6 +413,17 @@ impl Agent {
     /// The line typed into the session's shell. The instructions go through a
     /// file, since typing them would submit the line at their first newline.
     pub fn command_line(&self, resume: Option<&str>, write_prompt: bool) -> Result<String, Fail> {
+        self.command_line_with(resume, write_prompt, None)
+    }
+
+    /// Whether the CLI takes roer's status hooks.
+    pub fn takes_status(&self) -> bool {
+        self.cli != "custom" && cli(&self.cli).is_some_and(|cli| !cli.status.is_empty())
+    }
+
+    /// `command_line`, with roer's status settings file handed to a CLI that
+    /// takes one.
+    pub fn command_line_with(&self, resume: Option<&str>, write_prompt: bool, status: Option<&Path>) -> Result<String, Fail> {
         let prompt = if self.instructions.is_empty() {
             None
         } else {
@@ -411,7 +436,7 @@ impl Agent {
         if let Some(key) = self.env.keys().find(|key| !is_env_name(key)) {
             return Err(Fail::new(2, format!("not an environment variable name: {key:?}")));
         }
-        let words = self.words(resume, prompt.as_ref())?;
+        let words = self.words(resume, prompt.as_ref(), status)?;
         let mut line = String::new();
         for (key, value) in &self.env {
             if cfg!(windows) {
@@ -1337,7 +1362,21 @@ mod tests {
     }
 
     #[test]
-    fn refuses_settings_a_cli_would_ignore() {
+    fn hands_claude_the_status_hooks_and_no_one_else() {
+        let path = std::path::Path::new("/home/me/.roer/claude-status.json");
+        let claude = agent("claude");
+        assert!(claude.takes_status());
+        assert_eq!(
+            claude.command_line_with(None, false, Some(path)).unwrap(),
+            "claude --settings /home/me/.roer/claude-status.json"
+        );
+        let codex = agent("codex");
+        assert!(!codex.takes_status());
+        assert_eq!(codex.command_line_with(None, false, Some(path)).unwrap(), "codex");
+    }
+
+    #[test]
+        fn refuses_settings_a_cli_would_ignore() {
         let mut gemini = agent("gemini");
         gemini.effort = "high".into();
         assert!(gemini.check().is_err());

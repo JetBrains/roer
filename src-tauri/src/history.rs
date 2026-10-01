@@ -200,6 +200,10 @@ mod tests {
             command: "zsh".to_string(),
             agent: String::new(),
             title: String::new(),
+            activity: 0,
+            bell: false,
+            state: String::new(),
+            note: String::new(),
         }
     }
 

@@ -130,6 +130,16 @@ pub struct SessionInfo {
     /// What the program in the pane last titled it — Claude Code's summary of
     /// the task. Empty when nothing has, or when the shim predates the column.
     pub title: String,
+    /// When the window last printed anything, in seconds since the epoch; 0
+    /// when the shim is too old to say (it prints TSV) or the engine cannot.
+    pub activity: u64,
+    /// Whether it rang the bell where nobody was looking.
+    pub bell: bool,
+    /// What the agent's own hooks last said it is doing — `working`,
+    /// `waiting` or `done` — while it runs; empty when it has no hooks.
+    pub state: String,
+    /// Its words for what it is waiting for, with `waiting`.
+    pub note: String,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -162,6 +172,21 @@ pub fn roer_status() -> Status {
         home: home()
             .map(|home| home.to_string_lossy().into_owned())
             .unwrap_or_default(),
+    }
+}
+
+/// Ends the session `pane` is in, with whatever runs in it — the Sessions
+/// list's End session.
+#[tauri::command(async)]
+pub fn roer_kill(pane: String) -> Result<(), String> {
+    let out = crate::process::command(bin())
+        .args(["kill", "--pane", &pane])
+        .output()
+        .map_err(|e| format!("could not run `{} kill`: {e}", bin()))?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
     }
 }
 
@@ -214,8 +239,10 @@ pub fn roer_past_sessions() -> Result<Vec<PastSession>, String> {
 }
 
 fn live_sessions() -> Result<Vec<SessionInfo>, String> {
+    // `--json` for the activity and the bell; a shim from before it ignores
+    // the flag and prints TSV, which `parse_line` reads too.
     let out = crate::process::command(bin())
-        .arg("list")
+        .args(["list", "--json"])
         .output()
         .map_err(|e| format!("could not run `{} list`: {e}", bin()))?;
 
@@ -227,9 +254,52 @@ fn live_sessions() -> Result<Vec<SessionInfo>, String> {
         .collect())
 }
 
-/// One TSV row: id, session, pane, attached|detached, cwd, command, agent,
-/// title.
+/// One JSON row of `roer list --json`.
+#[derive(serde::Deserialize)]
+struct JsonRow {
+    id: String,
+    session: String,
+    pane: String,
+    attached: bool,
+    #[serde(default)]
+    cwd: String,
+    #[serde(default)]
+    command: String,
+    #[serde(default)]
+    agent: String,
+    #[serde(default)]
+    title: String,
+    #[serde(default)]
+    activity: u64,
+    #[serde(default)]
+    bell: bool,
+    #[serde(default)]
+    state: String,
+    #[serde(default)]
+    note: String,
+}
+
+/// One row of `roer list`: JSON from a shim that knows `--json`, otherwise
+/// TSV — id, session, pane, attached|detached, cwd, command, agent, title.
 fn parse_line(line: &str) -> Option<SessionInfo> {
+    if line.starts_with('{') {
+        let row: JsonRow = serde_json::from_str(line).ok()?;
+        let info = SessionInfo {
+            id: row.id,
+            session: row.session,
+            pane: row.pane,
+            attached: row.attached,
+            cwd: row.cwd,
+            command: command_name(&row.command),
+            agent: row.agent,
+            title: row.title,
+            activity: row.activity,
+            bell: row.bell,
+            state: row.state,
+            note: row.note,
+        };
+        return (!info.session.is_empty()).then_some(info);
+    }
     // The title is free text and comes last, so it keeps any tab it contains.
     let mut f = line.splitn(8, '\t');
     let info = SessionInfo {
@@ -241,6 +311,10 @@ fn parse_line(line: &str) -> Option<SessionInfo> {
         command: command_name(f.next().unwrap_or_default()),
         agent: f.next().unwrap_or_default().to_string(),
         title: f.next().unwrap_or_default().to_string(),
+        activity: 0,
+        bell: false,
+        state: String::new(),
+        note: String::new(),
     };
     (!info.session.is_empty()).then_some(info)
 }
@@ -331,6 +405,19 @@ mod tests {
     }
 
     use super::parse_line;
+
+    #[test]
+    fn parses_a_json_row() {
+        let got = parse_line(
+            r#"{"id":"abc","session":"roer","pane":"%0","attached":false,"cwd":"/tmp","command":"2.1.280","agent":"","title":"\u2733 fix","activity":1790000000,"bell":true}"#,
+        )
+        .expect("row");
+        assert_eq!(got.session, "roer");
+        assert_eq!(got.command, "claude");
+        assert_eq!(got.title, "\u{2733} fix");
+        assert_eq!(got.activity, 1_790_000_000);
+        assert!(got.bell);
+    }
 
     #[test]
     fn parses_a_tsv_row() {

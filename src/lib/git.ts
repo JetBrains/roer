@@ -24,10 +24,25 @@ export interface FileChange {
 export interface Changes {
   root: string;
   branch: string;
+  /** The checked-out commit, abbreviated; empty before the first one. */
+  commit: string;
   files: FileChange[];
 }
 
 export const gitChanges = (cwd: string): Promise<Changes> => invoke("git_changes", { cwd });
+
+/** Where a directory sits among its repository's worktrees. */
+export interface Repo {
+  /** The checkout it is in: a linked worktree's own folder. */
+  root: string;
+  /** The repository's main checkout, the same from every worktree. */
+  main: string;
+  /** Every worktree, the main checkout first. */
+  worktrees: string[];
+}
+
+/** Which repository a directory is in, whichever worktree; `null` outside one. */
+export const gitRepo = (cwd: string): Promise<Repo | null> => invoke("git_repo", { cwd });
 
 /** The repository a directory sits in, or `null` outside one. */
 export const gitRoot = (cwd: string): Promise<string | null> => invoke("git_root", { cwd });

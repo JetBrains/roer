@@ -36,6 +36,7 @@ pub fn run() {
             handoff::focus(app);
         }))
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
         .manage(pty::PtyState::default())
         .manage(files::FileIndex::default())
         .invoke_handler(tauri::generate_handler![
@@ -50,6 +51,7 @@ pub fn run() {
             git::git_changes,
             git::git_diff,
             git::git_root,
+            git::git_repo,
             git::git_branches,
             git::git_current_branch,
             git::git_branch_commits,
@@ -70,6 +72,7 @@ pub fn run() {
             roer::roer_past_sessions,
             roer::roer_status,
             roer::roer_send,
+            roer::roer_kill,
             claude::roer_claude_threads,
             agents::agents_list,
             agents::agent_save,

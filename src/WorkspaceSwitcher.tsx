@@ -6,6 +6,7 @@ import {
   ContextMenuItem,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
+import { confirmAction } from "./lib/confirm";
 import { type Workspace } from "./lib/workspaces";
 
 export interface WorkspaceSwitcherProps {
@@ -55,6 +56,14 @@ export function WorkspaceSwitcher({
     setRenamingId(null);
   };
 
+  const confirmDelete = async (workspace: Workspace) => {
+    const confirmed = await confirmAction(
+      `Delete "${workspace.name}"? Its projects and sessions stay; only the Workspace goes.`,
+      "Delete workspace",
+    );
+    if (confirmed) onDelete(workspace.id);
+  };
+
   return (
     <div className="workspace-switcher">
       <h2>
@@ -76,6 +85,10 @@ export function WorkspaceSwitcher({
             placeholder="Name"
             value={name}
             onChange={(event) => setName(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") submit();
+              if (event.key === "Escape") setCreating(false);
+            }}
             autoFocus
           />
           <button type="button" className="primary" disabled={!name.trim()} onClick={submit}>
@@ -139,7 +152,7 @@ export function WorkspaceSwitcher({
                   {/* The first is Default, which the backend will not delete
                       for now: something always has to be selected. */}
                   {index > 0 ? (
-                    <ContextMenuItem variant="destructive" onSelect={() => onDelete(workspace.id)}>
+                    <ContextMenuItem variant="destructive" onSelect={() => void confirmDelete(workspace)}>
                       Delete
                     </ContextMenuItem>
                   ) : null}

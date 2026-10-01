@@ -313,6 +313,20 @@ describe("App", () => {
     expect(localStorage.getItem("roer:theme")).toBe("system");
   });
 
+  it("turns notifications off and on from the title bar, remembering it", async () => {
+    render(<App />);
+    const toggle = await screen.findByRole("button", { name: "Notifications" });
+    expect(toggle).toHaveAttribute("aria-pressed", "true");
+
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-pressed", "false");
+    expect(localStorage.getItem("roer:notifications")).toBe("off");
+
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-pressed", "true");
+    expect(localStorage.getItem("roer:notifications")).toBe("on");
+  });
+
   it("opens on the launcher rather than a terminal", async () => {
     render(<App />);
 
@@ -815,13 +829,15 @@ describe("App", () => {
     expect(screen.queryByTestId("go-to-file")).not.toBeInTheDocument();
   });
 
-  it("has nothing to search without a session", async () => {
+  it("searches only sessions without one on the stage", async () => {
     render(<App />);
     await screen.findByRole("button", { name: /new session/i });
 
     goToFile(window);
 
-    expect(screen.queryByTestId("go-to-file")).not.toBeInTheDocument();
+    expect(await screen.findByTestId("go-to-file")).toBeInTheDocument();
+    expect(screen.getByRole("combobox")).toHaveAttribute("placeholder", "Search sessions");
+    expect(filesSearch).not.toHaveBeenCalled();
   });
 
   it("closes Go to File when the session ends under it", async () => {

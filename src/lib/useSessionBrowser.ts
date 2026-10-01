@@ -1,9 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ask } from "@tauri-apps/plugin-dialog";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { logLine } from "./log";
 
-import { gitRoot } from "../lib/git";
+import { gitChanges, gitRepo, type Repo } from "../lib/git";
+import { confirmAction } from "./confirm";
+import { notify } from "./notify";
 import {
+  killSession,
   listClaudeSessions,
   listPastSessions,
   listSessions,
@@ -33,7 +37,16 @@ import {
   workspaceAssignments,
   type Workspace,
 } from "../lib/workspaces";
-import type { OpenRequest } from "../SessionBrowser";
+import { isWorking, paneLabel, runningAgent, shorten, type OpenRequest } from "../SessionBrowser";
+
+/** What a session's directory has on its branch, for its row. */
+export interface DirStats {
+  branch: string;
+  commit: string;
+  files: number;
+  added: number;
+  deleted: number;
+}
 
 export interface UseSessionBrowserArgs {
   /** The pane on the stage, so the list can mark it rather than offer it. */
@@ -60,6 +73,9 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [claudeSessions, setClaudeSessions] = useState<ClaudeSession[]>([]);
   const [roots, setRoots] = useState<Record<string, string>>({});
+  // Each known directory's repository, which is what says a session in a
+  // linked worktree is still the same project.
+  const [repos, setRepos] = useState<Record<string, Repo>>({});
   const [failure, setShownFailure] = useState<string | null>(null);
   // Every failure the browser shows is one a bug report wants too.
   const setFailure = useCallback((next: string | null) => {
@@ -116,23 +132,136 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
   // that was not there before the click.
   const pendingAssignRef = useRef<{ known: string[]; workspaceId: string } | null>(null);
 
+  // Panes whose agent finished while nobody was looking: it worked, and
+  // stopped, somewhere other than on the stage. Seen once it is opened, or
+  // once it goes back to work, which means someone answered it elsewhere.
+  //
+  // A pane is seen while it is on the stage and the window has the focus: a
+  // session that stops while Roer is behind another app waits too.
+  const [waiting, setWaitingRaw] = useState<ReadonlySet<string>>(() => new Set());
+  const waitingRef = useRef<ReadonlySet<string>>(waiting);
+  const setWaiting = useCallback((next: ReadonlySet<string>) => {
+    const same = next.size === waitingRef.current.size && [...next].every((pane) => waitingRef.current.has(pane));
+    if (same) return;
+    waitingRef.current = next;
+    setWaitingRaw(next);
+  }, []);
+  const workingRef = useRef(new Map<string, boolean>());
+  const bellRef = useRef(new Map<string, boolean>());
+  const stateRef = useRef(new Map<string, string>());
+  // The first list only says how things stand: nothing in it is news.
+  const firstListRef = useRef(true);
+  const activePaneRef = useRef(activePane);
+  activePaneRef.current = activePane;
+  const onOpenRef = useRef(onOpen);
+  onOpenRef.current = onOpen;
+  const homeRef = useRef<string | undefined>(undefined);
+
+  /** Takes in a fresh live list: the rows, what finished or rang since the
+   * last one, and the new session a Workspace is waiting to be given. */
+  const takeLive = useCallback((live: SessionInfo[]) => {
+    setSessions((current) => (JSON.stringify(current) === JSON.stringify(live) ? current : live));
+
+    const now = Date.now() / 1000;
+    const wasWorking = workingRef.current;
+    const hadRung = bellRef.current;
+    const wasState = stateRef.current;
+    stateRef.current = new Map(live.map((session) => [session.pane, session.state ?? ""]));
+    const working = new Map(live.map((session) => [session.pane, isWorking(session, now)]));
+    workingRef.current = working;
+    bellRef.current = new Map(live.map((session) => [session.pane, Boolean(session.bell)]));
+    const seen = (pane: string) => pane === activePaneRef.current && document.hasFocus();
+
+    // An agent that stopped, asked for something, or rang for attention.
+    const turned = live.filter(
+      (session) =>
+        !seen(session.pane) &&
+        !working.get(session.pane) &&
+        (wasWorking.get(session.pane) ||
+          (session.state === "waiting" && wasState.get(session.pane) !== "waiting") ||
+          (session.bell && !hadRung.get(session.pane))),
+    );
+    const before = waitingRef.current;
+    setWaiting(
+      new Set(
+        [...before, ...turned.map((session) => session.pane)].filter(
+          (pane) => !seen(pane) && working.get(pane) === false,
+        ),
+      ),
+    );
+
+    // Named, so the notification says which one: "is waiting" alone, with
+    // several sessions running, says nothing.
+    if (!firstListRef.current) {
+      for (const session of turned) {
+        if (before.has(session.pane)) continue;
+        const who = runningAgent(session) ?? session.command;
+        const name = paneLabel(session.title, session.command) || who;
+        // Claude's own words when its hooks gave them: "Claude needs your
+        // permission to use Bash" says what to do, not only where.
+        const what = session.note || `${who} is waiting for you`;
+        void notify(name, `${what} · ${shorten(session.cwd, homeRef.current)}`, () =>
+          onOpenRef.current({
+            args: ["attach", session.pane],
+            cwd: session.cwd,
+            title: session.session,
+            pane: session.pane,
+          }),
+        );
+      }
+    }
+    firstListRef.current = false;
+
+    const pending = pendingAssignRef.current;
+    if (pending) {
+      const fresh = live.filter((session) => !pending.known.includes(session.pane));
+      if (fresh.length === 1) {
+        pendingAssignRef.current = null;
+        const { id: sessionId } = fresh[0];
+        const { workspaceId } = pending;
+        void assignSession(sessionId, workspaceId)
+          .then(() => setAssignments((current) => ({ ...current, [sessionId]: workspaceId })))
+          .catch((cause: unknown) => setFailure(String(cause)));
+      }
+    }
+  }, []);
+
+  // Branch and uncommitted changes per directory, read with the full list
+  // and every so often between, never on every poll: `git status` is the
+  // slowest thing a row shows.
+  const [stats, setStats] = useState<Record<string, DirStats>>({});
+  const refreshStats = useCallback((live: SessionInfo[]) => {
+    const cwds = [...new Set(live.map((session) => session.cwd))].filter(Boolean);
+    void Promise.all(
+      cwds.map((cwd) =>
+        Promise.resolve()
+          .then(() => gitChanges(cwd))
+          .then((changes): [string, DirStats] => {
+            const counted = changes.files.filter((file) => file.counted);
+            return [
+              cwd,
+              {
+                branch: changes.branch,
+                commit: changes.commit,
+                files: changes.files.length,
+                added: counted.reduce((sum, file) => sum + file.added, 0),
+                deleted: counted.reduce((sum, file) => sum + file.deleted, 0),
+              },
+            ];
+          })
+          .catch(() => null),
+      ),
+    ).then((found) => {
+      const next = Object.fromEntries(found.filter((entry): entry is [string, DirStats] => entry !== null));
+      setStats((current) => (JSON.stringify(current) === JSON.stringify(next) ? current : next));
+    });
+  }, []);
+
   const refresh = useCallback(async () => {
     try {
       const live = await listSessions();
-      setSessions(live);
-
-      const pending = pendingAssignRef.current;
-      if (pending) {
-        const fresh = live.filter((session) => !pending.known.includes(session.pane));
-        if (fresh.length === 1) {
-          pendingAssignRef.current = null;
-          const { id: sessionId } = fresh[0];
-          const { workspaceId } = pending;
-          void assignSession(sessionId, workspaceId)
-            .then(() => setAssignments((current) => ({ ...current, [sessionId]: workspaceId })))
-            .catch((cause: unknown) => setFailure(String(cause)));
-        }
-      }
+      takeLive(live);
+      refreshStats(live);
 
       // Reconciling history depends on having just asked for the live list,
       // so this always follows it rather than running in parallel. Its own
@@ -150,17 +279,37 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
           ...projects.map((p) => p.path),
         ]),
       ].filter(Boolean);
-      const [claude, rootEntries] = await Promise.all([
-        cwds.length > 0 ? listClaudeSessions(cwds) : Promise.resolve([]),
-        Promise.all(cwds.map(async (cwd) => [cwd, (await gitRoot(cwd)) ?? cwd] as const)),
-      ]);
+      const repoOf = (cwd: string) =>
+        Promise.resolve()
+          .then(() => gitRepo(cwd))
+          .catch(() => null)
+          .then((repo) => [cwd, repo] as const);
+      const found = new Map(await Promise.all(cwds.map(repoOf)));
+      // A conversation may have been had in any worktree of a repository
+      // known here, and is looked for in all of them.
+      const everywhere = [
+        ...new Set([...cwds, ...[...found.values()].flatMap((repo) => repo?.worktrees ?? [])]),
+      ];
+      const claude = everywhere.length > 0 ? await listClaudeSessions(everywhere) : [];
+      for (const [cwd, repo] of await Promise.all(
+        claude.map((thread) => thread.cwd).filter((cwd) => !found.has(cwd)).map(repoOf),
+      )) {
+        found.set(cwd, repo);
+      }
       setClaudeSessions(claude);
-      setRoots(Object.fromEntries(rootEntries));
+      // Grouped by repository, not by checkout: a worktree's sessions sit
+      // with the rest of its project, and their rows say which worktree.
+      setRoots(Object.fromEntries([...found].map(([cwd, repo]) => [cwd, repo?.main ?? cwd])));
+      setRepos(
+        Object.fromEntries([...found].filter((entry): entry is [string, Repo] => entry[1] !== null)),
+      );
       setFailure(null);
     } catch (cause: unknown) {
       setFailure(String(cause));
     }
-  }, [projects]);
+  }, [projects, takeLive, refreshStats]);
+
+  homeRef.current = status?.home;
 
   useEffect(() => {
     void roerStatus()
@@ -379,6 +528,72 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
     void refresh();
   }, [activePane, refresh, token]);
 
+  // Between those, only the live list is read again, often enough to see an
+  // agent start and stop: it is one `roer list`, where `refresh` also reads
+  // every conversation and git root. A pane that came or went needs those
+  // too, so that one is a full refresh.
+  useEffect(() => {
+    let ticks = 0;
+    const timer = window.setInterval(() => {
+      ticks += 1;
+      void listSessions()
+        .then((live) => {
+          const panes = [...workingRef.current.keys()];
+          const changed =
+            live.length !== panes.length || live.some((session) => !workingRef.current.has(session.pane));
+          if (changed) {
+            void refresh();
+            return;
+          }
+          takeLive(live);
+          if (ticks % STATS_EVERY === 0) refreshStats(live);
+        })
+        .catch(() => {});
+    }, POLL_MS);
+    return () => window.clearInterval(timer);
+  }, [refresh, refreshStats, takeLive]);
+
+  // Opening a waiting session is seeing it, and so is coming back to the
+  // window with it on the stage.
+  useEffect(() => {
+    const markSeen = () => {
+      const pane = activePaneRef.current;
+      if (!pane || !waitingRef.current.has(pane) || !document.hasFocus()) return;
+      const next = new Set(waitingRef.current);
+      next.delete(pane);
+      setWaiting(next);
+    };
+    markSeen();
+    window.addEventListener("focus", markSeen);
+    return () => window.removeEventListener("focus", markSeen);
+  }, [activePane, setWaiting]);
+
+  /** End session, from a row's menu: asked first, since whatever runs in it
+   * stops with it, and the more so when an agent is still at work. */
+  const handleEndSession = (session: SessionInfo) => {
+    const name = paneLabel(session.title, session.command) || (runningAgent(session) ?? session.command);
+    const busy = isWorking(session) ? " An agent is still working in it." : "";
+    void confirmAction(`End "${name}"?${busy} Everything running in it stops.`, "End session")
+      .then(async (confirmed) => {
+        if (!confirmed) return;
+        await killSession(session.pane);
+        await refresh();
+      })
+      .catch((cause: unknown) => setFailure(String(cause)));
+  };
+
+  // The Dock (or taskbar) counts them too, for when Roer is not in front.
+  // Outside Tauri there is no window, and asking for one throws.
+  useEffect(() => {
+    try {
+      void getCurrentWindow()
+        .setBadgeCount(waiting.size > 0 ? waiting.size : undefined)
+        .catch(() => {});
+    } catch {
+      /* no window */
+    }
+  }, [waiting]);
+
   // Counts the sessions opened from here, only so each one is a different
   // request. Two clicks send the same args to the same directory, and without
   // something to tell them apart the stage sees no change and keeps the first
@@ -498,8 +713,16 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
     });
   };
 
-  const underProject = (cwd: string, project: Project) =>
-    cwd === project.path || cwd.startsWith(`${project.path}/`);
+  // Under the Project's folder, or under the same folder of another
+  // worktree of its repository: the same project, checked out twice.
+  const within = (cwd: string, path: string) => cwd === path || cwd.startsWith(`${path}/`);
+  const underProject = (cwd: string, project: Project) => {
+    if (within(cwd, project.path)) return true;
+    const theirs = repos[project.path];
+    const ours = repos[cwd];
+    if (!theirs || !ours || theirs.main !== ours.main || !within(project.path, theirs.root)) return false;
+    return within(cwd, ours.root + project.path.slice(theirs.root.length));
+  };
 
   // A Workspace's view is the union of what its own attached Projects cover
   // and whatever was explicitly assigned — a session under an attached
@@ -524,10 +747,13 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
     );
 
   // A resumed conversation's tmux session (`<dir>-resume`, `-resume-2`, ...):
-  // scaffolding the shim creates so the resume is teleportable, not something
-  // the user asked to open as its own session. It's already represented by
-  // the Claude conversation the user clicked to get here.
-  const isResumeScaffold = (session: SessionInfo) => /-resume(-\d+)?$/.test(session.session);
+  // scaffolding the shim creates so the resume is teleportable. Once its
+  // agent has quit, the conversation's own row stands for it, and the shell
+  // left behind is not worth a row. While the agent runs it is the only row
+  // there is — a conversation being had is never offered for resuming — so
+  // it is listed like any other session.
+  const isResumeScaffold = (session: SessionInfo) =>
+    /-resume(-\d+)?$/.test(session.session) && !runningAgent(session);
 
   const visibleSessions = (
     selectedProject
@@ -536,6 +762,10 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
         ? sessions.filter((session) => underWorkspace(session.cwd, session.id, selectedWorkspace))
         : sessions
   ).filter((session) => !isResumeScaffold(session));
+  // Search looks past the selected Workspace: finding a session is the
+  // point when you don't know where it is.
+  const allSessions = sessions.filter((session) => !isResumeScaffold(session));
+
   const visibleClaudeSessions = selectedProject
     ? claudeSessions.filter((session) => underProject(session.cwd, selectedProject))
     : selectedWorkspace
@@ -572,6 +802,12 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
     handleAddItem,
     handleRemoveItem,
     roots,
+    repos,
+    waiting,
+    stats,
+    handleEndSession,
+    allSessions,
+    claudeSessions,
     visibleSessions,
     visibleClaudeSessions,
     activePane,
@@ -585,6 +821,12 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
     refresh,
   };
 }
+
+/** How often the live list is read for agents starting and stopping. */
+const POLL_MS = 3000;
+
+/** Every how many polls the branches and changes are read again. */
+const STATS_EVERY = 10;
 
 /** What `openNew` takes to start a session with just a shell. */
 export const SHELL = "--shell";

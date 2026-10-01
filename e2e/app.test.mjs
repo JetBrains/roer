@@ -42,7 +42,7 @@ test("the first launch asks about Claude Code, and Not now is remembered", async
 test("opens on the session list, with nothing running", async () => {
   await app.waitForText("Nothing running in this Workspace's projects yet.", ".sessions-view");
   await app.tab("Terminal");
-  await app.waitForText("Pick a session, or start a new one.");
+  await app.waitForText("Pick a session, or start a new one with");
 });
 
 test("New session starts the default agent in a terminal", async () => {
@@ -109,15 +109,15 @@ test("Changes shows the project's local edits", async () => {
 test("Sessions lists both, and picking the other one brings it back", async () => {
   await app.tab("Sessions");
   await app.waitForText("open here", ".sessions-view");
-  await app.waitForText("idle", ".sessions-view");
+  await app.waitForText("detached", ".sessions-view");
   // Named by what the agent titled its terminal; the plain shell by nothing
   // it did not set, not the console's own title (the shell's path) on Windows.
   await app.waitForText("Fake task", ".sessions-view");
   assert.doesNotMatch(await app.text(".sessions-view"), /\.exe\b/i);
 
-  const idle = await app.until("the idle session's row", () =>
+  const idle = await app.until("the detached session's row", () =>
     app.driver.executeScript(
-      "return Array.from(document.querySelectorAll('.sessions-view button.row')).find((row) => row.innerText.includes('idle')) ?? null",
+      "return Array.from(document.querySelectorAll('.sessions-view button.row')).find((row) => row.innerText.includes('detached')) ?? null",
     ),
   );
   await idle.click();

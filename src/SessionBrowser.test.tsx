@@ -1,25 +1,46 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { gitRoot } from "./lib/git";
-import { listClaudeSessions, listPastSessions, listSessions, roerStatus, type SessionInfo } from "./lib/pty";
+import { gitChanges, gitRepo } from "./lib/git";
+import { notify } from "./lib/notify";
+import {
+  killSession,
+  listClaudeSessions,
+  listPastSessions,
+  listSessions,
+  roerStatus,
+  type SessionInfo,
+} from "./lib/pty";
 import { useSessionBrowser } from "./lib/useSessionBrowser";
 import { listProjects } from "./lib/projects";
-import { assignSession, listWorkspaces, unassignSession, workspaceAssignments } from "./lib/workspaces";
+import { confirmAction } from "./lib/confirm";
+import {
+  assignSession,
+  deleteWorkspace,
+  listWorkspaces,
+  unassignSession,
+  workspaceAssignments,
+} from "./lib/workspaces";
 import { NewSessionButton } from "./NewSessionButton";
-import { paneLabel, runningAgent, SessionBrowser, type OpenRequest } from "./SessionBrowser";
+import { checkoutLabel, isWorking, paneLabel, runningAgent, SessionBrowser, type OpenRequest } from "./SessionBrowser";
 import { WorkspaceSidebar } from "./WorkspaceSidebar";
 
 vi.mock("./lib/pty", () => ({
+  killSession: vi.fn(),
   listSessions: vi.fn(),
   listPastSessions: vi.fn(),
   listClaudeSessions: vi.fn(),
   roerStatus: vi.fn(),
 }));
 
+vi.mock("./lib/confirm", () => ({ confirmAction: vi.fn() }));
+
 vi.mock("./lib/git", () => ({
-  gitRoot: vi.fn(),
+  gitRepo: vi.fn(),
+  gitChanges: vi.fn(),
 }));
+
+vi.mock("./lib/notify", () => ({ notify: vi.fn(async () => undefined) }));
 
 vi.mock("./lib/workspaces", () => ({
   listWorkspaces: vi.fn(async () => []),
@@ -46,7 +67,11 @@ beforeEach(() => {
   vi.mocked(listSessions).mockReset().mockResolvedValue([]);
   vi.mocked(listPastSessions).mockReset().mockResolvedValue([]);
   vi.mocked(listClaudeSessions).mockReset().mockResolvedValue([]);
-  vi.mocked(gitRoot).mockReset().mockResolvedValue(null);
+  vi.mocked(gitRepo).mockReset().mockResolvedValue(null);
+  vi.mocked(listWorkspaces).mockReset().mockResolvedValue([]);
+  vi.mocked(listProjects).mockReset().mockResolvedValue([]);
+  vi.mocked(gitChanges).mockReset().mockRejectedValue(new Error("not a repository"));
+  vi.mocked(notify).mockClear();
   vi.mocked(roerStatus)
     .mockReset()
     .mockResolvedValue({ bin: "roer", available: true, home: "/Users/test" });
@@ -103,6 +128,10 @@ function Harness({ onOpen }: { onOpen: (request: OpenRequest) => void }) {
         handleAddItem={browser.handleAddItem}
         handleRemoveItem={browser.handleRemoveItem}
         roots={browser.roots}
+        repos={browser.repos}
+        waiting={browser.waiting}
+        stats={browser.stats}
+        handleEndSession={browser.handleEndSession}
         visibleSessions={browser.visibleSessions}
         visibleClaudeSessions={browser.visibleClaudeSessions}
         activePane={browser.activePane}
@@ -114,9 +143,80 @@ function Harness({ onOpen }: { onOpen: (request: OpenRequest) => void }) {
   );
 }
 
+/** A plain checkout: its own root, the repository's only worktree. */
+const repoAt = (root: string) => ({ root, main: root, worktrees: [root] });
+
 function renderList(onOpen: (request: OpenRequest) => void = vi.fn()) {
   return render(<Harness onOpen={onOpen} />);
 }
+
+describe("a resumed conversation", () => {
+  it("is listed while its agent runs, and left to its conversation once it quits", async () => {
+    vi.mocked(listSessions).mockResolvedValue([
+      { id: "1", session: "roer-resume-5", pane: "%0", attached: true, cwd: "/Users/test/project", command: "claude", title: "\u2733 UX review" },
+      { id: "2", session: "roer-resume-6", pane: "%1", attached: false, cwd: "/Users/test/project", command: "zsh" },
+    ]);
+    renderList();
+
+    expect(await screen.findByTitle(/^roer-resume-5 /)).toHaveTextContent("UX review");
+    expect(screen.queryByTitle(/^roer-resume-6 /)).not.toBeInTheDocument();
+  });
+});
+
+describe("worktrees", () => {
+  it("counts a session in another worktree as its Project's, and says which worktree", async () => {
+    vi.mocked(listWorkspaces).mockResolvedValue([
+      { id: "w0", name: "Default", projects: [], items: [] },
+      { id: "w1", name: "Roer", projects: ["p1"], items: [] },
+    ]);
+    vi.mocked(listProjects).mockResolvedValue([{ id: "p1", name: "roer", path: "/work/roer" }]);
+    const repo = { main: "/work/roer", worktrees: ["/work/roer", "/work/roer-ux"] };
+    vi.mocked(gitRepo).mockImplementation(async (cwd: string) =>
+      cwd.startsWith("/work/roer-ux") ? { ...repo, root: "/work/roer-ux" } : cwd.startsWith("/work/roer") ? { ...repo, root: "/work/roer" } : null,
+    );
+    vi.mocked(listSessions).mockResolvedValue([
+      { id: "1", session: "roer-a", pane: "%0", attached: false, cwd: "/work/roer", command: "zsh" },
+      { id: "2", session: "roer-ux", pane: "%1", attached: false, cwd: "/work/roer-ux/src", command: "zsh" },
+    ]);
+    renderList();
+
+    // Covered by Roer's Project, so not left to Default.
+    await waitFor(() => expect(listClaudeSessions).toHaveBeenCalled());
+    await waitFor(() => expect(screen.queryByTitle(/^roer-ux /)).not.toBeInTheDocument());
+    fireEvent.click(await screen.findByRole("button", { name: /^Roer/ }));
+
+    const linked = await screen.findByTitle(/^roer-ux /);
+    await waitFor(() => expect(linked).toHaveTextContent("roer-ux"));
+    expect(screen.getByTitle(/^roer-a /)).not.toHaveTextContent("roer-ux");
+    // One repository, so one group: no headings.
+    expect(screen.queryAllByRole("heading", { level: 3 })).toHaveLength(0);
+    // Conversations are looked for in every worktree.
+    await waitFor(() =>
+      expect(vi.mocked(listClaudeSessions).mock.calls.at(-1)?.[0]).toEqual(expect.arrayContaining(["/work/roer-ux"])),
+    );
+  });
+});
+
+describe("what a row names its checkout by", () => {
+  const stats = (branch: string, commit: string) => ({ branch, commit, files: 0, added: 0, deleted: 0 });
+
+  it("goes by the branch, which it reads again when the session switches", () => {
+    expect(checkoutLabel(stats("ux-polishing", "ab3d7d1"), "roer-ux")?.text).toBe("ux-polishing");
+    expect(checkoutLabel(stats("main", "ab3d7d1"), null)?.text).toBe("main");
+  });
+
+  it("names a detached checkout by its commit, never as detached", () => {
+    const label = checkoutLabel(stats("(detached)", "27e3ed0"), "roer-pr36");
+    expect(label?.text).toBe("27e3ed0");
+    expect(label?.title).toContain("roer-pr36");
+  });
+
+  it("falls back to the worktree's folder, and to nothing outside a repository", () => {
+    expect(checkoutLabel(undefined, "roer-ux")?.text).toBe("roer-ux");
+    expect(checkoutLabel(stats("(detached)", ""), null)).toBeNull();
+    expect(checkoutLabel(undefined, null)).toBeNull();
+  });
+});
 
 describe("past Claude conversations", () => {
   it("renders resumable conversations alongside live sessions", async () => {
@@ -212,8 +312,8 @@ describe("grouping by git root", () => {
       { id: "1", session: "roer-a", pane: "%0", attached: true, cwd: "/work/one", command: "zsh" },
       { id: "2", session: "roer-b", pane: "%1", attached: true, cwd: "/work/two", command: "zsh" },
     ]);
-    vi.mocked(gitRoot).mockImplementation(async (cwd: string) =>
-      cwd === "/work/one" ? "/work/one" : "/work/two",
+    vi.mocked(gitRepo).mockImplementation(async (cwd: string) =>
+      repoAt(cwd === "/work/one" ? "/work/one" : "/work/two"),
     );
     renderList();
 
@@ -235,7 +335,7 @@ describe("grouping by git root", () => {
         command: "zsh",
       },
     ]);
-    vi.mocked(gitRoot).mockResolvedValue("/work/one");
+    vi.mocked(gitRepo).mockResolvedValue(repoAt("/work/one"));
     renderList();
 
     await screen.findByTitle(/^roer-a /);
@@ -289,7 +389,7 @@ describe("naming a session", () => {
       { id: "2", session: "roer-1b3c", pane: "%1", attached: true, cwd: "/trees/roer", command: "zsh" },
       { id: "3", session: "api-0a0a", pane: "%2", attached: true, cwd: "/work/api", command: "zsh" },
     ]);
-    vi.mocked(gitRoot).mockImplementation(async (cwd: string) => cwd);
+    vi.mocked(gitRepo).mockImplementation(async (cwd: string) => repoAt(cwd));
     renderList();
 
     await waitFor(async () => {
@@ -304,6 +404,169 @@ describe("session labels", () => {
     expect(paneLabel("\u2802 fixing tests", "claude")).toBe("fixing tests");
     expect(paneLabel("zsh", "zsh")).toBe("");
     expect(paneLabel(undefined, "zsh")).toBe("");
+  });
+});
+
+describe("what the agent is doing", () => {
+  const claude = (title: string): SessionInfo => ({
+    id: "1",
+    session: "roer-a",
+    pane: "%0",
+    attached: false,
+    cwd: "/Users/test/project",
+    command: "claude",
+    title,
+  });
+
+  it("reads Claude Code's spinner as working and its ✳ as not", () => {
+    expect(isWorking(claude("\u2802 fixing tests"))).toBe(true);
+    expect(isWorking(claude("\u2733 fixing tests"))).toBe(false);
+  });
+
+  it("takes any other agent as working while it keeps printing, and nothing else", () => {
+    const now = 1_790_000_000;
+    const codex = { ...claude(""), command: "codex", activity: now - 2 };
+    expect(isWorking(codex, now)).toBe(true);
+    expect(isWorking({ ...codex, activity: now - 30 }, now)).toBe(false);
+    expect(isWorking({ ...codex, activity: 0 }, now)).toBe(false);
+    // A shell printing a build log is not an agent at work.
+    expect(isWorking({ ...codex, command: "zsh" }, now)).toBe(false);
+  });
+
+  it("goes by what the agent's hooks said over anything its title shows", () => {
+    expect(isWorking({ ...claude("\u2733 fixing tests"), state: "working" })).toBe(true);
+    expect(isWorking({ ...claude("\u2802 fixing tests"), state: "done" })).toBe(false);
+    expect(isWorking({ ...claude("\u2802 fixing tests"), state: "waiting" })).toBe(false);
+  });
+
+  it("takes a hooked turn that has gone quiet for a stop, as Esc leaves it", () => {
+    const now = 1_790_000_000;
+    const working: SessionInfo = { ...claude("\u2802 fixing tests"), state: "working", activity: now - 10 };
+    expect(isWorking(working, now)).toBe(true);
+    // Esc ends the turn without a Stop hook: `working` stays, the output stops.
+    expect(isWorking({ ...working, activity: now - 31 }, now)).toBe(false);
+    // An older shim reports no activity; the hook is all there is.
+    expect(isWorking({ ...working, activity: undefined }, now)).toBe(true);
+  });
+
+  it("says a session is held up on you, in Claude's words, once its hooks say so", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      vi.mocked(listSessions).mockResolvedValue([{ ...claude("\u2802 fixing tests"), state: "working" }]);
+      renderList();
+      await screen.findByText("working");
+
+      vi.mocked(listSessions).mockResolvedValue([
+        { ...claude("\u2733 fixing tests"), state: "waiting", note: "Claude needs your permission to use Bash" },
+      ]);
+      await vi.advanceTimersByTimeAsync(3000);
+
+      const badge = await screen.findByText("needs you");
+      expect(badge).toHaveAttribute("title", "Claude needs your permission to use Bash");
+      expect(notify).toHaveBeenCalledWith(
+        "fixing tests",
+        expect.stringContaining("Claude needs your permission to use Bash"),
+        expect.any(Function),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("marks a session that rang the bell out of sight as waiting", async () => {
+    vi.mocked(listSessions).mockResolvedValue([{ ...claude(""), command: "codex", bell: true }]);
+    renderList();
+
+    const row = await screen.findByTitle(/^roer-a /);
+    await waitFor(() => expect(row).toHaveTextContent("waiting"));
+    // Already so when Roer first looked: shown, but not news.
+    expect(notify).not.toHaveBeenCalled();
+  });
+
+  it("lists what waits first, then what works, then the rest", async () => {
+    vi.mocked(listSessions).mockResolvedValue([
+      { ...claude("\u2733 idle one"), pane: "%0", session: "a" },
+      { ...claude("\u2802 busy one"), pane: "%1", session: "b" },
+      { ...claude("\u2733 rang one"), pane: "%2", session: "c", command: "codex", title: "", bell: true },
+    ]);
+    renderList();
+
+    await waitFor(() => {
+      const rows = [...document.querySelectorAll(".sessions-view button.row")].map((row) => row.getAttribute("title"));
+      expect(rows.map((title) => title?.split(" ")[0])).toEqual(["c", "b", "a"]);
+    });
+  });
+
+  it("shows the branch, what is uncommitted on it, and when it last printed", async () => {
+    vi.mocked(gitChanges).mockResolvedValue({
+      root: "/Users/test/project",
+      branch: "fix-login",
+      commit: "ab3d7d1",
+      files: [
+        { path: "a.ts", staged: ".", unstaged: "M", added: 10, deleted: 2, binary: false, counted: true },
+        { path: "b.ts", staged: ".", unstaged: "M", added: 2, deleted: 1, binary: false, counted: true },
+      ],
+    });
+    vi.mocked(listSessions).mockResolvedValue([
+      { ...claude("\u2733 fix"), activity: Math.floor(Date.now() / 1000) - 300 },
+    ]);
+    renderList();
+
+    const row = await screen.findByTitle(/^roer-a /);
+    await waitFor(() => expect(row).toHaveTextContent("fix-login"));
+    expect(row).toHaveTextContent("+12 −3");
+    expect(row).toHaveTextContent("5m ago");
+  });
+
+  it("ends a session from its menu, once that is confirmed", async () => {
+    vi.mocked(listSessions).mockResolvedValue([claude("\u2802 fixing tests")]);
+    vi.mocked(killSession).mockReset().mockResolvedValue(undefined);
+    vi.mocked(confirmAction).mockReset().mockResolvedValue(true);
+    renderList();
+
+    fireEvent.contextMenu(await screen.findByTitle(/^roer-a /));
+    fireEvent.click(await screen.findByText("End session…"));
+
+    await waitFor(() => expect(killSession).toHaveBeenCalledWith("%0"));
+    expect(vi.mocked(confirmAction).mock.calls[0][0]).toContain("An agent is still working in it.");
+  });
+
+  it("marks a working session, and calls one nobody holds detached", async () => {
+    vi.mocked(listSessions).mockResolvedValue([claude("\u2802 fixing tests")]);
+    renderList();
+
+    const row = await screen.findByTitle(/^roer-a /);
+    expect(row).toHaveTextContent("working");
+    expect(row).toHaveTextContent("detached");
+  });
+
+  it("marks a session waiting once its agent stops out of sight", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      vi.mocked(listSessions).mockResolvedValue([claude("\u2802 fixing tests")]);
+      renderList();
+      await screen.findByText("working");
+
+      vi.mocked(listSessions).mockResolvedValue([claude("\u2733 fixing tests")]);
+      await vi.advanceTimersByTimeAsync(3000);
+
+      const row = await screen.findByTitle(/^roer-a /);
+      await waitFor(() => expect(row).toHaveTextContent("waiting"));
+      expect(row).not.toHaveTextContent("working");
+      // Named, so it says which session.
+      expect(notify).toHaveBeenCalledWith("fixing tests", expect.stringContaining("claude is waiting"), expect.any(Function));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("never marks a session that was idle all along", async () => {
+    vi.mocked(listSessions).mockResolvedValue([claude("\u2733 fixing tests")]);
+    renderList();
+
+    const row = await screen.findByTitle(/^roer-a /);
+    expect(row).not.toHaveTextContent("waiting");
+    expect(row).not.toHaveTextContent("working");
   });
 });
 
@@ -352,6 +615,26 @@ describe("naming the agent", () => {
 });
 
 describe("the selected workspace", () => {
+  it("asks before deleting a Workspace", async () => {
+    vi.mocked(listWorkspaces).mockResolvedValue([
+      { id: "w1", name: "Default", projects: [], items: [] },
+      { id: "w2", name: "Feature work", projects: [], items: [] },
+    ]);
+    vi.mocked(deleteWorkspace).mockReset().mockResolvedValue(undefined);
+    vi.mocked(confirmAction).mockReset().mockResolvedValue(false);
+    renderList();
+
+    fireEvent.contextMenu(await screen.findByRole("button", { name: /Feature work/ }));
+    fireEvent.click(await screen.findByText("Delete"));
+    await waitFor(() => expect(confirmAction).toHaveBeenCalled());
+    expect(deleteWorkspace).not.toHaveBeenCalled();
+
+    vi.mocked(confirmAction).mockResolvedValue(true);
+    fireEvent.contextMenu(screen.getByRole("button", { name: /Feature work/ }));
+    fireEvent.click(await screen.findByText("Delete"));
+    await waitFor(() => expect(deleteWorkspace).toHaveBeenCalledWith("w2"));
+  });
+
   it("is the first one on launch, with no unfiltered All beside it", async () => {
     vi.mocked(listWorkspaces).mockResolvedValueOnce([
       { id: "w1", name: "Default", projects: [], items: [] },
@@ -418,7 +701,7 @@ describe("assigning a session to a workspace", () => {
     fireEvent.contextMenu(row);
 
     expect(await screen.findByText("Assign to Feature work")).toHaveAttribute("aria-disabled", "true");
-    fireEvent.click(screen.getByText("Unassign"));
+    fireEvent.click(screen.getByText("Remove from Feature work"));
 
     expect(unassignSession).toHaveBeenCalledWith("1");
   });

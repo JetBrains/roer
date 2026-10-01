@@ -227,6 +227,17 @@ function Split({ hunk }: { hunk: Hunk }) {
   );
 }
 
+const LAYOUT_KEY = "roer:diff-layout";
+
+function storedLayout(): Layout | null {
+  try {
+    const stored = localStorage.getItem(LAYOUT_KEY);
+    return stored === "split" || stored === "unified" ? stored : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * A file tree on the left, the selected file's diff on the right, and the
  * arrow keys stepping through the changes themselves.
@@ -256,7 +267,17 @@ export function DiffPane({
   const [diff, setDiff] = useState<{ path: string; text: string } | null>(null);
   const [diffError, setDiffError] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
-  const [layout, setLayout] = useState<Layout>(defaultLayout);
+  // A layout picked by hand is kept, everywhere and across launches; until
+  // then each view opens in the layout that suits it.
+  const [layout, setLayoutRaw] = useState<Layout>(() => storedLayout() ?? defaultLayout);
+  const setLayout = (next: Layout) => {
+    setLayoutRaw(next);
+    try {
+      localStorage.setItem(LAYOUT_KEY, next);
+    } catch {
+      /* not kept, still shown */
+    }
+  };
 
   const rootRef = useRef<HTMLDivElement>(null);
   const hunkRefs = useRef<(HTMLDivElement | null)[]>([]);
@@ -504,6 +525,8 @@ export function DiffPane({
         <p className="muted pad">{emptyMessage}</p>
       ) : null}
 
+      {!files && !error ? <p className="muted pad">Loading changes…</p> : null}
+
       {count > 0 ? (
         <div className="changes-body">
           <ul className="tree" aria-label="Changed files">
@@ -581,6 +604,10 @@ export function DiffPane({
             ) : null}
 
             {diffError ? <p className="error">{diffError}</p> : null}
+
+            {selected && !diffError && diff?.path !== selected.path ? (
+              <p className="muted pad">Loading diff…</p>
+            ) : null}
 
             {parsed?.binary ? (
               <p className="muted pad">Binary file — nothing to show.</p>

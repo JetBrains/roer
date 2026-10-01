@@ -74,6 +74,7 @@ function commit(subject: string, extra: Partial<Commit> = {}): Commit {
 const changes: Changes = {
   root: "/work/roer",
   branch: "feature",
+  commit: "ab3d7d1",
   files: [file("src/lib/git.ts"), file("src/lib/tree.ts"), file("README.md")],
 };
 
@@ -133,6 +134,14 @@ const batch = (paths: string[], over: Partial<FilesChanged> = {}): FilesChanged 
   paths,
   broad: false,
   ...over,
+});
+
+describe("DiffBrowserView — outside a repository", () => {
+  it("says the folder is not a git repository instead of showing nothing", async () => {
+    vi.mocked(gitRoot).mockResolvedValue(null);
+    view();
+    expect(await screen.findByText(/not a git repository/)).toBeInTheDocument();
+  });
 });
 
 describe("DiffBrowserView — local changes (the merged tab's default view)", () => {

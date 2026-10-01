@@ -1,6 +1,7 @@
 import { useState } from "react";
 
 import { applyClaudeSetup, dismissClaudeSetup, type SetupStatus } from "./lib/claudeSetup";
+import { isMac } from "./lib/keys";
 
 export interface ClaudeSetupProps {
   status: SetupStatus;
@@ -59,8 +60,18 @@ export function ClaudeSetup({ status, firstRun, onClose }: ClaudeSetupProps) {
         {!status.claudeCode ? (
           <>
             <p>
-              Claude Code was not found on this Mac, so there is nothing to set up. Once it is
-              installed, choose <strong>Roer › Claude Code Integration…</strong> to come back here.
+              Claude Code was not found on this computer, so there is nothing to set up.{" "}
+              {isMac() ? (
+                <>
+                  Once it is installed, choose <strong>Roer › Claude Code Integration…</strong> to
+                  come back here.
+                </>
+              ) : (
+                <>
+                  Once it is installed, <code>roer skills install</code> and{" "}
+                  <code>roer mcp install</code> set it up.
+                </>
+              )}
             </p>
             <div className="setup-actions">
               <button type="button" className="primary" onClick={onClose} autoFocus>
@@ -72,8 +83,18 @@ export function ClaudeSetup({ status, firstRun, onClose }: ClaudeSetupProps) {
           <>
             <p>
               Roer can add two things to Claude Code for your user account. Nothing else on this
-              Mac changes, and you can remove either one later from{" "}
-              <strong>Roer › Claude Code Integration…</strong>
+              computer changes, and you can remove either one later
+              {isMac() ? (
+                <>
+                  {" "}
+                  from <strong>Roer › Claude Code Integration…</strong>
+                </>
+              ) : (
+                <>
+                  {" "}
+                  with <code>roer skills uninstall</code> and <code>roer mcp uninstall</code>.
+                </>
+              )}
             </p>
 
             <label className="setup-option">

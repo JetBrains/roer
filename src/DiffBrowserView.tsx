@@ -48,6 +48,9 @@ function when(seconds: number): string {
  */
 export function DiffBrowserView({ cwd, pane, active, changed }: DiffBrowserViewProps) {
   const [root, setRoot] = useState<string | null>(null);
+  // Discovery found no repository at all, which has nothing to diff: said so
+  // rather than left as an empty view.
+  const [notRepo, setNotRepo] = useState(false);
   const [branches, setBranches] = useState<string[]>([]);
   const [branch, setBranch] = useState("");
   const [base, setBase] = useState("");
@@ -72,6 +75,7 @@ export function DiffBrowserView({ cwd, pane, active, changed }: DiffBrowserViewP
   // of continuing to show the previous session's branches and commits.
   useEffect(() => {
     setRoot(null);
+    setNotRepo(false);
     setBranches([]);
     setBranch("");
     setBase("");
@@ -96,7 +100,11 @@ export function DiffBrowserView({ cwd, pane, active, changed }: DiffBrowserViewP
           gitBranches(at),
           gitCurrentBranch(at),
         ]);
-        if (cancelled || !rootDir) return;
+        if (cancelled) return;
+        if (!rootDir) {
+          setNotRepo(true);
+          return;
+        }
         setRoot(rootDir);
         setBranches(names);
         setCurrentBranch(current);
@@ -290,6 +298,14 @@ export function DiffBrowserView({ cwd, pane, active, changed }: DiffBrowserViewP
     useCallback((event: KeyboardEvent) => active && isNextCommit(event), [active]),
     useCallback(() => setIndex((i) => Math.min(count - 1, i + 1)), [count]),
   );
+
+  if (notRepo) {
+    return (
+      <div className="branch-diff" aria-label="Changes">
+        <p className="muted pad">This session's folder is not a git repository, so it has no changes to show.</p>
+      </div>
+    );
+  }
 
   return (
     <div className="branch-diff" aria-label="Changes">

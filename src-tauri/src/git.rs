@@ -66,6 +66,9 @@ pub struct Changes {
     pub root: String,
     /// `(detached)` when there is no branch, which is what git itself reports.
     pub branch: String,
+    /// The checked-out commit, abbreviated: what names a detached checkout.
+    /// Empty before the first commit.
+    pub commit: String,
     pub files: Vec<FileChange>,
 }
 
@@ -262,6 +265,79 @@ pub(crate) fn root(cwd: &str) -> Result<String, String> {
 #[tauri::command]
 pub fn git_root(cwd: String) -> Option<String> {
     root(&cwd).ok()
+}
+
+/// Where a directory sits among a repository's worktrees.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Repo {
+    /// The checkout the directory is in: a worktree's own folder.
+    pub root: String,
+    /// The repository's main checkout, the same for all its worktrees.
+    pub main: String,
+    /// Every worktree of the repository, the main checkout first.
+    pub worktrees: Vec<String>,
+}
+
+/// Which repository a directory is in, whichever worktree of it: a session
+/// in a linked worktree belongs to the project as much as one in the main
+/// checkout. `None` outside a repository.
+#[tauri::command(async)]
+pub fn git_repo(cwd: String) -> Option<Repo> {
+    repo(&cwd).ok()
+}
+
+fn repo(cwd: &str) -> Result<Repo, String> {
+    let root = root(cwd)?;
+    let dirs = git(&root, &["rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir"])?;
+    let mut dirs = dirs.lines().map(str::trim);
+    let (own, common) = (dirs.next().unwrap_or_default(), dirs.next().unwrap_or_default());
+    let listed = git(&root, &["worktree", "list", "--porcelain"]).unwrap_or_default();
+    let mut worktrees: Vec<String> = listed
+        .lines()
+        .filter_map(|line| line.strip_prefix("worktree "))
+        .map(str::to_string)
+        .collect();
+    // A checkout whose git dir is the repository's own is the main one, its
+    // git dir wherever it is: a submodule's lives in its superproject's
+    // `.git/modules`, one made with `--separate-git-dir` anywhere at all,
+    // and git's list then names that dir in place of the checkout. A linked
+    // worktree goes by the list, or else by the common dir, which is
+    // `<main>/.git` in the usual layout and a bare repository itself. Where
+    // the list names the git dir, a submodule's says in `core.worktree`
+    // which checkout is its own; a `--separate-git-dir` one says nowhere.
+    let main = if own == common {
+        match worktrees.first_mut() {
+            Some(first) => *first = root.clone(),
+            None => worktrees.push(root.clone()),
+        }
+        root.clone()
+    } else if let Some(first) = worktrees.first_mut() {
+        if *first == common {
+            if let Some(checkout) = recorded_checkout(&root, common) {
+                *first = checkout;
+            }
+        }
+        first.clone()
+    } else {
+        let common = Path::new(common);
+        let main = if common.file_name().is_some_and(|name| name == ".git") {
+            common.parent().unwrap_or(common)
+        } else {
+            common
+        };
+        main.to_string_lossy().into_owned()
+    };
+    Ok(Repo { root, main, worktrees })
+}
+
+/// The checkout a git dir names as its own in `core.worktree`, relative to
+/// the git dir as git reads it. A submodule's has one. Spelled as git
+/// spells its own paths, which `canonicalize` on Windows does not.
+fn recorded_checkout(root: &str, common: &str) -> Option<String> {
+    let config = Path::new(common).join("config");
+    let recorded = git(root, &["config", "--file", &config.to_string_lossy(), "core.worktree"]).ok()?;
+    self::root(&Path::new(common).join(recorded.trim()).to_string_lossy()).ok()
 }
 
 /// Every local branch, for the branch-diff view's two pickers.
@@ -519,7 +595,7 @@ fn changes(root: &str) -> Result<Changes, String> {
             "--untracked-files=all",
         ],
     )?;
-    let (branch, mut files) = parse_status(&status);
+    let (branch, commit, mut files) = parse_status(&status);
 
     // One pass for every tracked file's line counts, rather than a `git`
     // process per row: a repository mid-refactor has hundreds of rows.
@@ -554,6 +630,7 @@ fn changes(root: &str) -> Result<Changes, String> {
     Ok(Changes {
         root: root.to_string(),
         branch,
+        commit,
         files,
     })
 }
@@ -621,14 +698,20 @@ fn cap(mut text: String, truncated: bool) -> String {
 ///
 /// Records are NUL-delimited, so every path is the literal one, and a
 /// rename's original path is a record of its own following the rename.
-fn parse_status(text: &str) -> (String, Vec<FileChange>) {
+fn parse_status(text: &str) -> (String, String, Vec<FileChange>) {
     let mut branch = String::new();
+    let mut commit = String::new();
     let mut files: Vec<FileChange> = Vec::new();
 
     let mut records = text.split('\0').filter(|record| !record.is_empty());
     while let Some(record) = records.next() {
         if let Some(head) = record.strip_prefix("# branch.head ") {
             branch = head.to_string();
+            continue;
+        }
+        // `(initial)` before the first commit, which has none to name.
+        if let Some(oid) = record.strip_prefix("# branch.oid ") {
+            commit = if oid.starts_with('(') { String::new() } else { oid.chars().take(7).collect() };
             continue;
         }
         let Some((kind, rest)) = record.split_once(' ') else {
@@ -655,7 +738,7 @@ fn parse_status(text: &str) -> (String, Vec<FileChange>) {
     // Git orders by index order; the tree wants path order, and sorting here
     // means every consumer gets the same one.
     files.sort_by(|a, b| a.path.cmp(&b.path));
-    (branch, files)
+    (branch, commit, files)
 }
 
 /// `1 <XY> <sub> <mH> <mI> <mW> <hH> <hI> <path>`
@@ -779,19 +862,78 @@ fn count_lines(path: &Path) -> (Option<u32>, bool) {
 mod tests {
     use super::{
         branch_commits, branches, changes, commit_files, count_lines, git, git_commit_diff,
-        git_diff, git_root, numstat, parse_name_status, parse_status, push_upstream, root,
+        git_diff, git_root, numstat, parse_name_status, parse_status, push_upstream, repo, root,
         upstream_status, Stat, Upstream, MAX_DIFF_BYTES,
     };
     use crate::testing::{commit, init, must, scratch, write};
 
     #[test]
+    fn a_worktree_belongs_to_the_repository_it_was_added_to() {
+        let dir = scratch("worktree-repo");
+        let main = dir.join("main");
+        std::fs::create_dir_all(&main).unwrap();
+        let main_s = main.to_string_lossy().to_string();
+        init(&main_s);
+        write(&main, "a.txt", "a");
+        must(&main_s, &["add", "a.txt"]);
+        commit(&main_s, "first");
+        let linked = dir.join("linked");
+        must(&main_s, &["worktree", "add", "-q", "-b", "side", &linked.to_string_lossy()]);
+
+        let from_main = repo(&main_s).unwrap();
+        let from_linked = repo(&linked.to_string_lossy()).unwrap();
+        assert_eq!(from_linked.main, from_main.main, "one repository");
+        assert_eq!(from_main.root, from_main.main);
+        assert_ne!(from_linked.root, from_linked.main, "its own checkout");
+        assert_eq!(from_linked.worktrees.len(), 2, "{:?}", from_linked.worktrees);
+        assert_eq!(from_linked.worktrees[0], from_main.main, "the main checkout first");
+        assert!(repo(&dir.to_string_lossy()).is_err(), "not in a repository");
+    }
+
+    #[test]
+    fn a_checkout_with_its_git_dir_elsewhere_is_its_own_main() {
+        let dir = scratch("separate-git-dir");
+        let work = dir.join("work");
+        std::fs::create_dir_all(&work).unwrap();
+        let work_s = work.to_string_lossy().to_string();
+        must(&work_s, &["init", "-q", "--separate-git-dir", &dir.join("store.git").to_string_lossy()]);
+        // No global identity on a CI runner: the same one `init` gives.
+        must(&work_s, &["config", "user.email", "test@example.invalid"]);
+        must(&work_s, &["config", "user.name", "Roer Test"]);
+        write(&work, "a.txt", "a");
+        must(&work_s, &["add", "a.txt"]);
+        commit(&work_s, "first");
+
+        let found = repo(&work_s).unwrap();
+        assert_eq!(found.main, found.root, "not the git dir: {found:?}");
+
+        // A submodule's git dir is in its superproject's `.git/modules`.
+        let sup = dir.join("super");
+        std::fs::create_dir_all(&sup).unwrap();
+        let sup_s = sup.to_string_lossy().to_string();
+        init(&sup_s);
+        must(&sup_s, &["-c", "protocol.file.allow=always", "submodule", "add", "-q", &work_s, "sub"]);
+        let sub = repo(&sup.join("sub").to_string_lossy()).unwrap();
+        assert_eq!(sub.main, sub.root, "not .git/modules: {sub:?}");
+
+        // A worktree of the submodule is its project's too.
+        let linked = dir.join("sub-linked");
+        must(&sub.root, &["worktree", "add", "-q", "-b", "side", &linked.to_string_lossy()]);
+        let from_linked = repo(&linked.to_string_lossy()).unwrap();
+        assert_eq!(from_linked.main, sub.main, "one repository: {from_linked:?}");
+        assert_eq!(from_linked.worktrees[0], sub.main, "the checkout first");
+    }
+
+    #[test]
     fn reads_the_branch_and_an_ordinary_change() {
-        let (branch, files) = parse_status(
-            "# branch.oid 1234\0\
+        let (branch, commit, files) = parse_status(
+            "# branch.oid 1234abcdef\0\
              # branch.head changes-view\0\
              1 .M N... 100644 100644 100644 abc def src/App.tsx\0",
         );
         assert_eq!(branch, "changes-view");
+        assert_eq!(commit, "1234abc");
+        assert_eq!(parse_status("# branch.oid (initial)\0# branch.head main\0").1, "", "no commit yet");
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].path, "src/App.tsx");
         assert_eq!(files[0].staged, ".");
@@ -802,14 +944,14 @@ mod tests {
     #[test]
     fn keeps_the_two_status_letters_apart() {
         // Staged an edit, then edited again: both sides have something.
-        let (_, files) = parse_status("1 MM N... 100644 100644 100644 abc def a.txt\0");
+        let (_, _, files) = parse_status("1 MM N... 100644 100644 100644 abc def a.txt\0");
         assert_eq!(files[0].staged, "M");
         assert_eq!(files[0].unstaged, "M");
     }
 
     #[test]
     fn parses_a_rename_with_its_original_path() {
-        let (_, files) =
+        let (_, _, files) =
             parse_status("2 R. N... 100644 100644 100644 abc def R100 src/new.ts\0src/old.ts\0");
         assert_eq!(files[0].path, "src/new.ts");
         assert_eq!(files[0].renamed_from.as_deref(), Some("src/old.ts"));
@@ -818,7 +960,7 @@ mod tests {
 
     #[test]
     fn parses_an_unmerged_file() {
-        let (_, files) =
+        let (_, _, files) =
             parse_status("u UU N... 100644 100644 100644 100644 a b c src/conflict.rs\0");
         assert_eq!(files[0].path, "src/conflict.rs");
         assert_eq!(files[0].staged, "U");
@@ -827,7 +969,7 @@ mod tests {
 
     #[test]
     fn marks_untracked_files_on_the_worktree_side() {
-        let (_, files) = parse_status("? notes.md\0");
+        let (_, _, files) = parse_status("? notes.md\0");
         assert_eq!(files[0].path, "notes.md");
         assert_eq!(files[0].staged, ".");
         assert_eq!(files[0].unstaged, "?");
@@ -835,7 +977,7 @@ mod tests {
 
     #[test]
     fn tolerates_paths_with_spaces() {
-        let (_, files) = parse_status(
+        let (_, _, files) = parse_status(
             "1 .M N... 100644 100644 100644 abc def my docs/a note.md\0? other notes.md\0",
         );
         let paths: Vec<_> = files.iter().map(|f| f.path.as_str()).collect();
@@ -846,13 +988,13 @@ mod tests {
     fn keeps_a_quote_and_a_tab_in_a_path() {
         // The line-delimited form would spell this one `"we\"ird\ttab.txt"`,
         // which is not a path anything can be asked about.
-        let (_, files) = parse_status("? we\"ird\ttab.txt\0");
+        let (_, _, files) = parse_status("? we\"ird\ttab.txt\0");
         assert_eq!(files[0].path, "we\"ird\ttab.txt");
     }
 
     #[test]
     fn ignores_headers_ignored_files_and_junk() {
-        let (_, files) = parse_status(
+        let (_, _, files) = parse_status(
             "# branch.ab +1 -0\0\
              ! target/debug/roer\0\
              \0\
@@ -864,7 +1006,7 @@ mod tests {
 
     #[test]
     fn sorts_files_by_path() {
-        let (_, files) = parse_status("? z.txt\0? a.txt\0? m/b.txt\0");
+        let (_, _, files) = parse_status("? z.txt\0? a.txt\0? m/b.txt\0");
         let paths: Vec<_> = files.iter().map(|f| f.path.as_str()).collect();
         assert_eq!(paths, ["a.txt", "m/b.txt", "z.txt"]);
     }

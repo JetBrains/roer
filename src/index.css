@@ -322,8 +322,8 @@ code {
   position: absolute;
   top: 0;
   bottom: 0;
-  left: -3px;
-  width: 6px;
+  left: -5px;
+  width: 10px;
   cursor: col-resize;
   z-index: 1;
 }
@@ -332,12 +332,22 @@ code {
   background: var(--roer-border);
 }
 
-/* Sits at the far end of the title bar, just before the panel toggle. */
-.theme-toggle {
-  margin-left: auto;
+/* What the stage shows, between the window's own controls. */
+.titlebar-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: center;
+  font-size: 12px;
+  color: var(--roer-muted);
 }
 
+.find-toggle,
 .theme-toggle,
+.notifications-toggle,
 .generative-toggle {
   margin-right: 8px;
   padding: 4px;
@@ -348,7 +358,9 @@ code {
   border-radius: 4px;
 }
 
+.find-toggle:hover:not(:disabled),
 .theme-toggle:hover,
+.notifications-toggle:hover,
 .generative-toggle:hover {
   color: var(--roer-fg);
   background: var(--roer-row-hover);
@@ -762,6 +774,50 @@ button.row.active {
 
 .badge.free {
   color: var(--roer-muted);
+}
+
+/* Branch, uncommitted changes, last activity: small, dimmed, after the
+   name and before the badges. */
+.row-meta {
+  flex: 0 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  overflow: hidden;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--roer-muted);
+}
+
+/* A linked worktree's branch, boxed so its row does not read as the main
+   checkout's. */
+.row-meta .worktree {
+  padding: 0 5px;
+  border: 1px solid var(--roer-border);
+  border-radius: 4px;
+}
+
+.badge.working {
+  color: var(--roer-accent);
+  border-style: dashed;
+  border-color: var(--roer-accent);
+}
+
+/* Held up on a permission or a question: more urgent than a finished turn. */
+.badge.needs {
+  color: var(--roer-bg);
+  border-color: var(--roer-warn);
+  background: var(--roer-warn);
+  font-weight: 600;
+}
+
+/* An agent that finished out of sight: the one row worth looking at. */
+.badge.waiting {
+  color: var(--roer-bg);
+  border-color: var(--roer-plus);
+  background: var(--roer-plus);
+  font-weight: 600;
 }
 
 .badge.resume {
@@ -1387,6 +1443,22 @@ button.tree-row.selected {
   color: var(--ide-hit-dir);
 }
 
+/* Where sessions end and files begin. */
+.hit-group {
+  padding: 6px 14px 2px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--roer-muted);
+}
+
+.hit-badge {
+  margin-left: auto;
+  flex: none;
+  font-size: 11px;
+  color: var(--roer-muted);
+}
+
 /* The characters the query matched. */
 .hit b {
   font-weight: 600;
@@ -1424,8 +1496,15 @@ button.tab.file {
   color: var(--roer-fg);
 }
 
+/* At least 20px each way: the glyph is small, the target need not be. */
 button.tab-x {
-  padding: 0 7px 0 2px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  min-height: 20px;
+  margin-right: 3px;
+  padding: 0 4px;
   background: none;
   border: none;
   border-radius: 3px;
@@ -2608,6 +2687,10 @@ button.gen-wi-source:hover {
   vertical-align: middle;
 }
 
+.tab-dot.waiting {
+  background: var(--roer-plus);
+}
+
 .pr-view {
   flex: 1 1 auto;
   min-width: 0;
@@ -3191,4 +3274,41 @@ button.agent-row.on {
 button.danger:hover {
   border-color: var(--roer-minus);
   color: var(--roer-minus);
+}
+
+/* The shortcut sheet: the Go to File popup's frame, holding a list. */
+.popup.shortcuts {
+  align-self: flex-start;
+  width: min(420px, 90vw);
+  max-height: 70vh;
+  overflow-y: auto;
+  padding: 14px 16px;
+  outline: none;
+}
+
+.popup.shortcuts h2 {
+  margin: 0 0 10px;
+  font-size: 13px;
+}
+
+.popup.shortcuts dl {
+  margin: 0;
+}
+
+.popup.shortcuts dl > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 5px 0;
+  border-top: 1px solid var(--ide-border);
+  font-size: 12px;
+}
+
+.popup.shortcuts dd {
+  margin: 0;
+}
+
+.popup.shortcuts kbd {
+  font-family: inherit;
+  color: var(--roer-muted);
 }
