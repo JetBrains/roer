@@ -764,6 +764,20 @@ button.row.active {
   color: var(--roer-muted);
 }
 
+.badge.working {
+  color: var(--roer-accent);
+  border-style: dashed;
+  border-color: var(--roer-accent);
+}
+
+/* An agent that finished out of sight: the one row worth looking at. */
+.badge.waiting {
+  color: var(--roer-bg);
+  border-color: var(--roer-plus);
+  background: var(--roer-plus);
+  font-weight: 600;
+}
+
 .badge.resume {
   color: var(--roer-muted);
   border-style: dashed;
@@ -2606,6 +2620,10 @@ button.gen-wi-source:hover {
   border-radius: 50%;
   background: var(--roer-accent);
   vertical-align: middle;
+}
+
+.tab-dot.waiting {
+  background: var(--roer-plus);
 }
 
 .pr-view {

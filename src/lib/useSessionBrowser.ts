@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ask } from "@tauri-apps/plugin-dialog";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { logLine } from "./log";
 
 import { gitRoot } from "../lib/git";
@@ -33,7 +34,7 @@ import {
   workspaceAssignments,
   type Workspace,
 } from "../lib/workspaces";
-import type { OpenRequest } from "../SessionBrowser";
+import { isWorking, type OpenRequest } from "../SessionBrowser";
 
 export interface UseSessionBrowserArgs {
   /** The pane on the stage, so the list can mark it rather than offer it. */
@@ -116,23 +117,53 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
   // that was not there before the click.
   const pendingAssignRef = useRef<{ known: string[]; workspaceId: string } | null>(null);
 
+  // Panes whose agent finished while nobody was looking: it worked, and
+  // stopped, somewhere other than on the stage. Seen once it is opened, or
+  // once it goes back to work, which means someone answered it elsewhere.
+  const [waiting, setWaiting] = useState<ReadonlySet<string>>(() => new Set());
+  const workingRef = useRef(new Map<string, boolean>());
+  const activePaneRef = useRef(activePane);
+  activePaneRef.current = activePane;
+
+  /** Takes in a fresh live list: the rows, what finished since the last
+   * one, and the new session a Workspace is waiting to be given. */
+  const takeLive = useCallback((live: SessionInfo[]) => {
+    setSessions((current) => (JSON.stringify(current) === JSON.stringify(live) ? current : live));
+
+    const was = workingRef.current;
+    workingRef.current = new Map(live.map((session) => [session.pane, isWorking(session.title)]));
+    const finished = live
+      .filter((session) => was.get(session.pane) && !isWorking(session.title))
+      .map((session) => session.pane);
+    setWaiting((current) => {
+      const next = new Set(
+        [...current, ...finished].filter(
+          (pane) => pane !== activePaneRef.current && workingRef.current.get(pane) === false,
+        ),
+      );
+      return next.size === current.size && [...next].every((pane) => current.has(pane))
+        ? current
+        : next;
+    });
+
+    const pending = pendingAssignRef.current;
+    if (pending) {
+      const fresh = live.filter((session) => !pending.known.includes(session.pane));
+      if (fresh.length === 1) {
+        pendingAssignRef.current = null;
+        const { id: sessionId } = fresh[0];
+        const { workspaceId } = pending;
+        void assignSession(sessionId, workspaceId)
+          .then(() => setAssignments((current) => ({ ...current, [sessionId]: workspaceId })))
+          .catch((cause: unknown) => setFailure(String(cause)));
+      }
+    }
+  }, []);
+
   const refresh = useCallback(async () => {
     try {
       const live = await listSessions();
-      setSessions(live);
-
-      const pending = pendingAssignRef.current;
-      if (pending) {
-        const fresh = live.filter((session) => !pending.known.includes(session.pane));
-        if (fresh.length === 1) {
-          pendingAssignRef.current = null;
-          const { id: sessionId } = fresh[0];
-          const { workspaceId } = pending;
-          void assignSession(sessionId, workspaceId)
-            .then(() => setAssignments((current) => ({ ...current, [sessionId]: workspaceId })))
-            .catch((cause: unknown) => setFailure(String(cause)));
-        }
-      }
+      takeLive(live);
 
       // Reconciling history depends on having just asked for the live list,
       // so this always follows it rather than running in parallel. Its own
@@ -160,7 +191,7 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
     } catch (cause: unknown) {
       setFailure(String(cause));
     }
-  }, [projects]);
+  }, [projects, takeLive]);
 
   useEffect(() => {
     void roerStatus()
@@ -379,6 +410,48 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
     void refresh();
   }, [activePane, refresh, token]);
 
+  // Between those, only the live list is read again, often enough to see an
+  // agent start and stop: it is one `roer list`, where `refresh` also reads
+  // every conversation and git root. A pane that came or went needs those
+  // too, so that one is a full refresh.
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      void listSessions()
+        .then((live) => {
+          const panes = [...workingRef.current.keys()];
+          const changed =
+            live.length !== panes.length || live.some((session) => !workingRef.current.has(session.pane));
+          if (changed) void refresh();
+          else takeLive(live);
+        })
+        .catch(() => {});
+    }, POLL_MS);
+    return () => window.clearInterval(timer);
+  }, [refresh, takeLive]);
+
+  // Opening a waiting session is seeing it.
+  useEffect(() => {
+    if (!activePane) return;
+    setWaiting((current) => {
+      if (!current.has(activePane)) return current;
+      const next = new Set(current);
+      next.delete(activePane);
+      return next;
+    });
+  }, [activePane]);
+
+  // The Dock (or taskbar) counts them too, for when Roer is not in front.
+  // Outside Tauri there is no window, and asking for one throws.
+  useEffect(() => {
+    try {
+      void getCurrentWindow()
+        .setBadgeCount(waiting.size > 0 ? waiting.size : undefined)
+        .catch(() => {});
+    } catch {
+      /* no window */
+    }
+  }, [waiting]);
+
   // Counts the sessions opened from here, only so each one is a different
   // request. Two clicks send the same args to the same directory, and without
   // something to tell them apart the stage sees no change and keeps the first
@@ -572,6 +645,7 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
     handleAddItem,
     handleRemoveItem,
     roots,
+    waiting,
     visibleSessions,
     visibleClaudeSessions,
     activePane,
@@ -585,6 +659,9 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
     refresh,
   };
 }
+
+/** How often the live list is read for agents starting and stopping. */
+const POLL_MS = 3000;
 
 /** What `openNew` takes to start a session with just a shell. */
 export const SHELL = "--shell";

@@ -780,6 +780,12 @@ export function App() {
                 }
               >
                 Sessions
+                {browser.waiting.size > 0 ? (
+                  <>
+                    <span className="tab-dot waiting" aria-hidden="true" />
+                    <span className="sr-only"> ({browser.waiting.size} waiting)</span>
+                  </>
+                ) : null}
               </button>
               <button
                 type="button"
@@ -919,6 +925,7 @@ export function App() {
                 handleAddItem={browser.handleAddItem}
                 handleRemoveItem={browser.handleRemoveItem}
                 roots={browser.roots}
+                waiting={browser.waiting}
                 visibleSessions={browser.visibleSessions}
                 visibleClaudeSessions={browser.visibleClaudeSessions}
                 activePane={browser.activePane}

@@ -76,6 +76,16 @@ export function paneLabel(title: string | undefined, command: string): string {
   return text === command ? "" : text;
 }
 
+/**
+ * Whether the agent in the pane is at work, as far as its title tells:
+ * Claude Code leads it with a braille spinner frame while it works and with
+ * `✳` once it waits for input. Other agents title nothing, so for them this
+ * is always false — no status rather than a wrong one.
+ */
+export function isWorking(title: string | undefined): boolean {
+  return /^[\u2801-\u28ff]/u.test(title ?? "");
+}
+
 /** The CLIs roer knows, by the command tmux reports for them. */
 const AGENT_COMMANDS = new Set(["claude", "codex", "pi", "gemini", "junie", "opencode"]);
 
@@ -216,6 +226,7 @@ export type SessionBrowserProps = Pick<
   | "handleAddItem"
   | "handleRemoveItem"
   | "roots"
+  | "waiting"
   | "visibleSessions"
   | "visibleClaudeSessions"
   | "activePane"
@@ -249,6 +260,7 @@ export function SessionBrowser({
   handleAddItem,
   handleRemoveItem,
   roots,
+  waiting,
   visibleSessions,
   visibleClaudeSessions,
   activePane,
@@ -331,6 +343,11 @@ export function SessionBrowser({
                           }
                         >
                           <LiveName session={entry.session} />
+                          {entry.session.pane === activePane ? null : isWorking(entry.session.title) ? (
+                            <span className="badge working">working</span>
+                          ) : waiting.has(entry.session.pane) ? (
+                            <span className="badge waiting">waiting</span>
+                          ) : null}
                           {/* Attaching takes a session over from whoever holds it,
                               which may be a terminal or another window of this app. */}
                           <span
@@ -346,7 +363,7 @@ export function SessionBrowser({
                               ? "open here"
                               : entry.session.attached
                                 ? "attached"
-                                : "idle"}
+                                : "detached"}
                           </span>
                         </button>
                       </span>

@@ -7,7 +7,7 @@ import { useSessionBrowser } from "./lib/useSessionBrowser";
 import { listProjects } from "./lib/projects";
 import { assignSession, listWorkspaces, unassignSession, workspaceAssignments } from "./lib/workspaces";
 import { NewSessionButton } from "./NewSessionButton";
-import { paneLabel, runningAgent, SessionBrowser, type OpenRequest } from "./SessionBrowser";
+import { isWorking, paneLabel, runningAgent, SessionBrowser, type OpenRequest } from "./SessionBrowser";
 import { WorkspaceSidebar } from "./WorkspaceSidebar";
 
 vi.mock("./lib/pty", () => ({
@@ -103,6 +103,7 @@ function Harness({ onOpen }: { onOpen: (request: OpenRequest) => void }) {
         handleAddItem={browser.handleAddItem}
         handleRemoveItem={browser.handleRemoveItem}
         roots={browser.roots}
+        waiting={browser.waiting}
         visibleSessions={browser.visibleSessions}
         visibleClaudeSessions={browser.visibleClaudeSessions}
         activePane={browser.activePane}
@@ -304,6 +305,61 @@ describe("session labels", () => {
     expect(paneLabel("\u2802 fixing tests", "claude")).toBe("fixing tests");
     expect(paneLabel("zsh", "zsh")).toBe("");
     expect(paneLabel(undefined, "zsh")).toBe("");
+  });
+});
+
+describe("what the agent is doing", () => {
+  const claude = (title: string): SessionInfo => ({
+    id: "1",
+    session: "roer-a",
+    pane: "%0",
+    attached: false,
+    cwd: "/Users/test/project",
+    command: "claude",
+    title,
+  });
+
+  it("reads Claude Code's spinner as working and its ✳ as not", () => {
+    expect(isWorking("\u2802 fixing tests")).toBe(true);
+    expect(isWorking("\u2733 fixing tests")).toBe(false);
+    expect(isWorking("fixing tests")).toBe(false);
+    expect(isWorking(undefined)).toBe(false);
+  });
+
+  it("marks a working session, and calls one nobody holds detached", async () => {
+    vi.mocked(listSessions).mockResolvedValue([claude("\u2802 fixing tests")]);
+    renderList();
+
+    const row = await screen.findByTitle(/^roer-a /);
+    expect(row).toHaveTextContent("working");
+    expect(row).toHaveTextContent("detached");
+  });
+
+  it("marks a session waiting once its agent stops out of sight", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      vi.mocked(listSessions).mockResolvedValue([claude("\u2802 fixing tests")]);
+      renderList();
+      await screen.findByText("working");
+
+      vi.mocked(listSessions).mockResolvedValue([claude("\u2733 fixing tests")]);
+      await vi.advanceTimersByTimeAsync(3000);
+
+      const row = await screen.findByTitle(/^roer-a /);
+      await waitFor(() => expect(row).toHaveTextContent("waiting"));
+      expect(row).not.toHaveTextContent("working");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("never marks a session that was idle all along", async () => {
+    vi.mocked(listSessions).mockResolvedValue([claude("\u2733 fixing tests")]);
+    renderList();
+
+    const row = await screen.findByTitle(/^roer-a /);
+    expect(row).not.toHaveTextContent("waiting");
+    expect(row).not.toHaveTextContent("working");
   });
 });
 
