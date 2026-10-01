@@ -274,6 +274,7 @@ fn dispatch(state: &Arc<AppState>, cmd: &str, args: Value, cid: Option<&str>) ->
         "roer_past_sessions" => call_res!(args, crate::roer::roer_past_sessions,),
         "roer_status" => call!(args, crate::roer::roer_status,),
         "roer_send" => call_res!(args, crate::roer::roer_send, "pane": String, "text": String),
+        "roer_kill" => call_res!(args, crate::roer::roer_kill, "pane": String),
         "roer_claude_threads" => call!(args, crate::claude::roer_claude_threads, "cwds": Vec<String>),
 
         // agents

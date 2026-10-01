@@ -70,6 +70,7 @@ pub fn run() {
             roer::roer_past_sessions,
             roer::roer_status,
             roer::roer_send,
+            roer::roer_kill,
             claude::roer_claude_threads,
             agents::agents_list,
             agents::agent_save,
