@@ -300,14 +300,21 @@ fn repo(cwd: &str) -> Result<Repo, String> {
     // `.git/modules`, one made with `--separate-git-dir` anywhere at all,
     // and git's list then names that dir in place of the checkout. A linked
     // worktree goes by the list, or else by the common dir, which is
-    // `<main>/.git` in the usual layout and a bare repository itself.
+    // `<main>/.git` in the usual layout and a bare repository itself. Where
+    // the list names the git dir, a submodule's says in `core.worktree`
+    // which checkout is its own; a `--separate-git-dir` one says nowhere.
     let main = if own == common {
         match worktrees.first_mut() {
             Some(first) => *first = root.clone(),
             None => worktrees.push(root.clone()),
         }
         root.clone()
-    } else if let Some(first) = worktrees.first() {
+    } else if let Some(first) = worktrees.first_mut() {
+        if *first == common {
+            if let Some(checkout) = recorded_checkout(&root, common) {
+                *first = checkout;
+            }
+        }
         first.clone()
     } else {
         let common = Path::new(common);
@@ -319,6 +326,15 @@ fn repo(cwd: &str) -> Result<Repo, String> {
         main.to_string_lossy().into_owned()
     };
     Ok(Repo { root, main, worktrees })
+}
+
+/// The checkout a git dir names as its own in `core.worktree`, relative to
+/// the git dir as git reads it. A submodule's has one.
+fn recorded_checkout(root: &str, common: &str) -> Option<String> {
+    let config = Path::new(common).join("config");
+    let recorded = git(root, &["config", "--file", &config.to_string_lossy(), "core.worktree"]).ok()?;
+    let checkout = std::fs::canonicalize(Path::new(common).join(recorded.trim())).ok()?;
+    Some(checkout.to_string_lossy().into_owned())
 }
 
 /// Every local branch, for the branch-diff view's two pickers.
@@ -886,6 +902,13 @@ mod tests {
         must(&sup_s, &["-c", "protocol.file.allow=always", "submodule", "add", "-q", &work_s, "sub"]);
         let sub = repo(&sup.join("sub").to_string_lossy()).unwrap();
         assert_eq!(sub.main, sub.root, "not .git/modules: {sub:?}");
+
+        // A worktree of the submodule is its project's too.
+        let linked = dir.join("sub-linked");
+        must(&sub.root, &["worktree", "add", "-q", "-b", "side", &linked.to_string_lossy()]);
+        let from_linked = repo(&linked.to_string_lossy()).unwrap();
+        assert_eq!(from_linked.main, sub.main, "one repository: {from_linked:?}");
+        assert_eq!(from_linked.worktrees[0], sub.main, "the checkout first");
     }
 
     #[test]
