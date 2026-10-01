@@ -58,6 +58,8 @@ export const shortcutLabel = {
   goToFile: () => (isMac() ? "⌘⇧O" : "Ctrl+Shift+O"),
   tab: (n: number) => (isMac() ? `⌘${n}` : `Ctrl+Shift+${n}`),
   shortcuts: () => (isMac() ? "⌘/" : "Ctrl+Shift+/"),
+  nextWaiting: () => (isMac() ? "⌘⇧J" : "Ctrl+Shift+J"),
+  previousSession: () => (isMac() ? "⌃Tab" : "Ctrl+Tab"),
   prevCommit: () => (isMac() ? "⌘←" : "Alt+←"),
   nextCommit: () => (isMac() ? "⌘→" : "Alt+→"),
 };
@@ -67,6 +69,8 @@ export const allShortcuts = (): Array<[string, string]> => [
   ["New session", shortcutLabel.newSession()],
   ["New session with another agent", shortcutLabel.pickAgent()],
   ["Search sessions and files", shortcutLabel.goToFile()],
+  ["Next waiting session", shortcutLabel.nextWaiting()],
+  ["Previous session", shortcutLabel.previousSession()],
   ["Sessions", shortcutLabel.tab(1)],
   ["Terminal", shortcutLabel.tab(2)],
   ["Changes", shortcutLabel.tab(3)],
@@ -150,3 +154,17 @@ export const isTabNumber = (event: KeyboardEvent): boolean => tabNumber(event) !
 /** The shortcut sheet: `Cmd+/` (`Ctrl+Shift+/`). */
 export const isShortcuts = (event: KeyboardEvent): boolean =>
   appChord(event, false) && (event.code === "Slash" || (!event.code && event.key === "/"));
+
+/**
+ * Jump to the next session waiting for you: `Cmd+Shift+J` (`Ctrl+Shift+J`).
+ * Not `U`, for "unread": `Ctrl+Shift+U` is how GTK types a character by its
+ * code point, and the input method takes it before the window sees it.
+ */
+export const isNextWaiting = (event: KeyboardEvent): boolean =>
+  appChord(event, true) && (event.code === "KeyJ" || (!event.code && event.key.toLowerCase() === "j"));
+
+/** Back to the session that was on the stage before this one: `Ctrl+Tab`,
+ * everywhere — a shell has no use for it, and it is the key for "the other
+ * one" in every tabbed app. */
+export const isPreviousSession = (event: KeyboardEvent): boolean =>
+  event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey && (event.code === "Tab" || event.key === "Tab");

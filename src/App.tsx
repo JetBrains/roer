@@ -43,6 +43,8 @@ import {
   isManageAgents,
   isNewSession,
   isPickAgent,
+  isNextWaiting,
+  isPreviousSession,
   isShortcuts,
   isTabNumber,
   shortcutLabel,
@@ -712,6 +714,48 @@ export function App() {
     }, []),
   );
 
+  // The session on the stage before this one, for Ctrl+Tab: the pane it was
+  // in, held while a different one comes up.
+  const previousPaneRef = useRef<string | undefined>(undefined);
+  const stagedPaneRef = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (session?.pane && session.pane !== stagedPaneRef.current) {
+      previousPaneRef.current = stagedPaneRef.current;
+      stagedPaneRef.current = session.pane;
+    }
+  }, [session?.pane]);
+
+  // Read through refs, like the hotkeys above: registered once, they must
+  // see the list as it is now.
+  const liveRef = useRef(browser.allSessions);
+  liveRef.current = browser.allSessions;
+  const waitingNowRef = useRef(browser.waiting);
+  waitingNowRef.current = browser.waiting;
+  const attach = useCallback(
+    (pane: string) => {
+      const live = liveRef.current.find((one) => one.pane === pane);
+      if (live) show({ args: ["attach", live.pane], cwd: live.cwd, title: live.session, pane: live.pane });
+    },
+    [show],
+  );
+  useHotkey(
+    isPreviousSession,
+    useCallback(() => {
+      if (previousPaneRef.current) attach(previousPaneRef.current);
+    }, [attach]),
+  );
+  // In the order tmux lists them, starting after the one on the stage,
+  // so pressing again goes on to the next.
+  useHotkey(
+    isNextWaiting,
+    useCallback(() => {
+      const panes = liveRef.current.map((one) => one.pane).filter((pane) => waitingNowRef.current.has(pane));
+      if (panes.length === 0) return;
+      const at = panes.indexOf(stagedPaneRef.current ?? "");
+      attach(panes[(at + 1) % panes.length]);
+    }, [attach]),
+  );
+
   // What the stage shows, named the way its row in Sessions names it, for
   // the title bar and the window's own title.
   const onStage = browser.visibleSessions.find((live) => live.pane === session?.pane);
@@ -738,7 +782,7 @@ export function App() {
         badge:
           live.pane === session?.pane
             ? "open here"
-            : isWorking(live.title)
+            : isWorking(live)
               ? "working"
               : browser.waiting.has(live.pane)
                 ? "waiting"
@@ -1051,6 +1095,8 @@ export function App() {
                 handleRemoveItem={browser.handleRemoveItem}
                 roots={browser.roots}
                 waiting={browser.waiting}
+                stats={browser.stats}
+                handleEndSession={browser.handleEndSession}
                 visibleSessions={browser.visibleSessions}
                 visibleClaudeSessions={browser.visibleClaudeSessions}
                 activePane={browser.activePane}

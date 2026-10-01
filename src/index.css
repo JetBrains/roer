@@ -774,6 +774,20 @@ button.row.active {
   color: var(--roer-muted);
 }
 
+/* Branch, uncommitted changes, last activity: small, dimmed, after the
+   name and before the badges. */
+.row-meta {
+  flex: 0 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  overflow: hidden;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--roer-muted);
+}
+
 .badge.working {
   color: var(--roer-accent);
   border-style: dashed;

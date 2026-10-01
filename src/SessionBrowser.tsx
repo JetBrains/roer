@@ -18,7 +18,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import type { Project } from "./lib/projects";
 import type { ClaudeSession, SessionInfo } from "./lib/pty";
-import type { SessionBrowserState } from "./lib/useSessionBrowser";
+import type { DirStats, SessionBrowserState } from "./lib/useSessionBrowser";
 import type { Workspace } from "./lib/workspaces";
 
 export interface OpenRequest {
@@ -77,14 +77,31 @@ export function paneLabel(title: string | undefined, command: string): string {
   return text === command ? "" : text;
 }
 
+/** How recently an agent that titles nothing must have printed to count as
+ * at work: its spinner redraws several times a second while it works, and
+ * it falls quiet once it waits. Longer than the list's poll, so one quiet
+ * moment between reads is not taken for a stop. */
+export const ACTIVE_SECS = 5;
+
 /**
- * Whether the agent in the pane is at work, as far as its title tells:
- * Claude Code leads it with a braille spinner frame while it works and with
- * `✳` once it waits for input. Other agents title nothing, so for them this
- * is always false — no status rather than a wrong one.
+ * Whether the agent in the pane is at work. Claude Code says so in its title:
+ * a braille spinner frame while it works, `✳` once it waits for input. Any
+ * other agent is at work while it keeps printing. Never true for a shell or
+ * anything else that is not an agent, whose output means nothing of the kind.
  */
-export function isWorking(title: string | undefined): boolean {
-  return /^[\u2801-\u28ff]/u.test(title ?? "");
+export function isWorking(session: SessionInfo, now = Date.now() / 1000): boolean {
+  const title = session.title ?? "";
+  if (/^[\u2801-\u28ff]/u.test(title)) return true;
+  if (/^\u2733/u.test(title)) return false;
+  if (!runningAgent(session)) return false;
+  return !!session.activity && now - session.activity <= ACTIVE_SECS;
+}
+
+/** Where a live row goes in its group: what needs you, then what is at
+ * work, then the rest, each in the order tmux listed them. */
+function liveRank(session: SessionInfo, waiting: ReadonlySet<string>): number {
+  if (waiting.has(session.pane)) return 0;
+  return isWorking(session) ? 1 : 2;
 }
 
 /** The CLIs roer knows, by the command tmux reports for them. */
@@ -119,6 +136,32 @@ function LiveName({ session }: { session: SessionInfo }) {
   ) : (
     <strong>{who}</strong>
   );
+}
+
+/** Live rows in the order they matter: waiting, working, the rest. Past
+ * conversations stay after them, as they were. */
+function byRank(items: SessionEntry[], waiting: ReadonlySet<string>): SessionEntry[] {
+  const rank = (entry: SessionEntry) => (entry.kind === "live" ? liveRank(entry.session, waiting) : 3);
+  return items
+    .map((entry, index) => ({ entry, index }))
+    .sort((a, b) => rank(a.entry) - rank(b.entry) || a.index - b.index)
+    .map(({ entry }) => entry);
+}
+
+/** What tells one row from the next without opening it: the branch, what
+ * is uncommitted on it, and when the session last printed anything. */
+function RowMeta({ session, stats }: { session: SessionInfo; stats: DirStats | undefined }) {
+  const parts: ReactNode[] = [];
+  if (stats?.branch) parts.push(<span key="branch">{stats.branch}</span>);
+  if (stats && stats.files > 0) {
+    parts.push(
+      <span key="changes" className="counts" title={`${stats.files} ${stats.files === 1 ? "file" : "files"} changed`}>
+        <span className="plus">+{stats.added}</span> <span className="minus">−{stats.deleted}</span>
+      </span>,
+    );
+  }
+  if (session.activity) parts.push(<span key="age">{relativeAge(session.activity)}</span>);
+  return parts.length > 0 ? <span className="row-meta">{parts}</span> : null;
 }
 
 /** How long ago a past conversation was last updated, roughly. */
@@ -177,15 +220,18 @@ function AssignMenu({
   workspaces,
   assignedTo,
   handleAssign,
+  onEnd,
   children,
 }: {
   sessionId: string;
   workspaces: Workspace[];
   assignedTo: string | undefined;
   handleAssign: (sessionId: string, workspaceId: string | null) => void;
+  /** A live session's End session; a past conversation has none. */
+  onEnd?: () => void;
   children: ReactNode;
 }) {
-  if (workspaces.length === 0 && !assignedTo) return <>{children}</>;
+  if (workspaces.length === 0 && !assignedTo && !onEnd) return <>{children}</>;
   return (
     <ContextMenu>
       <ContextMenuTrigger asChild>{children}</ContextMenuTrigger>
@@ -204,6 +250,14 @@ function AssignMenu({
           <ContextMenuItem onSelect={() => handleAssign(sessionId, null)}>
             Remove from {workspaces.find((workspace) => workspace.id === assignedTo)?.name ?? "Workspace"}
           </ContextMenuItem>
+        ) : null}
+        {onEnd ? (
+          <>
+            {workspaces.length > 0 || assignedTo ? <ContextMenuSeparator /> : null}
+            <ContextMenuItem variant="destructive" onSelect={onEnd}>
+              End session…
+            </ContextMenuItem>
+          </>
         ) : null}
       </ContextMenuContent>
     </ContextMenu>
@@ -230,6 +284,8 @@ export type SessionBrowserProps = Pick<
   | "handleRemoveItem"
   | "roots"
   | "waiting"
+  | "stats"
+  | "handleEndSession"
   | "visibleSessions"
   | "visibleClaudeSessions"
   | "activePane"
@@ -264,6 +320,8 @@ export function SessionBrowser({
   handleRemoveItem,
   roots,
   waiting,
+  stats,
+  handleEndSession,
   visibleSessions,
   visibleClaudeSessions,
   activePane,
@@ -321,7 +379,7 @@ export function SessionBrowser({
               </h3>
             ) : null}
             <ul>
-              {group.items.map((entry) =>
+              {byRank(group.items, waiting).map((entry) =>
                 entry.kind === "live" ? (
                   <li key={`live-${entry.session.pane}`}>
                     <AssignMenu
@@ -329,6 +387,7 @@ export function SessionBrowser({
                       workspaces={workspaces}
                       assignedTo={assignments[entry.session.id]}
                       handleAssign={handleAssign}
+                      onEnd={() => handleEndSession(entry.session)}
                     >
                       <span className="workspace-row">
                         <button
@@ -346,7 +405,8 @@ export function SessionBrowser({
                           }
                         >
                           <LiveName session={entry.session} />
-                          {entry.session.pane === activePane ? null : isWorking(entry.session.title) ? (
+                          <RowMeta session={entry.session} stats={stats[entry.session.cwd]} />
+                          {entry.session.pane === activePane ? null : isWorking(entry.session) ? (
                             <span className="badge working">working</span>
                           ) : waiting.has(entry.session.pane) ? (
                             <span className="badge waiting">waiting</span>

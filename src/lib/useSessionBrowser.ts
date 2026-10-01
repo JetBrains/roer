@@ -3,8 +3,11 @@ import { ask } from "@tauri-apps/plugin-dialog";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { logLine } from "./log";
 
-import { gitRoot } from "../lib/git";
+import { gitChanges, gitRoot } from "../lib/git";
+import { confirmAction } from "./confirm";
+import { notify } from "./notify";
 import {
+  killSession,
   listClaudeSessions,
   listPastSessions,
   listSessions,
@@ -34,7 +37,15 @@ import {
   workspaceAssignments,
   type Workspace,
 } from "../lib/workspaces";
-import { isWorking, type OpenRequest } from "../SessionBrowser";
+import { isWorking, paneLabel, runningAgent, shorten, type OpenRequest } from "../SessionBrowser";
+
+/** What a session's directory has on its branch, for its row. */
+export interface DirStats {
+  branch: string;
+  files: number;
+  added: number;
+  deleted: number;
+}
 
 export interface UseSessionBrowserArgs {
   /** The pane on the stage, so the list can mark it rather than offer it. */
@@ -120,31 +131,74 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
   // Panes whose agent finished while nobody was looking: it worked, and
   // stopped, somewhere other than on the stage. Seen once it is opened, or
   // once it goes back to work, which means someone answered it elsewhere.
-  const [waiting, setWaiting] = useState<ReadonlySet<string>>(() => new Set());
+  //
+  // A pane is seen while it is on the stage and the window has the focus: a
+  // session that stops while Roer is behind another app waits too.
+  const [waiting, setWaitingRaw] = useState<ReadonlySet<string>>(() => new Set());
+  const waitingRef = useRef<ReadonlySet<string>>(waiting);
+  const setWaiting = useCallback((next: ReadonlySet<string>) => {
+    const same = next.size === waitingRef.current.size && [...next].every((pane) => waitingRef.current.has(pane));
+    if (same) return;
+    waitingRef.current = next;
+    setWaitingRaw(next);
+  }, []);
   const workingRef = useRef(new Map<string, boolean>());
+  const bellRef = useRef(new Map<string, boolean>());
+  // The first list only says how things stand: nothing in it is news.
+  const firstListRef = useRef(true);
   const activePaneRef = useRef(activePane);
   activePaneRef.current = activePane;
+  const onOpenRef = useRef(onOpen);
+  onOpenRef.current = onOpen;
+  const homeRef = useRef<string | undefined>(undefined);
 
-  /** Takes in a fresh live list: the rows, what finished since the last
-   * one, and the new session a Workspace is waiting to be given. */
+  /** Takes in a fresh live list: the rows, what finished or rang since the
+   * last one, and the new session a Workspace is waiting to be given. */
   const takeLive = useCallback((live: SessionInfo[]) => {
     setSessions((current) => (JSON.stringify(current) === JSON.stringify(live) ? current : live));
 
-    const was = workingRef.current;
-    workingRef.current = new Map(live.map((session) => [session.pane, isWorking(session.title)]));
-    const finished = live
-      .filter((session) => was.get(session.pane) && !isWorking(session.title))
-      .map((session) => session.pane);
-    setWaiting((current) => {
-      const next = new Set(
-        [...current, ...finished].filter(
-          (pane) => pane !== activePaneRef.current && workingRef.current.get(pane) === false,
+    const now = Date.now() / 1000;
+    const wasWorking = workingRef.current;
+    const hadRung = bellRef.current;
+    const working = new Map(live.map((session) => [session.pane, isWorking(session, now)]));
+    workingRef.current = working;
+    bellRef.current = new Map(live.map((session) => [session.pane, Boolean(session.bell)]));
+    const seen = (pane: string) => pane === activePaneRef.current && document.hasFocus();
+
+    // An agent that stopped, or a program that rang for attention.
+    const turned = live.filter(
+      (session) =>
+        !seen(session.pane) &&
+        !working.get(session.pane) &&
+        (wasWorking.get(session.pane) || (session.bell && !hadRung.get(session.pane))),
+    );
+    const before = waitingRef.current;
+    setWaiting(
+      new Set(
+        [...before, ...turned.map((session) => session.pane)].filter(
+          (pane) => !seen(pane) && working.get(pane) === false,
         ),
-      );
-      return next.size === current.size && [...next].every((pane) => current.has(pane))
-        ? current
-        : next;
-    });
+      ),
+    );
+
+    // Named, so the notification says which one: "is waiting" alone, with
+    // several sessions running, says nothing.
+    if (!firstListRef.current) {
+      for (const session of turned) {
+        if (before.has(session.pane)) continue;
+        const who = runningAgent(session) ?? session.command;
+        const name = paneLabel(session.title, session.command) || who;
+        void notify(name, `${who} is waiting for you · ${shorten(session.cwd, homeRef.current)}`, () =>
+          onOpenRef.current({
+            args: ["attach", session.pane],
+            cwd: session.cwd,
+            title: session.session,
+            pane: session.pane,
+          }),
+        );
+      }
+    }
+    firstListRef.current = false;
 
     const pending = pendingAssignRef.current;
     if (pending) {
@@ -160,10 +214,41 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
     }
   }, []);
 
+  // Branch and uncommitted changes per directory, read with the full list
+  // and every so often between, never on every poll: `git status` is the
+  // slowest thing a row shows.
+  const [stats, setStats] = useState<Record<string, DirStats>>({});
+  const refreshStats = useCallback((live: SessionInfo[]) => {
+    const cwds = [...new Set(live.map((session) => session.cwd))].filter(Boolean);
+    void Promise.all(
+      cwds.map((cwd) =>
+        Promise.resolve()
+          .then(() => gitChanges(cwd))
+          .then((changes): [string, DirStats] => {
+            const counted = changes.files.filter((file) => file.counted);
+            return [
+              cwd,
+              {
+                branch: changes.branch,
+                files: changes.files.length,
+                added: counted.reduce((sum, file) => sum + file.added, 0),
+                deleted: counted.reduce((sum, file) => sum + file.deleted, 0),
+              },
+            ];
+          })
+          .catch(() => null),
+      ),
+    ).then((found) => {
+      const next = Object.fromEntries(found.filter((entry): entry is [string, DirStats] => entry !== null));
+      setStats((current) => (JSON.stringify(current) === JSON.stringify(next) ? current : next));
+    });
+  }, []);
+
   const refresh = useCallback(async () => {
     try {
       const live = await listSessions();
       takeLive(live);
+      refreshStats(live);
 
       // Reconciling history depends on having just asked for the live list,
       // so this always follows it rather than running in parallel. Its own
@@ -191,7 +276,9 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
     } catch (cause: unknown) {
       setFailure(String(cause));
     }
-  }, [projects, takeLive]);
+  }, [projects, takeLive, refreshStats]);
+
+  homeRef.current = status?.home;
 
   useEffect(() => {
     void roerStatus()
@@ -415,30 +502,54 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
   // every conversation and git root. A pane that came or went needs those
   // too, so that one is a full refresh.
   useEffect(() => {
+    let ticks = 0;
     const timer = window.setInterval(() => {
+      ticks += 1;
       void listSessions()
         .then((live) => {
           const panes = [...workingRef.current.keys()];
           const changed =
             live.length !== panes.length || live.some((session) => !workingRef.current.has(session.pane));
-          if (changed) void refresh();
-          else takeLive(live);
+          if (changed) {
+            void refresh();
+            return;
+          }
+          takeLive(live);
+          if (ticks % STATS_EVERY === 0) refreshStats(live);
         })
         .catch(() => {});
     }, POLL_MS);
     return () => window.clearInterval(timer);
-  }, [refresh, takeLive]);
+  }, [refresh, refreshStats, takeLive]);
 
-  // Opening a waiting session is seeing it.
+  // Opening a waiting session is seeing it, and so is coming back to the
+  // window with it on the stage.
   useEffect(() => {
-    if (!activePane) return;
-    setWaiting((current) => {
-      if (!current.has(activePane)) return current;
-      const next = new Set(current);
-      next.delete(activePane);
-      return next;
-    });
-  }, [activePane]);
+    const markSeen = () => {
+      const pane = activePaneRef.current;
+      if (!pane || !waitingRef.current.has(pane) || !document.hasFocus()) return;
+      const next = new Set(waitingRef.current);
+      next.delete(pane);
+      setWaiting(next);
+    };
+    markSeen();
+    window.addEventListener("focus", markSeen);
+    return () => window.removeEventListener("focus", markSeen);
+  }, [activePane, setWaiting]);
+
+  /** End session, from a row's menu: asked first, since whatever runs in it
+   * stops with it, and the more so when an agent is still at work. */
+  const handleEndSession = (session: SessionInfo) => {
+    const name = paneLabel(session.title, session.command) || (runningAgent(session) ?? session.command);
+    const busy = isWorking(session) ? " An agent is still working in it." : "";
+    void confirmAction(`End "${name}"?${busy} Everything running in it stops.`, "End session")
+      .then(async (confirmed) => {
+        if (!confirmed) return;
+        await killSession(session.pane);
+        await refresh();
+      })
+      .catch((cause: unknown) => setFailure(String(cause)));
+  };
 
   // The Dock (or taskbar) counts them too, for when Roer is not in front.
   // Outside Tauri there is no window, and asking for one throws.
@@ -650,6 +761,8 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
     handleRemoveItem,
     roots,
     waiting,
+    stats,
+    handleEndSession,
     allSessions,
     claudeSessions,
     visibleSessions,
@@ -668,6 +781,9 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
 
 /** How often the live list is read for agents starting and stopping. */
 const POLL_MS = 3000;
+
+/** Every how many polls the branches and changes are read again. */
+const STATS_EVERY = 10;
 
 /** What `openNew` takes to start a session with just a shell. */
 export const SHELL = "--shell";

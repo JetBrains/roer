@@ -1,8 +1,16 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { gitRoot } from "./lib/git";
-import { listClaudeSessions, listPastSessions, listSessions, roerStatus, type SessionInfo } from "./lib/pty";
+import { gitChanges, gitRoot } from "./lib/git";
+import { notify } from "./lib/notify";
+import {
+  killSession,
+  listClaudeSessions,
+  listPastSessions,
+  listSessions,
+  roerStatus,
+  type SessionInfo,
+} from "./lib/pty";
 import { useSessionBrowser } from "./lib/useSessionBrowser";
 import { listProjects } from "./lib/projects";
 import { confirmAction } from "./lib/confirm";
@@ -18,6 +26,7 @@ import { isWorking, paneLabel, runningAgent, SessionBrowser, type OpenRequest } 
 import { WorkspaceSidebar } from "./WorkspaceSidebar";
 
 vi.mock("./lib/pty", () => ({
+  killSession: vi.fn(),
   listSessions: vi.fn(),
   listPastSessions: vi.fn(),
   listClaudeSessions: vi.fn(),
@@ -28,7 +37,10 @@ vi.mock("./lib/confirm", () => ({ confirmAction: vi.fn() }));
 
 vi.mock("./lib/git", () => ({
   gitRoot: vi.fn(),
+  gitChanges: vi.fn(),
 }));
+
+vi.mock("./lib/notify", () => ({ notify: vi.fn(async () => undefined) }));
 
 vi.mock("./lib/workspaces", () => ({
   listWorkspaces: vi.fn(async () => []),
@@ -56,6 +68,8 @@ beforeEach(() => {
   vi.mocked(listPastSessions).mockReset().mockResolvedValue([]);
   vi.mocked(listClaudeSessions).mockReset().mockResolvedValue([]);
   vi.mocked(gitRoot).mockReset().mockResolvedValue(null);
+  vi.mocked(gitChanges).mockReset().mockRejectedValue(new Error("not a repository"));
+  vi.mocked(notify).mockClear();
   vi.mocked(roerStatus)
     .mockReset()
     .mockResolvedValue({ bin: "roer", available: true, home: "/Users/test" });
@@ -113,6 +127,8 @@ function Harness({ onOpen }: { onOpen: (request: OpenRequest) => void }) {
         handleRemoveItem={browser.handleRemoveItem}
         roots={browser.roots}
         waiting={browser.waiting}
+        stats={browser.stats}
+        handleEndSession={browser.handleEndSession}
         visibleSessions={browser.visibleSessions}
         visibleClaudeSessions={browser.visibleClaudeSessions}
         activePane={browser.activePane}
@@ -329,10 +345,75 @@ describe("what the agent is doing", () => {
   });
 
   it("reads Claude Code's spinner as working and its ✳ as not", () => {
-    expect(isWorking("\u2802 fixing tests")).toBe(true);
-    expect(isWorking("\u2733 fixing tests")).toBe(false);
-    expect(isWorking("fixing tests")).toBe(false);
-    expect(isWorking(undefined)).toBe(false);
+    expect(isWorking(claude("\u2802 fixing tests"))).toBe(true);
+    expect(isWorking(claude("\u2733 fixing tests"))).toBe(false);
+  });
+
+  it("takes any other agent as working while it keeps printing, and nothing else", () => {
+    const now = 1_790_000_000;
+    const codex = { ...claude(""), command: "codex", activity: now - 2 };
+    expect(isWorking(codex, now)).toBe(true);
+    expect(isWorking({ ...codex, activity: now - 30 }, now)).toBe(false);
+    expect(isWorking({ ...codex, activity: 0 }, now)).toBe(false);
+    // A shell printing a build log is not an agent at work.
+    expect(isWorking({ ...codex, command: "zsh" }, now)).toBe(false);
+  });
+
+  it("marks a session that rang the bell out of sight as waiting", async () => {
+    vi.mocked(listSessions).mockResolvedValue([{ ...claude(""), command: "codex", bell: true }]);
+    renderList();
+
+    const row = await screen.findByTitle(/^roer-a /);
+    await waitFor(() => expect(row).toHaveTextContent("waiting"));
+    // Already so when Roer first looked: shown, but not news.
+    expect(notify).not.toHaveBeenCalled();
+  });
+
+  it("lists what waits first, then what works, then the rest", async () => {
+    vi.mocked(listSessions).mockResolvedValue([
+      { ...claude("\u2733 idle one"), pane: "%0", session: "a" },
+      { ...claude("\u2802 busy one"), pane: "%1", session: "b" },
+      { ...claude("\u2733 rang one"), pane: "%2", session: "c", command: "codex", title: "", bell: true },
+    ]);
+    renderList();
+
+    await waitFor(() => {
+      const rows = [...document.querySelectorAll(".sessions-view button.row")].map((row) => row.getAttribute("title"));
+      expect(rows.map((title) => title?.split(" ")[0])).toEqual(["c", "b", "a"]);
+    });
+  });
+
+  it("shows the branch, what is uncommitted on it, and when it last printed", async () => {
+    vi.mocked(gitChanges).mockResolvedValue({
+      root: "/Users/test/project",
+      branch: "fix-login",
+      files: [
+        { path: "a.ts", staged: ".", unstaged: "M", added: 10, deleted: 2, binary: false, counted: true },
+        { path: "b.ts", staged: ".", unstaged: "M", added: 2, deleted: 1, binary: false, counted: true },
+      ],
+    });
+    vi.mocked(listSessions).mockResolvedValue([
+      { ...claude("\u2733 fix"), activity: Math.floor(Date.now() / 1000) - 300 },
+    ]);
+    renderList();
+
+    const row = await screen.findByTitle(/^roer-a /);
+    await waitFor(() => expect(row).toHaveTextContent("fix-login"));
+    expect(row).toHaveTextContent("+12 −3");
+    expect(row).toHaveTextContent("5m ago");
+  });
+
+  it("ends a session from its menu, once that is confirmed", async () => {
+    vi.mocked(listSessions).mockResolvedValue([claude("\u2802 fixing tests")]);
+    vi.mocked(killSession).mockReset().mockResolvedValue(undefined);
+    vi.mocked(confirmAction).mockReset().mockResolvedValue(true);
+    renderList();
+
+    fireEvent.contextMenu(await screen.findByTitle(/^roer-a /));
+    fireEvent.click(await screen.findByText("End session…"));
+
+    await waitFor(() => expect(killSession).toHaveBeenCalledWith("%0"));
+    expect(vi.mocked(confirmAction).mock.calls[0][0]).toContain("An agent is still working in it.");
   });
 
   it("marks a working session, and calls one nobody holds detached", async () => {
@@ -357,6 +438,8 @@ describe("what the agent is doing", () => {
       const row = await screen.findByTitle(/^roer-a /);
       await waitFor(() => expect(row).toHaveTextContent("waiting"));
       expect(row).not.toHaveTextContent("working");
+      // Named, so it says which session.
+      expect(notify).toHaveBeenCalledWith("fixing tests", expect.stringContaining("claude is waiting"), expect.any(Function));
     } finally {
       vi.useRealTimers();
     }

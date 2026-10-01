@@ -22,6 +22,11 @@ export interface SessionInfo {
   /** What the program in the pane last titled it — Claude Code keeps a
    * summary of the task there. Empty when nothing has. */
   title?: string;
+  /** When the window last printed anything, in seconds since the epoch; 0
+   * or missing when the shim cannot say. */
+  activity?: number;
+  /** Whether it rang the bell where nobody was looking. */
+  bell?: boolean;
 }
 
 /**
@@ -127,6 +132,9 @@ export const closePty = (id: string): Promise<void> => {
 };
 
 export const listSessions = (): Promise<SessionInfo[]> => invoke("roer_sessions");
+
+/** Ends the session `pane` is in, and everything running in it. */
+export const killSession = (pane: string): Promise<void> => invoke("roer_kill", { pane });
 
 /**
  * Sessions that have ended, most recently ended first. Calling this is what
