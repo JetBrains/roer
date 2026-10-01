@@ -560,6 +560,52 @@ describe("what the agent is doing", () => {
     }
   });
 
+  it("takes one redraw of an agent told only by its output for nothing", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const junie = (activity: number): SessionInfo => ({ ...claude(""), command: "junie", activity });
+      const now = () => Math.floor(Date.now() / 1000);
+      vi.mocked(listSessions).mockResolvedValue([junie(now() - 60)]);
+      renderList();
+      const row = await screen.findByTitle(/^roer-a /);
+
+      // Opening or leaving it resizes it, and it draws itself again, once.
+      vi.mocked(listSessions).mockResolvedValue([junie(now())]);
+      await vi.advanceTimersByTimeAsync(3000);
+      await vi.advanceTimersByTimeAsync(9000);
+
+      expect(row).not.toHaveTextContent("waiting");
+      expect(notify).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("marks an agent told only by its output waiting once it stops printing", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const junie = (activity: number): SessionInfo => ({ ...claude(""), command: "junie", activity });
+      const now = () => Math.floor(Date.now() / 1000);
+      vi.mocked(listSessions).mockResolvedValue([junie(now() - 60)]);
+      renderList();
+      const row = await screen.findByTitle(/^roer-a /);
+
+      // Its spinner, through a few lists.
+      vi.mocked(listSessions).mockImplementation(async () => [junie(now())]);
+      await vi.advanceTimersByTimeAsync(9000);
+      await waitFor(() => expect(row).toHaveTextContent("working"));
+
+      const stopped = now();
+      vi.mocked(listSessions).mockResolvedValue([junie(stopped)]);
+      await vi.advanceTimersByTimeAsync(9000);
+
+      await waitFor(() => expect(row).toHaveTextContent("waiting"));
+      expect(notify).toHaveBeenCalledWith("junie", expect.stringContaining("junie is waiting"), expect.any(Function));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("never marks a session that was idle all along", async () => {
     vi.mocked(listSessions).mockResolvedValue([claude("\u2733 fixing tests")]);
     renderList();

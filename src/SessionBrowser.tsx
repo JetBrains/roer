@@ -111,6 +111,12 @@ export function isWorking(session: SessionInfo, now = Date.now() / 1000): boolea
   return !!session.activity && now - session.activity <= ACTIVE_SECS;
 }
 
+/** Whether all there is to go by is the agent's output: no hooks, and no
+ * spinner or `✳` in its title. */
+export function toldByOutput(session: SessionInfo): boolean {
+  return !session.state && !/^[\u2801-\u28ff\u2733]/u.test(session.title ?? "");
+}
+
 /** Whether the agent is held up on you — a permission prompt, a question —
  * rather than done with its turn. Only its hooks can tell those apart. */
 export function needsYou(session: SessionInfo): boolean {
