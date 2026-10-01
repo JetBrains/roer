@@ -897,6 +897,9 @@ mod tests {
         std::fs::create_dir_all(&work).unwrap();
         let work_s = work.to_string_lossy().to_string();
         must(&work_s, &["init", "-q", "--separate-git-dir", &dir.join("store.git").to_string_lossy()]);
+        // No global identity on a CI runner: the same one `init` gives.
+        must(&work_s, &["config", "user.email", "test@example.invalid"]);
+        must(&work_s, &["config", "user.name", "Roer Test"]);
         write(&work, "a.txt", "a");
         must(&work_s, &["add", "a.txt"]);
         commit(&work_s, "first");
