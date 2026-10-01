@@ -1096,6 +1096,7 @@ export function App() {
                 handleAddItem={browser.handleAddItem}
                 handleRemoveItem={browser.handleRemoveItem}
                 roots={browser.roots}
+                repos={browser.repos}
                 waiting={browser.waiting}
                 stats={browser.stats}
                 handleEndSession={browser.handleEndSession}

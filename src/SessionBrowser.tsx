@@ -16,6 +16,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import type { Repo } from "./lib/git";
 import type { Project } from "./lib/projects";
 import type { ClaudeSession, SessionInfo } from "./lib/pty";
 import type { DirStats, SessionBrowserState } from "./lib/useSessionBrowser";
@@ -160,8 +161,23 @@ function byRank(items: SessionEntry[], waiting: ReadonlySet<string>): SessionEnt
 
 /** What tells one row from the next without opening it: the branch, what
  * is uncommitted on it, and when the session last printed anything. */
-function RowMeta({ session, stats }: { session: SessionInfo; stats: DirStats | undefined }) {
+function RowMeta({
+  session,
+  stats,
+  worktree,
+}: {
+  session: SessionInfo;
+  stats: DirStats | undefined;
+  worktree: string | null;
+}) {
   const parts: ReactNode[] = [];
+  if (worktree) {
+    parts.push(
+      <span key="worktree" className="worktree" title={`In the worktree ${worktree}`}>
+        {worktree}
+      </span>,
+    );
+  }
   if (stats?.branch) parts.push(<span key="branch">{stats.branch}</span>);
   if (stats && stats.files > 0) {
     parts.push(
@@ -172,6 +188,13 @@ function RowMeta({ session, stats }: { session: SessionInfo; stats: DirStats | u
   }
   if (session.activity) parts.push(<span key="age">{relativeAge(session.activity)}</span>);
   return parts.length > 0 ? <span className="row-meta">{parts}</span> : null;
+}
+
+/** A linked worktree's folder name, for a row grouped with the main
+ * checkout's; `null` in the main checkout or outside a repository. */
+function worktreeName(repo: Repo | undefined): string | null {
+  if (!repo || repo.root === repo.main) return null;
+  return repo.root.replace(/\/+$/, "").split("/").pop() ?? repo.root;
 }
 
 /** How long ago a past conversation was last updated, roughly. */
@@ -293,6 +316,7 @@ export type SessionBrowserProps = Pick<
   | "handleAddItem"
   | "handleRemoveItem"
   | "roots"
+  | "repos"
   | "waiting"
   | "stats"
   | "handleEndSession"
@@ -329,6 +353,7 @@ export function SessionBrowser({
   handleAddItem,
   handleRemoveItem,
   roots,
+  repos,
   waiting,
   stats,
   handleEndSession,
@@ -415,7 +440,11 @@ export function SessionBrowser({
                           }
                         >
                           <LiveName session={entry.session} />
-                          <RowMeta session={entry.session} stats={stats[entry.session.cwd]} />
+                          <RowMeta
+                            session={entry.session}
+                            stats={stats[entry.session.cwd]}
+                            worktree={worktreeName(repos[entry.session.cwd])}
+                          />
                           {entry.session.pane === activePane ? null : isWorking(entry.session) ? (
                             <span className="badge working">working</span>
                           ) : waiting.has(entry.session.pane) ? (

@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { gitChanges, gitRoot } from "./lib/git";
+import { gitChanges, gitRepo } from "./lib/git";
 import { notify } from "./lib/notify";
 import {
   killSession,
@@ -36,7 +36,7 @@ vi.mock("./lib/pty", () => ({
 vi.mock("./lib/confirm", () => ({ confirmAction: vi.fn() }));
 
 vi.mock("./lib/git", () => ({
-  gitRoot: vi.fn(),
+  gitRepo: vi.fn(),
   gitChanges: vi.fn(),
 }));
 
@@ -67,7 +67,9 @@ beforeEach(() => {
   vi.mocked(listSessions).mockReset().mockResolvedValue([]);
   vi.mocked(listPastSessions).mockReset().mockResolvedValue([]);
   vi.mocked(listClaudeSessions).mockReset().mockResolvedValue([]);
-  vi.mocked(gitRoot).mockReset().mockResolvedValue(null);
+  vi.mocked(gitRepo).mockReset().mockResolvedValue(null);
+  vi.mocked(listWorkspaces).mockReset().mockResolvedValue([]);
+  vi.mocked(listProjects).mockReset().mockResolvedValue([]);
   vi.mocked(gitChanges).mockReset().mockRejectedValue(new Error("not a repository"));
   vi.mocked(notify).mockClear();
   vi.mocked(roerStatus)
@@ -126,6 +128,7 @@ function Harness({ onOpen }: { onOpen: (request: OpenRequest) => void }) {
         handleAddItem={browser.handleAddItem}
         handleRemoveItem={browser.handleRemoveItem}
         roots={browser.roots}
+        repos={browser.repos}
         waiting={browser.waiting}
         stats={browser.stats}
         handleEndSession={browser.handleEndSession}
@@ -140,9 +143,46 @@ function Harness({ onOpen }: { onOpen: (request: OpenRequest) => void }) {
   );
 }
 
+/** A plain checkout: its own root, the repository's only worktree. */
+const repoAt = (root: string) => ({ root, main: root, worktrees: [root] });
+
 function renderList(onOpen: (request: OpenRequest) => void = vi.fn()) {
   return render(<Harness onOpen={onOpen} />);
 }
+
+describe("worktrees", () => {
+  it("counts a session in another worktree as its Project's, and says which worktree", async () => {
+    vi.mocked(listWorkspaces).mockResolvedValue([
+      { id: "w0", name: "Default", projects: [], items: [] },
+      { id: "w1", name: "Roer", projects: ["p1"], items: [] },
+    ]);
+    vi.mocked(listProjects).mockResolvedValue([{ id: "p1", name: "roer", path: "/work/roer" }]);
+    const repo = { main: "/work/roer", worktrees: ["/work/roer", "/work/roer-ux"] };
+    vi.mocked(gitRepo).mockImplementation(async (cwd: string) =>
+      cwd.startsWith("/work/roer-ux") ? { ...repo, root: "/work/roer-ux" } : cwd.startsWith("/work/roer") ? { ...repo, root: "/work/roer" } : null,
+    );
+    vi.mocked(listSessions).mockResolvedValue([
+      { id: "1", session: "roer-a", pane: "%0", attached: false, cwd: "/work/roer", command: "zsh" },
+      { id: "2", session: "roer-ux", pane: "%1", attached: false, cwd: "/work/roer-ux/src", command: "zsh" },
+    ]);
+    renderList();
+
+    // Covered by Roer's Project, so not left to Default.
+    await waitFor(() => expect(listClaudeSessions).toHaveBeenCalled());
+    await waitFor(() => expect(screen.queryByTitle(/^roer-ux /)).not.toBeInTheDocument());
+    fireEvent.click(await screen.findByRole("button", { name: /^Roer/ }));
+
+    const linked = await screen.findByTitle(/^roer-ux /);
+    await waitFor(() => expect(linked).toHaveTextContent("roer-ux"));
+    expect(screen.getByTitle(/^roer-a /)).not.toHaveTextContent("roer-ux");
+    // One repository, so one group: no headings.
+    expect(screen.queryAllByRole("heading", { level: 3 })).toHaveLength(0);
+    // Conversations are looked for in every worktree.
+    await waitFor(() =>
+      expect(vi.mocked(listClaudeSessions).mock.calls.at(-1)?.[0]).toEqual(expect.arrayContaining(["/work/roer-ux"])),
+    );
+  });
+});
 
 describe("past Claude conversations", () => {
   it("renders resumable conversations alongside live sessions", async () => {
@@ -238,8 +278,8 @@ describe("grouping by git root", () => {
       { id: "1", session: "roer-a", pane: "%0", attached: true, cwd: "/work/one", command: "zsh" },
       { id: "2", session: "roer-b", pane: "%1", attached: true, cwd: "/work/two", command: "zsh" },
     ]);
-    vi.mocked(gitRoot).mockImplementation(async (cwd: string) =>
-      cwd === "/work/one" ? "/work/one" : "/work/two",
+    vi.mocked(gitRepo).mockImplementation(async (cwd: string) =>
+      repoAt(cwd === "/work/one" ? "/work/one" : "/work/two"),
     );
     renderList();
 
@@ -261,7 +301,7 @@ describe("grouping by git root", () => {
         command: "zsh",
       },
     ]);
-    vi.mocked(gitRoot).mockResolvedValue("/work/one");
+    vi.mocked(gitRepo).mockResolvedValue(repoAt("/work/one"));
     renderList();
 
     await screen.findByTitle(/^roer-a /);
@@ -315,7 +355,7 @@ describe("naming a session", () => {
       { id: "2", session: "roer-1b3c", pane: "%1", attached: true, cwd: "/trees/roer", command: "zsh" },
       { id: "3", session: "api-0a0a", pane: "%2", attached: true, cwd: "/work/api", command: "zsh" },
     ]);
-    vi.mocked(gitRoot).mockImplementation(async (cwd: string) => cwd);
+    vi.mocked(gitRepo).mockImplementation(async (cwd: string) => repoAt(cwd));
     renderList();
 
     await waitFor(async () => {

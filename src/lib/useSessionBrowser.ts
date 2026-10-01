@@ -3,7 +3,7 @@ import { ask } from "@tauri-apps/plugin-dialog";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { logLine } from "./log";
 
-import { gitChanges, gitRoot } from "../lib/git";
+import { gitChanges, gitRepo, type Repo } from "../lib/git";
 import { confirmAction } from "./confirm";
 import { notify } from "./notify";
 import {
@@ -72,6 +72,9 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [claudeSessions, setClaudeSessions] = useState<ClaudeSession[]>([]);
   const [roots, setRoots] = useState<Record<string, string>>({});
+  // Each known directory's repository, which is what says a session in a
+  // linked worktree is still the same project.
+  const [repos, setRepos] = useState<Record<string, Repo>>({});
   const [failure, setShownFailure] = useState<string | null>(null);
   // Every failure the browser shows is one a bug report wants too.
   const setFailure = useCallback((next: string | null) => {
@@ -274,12 +277,30 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
           ...projects.map((p) => p.path),
         ]),
       ].filter(Boolean);
-      const [claude, rootEntries] = await Promise.all([
-        cwds.length > 0 ? listClaudeSessions(cwds) : Promise.resolve([]),
-        Promise.all(cwds.map(async (cwd) => [cwd, (await gitRoot(cwd)) ?? cwd] as const)),
-      ]);
+      const repoOf = (cwd: string) =>
+        Promise.resolve()
+          .then(() => gitRepo(cwd))
+          .catch(() => null)
+          .then((repo) => [cwd, repo] as const);
+      const found = new Map(await Promise.all(cwds.map(repoOf)));
+      // A conversation may have been had in any worktree of a repository
+      // known here, and is looked for in all of them.
+      const everywhere = [
+        ...new Set([...cwds, ...[...found.values()].flatMap((repo) => repo?.worktrees ?? [])]),
+      ];
+      const claude = everywhere.length > 0 ? await listClaudeSessions(everywhere) : [];
+      for (const [cwd, repo] of await Promise.all(
+        claude.map((thread) => thread.cwd).filter((cwd) => !found.has(cwd)).map(repoOf),
+      )) {
+        found.set(cwd, repo);
+      }
       setClaudeSessions(claude);
-      setRoots(Object.fromEntries(rootEntries));
+      // Grouped by repository, not by checkout: a worktree's sessions sit
+      // with the rest of its project, and their rows say which worktree.
+      setRoots(Object.fromEntries([...found].map(([cwd, repo]) => [cwd, repo?.main ?? cwd])));
+      setRepos(
+        Object.fromEntries([...found].filter((entry): entry is [string, Repo] => entry[1] !== null)),
+      );
       setFailure(null);
     } catch (cause: unknown) {
       setFailure(String(cause));
@@ -690,8 +711,16 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
     });
   };
 
-  const underProject = (cwd: string, project: Project) =>
-    cwd === project.path || cwd.startsWith(`${project.path}/`);
+  // Under the Project's folder, or under the same folder of another
+  // worktree of its repository: the same project, checked out twice.
+  const within = (cwd: string, path: string) => cwd === path || cwd.startsWith(`${path}/`);
+  const underProject = (cwd: string, project: Project) => {
+    if (within(cwd, project.path)) return true;
+    const theirs = repos[project.path];
+    const ours = repos[cwd];
+    if (!theirs || !ours || theirs.main !== ours.main || !within(project.path, theirs.root)) return false;
+    return within(cwd, ours.root + project.path.slice(theirs.root.length));
+  };
 
   // A Workspace's view is the union of what its own attached Projects cover
   // and whatever was explicitly assigned — a session under an attached
@@ -768,6 +797,7 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
     handleAddItem,
     handleRemoveItem,
     roots,
+    repos,
     waiting,
     stats,
     handleEndSession,

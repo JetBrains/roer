@@ -788,6 +788,14 @@ button.row.active {
   color: var(--roer-muted);
 }
 
+/* A linked worktree, named where the row would otherwise read as the main
+   checkout's. */
+.row-meta .worktree {
+  padding: 0 5px;
+  border: 1px solid var(--roer-border);
+  border-radius: 4px;
+}
+
 .badge.working {
   color: var(--roer-accent);
   border-style: dashed;

@@ -264,6 +264,45 @@ pub fn git_root(cwd: String) -> Option<String> {
     root(&cwd).ok()
 }
 
+/// Where a directory sits among a repository's worktrees.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Repo {
+    /// The checkout the directory is in: a worktree's own folder.
+    pub root: String,
+    /// The repository's main checkout, the same for all its worktrees.
+    pub main: String,
+    /// Every worktree of the repository, the main checkout first.
+    pub worktrees: Vec<String>,
+}
+
+/// Which repository a directory is in, whichever worktree of it: a session
+/// in a linked worktree belongs to the project as much as one in the main
+/// checkout. `None` outside a repository.
+#[tauri::command(async)]
+pub fn git_repo(cwd: String) -> Option<Repo> {
+    repo(&cwd).ok()
+}
+
+fn repo(cwd: &str) -> Result<Repo, String> {
+    let root = root(cwd)?;
+    let common = git(&root, &["rev-parse", "--path-format=absolute", "--git-common-dir"])?;
+    let common = Path::new(common.trim());
+    // A bare repository's common dir is the repository itself.
+    let main = if common.file_name().is_some_and(|name| name == ".git") {
+        common.parent().unwrap_or(common)
+    } else {
+        common
+    };
+    let listed = git(&root, &["worktree", "list", "--porcelain"]).unwrap_or_default();
+    let worktrees = listed
+        .lines()
+        .filter_map(|line| line.strip_prefix("worktree "))
+        .map(str::to_string)
+        .collect();
+    Ok(Repo { root, main: main.to_string_lossy().into_owned(), worktrees })
+}
+
 /// Every local branch, for the branch-diff view's two pickers.
 #[tauri::command(async)]
 pub fn git_branches(cwd: String) -> Result<Vec<String>, String> {
@@ -779,10 +818,33 @@ fn count_lines(path: &Path) -> (Option<u32>, bool) {
 mod tests {
     use super::{
         branch_commits, branches, changes, commit_files, count_lines, git, git_commit_diff,
-        git_diff, git_root, numstat, parse_name_status, parse_status, push_upstream, root,
+        git_diff, git_root, numstat, parse_name_status, parse_status, push_upstream, repo, root,
         upstream_status, Stat, Upstream, MAX_DIFF_BYTES,
     };
     use crate::testing::{commit, init, must, scratch, write};
+
+    #[test]
+    fn a_worktree_belongs_to_the_repository_it_was_added_to() {
+        let dir = scratch("worktree-repo");
+        let main = dir.join("main");
+        std::fs::create_dir_all(&main).unwrap();
+        let main_s = main.to_string_lossy().to_string();
+        init(&main_s);
+        write(&main, "a.txt", "a");
+        must(&main_s, &["add", "a.txt"]);
+        commit(&main_s, "first");
+        let linked = dir.join("linked");
+        must(&main_s, &["worktree", "add", "-q", "-b", "side", &linked.to_string_lossy()]);
+
+        let from_main = repo(&main_s).unwrap();
+        let from_linked = repo(&linked.to_string_lossy()).unwrap();
+        assert_eq!(from_linked.main, from_main.main, "one repository");
+        assert_eq!(from_main.root, from_main.main);
+        assert_ne!(from_linked.root, from_linked.main, "its own checkout");
+        assert_eq!(from_linked.worktrees.len(), 2, "{:?}", from_linked.worktrees);
+        assert_eq!(from_linked.worktrees[0], from_main.main, "the main checkout first");
+        assert!(repo(&dir.to_string_lossy()).is_err(), "not in a repository");
+    }
 
     #[test]
     fn reads_the_branch_and_an_ordinary_change() {
