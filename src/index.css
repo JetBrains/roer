@@ -3230,6 +3230,7 @@ button.danger:hover {
 
 /* The shortcut sheet: the Go to File popup's frame, holding a list. */
 .popup.shortcuts {
+  align-self: flex-start;
   width: min(420px, 90vw);
   max-height: 70vh;
   overflow-y: auto;
