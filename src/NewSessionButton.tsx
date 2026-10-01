@@ -25,6 +25,8 @@ export type NewSessionButtonProps = Pick<
 > & {
   /** What the picker offers; null until first read. */
   agents?: AgentList | null;
+  /** Why `agents` could not be read, when it could not. */
+  agentsError?: string | null;
   /** Whether the agent picker is open, held by the caller so a shortcut can
    * open it too. */
   pickerOpen?: boolean;
@@ -51,6 +53,7 @@ export function NewSessionButton({
   pickProjectForNewSession,
   attachNewProjectForNewSession,
   agents,
+  agentsError,
   pickerOpen,
   onPickerOpenChange,
   onNewAgent,
@@ -125,7 +128,7 @@ export function NewSessionButton({
           </button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="agent-picker">
-          <AgentPickerItems agents={agents} openNew={openNew} />
+          <AgentPickerItems agents={agents} error={agentsError} openNew={openNew} />
           <DropdownMenuSeparator />
           <DropdownMenuItem onSelect={() => onNewAgent?.()}>New agent…</DropdownMenuItem>
           <DropdownMenuItem onSelect={() => onManageAgents?.()}>
@@ -144,11 +147,22 @@ export function NewSessionButton({
  */
 function AgentPickerItems({
   agents,
+  error,
   openNew,
 }: {
   agents: AgentList | null | undefined;
+  error?: string | null;
   openNew: NewSessionButtonProps["openNew"];
 }) {
+  // A failure is the answer, not a wait: say so, in its first line — an
+  // old `roer` answers an unknown command with its whole usage text.
+  if (!agents && error) {
+    return (
+      <DropdownMenuLabel className="error" title={error}>
+        Could not list agents: {error.split("\n")[0]}
+      </DropdownMenuLabel>
+    );
+  }
   if (!agents) {
     return <DropdownMenuLabel className="muted">Looking for agents…</DropdownMenuLabel>;
   }

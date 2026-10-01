@@ -631,18 +631,21 @@ export function App() {
   agentsCwdRef.current = browser.newSessionCwd();
   const agentsRequestRef = useRef(0);
   const agentsErrorRef = useRef<string | null>(null);
+  const [agentsError, setAgentsError] = useState<string | null>(null);
   const refreshAgents = useCallback(() => {
     const request = ++agentsRequestRef.current;
     return listAgents(agentsCwdRef.current)
       .then((list) => {
         if (request !== agentsRequestRef.current) return undefined;
         agentsErrorRef.current = null;
+        setAgentsError(null);
         setAgents(list);
         return list;
       })
       .catch((cause: unknown) => {
         console.warn("could not list agents", cause);
         agentsErrorRef.current = String(cause);
+        if (request === agentsRequestRef.current) setAgentsError(String(cause));
         return undefined;
       });
   }, []);
@@ -710,7 +713,8 @@ export function App() {
     ? ""
     : onStage
       ? paneLabel(onStage.title, onStage.command) || (runningAgent(onStage) ?? onStage.command)
-      : session.title;
+      : // A teleported session is titled with its pane's title, spinner and all.
+        paneLabel(session.title, "");
   useEffect(() => {
     document.title = stageName ? `${stageName} — Roer` : "Roer";
   }, [stageName]);
@@ -956,6 +960,7 @@ export function App() {
                 browser.attachNewProjectForNewSession
               }
               agents={agents}
+              agentsError={agentsError}
               pickerOpen={agentPickerOpen}
               onPickerOpenChange={openAgentPicker}
               onNewAgent={() => openAgents({ mode: "new" }, true)}
