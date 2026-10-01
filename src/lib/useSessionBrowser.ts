@@ -42,6 +42,7 @@ import { isWorking, paneLabel, runningAgent, shorten, type OpenRequest } from ".
 /** What a session's directory has on its branch, for its row. */
 export interface DirStats {
   branch: string;
+  commit: string;
   files: number;
   added: number;
   deleted: number;
@@ -241,6 +242,7 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
               cwd,
               {
                 branch: changes.branch,
+                commit: changes.commit,
                 files: changes.files.length,
                 added: counted.reduce((sum, file) => sum + file.added, 0),
                 deleted: counted.reduce((sum, file) => sum + file.deleted, 0),

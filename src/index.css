@@ -790,7 +790,7 @@ button.row.active {
   color: var(--roer-muted);
 }
 
-/* A linked worktree, named where the row would otherwise read as the main
+/* A linked worktree's branch, boxed so its row does not read as the main
    checkout's. */
 .row-meta .worktree {
   padding: 0 5px;

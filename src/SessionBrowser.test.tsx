@@ -22,7 +22,7 @@ import {
   workspaceAssignments,
 } from "./lib/workspaces";
 import { NewSessionButton } from "./NewSessionButton";
-import { isWorking, paneLabel, runningAgent, SessionBrowser, type OpenRequest } from "./SessionBrowser";
+import { checkoutLabel, isWorking, paneLabel, runningAgent, SessionBrowser, type OpenRequest } from "./SessionBrowser";
 import { WorkspaceSidebar } from "./WorkspaceSidebar";
 
 vi.mock("./lib/pty", () => ({
@@ -194,6 +194,27 @@ describe("worktrees", () => {
     await waitFor(() =>
       expect(vi.mocked(listClaudeSessions).mock.calls.at(-1)?.[0]).toEqual(expect.arrayContaining(["/work/roer-ux"])),
     );
+  });
+});
+
+describe("what a row names its checkout by", () => {
+  const stats = (branch: string, commit: string) => ({ branch, commit, files: 0, added: 0, deleted: 0 });
+
+  it("goes by the branch, which it reads again when the session switches", () => {
+    expect(checkoutLabel(stats("ux-polishing", "ab3d7d1"), "roer-ux")?.text).toBe("ux-polishing");
+    expect(checkoutLabel(stats("main", "ab3d7d1"), null)?.text).toBe("main");
+  });
+
+  it("names a detached checkout by its commit, never as detached", () => {
+    const label = checkoutLabel(stats("(detached)", "27e3ed0"), "roer-pr36");
+    expect(label?.text).toBe("27e3ed0");
+    expect(label?.title).toContain("roer-pr36");
+  });
+
+  it("falls back to the worktree's folder, and to nothing outside a repository", () => {
+    expect(checkoutLabel(undefined, "roer-ux")?.text).toBe("roer-ux");
+    expect(checkoutLabel(stats("(detached)", ""), null)).toBeNull();
+    expect(checkoutLabel(undefined, null)).toBeNull();
   });
 });
 
@@ -480,6 +501,7 @@ describe("what the agent is doing", () => {
     vi.mocked(gitChanges).mockResolvedValue({
       root: "/Users/test/project",
       branch: "fix-login",
+      commit: "ab3d7d1",
       files: [
         { path: "a.ts", staged: ".", unstaged: "M", added: 10, deleted: 2, binary: false, counted: true },
         { path: "b.ts", staged: ".", unstaged: "M", added: 2, deleted: 1, binary: false, counted: true },

@@ -66,6 +66,9 @@ pub struct Changes {
     pub root: String,
     /// `(detached)` when there is no branch, which is what git itself reports.
     pub branch: String,
+    /// The checked-out commit, abbreviated: what names a detached checkout.
+    /// Empty before the first commit.
+    pub commit: String,
     pub files: Vec<FileChange>,
 }
 
@@ -592,7 +595,7 @@ fn changes(root: &str) -> Result<Changes, String> {
             "--untracked-files=all",
         ],
     )?;
-    let (branch, mut files) = parse_status(&status);
+    let (branch, commit, mut files) = parse_status(&status);
 
     // One pass for every tracked file's line counts, rather than a `git`
     // process per row: a repository mid-refactor has hundreds of rows.
@@ -627,6 +630,7 @@ fn changes(root: &str) -> Result<Changes, String> {
     Ok(Changes {
         root: root.to_string(),
         branch,
+        commit,
         files,
     })
 }
@@ -694,14 +698,20 @@ fn cap(mut text: String, truncated: bool) -> String {
 ///
 /// Records are NUL-delimited, so every path is the literal one, and a
 /// rename's original path is a record of its own following the rename.
-fn parse_status(text: &str) -> (String, Vec<FileChange>) {
+fn parse_status(text: &str) -> (String, String, Vec<FileChange>) {
     let mut branch = String::new();
+    let mut commit = String::new();
     let mut files: Vec<FileChange> = Vec::new();
 
     let mut records = text.split('\0').filter(|record| !record.is_empty());
     while let Some(record) = records.next() {
         if let Some(head) = record.strip_prefix("# branch.head ") {
             branch = head.to_string();
+            continue;
+        }
+        // `(initial)` before the first commit, which has none to name.
+        if let Some(oid) = record.strip_prefix("# branch.oid ") {
+            commit = if oid.starts_with('(') { String::new() } else { oid.chars().take(7).collect() };
             continue;
         }
         let Some((kind, rest)) = record.split_once(' ') else {
@@ -728,7 +738,7 @@ fn parse_status(text: &str) -> (String, Vec<FileChange>) {
     // Git orders by index order; the tree wants path order, and sorting here
     // means every consumer gets the same one.
     files.sort_by(|a, b| a.path.cmp(&b.path));
-    (branch, files)
+    (branch, commit, files)
 }
 
 /// `1 <XY> <sub> <mH> <mI> <mW> <hH> <hI> <path>`
@@ -913,12 +923,14 @@ mod tests {
 
     #[test]
     fn reads_the_branch_and_an_ordinary_change() {
-        let (branch, files) = parse_status(
-            "# branch.oid 1234\0\
+        let (branch, commit, files) = parse_status(
+            "# branch.oid 1234abcdef\0\
              # branch.head changes-view\0\
              1 .M N... 100644 100644 100644 abc def src/App.tsx\0",
         );
         assert_eq!(branch, "changes-view");
+        assert_eq!(commit, "1234abc");
+        assert_eq!(parse_status("# branch.oid (initial)\0# branch.head main\0").1, "", "no commit yet");
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].path, "src/App.tsx");
         assert_eq!(files[0].staged, ".");
@@ -929,14 +941,14 @@ mod tests {
     #[test]
     fn keeps_the_two_status_letters_apart() {
         // Staged an edit, then edited again: both sides have something.
-        let (_, files) = parse_status("1 MM N... 100644 100644 100644 abc def a.txt\0");
+        let (_, _, files) = parse_status("1 MM N... 100644 100644 100644 abc def a.txt\0");
         assert_eq!(files[0].staged, "M");
         assert_eq!(files[0].unstaged, "M");
     }
 
     #[test]
     fn parses_a_rename_with_its_original_path() {
-        let (_, files) =
+        let (_, _, files) =
             parse_status("2 R. N... 100644 100644 100644 abc def R100 src/new.ts\0src/old.ts\0");
         assert_eq!(files[0].path, "src/new.ts");
         assert_eq!(files[0].renamed_from.as_deref(), Some("src/old.ts"));
@@ -945,7 +957,7 @@ mod tests {
 
     #[test]
     fn parses_an_unmerged_file() {
-        let (_, files) =
+        let (_, _, files) =
             parse_status("u UU N... 100644 100644 100644 100644 a b c src/conflict.rs\0");
         assert_eq!(files[0].path, "src/conflict.rs");
         assert_eq!(files[0].staged, "U");
@@ -954,7 +966,7 @@ mod tests {
 
     #[test]
     fn marks_untracked_files_on_the_worktree_side() {
-        let (_, files) = parse_status("? notes.md\0");
+        let (_, _, files) = parse_status("? notes.md\0");
         assert_eq!(files[0].path, "notes.md");
         assert_eq!(files[0].staged, ".");
         assert_eq!(files[0].unstaged, "?");
@@ -962,7 +974,7 @@ mod tests {
 
     #[test]
     fn tolerates_paths_with_spaces() {
-        let (_, files) = parse_status(
+        let (_, _, files) = parse_status(
             "1 .M N... 100644 100644 100644 abc def my docs/a note.md\0? other notes.md\0",
         );
         let paths: Vec<_> = files.iter().map(|f| f.path.as_str()).collect();
@@ -973,13 +985,13 @@ mod tests {
     fn keeps_a_quote_and_a_tab_in_a_path() {
         // The line-delimited form would spell this one `"we\"ird\ttab.txt"`,
         // which is not a path anything can be asked about.
-        let (_, files) = parse_status("? we\"ird\ttab.txt\0");
+        let (_, _, files) = parse_status("? we\"ird\ttab.txt\0");
         assert_eq!(files[0].path, "we\"ird\ttab.txt");
     }
 
     #[test]
     fn ignores_headers_ignored_files_and_junk() {
-        let (_, files) = parse_status(
+        let (_, _, files) = parse_status(
             "# branch.ab +1 -0\0\
              ! target/debug/roer\0\
              \0\
@@ -991,7 +1003,7 @@ mod tests {
 
     #[test]
     fn sorts_files_by_path() {
-        let (_, files) = parse_status("? z.txt\0? a.txt\0? m/b.txt\0");
+        let (_, _, files) = parse_status("? z.txt\0? a.txt\0? m/b.txt\0");
         let paths: Vec<_> = files.iter().map(|f| f.path.as_str()).collect();
         assert_eq!(paths, ["a.txt", "m/b.txt", "z.txt"]);
     }

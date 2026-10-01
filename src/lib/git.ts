@@ -24,6 +24,8 @@ export interface FileChange {
 export interface Changes {
   root: string;
   branch: string;
+  /** The checked-out commit, abbreviated; empty before the first one. */
+  commit: string;
   files: FileChange[];
 }
 

@@ -181,14 +181,18 @@ function RowMeta({
   worktree: string | null;
 }) {
   const parts: ReactNode[] = [];
-  if (worktree) {
+  // What the checkout is on now, read again every so often: a session can
+  // switch branch. A detached one goes by its commit, never the word, which
+  // on a row says nobody holds the session. A linked worktree's folder only
+  // when there is neither, and nothing at all outside a repository.
+  const head = checkoutLabel(stats, worktree);
+  if (head) {
     parts.push(
-      <span key="worktree" className="worktree" title={`In the worktree ${worktree}`}>
-        {worktree}
+      <span key="head" className={worktree ? "worktree" : undefined} title={head.title}>
+        {head.text}
       </span>,
     );
   }
-  if (stats?.branch) parts.push(<span key="branch">{stats.branch}</span>);
   if (stats && stats.files > 0) {
     parts.push(
       <span key="changes" className="counts" title={`${stats.files} ${stats.files === 1 ? "file" : "files"} changed`}>
@@ -198,6 +202,19 @@ function RowMeta({
   }
   if (session.activity) parts.push(<span key="age">{relativeAge(session.activity)}</span>);
   return parts.length > 0 ? <span className="row-meta">{parts}</span> : null;
+}
+
+/** What a row names its checkout by: its branch, else its commit, else a
+ * linked worktree's folder; `null` with none of them. */
+export function checkoutLabel(
+  stats: DirStats | undefined,
+  worktree: string | null,
+): { text: string; title: string } | null {
+  const where = worktree ? ` in the worktree ${worktree}` : "";
+  if (stats?.branch && stats.branch !== "(detached)") return { text: stats.branch, title: `On ${stats.branch}${where}` };
+  if (stats?.commit) return { text: stats.commit, title: `No branch: at commit ${stats.commit}${where}` };
+  if (worktree) return { text: worktree, title: `In the worktree ${worktree}` };
+  return null;
 }
 
 /** A linked worktree's folder name, for a row grouped with the main

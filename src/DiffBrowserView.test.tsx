@@ -74,6 +74,7 @@ function commit(subject: string, extra: Partial<Commit> = {}): Commit {
 const changes: Changes = {
   root: "/work/roer",
   branch: "feature",
+  commit: "ab3d7d1",
   files: [file("src/lib/git.ts"), file("src/lib/tree.ts"), file("README.md")],
 };
 
