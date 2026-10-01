@@ -37,7 +37,7 @@ import {
   workspaceAssignments,
   type Workspace,
 } from "../lib/workspaces";
-import { isWorking, paneLabel, runningAgent, shorten, type OpenRequest } from "../SessionBrowser";
+import { isWorking, paneLabel, runningAgent, shorten, toldByOutput, type OpenRequest } from "../SessionBrowser";
 
 /** What a session's directory has on its branch, for its row. */
 export interface DirStats {
@@ -149,6 +149,8 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
   const workingRef = useRef(new Map<string, boolean>());
   const bellRef = useRef(new Map<string, boolean>());
   const stateRef = useRef(new Map<string, string>());
+  // Per pane, its last output and in how many lists in a row that moved on.
+  const printedRef = useRef(new Map<string, { activity: number; lists: number }>());
   // The first list only says how things stand: nothing in it is news.
   const firstListRef = useRef(true);
   const activePaneRef = useRef(activePane);
@@ -167,7 +169,27 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
     const hadRung = bellRef.current;
     const wasState = stateRef.current;
     stateRef.current = new Map(live.map((session) => [session.pane, session.state ?? ""]));
-    const working = new Map(live.map((session) => [session.pane, isWorking(session, now)]));
+    const wasPrinted = printedRef.current;
+    printedRef.current = new Map(
+      live.map((session) => {
+        const activity = session.activity ?? 0;
+        const last = wasPrinted.get(session.pane);
+        return [session.pane, { activity, lists: last && activity > last.activity ? last.lists + 1 : 0 }];
+      }),
+    );
+    // Output alone starts a turn only once it keeps coming: a spinner moves on
+    // between every two lists, while a TUI redrawing itself for a resize, as
+    // opening or leaving the session does, prints once and is done. Taken for
+    // work, that would be a stop, and a notification, a few seconds later.
+    const working = new Map(
+      live.map((session) => [
+        session.pane,
+        isWorking(session, now) &&
+          (!toldByOutput(session) ||
+            Boolean(wasWorking.get(session.pane)) ||
+            (printedRef.current.get(session.pane)?.lists ?? 0) >= 2),
+      ]),
+    );
     workingRef.current = working;
     bellRef.current = new Map(live.map((session) => [session.pane, Boolean(session.bell)]));
     const seen = (pane: string) => pane === activePaneRef.current && document.hasFocus();
