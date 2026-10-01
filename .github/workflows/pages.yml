@@ -44,8 +44,9 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       # No checkout, so gh has no remote to infer the repository from.
       GH_REPO: ${{ github.repository }}
+      DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
     steps:
-      - run: gh workflow run pages.yml --ref "${{ github.event.repository.default_branch }}"
+      - run: gh workflow run pages.yml --ref "$DEFAULT_BRANCH"
 
   build:
     name: Build
@@ -54,6 +55,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           # A release event checks out its tag by default, which may predate
           # site/ or carry an older copy of it; the site is always main's.
           ref: ${{ github.event.repository.default_branch }}

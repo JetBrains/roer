@@ -63,6 +63,8 @@ jobs:
     environment: ${{ inputs.release_environment }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
@@ -104,9 +106,11 @@ jobs:
       - name: Tar the .app for signing
         if: runner.os == 'macOS'
         shell: bash
+        env:
+          BUNDLE_DIR: ${{ inputs.bundle_dir }}
         run: |
           set -euo pipefail
-          tar -czf Roer.app.tar.gz -C "${{ inputs.bundle_dir }}/macos" Roer.app
+          tar -czf Roer.app.tar.gz -C "$BUNDLE_DIR/macos" Roer.app
           ls -lh Roer.app.tar.gz
 
       - name: Stage selected bundles
