@@ -7,6 +7,14 @@
 //   /ui       shows a surface in the Generative UI panel, via `roer plugin-ui`
 //   /actions  prints the clicks read back from it, via `roer plugin-ui-actions`
 //   /exit     quits, leaving the session's shell
+//   /clear    clears the screen
+//   /task <title>
+//             titles the terminal with a task, as Claude Code does when idle
+//   /work <seconds> <title>
+//             clears the screen and works on the task for that long, spinner
+//             and all, then asks
+//             for permission as Claude Code does, through `roer status`;
+//             `y` lets it finish
 //   anything else is echoed back as `echo: <line>`
 //
 // `claude mcp …`, which `roer mcp` runs, succeeds and prints nothing.
@@ -15,6 +23,9 @@ import { createInterface } from "node:readline";
 
 const args = process.argv.slice(2);
 if (args[0] === "mcp") process.exit(0);
+// Named as the real one is, for tmux's pane_current_command. Not on Windows,
+// where this would retitle the console instead.
+if (process.platform !== "win32") process.title = "claude";
 
 // The roer the harness built; the wrapper that starts this sets it.
 const roer = process.env.ROER_E2E_ROER || "roer";
@@ -49,6 +60,33 @@ function run(argv, input) {
 process.stdout.write("\x1b]2;Fake task\x07");
 console.log(`fake-claude ready (${args.length} args)`);
 
+const SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏";
+const title = (text) => process.stdout.write(`\x1b]2;${text}\x07`);
+const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
+/** The task `/work` asked permission for, until it is answered. */
+let asking = null;
+
+/** What a turn looks like from outside: the hooks roer starts Claude Code
+ * with say working, then waiting with Claude's words for what it needs. */
+async function work(seconds, task) {
+  run(["status", "working"]);
+  process.stdout.write(`\x1b[2J\x1b[H● ${task}\n`);
+  const start = Date.now();
+  for (let i = 0; Date.now() < start + seconds * 1000; i++) {
+    const frame = SPINNER[i % SPINNER.length];
+    title(`${frame} ${task}`);
+    process.stdout.write(`\r  ${frame} Working… ${Math.floor((Date.now() - start) / 1000)}s`);
+    await sleep(100);
+  }
+  process.stdout.write("\r\x1b[2K");
+  title(`✳ ${task}`);
+  console.log("  Bash(npm test)");
+  console.log("  Allow this command? [y/n]");
+  const message = "Claude needs your permission to use Bash";
+  run(["status", "waiting", "--hook"], JSON.stringify({ message, notification_type: "permission_prompt" }));
+  asking = task;
+}
+
 const lines = createInterface({ input: process.stdin, output: process.stdout, prompt: "> " });
 lines.prompt();
 lines.on("line", (line) => {
@@ -57,7 +95,22 @@ lines.on("line", (line) => {
     lines.close();
     return;
   }
-  if (text === "/ui") {
+  if (asking) {
+    const task = asking;
+    asking = null;
+    run(["status", "working"]);
+    console.log(text === "y" ? "  ✓ 128 passed" : "  Skipped");
+    title(`✳ ${task}`);
+    run(["status", "done"]);
+  } else if (text === "/clear") {
+    process.stdout.write("\x1b[2J\x1b[H");
+  } else if (text.startsWith("/task ")) {
+    title(`✳ ${text.slice(6)}`);
+  } else if (text.startsWith("/work ")) {
+    const [, seconds, ...task] = text.split(/\s+/);
+    void work(Number(seconds) || 0, task.join(" "));
+    return;
+  } else if (text === "/ui") {
     for (const message of surface) run(["plugin-ui"], JSON.stringify(message));
     console.log("ui shown");
   } else if (text === "/actions") {

@@ -40,7 +40,9 @@ git ls-files -z --cached --others --exclude-standard | grep -z -v '^e2e/artifact
             cargo build --manifest-path cli/Cargo.toml
             cd e2e && npm ci --no-audit --no-fund
             status=0
-            dbus-run-session -- xvfb-run -a -s "-screen 0 1280x800x24" npm test || status=$?
+            # dunst is the notification server a desktop would have, so a
+            # recording shows the notifications the app sends.
+            dbus-run-session -- xvfb-run -a -s "-screen 0 1280x800x24" sh -c "dunst & npm test" || status=$?
             cp -r artifacts/. /artifacts/ 2>/dev/null || true
             # Owned by the host user, not root: on a Linux host the next run
             # must be able to delete them.

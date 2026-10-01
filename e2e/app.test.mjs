@@ -129,3 +129,37 @@ test("Sessions lists both, and picking the other one brings it back", async () =
     (rows) => rows.length === 2 && rows.filter((row) => row.attached === "attached").length === 1,
   );
 });
+
+test("an agent out of sight that stops to ask is shown as needing you", async () => {
+  // The agent on the stage now goes out of sight behind a new session.
+  const [hidden] = await app.untilSessions("one session attached", (rows) => {
+    const held = rows.filter((row) => row.attached === "attached");
+    return held.length === 1 ? held : null;
+  });
+  await app.click("New session");
+  await app.waitForTerminal("fake-claude ready");
+  await app.untilSessions("the agent to be detached", (rows) =>
+    rows.find((row) => row.pane === hidden.pane)?.attached === "detached",
+  );
+
+  // Asking through `roer status`, as Claude Code's hooks do: the app sends a
+  // system notification, which nothing here can see, and marks it waiting.
+  app.roer(["send", "--pane", hidden.pane], "/work 1 Run the test suite");
+  await app.until("a dot on the Sessions tab", () =>
+    app.driver.executeScript("return !!document.querySelector('.tab-dot.waiting')"),
+  );
+  await app.tab("Sessions");
+  const asking = await app.until("the row that needs you", () =>
+    app.driver.executeScript(
+      "return Array.from(document.querySelectorAll('.sessions-view button.row')).find((row) => row.innerText.includes('needs you')) ?? null",
+    ),
+  );
+  await asking.click();
+  await app.waitForTerminal("Allow this command?");
+  await app.type(`y${Key.ENTER}`);
+  await app.waitForTerminal("128 passed");
+  // Seen, so no longer waiting.
+  await app.until("the dot to go", () =>
+    app.driver.executeScript("return !document.querySelector('.tab-dot.waiting')"),
+  );
+});
