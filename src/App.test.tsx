@@ -313,6 +313,20 @@ describe("App", () => {
     expect(localStorage.getItem("roer:theme")).toBe("system");
   });
 
+  it("turns notifications off and on from the title bar, remembering it", async () => {
+    render(<App />);
+    const toggle = await screen.findByRole("button", { name: "Notifications" });
+    expect(toggle).toHaveAttribute("aria-pressed", "true");
+
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-pressed", "false");
+    expect(localStorage.getItem("roer:notifications")).toBe("off");
+
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-pressed", "true");
+    expect(localStorage.getItem("roer:notifications")).toBe("on");
+  });
+
   it("opens on the launcher rather than a terminal", async () => {
     render(<App />);
 

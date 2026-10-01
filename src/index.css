@@ -347,6 +347,7 @@ code {
 
 .find-toggle,
 .theme-toggle,
+.notifications-toggle,
 .generative-toggle {
   margin-right: 8px;
   padding: 4px;
@@ -359,6 +360,7 @@ code {
 
 .find-toggle:hover:not(:disabled),
 .theme-toggle:hover,
+.notifications-toggle:hover,
 .generative-toggle:hover {
   color: var(--roer-fg);
   background: var(--roer-row-hover);

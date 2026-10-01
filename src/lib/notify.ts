@@ -9,6 +9,23 @@
  * Roer to the front.
  */
 import { invoke } from "@tauri-apps/api/core";
+import { useEffect, useState } from "react";
+
+const KEY = "roer:notifications";
+
+/** On unless turned off from the title bar. */
+export function notificationsOn(): boolean {
+  return localStorage.getItem(KEY) !== "off";
+}
+
+/** The user's choice, persisted. */
+export function useNotificationsOn(): [boolean, (on: boolean) => void] {
+  const [on, setOn] = useState(notificationsOn);
+  useEffect(() => {
+    localStorage.setItem(KEY, on ? "on" : "off");
+  }, [on]);
+  return [on, setOn];
+}
 
 function inTauri(): boolean {
   return "__TAURI_INTERNALS__" in window;
@@ -28,9 +45,11 @@ async function ask(): Promise<boolean> {
   return (await Notification.requestPermission()) === "granted";
 }
 
-/** Shows `title` and `body`, unless notifications are not allowed. Never
- * throws: a notification that could not be shown is only one fewer. */
+/** Shows `title` and `body`, unless notifications are turned off or not
+ * allowed. Never throws: a notification that could not be shown is only one
+ * fewer. Turned off, the system is not even asked for permission. */
 export async function notify(title: string, body: string, onClick?: () => void): Promise<void> {
+  if (!notificationsOn()) return;
   try {
     allowed ??= ask().catch(() => false);
     if (!(await allowed)) return;

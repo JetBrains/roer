@@ -1,5 +1,7 @@
 import { message } from "@tauri-apps/plugin-dialog";
 import {
+  Bell,
+  BellOff,
   Monitor,
   Moon,
   PanelLeftClose,
@@ -51,6 +53,7 @@ import {
   tabNumber,
   useHotkey,
 } from "./lib/keys";
+import { useNotificationsOn } from "./lib/notify";
 import { nextChoice, useThemeChoice } from "./lib/theme";
 import { useSessionBrowser } from "./lib/useSessionBrowser";
 import {
@@ -163,6 +166,7 @@ export function App() {
     );
   }, [sidebarCollapsed]);
   const [themeChoice, setThemeChoice] = useThemeChoice();
+  const [notificationsOn, setNotificationsOn] = useNotificationsOn();
   // Unlike `sidebarCollapsed`, this is never persisted: the panel is a side
   // column now, not a tab, so it should only ever claim space when there is
   // something to show, freshly each launch — a live message expands it
@@ -889,6 +893,17 @@ export function App() {
           ) : (
             <Moon size={15} />
           )}
+        </button>
+
+        <button
+          type="button"
+          className="notifications-toggle"
+          aria-label="Notifications"
+          title={notificationsOn ? "Notifications on" : "Notifications off"}
+          aria-pressed={notificationsOn}
+          onClick={() => setNotificationsOn(!notificationsOn)}
+        >
+          {notificationsOn ? <Bell size={15} /> : <BellOff size={15} />}
         </button>
 
         <button
