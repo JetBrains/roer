@@ -286,21 +286,39 @@ pub fn git_repo(cwd: String) -> Option<Repo> {
 
 fn repo(cwd: &str) -> Result<Repo, String> {
     let root = root(cwd)?;
-    let common = git(&root, &["rev-parse", "--path-format=absolute", "--git-common-dir"])?;
-    let common = Path::new(common.trim());
-    // A bare repository's common dir is the repository itself.
-    let main = if common.file_name().is_some_and(|name| name == ".git") {
-        common.parent().unwrap_or(common)
-    } else {
-        common
-    };
+    let dirs = git(&root, &["rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir"])?;
+    let mut dirs = dirs.lines().map(str::trim);
+    let (own, common) = (dirs.next().unwrap_or_default(), dirs.next().unwrap_or_default());
     let listed = git(&root, &["worktree", "list", "--porcelain"]).unwrap_or_default();
-    let worktrees = listed
+    let mut worktrees: Vec<String> = listed
         .lines()
         .filter_map(|line| line.strip_prefix("worktree "))
         .map(str::to_string)
         .collect();
-    Ok(Repo { root, main: main.to_string_lossy().into_owned(), worktrees })
+    // A checkout whose git dir is the repository's own is the main one, its
+    // git dir wherever it is: a submodule's lives in its superproject's
+    // `.git/modules`, one made with `--separate-git-dir` anywhere at all,
+    // and git's list then names that dir in place of the checkout. A linked
+    // worktree goes by the list, or else by the common dir, which is
+    // `<main>/.git` in the usual layout and a bare repository itself.
+    let main = if own == common {
+        match worktrees.first_mut() {
+            Some(first) => *first = root.clone(),
+            None => worktrees.push(root.clone()),
+        }
+        root.clone()
+    } else if let Some(first) = worktrees.first() {
+        first.clone()
+    } else {
+        let common = Path::new(common);
+        let main = if common.file_name().is_some_and(|name| name == ".git") {
+            common.parent().unwrap_or(common)
+        } else {
+            common
+        };
+        main.to_string_lossy().into_owned()
+    };
+    Ok(Repo { root, main, worktrees })
 }
 
 /// Every local branch, for the branch-diff view's two pickers.
@@ -844,6 +862,30 @@ mod tests {
         assert_eq!(from_linked.worktrees.len(), 2, "{:?}", from_linked.worktrees);
         assert_eq!(from_linked.worktrees[0], from_main.main, "the main checkout first");
         assert!(repo(&dir.to_string_lossy()).is_err(), "not in a repository");
+    }
+
+    #[test]
+    fn a_checkout_with_its_git_dir_elsewhere_is_its_own_main() {
+        let dir = scratch("separate-git-dir");
+        let work = dir.join("work");
+        std::fs::create_dir_all(&work).unwrap();
+        let work_s = work.to_string_lossy().to_string();
+        must(&work_s, &["init", "-q", "--separate-git-dir", &dir.join("store.git").to_string_lossy()]);
+        write(&work, "a.txt", "a");
+        must(&work_s, &["add", "a.txt"]);
+        commit(&work_s, "first");
+
+        let found = repo(&work_s).unwrap();
+        assert_eq!(found.main, found.root, "not the git dir: {found:?}");
+
+        // A submodule's git dir is in its superproject's `.git/modules`.
+        let sup = dir.join("super");
+        std::fs::create_dir_all(&sup).unwrap();
+        let sup_s = sup.to_string_lossy().to_string();
+        init(&sup_s);
+        must(&sup_s, &["-c", "protocol.file.allow=always", "submodule", "add", "-q", &work_s, "sub"]);
+        let sub = repo(&sup.join("sub").to_string_lossy()).unwrap();
+        assert_eq!(sub.main, sub.root, "not .git/modules: {sub:?}");
     }
 
     #[test]
