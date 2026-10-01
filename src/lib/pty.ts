@@ -33,6 +33,9 @@ export interface SessionInfo {
   state?: "working" | "waiting" | "done" | "";
   /** Its words for what it waits for, with `waiting`. */
   note?: string;
+  /** When the session was last opened, in seconds since the epoch; 0 or
+   * missing when it never was or the shim cannot say. */
+  opened?: number;
 }
 
 /**
