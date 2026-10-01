@@ -36,7 +36,7 @@ done
 
 # Ad hoc, as tauri.conf.json signs the app: the linker signs only arm64
 # slices, and a bundle holding code with no signature at all cannot be sealed.
-# The CodeSign service re-signs both with the Developer ID.
+# Developer ID signing, done outside this repository, re-signs both.
 codesign --force --sign - --options runtime "$stage/roer" "$stage/tmux"
 
 # Laid out as the bundle will be, roer has to find both without any help: a

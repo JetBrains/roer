@@ -13,7 +13,7 @@ for Apple silicon and Intel.
    xattr -dr com.apple.quarantine /Applications/Roer.app
    ```
 
-   __SIGNING__ Until notarization is in place, macOS quarantines the app on
+   This build is **unsigned**. Until notarization is in place, macOS quarantines the app on
    first launch and it is killed instead of opening. The command above is the
    fix; it is not optional.
 3. Open Roer once. It puts the `roer` command on your `PATH`; in a new
