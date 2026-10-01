@@ -313,7 +313,11 @@ export function GoToFile({
         : matched > shown.length
           ? `${shown.length} of ${matched} matches`
           : `${matched} ${matched === 1 ? "match" : "matches"}`;
-    return indexing ? `${counted} — indexing…` : counted;
+    const files = indexing ? `${counted} — indexing…` : counted;
+    const found = sessionRows.length;
+    if (found === 0) return files;
+    const named = `${found} ${found === 1 ? "session" : "sessions"}`;
+    return matched === 0 && !indexing ? named : `${named} · ${files}`;
   };
 
   return (

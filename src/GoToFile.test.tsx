@@ -332,6 +332,7 @@ describe("GoToFile — sessions", () => {
       "Add dark modeclaude · /work/roer",
       "dark.tssrc/theme/",
     ]);
+    expect(screen.getByText("1 session · 1 match")).toBeInTheDocument();
     expect(screen.getByText("Sessions")).toBeInTheDocument();
     expect(screen.getByText("Files")).toBeInTheDocument();
   });
