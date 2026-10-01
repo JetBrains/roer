@@ -50,7 +50,8 @@ fn settings(cli: &str, bin: &str) -> Value {
                 "PreToolUse": hook("working"),
                 // In the background, since a permission hook that waits and
                 // succeeds answers the prompt itself, allowing whatever was
-                // asked. One in the background answers nothing.
+                // asked. One in the background answers nothing, but may land
+                // late: see `tool`.
                 "PermissionRequest": background("waiting"),
                 "Stop": hook("done"),
                 "StopFailure": hook("done"),
@@ -112,6 +113,29 @@ pub fn note(input: &Value) -> String {
     flat.chars().take(NOTE_CHARS).collect()
 }
 
+/// Which tool call a hook is about, as a short tag, or "" for a hook about
+/// none. A tool hook leaves it on the pane, and a permission request lands
+/// only on the call it asked about: run in the background, it may come after
+/// the prompt was answered and the agent has moved on to another tool, or
+/// finished, and must then say nothing. Junie gives the two hooks different
+/// `tool_input`, so only the tool and its command count. A hash, so that a
+/// command with any characters in it is a plain word for tmux.
+pub fn tool(input: &Value) -> String {
+    let Some(name) = input.get("tool_name").and_then(Value::as_str) else { return String::new() };
+    let command = input.pointer("/tool_input/command").and_then(Value::as_str).unwrap_or_default();
+    // FNV-1a: the same on every build, unlike the standard library's hasher,
+    // so a roer replaced mid-session still matches its own tags.
+    let hash = format!("{name}\0{command}").bytes().fold(0xcbf29ce484222325u64, |hash, byte| {
+        (hash ^ u64::from(byte)).wrapping_mul(0x100000001b3)
+    });
+    format!("{hash:016x}")
+}
+
+/// Whether a hook is a permission request, whose `waiting` is told by `tool`.
+pub fn is_permission_request(input: &Value) -> bool {
+    input.get("hook_event_name").and_then(Value::as_str) == Some("PermissionRequest")
+}
+
 /// Whether a `Notification` hook asks the person for nothing: Claude Code's
 /// reminder that a finished turn is still unanswered, a minute after `Stop`,
 /// or word that a login worked. The turn stays as it was. Told by its type
@@ -165,13 +189,14 @@ mod tests {
     fn asks_junie_permission_in_the_background_only() {
         let junie = settings("junie", "/bin/roer");
         let hooks = junie["hooks"].as_object().unwrap();
+        let roer = quote("/bin/roer");
         for (event, entries) in hooks {
             let command = &entries[0]["hooks"][0];
-            assert!(command["command"].as_str().unwrap().starts_with("'/bin/roer' status "), "{event}");
+            assert!(command["command"].as_str().unwrap().starts_with(&format!("{roer} status ")), "{event}");
             // Waited for and succeeding, it would allow whatever was asked.
             assert_eq!(command["async"].as_bool().unwrap_or(false), event == "PermissionRequest", "{event}");
         }
-        assert_eq!(hooks["PermissionRequest"][0]["hooks"][0]["command"], "'/bin/roer' status waiting --hook");
+        assert_eq!(hooks["PermissionRequest"][0]["hooks"][0]["command"], format!("{roer} status waiting --hook"));
         assert!(!hooks.contains_key("Notification"));
         assert!(settings("claude", "/bin/roer")["hooks"].get("PermissionRequest").is_none());
     }
@@ -184,6 +209,27 @@ mod tests {
         assert!(!asks_nothing(&json!({ "notification_type": "permission_prompt", "message": "Claude needs your permission to use Bash" })));
         assert!(!asks_nothing(&json!({ "message": "Claude needs your permission to use Bash" })));
         assert!(!asks_nothing(&json!({})));
+    }
+
+    #[test]
+    fn tags_a_tool_call_the_same_from_either_hook() {
+        // As Junie sends them: the same call, with different `tool_input`.
+        let before = json!({
+            "hook_event_name": "PreToolUse",
+            "tool_name": "Bash",
+            "tool_input": { "run_in_background": false, "command": "touch made.txt" },
+        });
+        let asked = json!({
+            "hook_event_name": "PermissionRequest",
+            "tool_name": "Bash",
+            "tool_input": { "type": "TerminalAction", "command": "touch made.txt" },
+        });
+        assert_eq!(tool(&before), tool(&asked));
+        assert_eq!(tool(&before).len(), 16);
+        assert_ne!(tool(&before), tool(&json!({ "tool_name": "Bash", "tool_input": { "command": "rm made.txt" } })));
+        assert_ne!(tool(&before), tool(&json!({ "tool_name": "Edit", "tool_input": { "command": "touch made.txt" } })));
+        assert_eq!(tool(&json!({ "hook_event_name": "Stop" })), "");
+        assert!(is_permission_request(&asked) && !is_permission_request(&before));
     }
 
     #[test]

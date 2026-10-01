@@ -522,13 +522,30 @@ impl Roer {
             return Ok(());
         }
         let note = input.as_ref().map(status_hooks::note).unwrap_or_default();
+        let tool = input.as_ref().map(status_hooks::tool).unwrap_or_default();
         let Ok(pane) = self.tmux.inside_roer() else { return Ok(()) };
         if state == "clear" {
-            self.tmux.ok(&["set-option", "-p", "-u", "-t", &pane, "@roer_state"]);
-            self.tmux.ok(&["set-option", "-p", "-u", "-t", &pane, "@roer_note"]);
+            for option in ["@roer_state", "@roer_note", "@roer_tool"] {
+                self.tmux.ok(&["set-option", "-p", "-u", "-t", &pane, option]);
+            }
             return Ok(());
         }
+        // A permission request run in the background can come after its
+        // prompt was answered and later hooks have said more: it counts only
+        // while the agent is still at the tool call it asked about.
+        if state == "waiting" && input.as_ref().is_some_and(status_hooks::is_permission_request) {
+            let now = self.tmux.read(&["display-message", "-p", "-t", &pane, "#{@roer_state} #{@roer_tool}"]);
+            if now != format!("working {tool}") {
+                return Ok(());
+            }
+        }
         self.tmux.ok(&["set-option", "-p", "-t", &pane, "@roer_state", state]);
+        // The tool call the agent is at, for a permission request to match.
+        if state == "working" && !tool.is_empty() {
+            self.tmux.ok(&["set-option", "-p", "-t", &pane, "@roer_tool", &tool]);
+        } else if state != "waiting" {
+            self.tmux.ok(&["set-option", "-p", "-u", "-t", &pane, "@roer_tool"]);
+        }
         // A note belongs to the moment it was said: kept only with `waiting`.
         if state == "waiting" && !note.is_empty() {
             self.tmux.ok(&["set-option", "-p", "-t", &pane, "@roer_note", &note]);

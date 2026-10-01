@@ -400,6 +400,43 @@ fn a_hook_says_what_the_agent_is_doing_and_list_reports_it() {
 }
 
 #[test]
+fn a_permission_request_that_comes_late_says_nothing() {
+    let env = Env::new("late-ask");
+    let bin = env!("CARGO_BIN_EXE_roer");
+    let before = |command: &str| format!(r#"{{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{{"command":"{command}"}}}}"#);
+    let asked = |command: &str| {
+        format!(r#"{{"hook_event_name":"PermissionRequest","tool_name":"Bash","tool_input":{{"type":"TerminalAction","command":"{command}"}}}}"#)
+    };
+    let stop = r#"{"hook_event_name":"Stop"}"#.to_string();
+    // Each the hooks of one turn in the order they ran, and what is left.
+    let cases = [
+        ("asks", vec![("working", before("touch a")), ("waiting", asked("touch a"))], "waiting"),
+        ("moved-on", vec![("working", before("touch a")), ("working", before("touch b")), ("waiting", asked("touch a"))], "working"),
+        ("finished", vec![("working", before("touch a")), ("done", stop.clone()), ("waiting", asked("touch a"))], "done"),
+    ];
+    for (session, hooks, _) in &cases {
+        let mut script: Vec<String> =
+            hooks.iter().map(|(state, input)| format!("printf '%s' '{input}' | '{bin}' status {state} --hook")).collect();
+        script.push("tmux set-option -p @hooks_ran 1".into());
+        script.push("exec cat".into());
+        pane(&env, session, &script.join("; "));
+    }
+    for (session, _, left) in &cases {
+        let target = format!("={session}:");
+        let mut state = String::new();
+        for _ in 0..100 {
+            let now = env.tmux(&["display-message", "-p", "-t", &target, "#{@hooks_ran} #{@roer_state}"]);
+            if let Some(ran) = now.strip_prefix("1 ") {
+                state = ran.to_string();
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        assert_eq!(state, *left, "{session}");
+    }
+}
+
+#[test]
 fn a_reminder_that_a_turn_is_unanswered_leaves_it_done() {
     let env = Env::new("reminder");
     let bin = env!("CARGO_BIN_EXE_roer");
