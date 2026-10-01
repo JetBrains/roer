@@ -14,6 +14,7 @@ import {
   type AgentList,
   type AgentScope,
 } from "./lib/agents";
+import { confirmAction } from "./lib/confirm";
 
 /** What the dialog opens on: a new agent, or an existing one by id. */
 export type AgentsDialogStart = { mode: "new"; cli?: string } | { mode: "edit"; id?: string };
@@ -192,8 +193,17 @@ export function AgentsDialog({ list, cwd, start, startAfterSave, onChanged, onSt
     }
   };
 
+  // Esc and a click outside are easy to do by accident, unlike Cancel, so
+  // they ask before throwing edits away.
+  const dismiss = async () => {
+    if (busy) return;
+    if (dirty && !readOnly && !(await confirmAction("Discard your changes to this agent?", "Unsaved changes"))) return;
+    onClose();
+  };
+
   const remove = async () => {
     if (isNew || readOnly) return;
+    if (!(await confirmAction(`Delete "${selected.name}"? Its file is removed.`, "Delete agent"))) return;
     setBusy(true);
     setError(null);
     try {
@@ -230,14 +240,14 @@ export function AgentsDialog({ list, cwd, start, startAfterSave, onChanged, onSt
   }, [list]);
 
   return (
-    <div className="popup-scrim" onMouseDown={(event) => event.target === event.currentTarget && !busy && onClose()}>
+    <div className="popup-scrim" onMouseDown={(event) => event.target === event.currentTarget && void dismiss()}>
       <div
         className="popup agents"
         role="dialog"
         aria-modal="true"
         aria-labelledby="agents-title"
         onKeyDown={(event) => {
-          if (event.key === "Escape" && !busy) onClose();
+          if (event.key === "Escape") void dismiss();
           if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && dirty && !readOnly && !busy) {
             void save(Boolean(startAfterSave));
           }

@@ -5,7 +5,14 @@ import { gitRoot } from "./lib/git";
 import { listClaudeSessions, listPastSessions, listSessions, roerStatus, type SessionInfo } from "./lib/pty";
 import { useSessionBrowser } from "./lib/useSessionBrowser";
 import { listProjects } from "./lib/projects";
-import { assignSession, listWorkspaces, unassignSession, workspaceAssignments } from "./lib/workspaces";
+import { confirmAction } from "./lib/confirm";
+import {
+  assignSession,
+  deleteWorkspace,
+  listWorkspaces,
+  unassignSession,
+  workspaceAssignments,
+} from "./lib/workspaces";
 import { NewSessionButton } from "./NewSessionButton";
 import { isWorking, paneLabel, runningAgent, SessionBrowser, type OpenRequest } from "./SessionBrowser";
 import { WorkspaceSidebar } from "./WorkspaceSidebar";
@@ -16,6 +23,8 @@ vi.mock("./lib/pty", () => ({
   listClaudeSessions: vi.fn(),
   roerStatus: vi.fn(),
 }));
+
+vi.mock("./lib/confirm", () => ({ confirmAction: vi.fn() }));
 
 vi.mock("./lib/git", () => ({
   gitRoot: vi.fn(),
@@ -408,6 +417,26 @@ describe("naming the agent", () => {
 });
 
 describe("the selected workspace", () => {
+  it("asks before deleting a Workspace", async () => {
+    vi.mocked(listWorkspaces).mockResolvedValue([
+      { id: "w1", name: "Default", projects: [], items: [] },
+      { id: "w2", name: "Feature work", projects: [], items: [] },
+    ]);
+    vi.mocked(deleteWorkspace).mockReset().mockResolvedValue(undefined);
+    vi.mocked(confirmAction).mockReset().mockResolvedValue(false);
+    renderList();
+
+    fireEvent.contextMenu(await screen.findByRole("button", { name: /Feature work/ }));
+    fireEvent.click(await screen.findByText("Delete"));
+    await waitFor(() => expect(confirmAction).toHaveBeenCalled());
+    expect(deleteWorkspace).not.toHaveBeenCalled();
+
+    vi.mocked(confirmAction).mockResolvedValue(true);
+    fireEvent.contextMenu(screen.getByRole("button", { name: /Feature work/ }));
+    fireEvent.click(await screen.findByText("Delete"));
+    await waitFor(() => expect(deleteWorkspace).toHaveBeenCalledWith("w2"));
+  });
+
   it("is the first one on launch, with no unfiltered All beside it", async () => {
     vi.mocked(listWorkspaces).mockResolvedValueOnce([
       { id: "w1", name: "Default", projects: [], items: [] },
@@ -474,7 +503,7 @@ describe("assigning a session to a workspace", () => {
     fireEvent.contextMenu(row);
 
     expect(await screen.findByText("Assign to Feature work")).toHaveAttribute("aria-disabled", "true");
-    fireEvent.click(screen.getByText("Unassign"));
+    fireEvent.click(screen.getByText("Remove from Feature work"));
 
     expect(unassignSession).toHaveBeenCalledWith("1");
   });

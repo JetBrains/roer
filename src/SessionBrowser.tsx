@@ -7,6 +7,7 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
+import { confirmAction } from "./lib/confirm";
 import { pickFolder } from "./lib/folderPicker";
 import {
   DropdownMenu,
@@ -200,7 +201,9 @@ function AssignMenu({
         ))}
         {workspaces.length > 0 && assignedTo ? <ContextMenuSeparator /> : null}
         {assignedTo ? (
-          <ContextMenuItem onSelect={() => handleAssign(sessionId, null)}>Unassign</ContextMenuItem>
+          <ContextMenuItem onSelect={() => handleAssign(sessionId, null)}>
+            Remove from {workspaces.find((workspace) => workspace.id === assignedTo)?.name ?? "Workspace"}
+          </ContextMenuItem>
         ) : null}
       </ContextMenuContent>
     </ContextMenu>
@@ -476,6 +479,10 @@ export function SessionBrowser({
                 placeholder="Title"
                 value={itemTitle}
                 onChange={(event) => setItemTitle(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") handleAddItem();
+                  if (event.key === "Escape") setAddingItem(false);
+                }}
                 autoFocus
               />
               <button type="button" className="primary" disabled={!itemTitle.trim()} onClick={handleAddItem}>
@@ -499,7 +506,11 @@ export function SessionBrowser({
                       type="button"
                       className="tab-x"
                       aria-label={`Remove ${item.title}`}
-                      onClick={() => handleRemoveItem(item.id)}
+                      onClick={() =>
+                        void confirmAction(`Remove "${item.title}"?`, "Remove item").then(
+                          (confirmed) => confirmed && handleRemoveItem(item.id),
+                        )
+                      }
                     >
                       ×
                     </button>
