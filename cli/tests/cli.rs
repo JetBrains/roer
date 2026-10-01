@@ -349,6 +349,33 @@ fn list_json_says_when_a_window_last_printed_and_whether_it_rang() {
 }
 
 #[test]
+fn a_hook_says_what_the_agent_is_doing_and_list_reports_it() {
+    let env = Env::new("status");
+    let bin = env!("CARGO_BIN_EXE_roer");
+    let input = r#"{"message":"Claude needs your\npermission to use Bash"}"#;
+    let pane = pane(&env, "agent", &format!("printf '%s' '{input}' | '{bin}' status waiting --hook; exec cat"));
+    // As if roer had started the agent: the state is shown only while one runs.
+    env.tmux(&["set-option", "-t", "=agent:", "@roer_agent", "claude"]);
+    env.tmux(&["set-option", "-t", "=agent:", "@roer_agent_procs", "cat"]);
+
+    let mut row = serde_json::Value::Null;
+    for _ in 0..50 {
+        let out = env.run(&["list", "--json"]);
+        row = serde_json::from_str(String::from_utf8_lossy(&out.stdout).lines().next().unwrap_or("null")).unwrap();
+        if row["state"] == "waiting" {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert_eq!(row["pane"], pane.as_str());
+    assert_eq!(row["state"], "waiting", "{row}");
+    assert_eq!(row["note"], "Claude needs your permission to use Bash");
+
+    assert_eq!(code(&env.run(&["status", "sleeping"])), 2, "not a state");
+    assert_eq!(code(&env.roer(&["status", "done"]).env_remove("TMUX").output().unwrap()), 0, "quiet outside");
+}
+
+#[test]
 fn kill_ends_the_session_a_pane_is_in() {
     let env = Env::new("kill");
     let doomed = pane(&env, "doomed", "cat");

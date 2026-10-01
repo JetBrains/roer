@@ -12,6 +12,7 @@ mod mcp_install;
 mod names;
 mod records;
 mod skills;
+mod status_hooks;
 mod tasks;
 mod tmux;
 
@@ -68,6 +69,9 @@ usage:
                         window's last activity (epoch seconds) and unseen bell
   roer detach [name]    release the session; it keeps running with no client
   roer kill --pane <id> end the session that pane is in
+  roer status <working|waiting|done|clear> [--hook]
+                        what the agent in this pane is doing, for the app;
+                        run by the Claude Code hooks roer starts it with
   roer resume <id> [--agent <id>]
                         resume an agent's conversation inside a new session
                         (Claude Code's unless --agent names another)
@@ -204,6 +208,7 @@ impl Roer {
             "attach" => self.attach(args.first().copied()),
             "list" | "ls" => self.list(args.contains(&"--json")),
             "kill" => self.kill(args),
+            "status" => self.status(args),
             "detach" => self.detach(args.first().copied()),
             "resume" => self.resume(args),
             "agents" | "agent" => match args {
@@ -416,7 +421,15 @@ impl Roer {
     /// agent it was: not every agent titles its pane, and the app names a
     /// session by the agent it runs.
     fn start_agent(&self, name: &str, agent: &agents::Agent, resume: Option<&str>) -> Outcome {
-        let command = agent.command_line(resume, true)?;
+        // The hooks that tell the app what the agent is doing, for a CLI that
+        // takes them; a session without them is still told apart by its
+        // title and its output, so a file that cannot be written is no reason
+        // not to start.
+        let status = agent
+            .takes_status()
+            .then(|| status_hooks::write(&self_path().to_string_lossy()).ok())
+            .flatten();
+        let command = agent.command_line_with(resume, true, status.as_deref())?;
         let target = format!("={name}:");
         self.tmux.ok(&["set-option", "-t", &target, "@roer_agent", &agent.name]);
         self.tmux.ok(&["set-option", "-t", &target, "@roer_agent_procs", &agent.procs()]);
@@ -453,14 +466,14 @@ impl Roer {
         let format = format!(
             "#{{@roer_id}}\t#{{session_name}}\t{}\t#{{?session_attached,attached,detached}}\t\
              #{{pane_current_path}}\t#{{pane_current_command}}\t#{{@roer_agent_procs}}\t#{{@roer_agent}}\t\
-             #{{window_activity}}\t#{{window_bell_flag}}\t\
+             #{{window_activity}}\t#{{window_bell_flag}}\t#{{@roer_state}}\t#{{@roer_note}}\t\
              #{{?#{{||:#{{==:#{{pane_title}},#{{host}}}},#{{==:#{{pane_title}},#{{host_short}}}}}},,#{{pane_title}}}}",
             self.tmux.pane_format()
         );
         let rows = self.tmux.read(&["list-panes", "-a", "-F", &format]);
         for row in rows.lines().filter(|row| !row.is_empty()) {
-            let f: Vec<&str> = row.splitn(11, '\t').collect();
-            let [id, session, pane, attached, cwd, command, procs, agent, activity, bell, title] = f[..] else {
+            let f: Vec<&str> = row.splitn(13, '\t').collect();
+            let [id, session, pane, attached, cwd, command, procs, agent, activity, bell, state, note, title] = f[..] else {
                 println!("{row}");
                 continue;
             };
@@ -479,11 +492,46 @@ impl Roer {
                     // Seconds since the epoch; 0 where the engine does not say.
                     "activity": activity.parse::<u64>().unwrap_or(0),
                     "bell": bell == "1",
+                    // What the agent's own hooks last said, while it runs.
+                    "state": if agent.is_empty() { "" } else { state },
+                    "note": note,
                 });
                 println!("{row}");
             } else {
                 println!("{id}\t{session}\t{pane}\t{attached}\t{cwd}\t{command}\t{agent}\t{title}");
             }
+        }
+        Ok(())
+    }
+
+    /// `roer status <state> [--hook]`: what the agent in this pane is doing,
+    /// for `roer list --json`. Run by the hooks in `status_hooks`; with
+    /// `--hook`, the hook's JSON on stdin gives the note. Outside a roer
+    /// session, or on anything going wrong, it does nothing and says nothing:
+    /// a hook that fails is shown to the person in Claude Code.
+    fn status(&self, args: &[&str]) -> Outcome {
+        let Some(state) = args.first().copied().filter(|state| status_hooks::STATES.contains(state)) else {
+            return Err(Fail::new(2, format!("status needs one of: {}", status_hooks::STATES.join(", "))));
+        };
+        let note = if args.contains(&"--hook") {
+            let mut text = String::new();
+            let _ = std::io::stdin().read_to_string(&mut text);
+            serde_json::from_str::<Value>(&text).map(|input| status_hooks::note(&input)).unwrap_or_default()
+        } else {
+            String::new()
+        };
+        let Ok(pane) = self.tmux.inside_roer() else { return Ok(()) };
+        if state == "clear" {
+            self.tmux.ok(&["set-option", "-p", "-u", "-t", &pane, "@roer_state"]);
+            self.tmux.ok(&["set-option", "-p", "-u", "-t", &pane, "@roer_note"]);
+            return Ok(());
+        }
+        self.tmux.ok(&["set-option", "-p", "-t", &pane, "@roer_state", state]);
+        // A note belongs to the moment it was said: kept only with `waiting`.
+        if state == "waiting" && !note.is_empty() {
+            self.tmux.ok(&["set-option", "-p", "-t", &pane, "@roer_note", &note]);
+        } else {
+            self.tmux.ok(&["set-option", "-p", "-u", "-t", &pane, "@roer_note"]);
         }
         Ok(())
     }
