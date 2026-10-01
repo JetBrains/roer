@@ -427,7 +427,7 @@ impl Roer {
         // not to start.
         let status = agent
             .takes_status()
-            .then(|| status_hooks::write(&self_path().to_string_lossy()).ok())
+            .then(|| status_hooks::write(&agent.cli, &self_path().to_string_lossy()).ok())
             .flatten();
         let command = agent.command_line_with(resume, true, status.as_deref())?;
         let target = format!("={name}:");
@@ -508,7 +508,7 @@ impl Roer {
     /// for `roer list --json`. Run by the hooks in `status_hooks`; with
     /// `--hook`, the hook's JSON on stdin gives the note. Outside a roer
     /// session, or on anything going wrong, it does nothing and says nothing:
-    /// a hook that fails is shown to the person in Claude Code.
+    /// a hook that fails is shown to the person by the agent.
     fn status(&self, args: &[&str]) -> Outcome {
         let Some(state) = args.first().copied().filter(|state| status_hooks::STATES.contains(state)) else {
             return Err(Fail::new(2, format!("status needs one of: {}", status_hooks::STATES.join(", "))));
