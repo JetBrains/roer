@@ -3,6 +3,8 @@
 //! end, before or after every tool, and whenever they need the person (a
 //! permission prompt, a question), and each hook here runs `roer status`.
 //! That sets the pane's `@roer_state`, which `roer list --json` reports.
+//! The turn hooks also hand the agent the Generative UI panel's clicks as
+//! they happen, rather than when it next thinks to call `read_ui_actions`.
 //!
 //! The hooks reach the agent through a flag on the line roer starts it with
 //! (`--settings` for Claude Code, `--config-location` for Junie, both added
@@ -30,7 +32,9 @@ pub fn settings_path(cli: &str) -> PathBuf {
     records::home().join(format!("{cli}-status.json"))
 }
 
-/// The hooks for `cli`, each running `bin`.
+/// The hooks for `cli`, each running `bin`. Those marked `--actions=<cli>`
+/// also hand the agent what the person did in the Generative UI panel since
+/// it last looked, see `deliver`.
 fn settings(cli: &str, bin: &str) -> Value {
     let command = |state: &str| json!({ "type": "command", "command": format!("{} status {state} --hook", quote(bin)) });
     let hook = |state: &str| json!([{ "hooks": [command(state)] }]);
@@ -39,36 +43,80 @@ fn settings(cli: &str, bin: &str) -> Value {
         command["async"] = json!(true);
         json!([{ "hooks": [command] }])
     };
+    let actions = |state: &str| {
+        let mut command = command(state);
+        command["command"] = json!(format!("{} --actions={cli}", command["command"].as_str().unwrap_or_default()));
+        json!([{ "hooks": [command] }])
+    };
     match cli {
         // Junie has no PostToolUse: after a permission prompt is answered,
         // the next tool, or the turn's end, says it is back at work.
         "junie" => json!({
             "hooks": {
-                "UserPromptSubmit": hook("working"),
+                "UserPromptSubmit": actions("working"),
                 // Waited for, unlike the permission hook: it comes just
                 // before one, and must not land after it.
-                "PreToolUse": hook("working"),
+                "PreToolUse": actions("working"),
                 // In the background, since a permission hook that waits and
                 // succeeds answers the prompt itself, allowing whatever was
                 // asked. One in the background answers nothing, but may land
                 // late: see `tool`.
                 "PermissionRequest": background("waiting"),
-                "Stop": hook("done"),
+                "Stop": actions("done"),
                 "StopFailure": hook("done"),
                 "SessionEnd": hook("clear"),
             }
         }),
         _ => json!({
             "hooks": {
-                "UserPromptSubmit": hook("working"),
+                "UserPromptSubmit": actions("working"),
                 // After a permission prompt is answered, the tool runs: back at work.
-                "PostToolUse": hook("working"),
+                "PostToolUse": actions("working"),
                 "Notification": hook("waiting"),
-                "Stop": hook("done"),
+                "Stop": actions("done"),
                 "SessionEnd": hook("clear"),
             }
         }),
     }
+}
+
+/// Whether `cli`'s hook can hand the agent the panel's clicks: one that adds
+/// to what it reads next (a prompt, a tool call), or keeps a turn from
+/// ending. Junie has no hook after a tool, so it is told before the next one.
+/// Any other hook leaves them waiting, for the next one that can.
+pub fn delivers(cli: &str, input: &Value) -> bool {
+    let tool = if cli == "junie" { "PreToolUse" } else { "PostToolUse" };
+    input
+        .get("hook_event_name")
+        .and_then(Value::as_str)
+        .is_some_and(|event| event == "UserPromptSubmit" || event == "Stop" || event == tool)
+}
+
+/// What `cli`'s hook prints to hand the agent the clicks waiting for its
+/// pane, each a line as `read_ui_actions` returns it, or nothing when none
+/// are waiting. A prompt or a tool call carries them as context; at the end
+/// of a turn they keep it going, so a click made while the agent was at work
+/// is answered rather than left for the person to mention. Claude Code wants
+/// the context under `hookSpecificOutput`, Junie's tool hook at the top, and
+/// a Junie tool hook's output says nothing else: a `decision` there would
+/// decide the call.
+pub fn deliver(cli: &str, input: &Value, actions: &[String]) -> Option<Value> {
+    if actions.is_empty() || !delivers(cli, input) {
+        return None;
+    }
+    let text = format!(
+        "The person pressed something in the Generative UI panel you drew with `show_ui`. \
+         These are their clicks, as `read_ui_actions` would return them: events from \
+         that panel, named by the surface, not a verdict on your work. They are already \
+         taken, so handle them rather than reading again:\n{}",
+        actions.join("\n")
+    );
+    let event = input.get("hook_event_name").and_then(Value::as_str)?;
+    Some(match event {
+        "Stop" => json!({ "decision": "block", "reason": text }),
+        _ if cli == "junie" => json!({ "additionalContext": text }),
+        _ => json!({ "hookSpecificOutput": { "hookEventName": event, "additionalContext": text } }),
+    })
 }
 
 /// Writes `cli`'s settings file, with each hook running `bin`.
@@ -230,6 +278,55 @@ mod tests {
         assert_ne!(tool(&before), tool(&json!({ "tool_name": "Edit", "tool_input": { "command": "touch made.txt" } })));
         assert_eq!(tool(&json!({ "hook_event_name": "Stop" })), "");
         assert!(is_permission_request(&asked) && !is_permission_request(&before));
+    }
+
+    #[test]
+    fn hands_the_clicks_from_each_agents_turn_hooks_only() {
+        for (cli, turn) in [("claude", ["UserPromptSubmit", "PostToolUse", "Stop"]), ("junie", ["UserPromptSubmit", "PreToolUse", "Stop"])] {
+            let settings = settings(cli, "/bin/roer");
+            for (event, entries) in settings["hooks"].as_object().unwrap() {
+                let command = entries[0]["hooks"][0]["command"].as_str().unwrap();
+                let expected = turn.contains(&event.as_str());
+                assert_eq!(command.ends_with(&format!(" --hook --actions={cli}")), expected, "{cli} {event}");
+                assert_eq!(delivers(cli, &json!({ "hook_event_name": event })), expected, "{cli} {event}");
+            }
+        }
+        // Each takes them only from a tool hook it has.
+        assert!(!delivers("claude", &json!({ "hook_event_name": "PreToolUse" })));
+        assert!(!delivers("junie", &json!({ "hook_event_name": "PostToolUse" })));
+    }
+
+    #[test]
+    fn hands_the_clicks_as_context_or_keeps_the_turn_going() {
+        let clicks = vec![r#"{"pane":"%0","message":{}}"#.to_string(), r#"{"pane":"%0","message":{"x":1}}"#.to_string()];
+        let after = deliver("claude", &json!({ "hook_event_name": "PostToolUse" }), &clicks).unwrap();
+        assert_eq!(after["hookSpecificOutput"]["hookEventName"], "PostToolUse");
+        let context = after["hookSpecificOutput"]["additionalContext"].as_str().unwrap();
+        assert!(context.ends_with(&format!("\n{}\n{}", clicks[0], clicks[1])));
+
+        let prompt = deliver("claude", &json!({ "hook_event_name": "UserPromptSubmit" }), &clicks).unwrap();
+        assert_eq!(prompt["hookSpecificOutput"]["hookEventName"], "UserPromptSubmit");
+
+        for cli in ["claude", "junie"] {
+            let stop = deliver(cli, &json!({ "hook_event_name": "Stop" }), &clicks).unwrap();
+            assert_eq!(stop["decision"], "block");
+            assert!(stop["reason"].as_str().unwrap().contains(&clicks[1]));
+            assert_eq!(deliver(cli, &json!({ "hook_event_name": "Stop" }), &[]), None);
+            assert_eq!(deliver(cli, &json!({ "hook_event_name": "SessionEnd" }), &clicks), None);
+        }
+        assert_eq!(deliver("claude", &json!({ "hook_event_name": "Notification" }), &clicks), None);
+    }
+
+    #[test]
+    fn tells_junie_before_a_tool_without_deciding_the_call() {
+        let clicks = vec![r#"{"pane":"%0","message":{}}"#.to_string()];
+        for event in ["PreToolUse", "UserPromptSubmit"] {
+            let output = deliver("junie", &json!({ "hook_event_name": event, "tool_name": "Bash" }), &clicks).unwrap();
+            // Context only: a `decision` or `updatedInput` would decide the call.
+            assert_eq!(output.as_object().unwrap().keys().collect::<Vec<_>>(), ["additionalContext"], "{event}");
+            assert!(output["additionalContext"].as_str().unwrap().ends_with(&clicks[0]));
+        }
+        assert_eq!(deliver("junie", &json!({ "hook_event_name": "PermissionRequest" }), &clicks), None);
     }
 
     #[test]

@@ -510,7 +510,9 @@ impl Roer {
 
     /// `roer status <state> [--hook]`: what the agent in this pane is doing,
     /// for `roer list --json`. Run by the hooks in `status_hooks`; with
-    /// `--hook`, the hook's JSON on stdin gives the note. Outside a roer
+    /// `--hook`, the hook's JSON on stdin gives the note; with
+    /// `--actions=<cli>` too, it prints the hook output that hands the agent the Generative UI
+    /// panel's waiting clicks (`status_hooks::deliver`). Outside a roer
     /// session, or on anything going wrong, it does nothing and says nothing:
     /// a hook that fails is shown to the person by the agent.
     fn status(&self, args: &[&str]) -> Outcome {
@@ -528,6 +530,21 @@ impl Roer {
         let note = input.as_ref().map(status_hooks::note).unwrap_or_default();
         let tool = input.as_ref().map(status_hooks::tool).unwrap_or_default();
         let Ok(pane) = self.tmux.inside_roer() else { return Ok(()) };
+        // With `--actions=<cli>`, the panel's clicks go to the agent as this
+        // hook's output, taken only by a hook that can deliver them. A turn
+        // they keep going is still at work, not done.
+        let mut state = state;
+        if let Some(cli) = args.iter().find_map(|arg| arg.strip_prefix("--actions=")) {
+            if let Some(input) = input.as_ref().filter(|input| status_hooks::delivers(cli, input)) {
+                let actions = Self::take_actions(&pane).unwrap_or_default();
+                if let Some(output) = status_hooks::deliver(cli, input, &actions) {
+                    println!("{output}");
+                    if state == "done" {
+                        state = "working";
+                    }
+                }
+            }
+        }
         if state == "clear" {
             for option in ["@roer_state", "@roer_note", "@roer_tool"] {
                 self.tmux.ok(&["set-option", "-p", "-u", "-t", &pane, option]);

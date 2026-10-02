@@ -197,3 +197,8 @@ If `createSurface` set `"sendDataModel": true`, each line also carries the
 surface's whole `dataModel` beside the message. It only reports what
 happened; decide yourself what to do next, e.g. fetch fresh data and send an
 `updateDataModel`. An empty result means nothing has been clicked yet.
+
+In a Claude Code or Junie session Roer started, you need not ask: the clicks reach
+you by themselves, these same lines, at each tool call and at the end of a
+turn. They are taken as they are handed to you, so act on them rather than
+reading again.
