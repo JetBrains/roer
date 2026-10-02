@@ -8,8 +8,8 @@ import {
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { DiffBrowserView } from "./DiffBrowserView";
-import { parseDiff } from "./lib/diff";
-import { type FilesChanged } from "./lib/files";
+import { parseDiff } from "../../lib/diff";
+import { type FilesChanged } from "../../lib/files";
 import {
   gitBranchCommits,
   gitBranches,
@@ -22,13 +22,13 @@ import {
   type Changes,
   type Commit,
   type FileChange,
-} from "./lib/git";
-import { listSessions } from "./lib/pty";
+} from "../../lib/git";
+import { listSessions } from "../../lib/pty";
 
-vi.mock("./lib/git", async (importOriginal) => ({
+vi.mock("../../lib/git", async (importOriginal) => ({
   // The helpers are pure and worth exercising for real; only the calls that
   // reach the backend are stubbed.
-  ...(await importOriginal<typeof import("./lib/git")>()),
+  ...(await importOriginal<typeof import("../../lib/git")>()),
   gitChanges: vi.fn(),
   gitDiff: vi.fn(),
   gitRoot: vi.fn(),
@@ -39,11 +39,11 @@ vi.mock("./lib/git", async (importOriginal) => ({
   gitCommitDiff: vi.fn(),
 }));
 
-vi.mock("./lib/pty", () => ({ listSessions: vi.fn() }));
+vi.mock("../../lib/pty", () => ({ listSessions: vi.fn() }));
 
 // Called through, not stubbed: the point is how often, not what it answers.
-vi.mock("./lib/diff", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("./lib/diff")>();
+vi.mock("../../lib/diff", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../lib/diff")>();
   return { ...actual, parseDiff: vi.fn(actual.parseDiff) };
 });
 

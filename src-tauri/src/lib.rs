@@ -6,6 +6,7 @@ mod claude_setup;
 mod codex;
 mod cli_link;
 pub mod events;
+mod extensions;
 mod files;
 mod gh;
 mod git;
@@ -106,6 +107,10 @@ pub fn run() {
             projects::project_delete,
             server::start_browser_server,
             logfile::app_log,
+            files::files_grep,
+            extensions::extensions_list,
+            extensions::extension_bundle,
+            extensions::extension_log,
         ])
         .setup(|app| {
             menu(app)?;
@@ -113,6 +118,7 @@ pub fn run() {
             handoff::watch(app.handle().clone())?;
             plugin_ui::watch(server::DesktopWatchSink(app.handle().clone()))?;
             pr_draft::watch(server::DesktopWatchSink(app.handle().clone()))?;
+            extensions::watch(server::DesktopWatchSink(app.handle().clone()))?;
             Ok(())
         })
         .run(tauri::generate_context!())

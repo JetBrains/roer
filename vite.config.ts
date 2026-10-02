@@ -9,6 +9,9 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": path.resolve(import.meta.dirname, "./src"),
+      // What an extension imports the host's own code as; bundled extensions
+      // too, so their source builds unchanged as somebody's fork.
+      roer: path.resolve(import.meta.dirname, "./src/extensions/sdk.ts"),
     },
   },
   // Tauri expects a fixed port and serves the built assets from dist/.

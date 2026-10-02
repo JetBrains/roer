@@ -370,6 +370,18 @@ fn dispatch(state: &Arc<AppState>, cmd: &str, args: Value, cid: Option<&str>) ->
         // native window-focus step `handoff_pending` does in the app).
         "app_log" => call!(args, crate::logfile::app_log, "message": String),
 
+        // extensions
+        "files_grep" => {
+            let cwd = parse(&args, "cwd")?;
+            let pattern = parse(&args, "pattern")?;
+            let limit = parse(&args, "limit")?;
+            crate::files::files_grep_core(&state.bus, &state.files, cwd, pattern, limit)
+                .and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string()))
+        }
+        "extensions_list" => call!(args, crate::extensions::extensions_list,),
+        "extension_bundle" => call_res!(args, crate::extensions::extension_bundle, "id": String),
+        "extension_log" => call!(args, crate::extensions::extension_log, "id": String, "message": String),
+
                 "handoff_pending" => call!(args, crate::handoff::handoff_pending_core,),
         "handoff_claim" => call_res!(args, crate::handoff::handoff_claim, "record": String),
         "handoff_ack" => call_res!(args, crate::handoff::handoff_ack, "record": String),
@@ -631,6 +643,9 @@ async fn start(addr: SocketAddr, own_watchers: bool) -> std::io::Result<Started>
         }
         if let Err(e) = crate::pr_draft::watch(state.bus.clone()) {
             eprintln!("roer-server: could not start the PR-draft watcher: {e}");
+        }
+        if let Err(e) = crate::extensions::watch(state.bus.clone()) {
+            eprintln!("roer-server: could not start the extensions watcher: {e}");
         }
     }
     let bus = state.bus.clone();

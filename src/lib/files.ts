@@ -56,6 +56,23 @@ export interface FileText {
   bytes: number;
 }
 
+/** One line `filesGrep` found. */
+export interface GrepHit {
+  /** Repo-relative, as git spells it. */
+  path: string;
+  line: number;
+  /** The line, cut to 300 characters. */
+  text: string;
+}
+
+/**
+ * The lines of the repository holding `cwd` that contain `pattern`, as a
+ * plain string rather than a regex: tracked and new files, `.gitignore`
+ * respected, binary files skipped. 500 at most unless `limit` says otherwise.
+ */
+export const filesGrep = (cwd: string, pattern: string, limit?: number): Promise<GrepHit[]> =>
+  invoke("files_grep", { cwd, pattern, limit });
+
 /** The best `limit` paths for `query`, in the repository holding `cwd`. */
 export const filesSearch = (cwd: string, query: string, limit = 50): Promise<Hits> =>
   invoke("files_search", { cwd, query, limit });
