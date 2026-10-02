@@ -50,7 +50,12 @@ export function must(program, args, options = {}) {
  * Windows fake-agent's claude.exe (see its main.rs for why an .exe), which
  * finds agent.mjs and node through `env`. The script has the paths written
  * into it instead, since a pane's shell need not have everything the app was
- * started with. */
+ * started with. What to remove afterwards comes back.
+ *
+ * On Windows the node it runs is a copy named claude.exe: psmux names a
+ * pane's command by the process running in it, and `process.title`, which
+ * makes node `claude` on Linux, only sets the console's title there. As
+ * `node`, roer would not take the pane for an agent. */
 function fakeClaude(bin, env) {
   mkdirSync(bin, { recursive: true });
   const agent = join(here, "fake-agent/agent.mjs");
@@ -58,12 +63,16 @@ function fakeClaude(bin, env) {
   if (windows) {
     if (!existsSync(CLAUDE_EXE)) throw new Error(`no fake claude.exe at ${CLAUDE_EXE}: build it first (see e2e/README.md)`);
     copyFileSync(CLAUDE_EXE, join(bin, "claude.exe"));
-    Object.assign(env, { ROER_E2E_AGENT: agent, ROER_E2E_NODE: node });
-    return join(bin, "claude.exe");
+    const named = join(bin, "fake-claude-node");
+    mkdirSync(named, { recursive: true });
+    copyFileSync(node, join(named, "claude.exe"));
+    Object.assign(env, { ROER_E2E_AGENT: agent, ROER_E2E_NODE: join(named, "claude.exe") });
+    return [join(bin, "claude.exe"), named];
   } else {
     const q = (s) => `'${s.replaceAll("'", `'\\''`)}'`;
     const sets = Object.entries(env).map(([k, v]) => `export ${k}=${q(v)}`).join("\n");
     writeFileSync(join(bin, "claude"), `#!/bin/sh\n${sets}\nexec ${q(node)} ${q(agent)} "$@"\n`, { mode: 0o755 });
+    return [join(bin, "claude")];
   }
 }
 
@@ -231,7 +240,7 @@ export class Roer {
     // What the run leaves behind: the fake, wherever it went, and the
     // directory everything else is in. Best effort: a process still holding
     // a file on Windows only means it stays in the temp folder.
-    for (const path of [this.fake, this.root]) {
+    for (const path of [...(this.fake ?? []), this.root]) {
       try {
         if (path) rmSync(path, { recursive: true, force: true, maxRetries: 3 });
       } catch (e) {
