@@ -881,7 +881,17 @@ impl Roer {
         let text = read_stdin("send needs the text on stdin")?;
 
         let buffer = format!("roer-send-{}", std::process::id());
-        if !self.tmux.feed(&["load-buffer", "-b", &buffer, "-"], &text) {
+        // psmux keeps buffers per session, one server each, and sends a
+        // command without `-t` to the session active last: the buffer has to
+        // be loaded where it will be pasted, or a pane out of sight finds no
+        // such buffer. psmux takes any `-t` for routing alone; tmux, with one
+        // server, would read it as a client.
+        let mut load = vec!["load-buffer", "-b", &buffer];
+        if self.tmux.is_psmux() {
+            load.extend(["-t", &pane]);
+        }
+        load.push("-");
+        if !self.tmux.feed(&load, &text) {
             return Err(Fail::new(1, "could not load the text into tmux"));
         }
         if !self.tmux.ok(&["paste-buffer", "-p", "-d", "-b", &buffer, "-t", &pane]) {
