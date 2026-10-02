@@ -837,7 +837,10 @@ impl Roer {
     }
 
     /// The pending component actions for `pane`, oldest first, each consumed
-    /// as it is taken.
+    /// as it is taken. A hook and `read_ui_actions` may look at the same
+    /// moment, so each record is claimed by renaming it out of the `.json`
+    /// names before it counts: only one reader's rename succeeds, and a claimed
+    /// record that cannot then be removed is never listed again.
     fn take_actions(pane: &str) -> Result<Vec<String>, Fail> {
         let dir = records::home().join("plugin-ui-actions");
         std::fs::create_dir_all(&dir)
@@ -855,9 +858,15 @@ impl Roer {
             let Ok(text) = std::fs::read_to_string(&file) else { continue };
             let for_pane = serde_json::from_str::<Value>(&text)
                 .is_ok_and(|action| action.get("pane").and_then(Value::as_str) == Some(pane));
-            if for_pane {
+            if !for_pane {
+                continue;
+            }
+            // The app writes a record whole and never changes it, so what was
+            // read is what is claimed.
+            let claimed = file.with_extension(format!("json.{}.taken", std::process::id()));
+            if std::fs::rename(&file, &claimed).is_ok() {
                 taken.push(text.trim_end_matches('\n').to_string());
-                let _ = std::fs::remove_file(&file);
+                let _ = std::fs::remove_file(&claimed);
             }
         }
         Ok(taken)
