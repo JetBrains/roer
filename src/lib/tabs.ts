@@ -123,8 +123,7 @@ export function closeTab(tabs: Tabs, id: string): Tabs {
 /**
  * Drops the file tabs that are not from `root`.
  *
- * A session that ends takes its files with it, and opening a file from
- * another repository means the session has moved: a tab holding a path
+ * A session that ends takes its files with it: a tab holding a path
  * relative to a root nobody is in any more is a tab about nothing.
  */
 export function forRoot(tabs: Tabs, root: string | undefined): Tabs {
@@ -139,12 +138,12 @@ export function forRoot(tabs: Tabs, root: string | undefined): Tabs {
   return { files, used: touch(used, active), active };
 }
 
-/** The paths of the open files, most recently used first. */
-export const recent = (tabs: Tabs): string[] =>
+/** The open files, most recently used first. */
+export const recent = (tabs: Tabs): { root: string; path: string }[] =>
   tabs.used
     .map((id) => tabs.files.find((file) => tabId(file) === id))
     .filter((file): file is FileTab => Boolean(file))
-    .map((file) => file.path);
+    .map(({ root, path }) => ({ root, path }));
 
 /** The tab on top, if it is a file. */
 export const activeFile = (tabs: Tabs): FileTab | undefined =>

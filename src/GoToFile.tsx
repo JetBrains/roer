@@ -9,7 +9,7 @@ import {
   type MouseEvent,
 } from "react";
 
-import { filesSearch, parts, type Hit, type Hits } from "./lib/files";
+import { baseName, filesSearch, parts, type Hit, type Hits } from "./lib/files";
 import { resolveDir } from "./lib/session";
 
 /** How long after a keystroke the query is sent, so a burst is one search. */
@@ -57,16 +57,74 @@ export function matchesQuery(fields: Array<string | null | undefined>, query: st
   return words.every((word) => haystack.includes(word));
 }
 
+/** A hit, with the repository its path is relative to. */
+type RootedHit = Hit & { root: string };
+
 /** One row of the list: a session or a file, keyed so the two never clash. */
-type Row = { kind: "session"; key: string; session: SessionHit } | { kind: "file"; key: string; hit: Hit };
+type Row =
+  | { kind: "session"; key: string; session: SessionHit }
+  | { kind: "file"; key: string; hit: RootedHit };
+
+/** A repository searched besides the session's own, and what to call it. */
+export interface SearchRoot {
+  path: string;
+  name: string;
+}
+
+/** A file opened before, which is what an empty query shows. */
+export interface RecentFile {
+  root: string;
+  path: string;
+}
+
+/**
+ * Every repository's answer to one query, as one: the best hits of all of
+ * them, and the counts added up. Its fields mean what `Hits`'s do.
+ */
+interface Found {
+  hits: RootedHit[];
+  /** The repositories that answered, in the order they were asked. */
+  roots: string[];
+  indexing: boolean;
+  total: number;
+  matched: number;
+  line: number | null;
+}
+
+/**
+ * The answers from several repositories, folded into one list.
+ *
+ * The scores come from one ranking over paths, so they compare across
+ * repositories, and a sort on them interleaves the lists. It is stable, so
+ * on a tie the repository asked first — the session's — comes first. Two
+ * directories in one repository answer with the same root, and that root is
+ * counted once.
+ */
+export function merge(answers: readonly Hits[], limit: number): Found {
+  const seen = new Set<string>();
+  const unique = answers.filter((answer) => !seen.has(answer.root) && seen.add(answer.root));
+  return {
+    hits: unique
+      .flatMap((answer) => answer.hits.map((hit) => ({ ...hit, root: answer.root })))
+      .sort((a, b) => b.score - a.score)
+      .slice(0, limit),
+    roots: unique.map((answer) => answer.root),
+    indexing: unique.some((answer) => answer.indexing),
+    total: unique.reduce((sum, answer) => sum + answer.total, 0),
+    matched: unique.reduce((sum, answer) => sum + answer.matched, 0),
+    line: unique[0]?.line ?? null,
+  };
+}
 
 export interface GoToFileProps {
   /** Directory the session was opened in; the repository is whatever holds it. */
   cwd?: string;
   /** The session's pane, so a `cd` inside it moves the search with it. */
   pane?: string;
-  /** Recently opened paths, which is what an empty query shows. */
-  recent?: readonly string[];
+  /** The other repositories to search: the selected Workspace's Projects. */
+  roots?: readonly SearchRoot[];
+  /** Recently opened files, which is what an empty query shows. */
+  recent?: readonly RecentFile[];
   /** Sessions to offer above the files, matched here as the query changes. */
   sessions?: readonly SessionHit[];
   /** No session on the stage, so no repository: sessions only. */
@@ -75,10 +133,10 @@ export interface GoToFileProps {
   onClose: () => void;
 }
 
-/** A row for a recent path: no match to emphasise, just the path. */
-const asHit = (path: string): Hit => ({ path, nameAt: 0, score: 0, at: [] });
+/** A row for a recent file: no match to emphasise, just the path. */
+const asHit = ({ root, path }: RecentFile): RootedHit => ({ root, path, nameAt: 0, score: 0, at: [] });
 
-function FileRow({ hit }: { hit: Hit }) {
+function FileRow({ hit, project }: { hit: Hit; project?: string }) {
   const { dir, name } = useMemo(() => parts(hit), [hit]);
   const runs = (list: typeof dir) =>
     list.map((run, i) => (run.hit ? <b key={i}>{run.text}</b> : <span key={i}>{run.text}</span>));
@@ -87,14 +145,15 @@ function FileRow({ hit }: { hit: Hit }) {
     <>
       <span className="hit-name">{runs(name)}</span>
       {dir.length > 0 ? <span className="hit-dir">{runs(dir)}</span> : null}
+      {project ? <span className="hit-badge">{project}</span> : null}
     </>
   );
 }
 
 /**
  * IntelliJ's Go to File, over the flat list of everything in the session's
- * repository, with the sessions that match listed first: one place to look
- * for anything.
+ * repository and in each Project of the selected Workspace, with the sessions
+ * that match listed first: one place to look for anything.
  *
  * Mounted only while it is open, so closing it drops the query and the
  * selection, and the element that had the keyboard gets it back.
@@ -102,6 +161,7 @@ function FileRow({ hit }: { hit: Hit }) {
 export function GoToFile({
   cwd,
   pane,
+  roots = [],
   recent = [],
   sessions = [],
   noFiles = false,
@@ -109,8 +169,8 @@ export function GoToFile({
   onClose,
 }: GoToFileProps) {
   const [query, setQuery] = useState("");
-  const [dir, setDir] = useState<string | null>(null);
-  const [hits, setHits] = useState<Hits | null>(null);
+  const [dirs, setDirs] = useState<readonly string[] | null>(null);
+  const [hits, setHits] = useState<Found | null>(null);
   const [error, setError] = useState<string | null>(null);
   // The selection is a path rather than a row number. The same query is asked
   // again every POLL_MS while a build runs, and the answer can come back
@@ -139,40 +199,59 @@ export function GoToFile({
     };
   }, []);
 
-  // Which repository, asked on the way in rather than held: a `cd` in the
-  // terminal since the last time this was open has moved it.
+  // Which repositories: the session's, asked on the way in rather than held
+  // (a `cd` in the terminal since the last time this was open has moved it),
+  // and then the Workspace's. Keyed on the paths, not the array, which the
+  // caller builds afresh on every render.
+  const rootPaths = roots.map((root) => root.path).join("\n");
   useEffect(() => {
     if (noFiles) return;
     let cancelled = false;
     void resolveDir(cwd, pane).then((next) => {
-      if (!cancelled) setDir(next);
+      if (cancelled) return;
+      const others = rootPaths ? rootPaths.split("\n") : [];
+      setDirs([...new Set([next, ...others])]);
     });
     return () => {
       cancelled = true;
     };
-  }, [cwd, pane, noFiles]);
+  }, [cwd, pane, noFiles, rootPaths]);
 
   useEffect(() => {
-    if (dir === null) return;
+    if (dirs === null) return;
     const ask = askRef.current + 1;
     askRef.current = ask;
 
     const timer = setTimeout(() => {
-      void filesSearch(dir, query, LIMIT)
-        .then((next) => {
-          if (askRef.current !== ask) return;
-          setHits(next);
-          setError(null);
-        })
-        .catch((cause: unknown) => {
-          if (askRef.current !== ask) return;
+      void Promise.allSettled(dirs.map((dir) => filesSearch(dir, query, LIMIT))).then((settled) => {
+        if (askRef.current !== ask) return;
+        const answers = settled.flatMap((one) => (one.status === "fulfilled" ? [one.value] : []));
+        // A Project that is gone or no longer a repository is left out
+        // rather than failing the search; the error shows only when there
+        // is nothing else to show.
+        const failed = settled.find((one) => one.status === "rejected");
+        if (answers.length === 0 && failed) {
           setHits(null);
-          setError(String(cause));
-        });
+          setError(String(failed.reason));
+          return;
+        }
+        setHits(merge(answers, LIMIT));
+        setError(null);
+      });
     }, SETTLE_MS);
 
     return () => clearTimeout(timer);
-  }, [dir, query, token]);
+  }, [dirs, query, token]);
+
+  // A repository's name, for a row, once there is more than one to tell
+  // apart. A Project goes by its own name, anything else by its folder's.
+  const projectOf = useCallback(
+    (root: string): string | undefined => {
+      if ((hits?.roots.length ?? 0) < 2) return undefined;
+      return roots.find((one) => one.path === root)?.name ?? baseName(root);
+    },
+    [hits, roots],
+  );
 
   // A build was running when that answer was made, so there is a better one
   // coming. Asking again keeps the list filling in as it lands.
@@ -222,7 +301,7 @@ export function GoToFile({
         ? []
         : (query.trim() ? (hits?.hits ?? []) : recent.slice(0, LIMIT).map(asHit)).map((hit) => ({
             kind: "file",
-            key: `file:${hit.path}`,
+            key: `file:${hit.root}/${hit.path}`,
             hit,
           })),
     [hits, noFiles, query, recent],
@@ -234,7 +313,6 @@ export function GoToFile({
     return found === -1 ? 0 : found;
   }, [chosen, rows]);
 
-  const root = hits?.root;
   const open = useCallback(
     (row: Row | undefined) => {
       if (!row) return;
@@ -243,11 +321,10 @@ export function GoToFile({
         row.session.open();
         return;
       }
-      if (!root) return;
-      onOpen(root, row.hit.path, hits?.line ?? undefined);
+      onOpen(row.hit.root, row.hit.path, hits?.line ?? undefined);
       onClose();
     },
-    [hits, onClose, onOpen, root],
+    [hits, onClose, onOpen],
   );
 
   const step = useCallback(
@@ -382,7 +459,7 @@ export function GoToFile({
                 onMouseMove={(event) => hover(event, row.key)}
               >
                 {row.kind === "file" ? (
-                  <FileRow hit={row.hit} />
+                  <FileRow hit={row.hit} project={projectOf(row.hit.root)} />
                 ) : (
                   <>
                     <span className="hit-name">{row.session.name}</span>
