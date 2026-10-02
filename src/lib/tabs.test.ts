@@ -18,6 +18,9 @@ import {
 const root = "/Users/test/project";
 const file = (path: string, line?: number): FileTab => ({ kind: "file", root, path, line });
 
+/** The recent files' paths, which is all one repository's tests compare. */
+const paths = (tabs: Tabs): string[] => recent(tabs).map((one) => one.path);
+
 /** Open a run of files, oldest first. */
 const opened = (...paths: string[]): Tabs =>
   paths.reduce((tabs, path) => openFile(tabs, file(path)), noTabs);
@@ -51,13 +54,13 @@ describe("openFile", () => {
   it("adds each file to the end of the strip and the front of the use order", () => {
     const tabs = opened("a.ts", "b.ts", "c.ts");
     expect(strip(tabs)).toEqual(["a.ts", "b.ts", "c.ts"]);
-    expect(recent(tabs)).toEqual(["c.ts", "b.ts", "a.ts"]);
+    expect(paths(tabs)).toEqual(["c.ts", "b.ts", "a.ts"]);
   });
 
   it("activates the tab a file already has rather than opening a second", () => {
     const tabs = openFile(opened("a.ts", "b.ts"), file("a.ts"));
     expect(strip(tabs)).toEqual(["a.ts", "b.ts"]);
-    expect(recent(tabs)).toEqual(["a.ts", "b.ts"]);
+    expect(paths(tabs)).toEqual(["a.ts", "b.ts"]);
     expect(tabs.active).toBe(tabId(file("a.ts")));
   });
 
@@ -66,7 +69,7 @@ describe("openFile", () => {
     // shuffle the strip under the pointer.
     const tabs = activate(opened("a.ts", "b.ts", "c.ts"), tabId(file("a.ts")));
     expect(strip(tabs)).toEqual(["a.ts", "b.ts", "c.ts"]);
-    expect(recent(tabs)).toEqual(["a.ts", "c.ts", "b.ts"]);
+    expect(paths(tabs)).toEqual(["a.ts", "c.ts", "b.ts"]);
   });
 
   it("takes a new line number to a file that is already open", () => {
@@ -78,8 +81,8 @@ describe("openFile", () => {
   });
 
   it("evicts the least recently used past the cap", () => {
-    const paths = Array.from({ length: MAX_FILE_TABS }, (_, i) => `f${i}.ts`);
-    const full = opened(...paths);
+    const names = Array.from({ length: MAX_FILE_TABS }, (_, i) => `f${i}.ts`);
+    const full = opened(...names);
     expect(full.files).toHaveLength(MAX_FILE_TABS);
 
     // `f0.ts` is the oldest, so it is the one that goes.
@@ -87,7 +90,7 @@ describe("openFile", () => {
     expect(over.files).toHaveLength(MAX_FILE_TABS);
     expect(strip(over)).not.toContain("f0.ts");
     expect(strip(over).at(-1)).toBe("new.ts");
-    expect(recent(over)[0]).toBe("new.ts");
+    expect(paths(over)[0]).toBe("new.ts");
   });
 
   it("evicts by use rather than by age", () => {
@@ -139,7 +142,7 @@ describe("closeTab", () => {
 describe("activate", () => {
   it("brings a file to the front of the use order", () => {
     const tabs = activate(opened("a.ts", "b.ts"), tabId(file("a.ts")));
-    expect(recent(tabs)).toEqual(["a.ts", "b.ts"]);
+    expect(paths(tabs)).toEqual(["a.ts", "b.ts"]);
   });
 
   it("selects the terminal without closing anything", () => {

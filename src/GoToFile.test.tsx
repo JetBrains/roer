@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { GoToFile, matchesQuery, type SessionHit } from "./GoToFile";
+import { GoToFile, matchesQuery, merge, type SessionHit } from "./GoToFile";
 import { filesSearch } from "./lib/files";
 import type { Hit, Hits } from "./lib/files";
 
@@ -255,7 +255,12 @@ describe("GoToFile", () => {
   });
 
   it("shows the recently opened files before anything is typed", async () => {
-    await open({ recent: ["src/App.tsx", "README.md"] });
+    await open({
+      recent: [
+        { root: "/Users/test/project", path: "src/App.tsx" },
+        { root: "/Users/test/project", path: "README.md" },
+      ],
+    });
     expect(screen.getByText("Recent files")).toBeInTheDocument();
     expect(screen.getAllByRole("option")).toHaveLength(2);
   });
@@ -303,6 +308,76 @@ describe("GoToFile", () => {
 
     expect(screen.getAllByRole("option")).toHaveLength(1);
     expect(screen.getByRole("option")).toHaveTextContent("second.ts");
+  });
+});
+
+describe("GoToFile — a Workspace's Projects", () => {
+  const api = "/Users/test/api";
+  const roots = [
+    { path: "/Users/test/project", name: "project" },
+    { path: api, name: "API" },
+  ];
+
+  /** Each directory answers with its own hits, as its own root. */
+  const byDir = (answers: Record<string, Hit[]>) =>
+    asked.mockImplementation(async (dir: string) => answer(answers[dir] ?? [], { root: dir }));
+
+  it("searches the session's repository and every Project, best first", async () => {
+    byDir({
+      "/Users/test/project": [{ ...hit("src/App.tsx"), score: 5 }],
+      [api]: [{ ...hit("server/app.go"), score: 9 }],
+    });
+    await open({ roots });
+    await type("app");
+
+    expect(asked).toHaveBeenCalledWith("/Users/test/project", "app", 50);
+    expect(asked).toHaveBeenCalledWith(api, "app", 50);
+    // The session's repository is also a Project here, and is asked once.
+    expect(asked.mock.calls.filter(([dir, query]) => dir === "/Users/test/project" && query === "app")).toHaveLength(1);
+    const rows = screen.getAllByRole("option");
+    expect(rows.map((row) => row.textContent)).toEqual(["app.goserver/API", "App.tsxsrc/project"]);
+    expect(screen.getByText("2 matches")).toBeInTheDocument();
+  });
+
+  it("opens a file in the repository it was found in", async () => {
+    byDir({ [api]: [hit("server/app.go")] });
+    const { onOpen } = await open({ roots });
+    await type("app");
+
+    fireEvent.keyDown(screen.getByRole("combobox"), { key: "Enter" });
+    expect(onOpen).toHaveBeenCalledWith(api, "server/app.go", undefined);
+  });
+
+  it("names no repository when only one answered", async () => {
+    asked.mockImplementation(async (dir: string) => {
+      if (dir === api) throw new Error(`${api} is not in a git repository.`);
+      return answer([hit("src/App.tsx")], { root: dir });
+    });
+    await open({ roots });
+    await type("app");
+
+    // A Project that is not a repository any more is left out, not an error.
+    expect(screen.getByRole("option")).toHaveTextContent(/^App\.tsxsrc\/$/);
+    expect(screen.queryByText(/not in a git repository/)).not.toBeInTheDocument();
+  });
+});
+
+describe("merge", () => {
+  it("counts a repository that answered twice once", () => {
+    const one = answer([hit("a.ts")], { total: 3, matched: 1 });
+    const found = merge([one, one], 50);
+    expect(found.hits).toHaveLength(1);
+    expect(found.total).toBe(3);
+    expect(found.roots).toEqual(["/Users/test/project"]);
+  });
+
+  it("keeps the first repository first on a tie, and stops at the limit", () => {
+    const found = merge(
+      [answer([hit("a.ts"), hit("b.ts")]), answer([hit("c.ts")], { root: "/other" })],
+      2,
+    );
+    expect(found.hits.map((one) => one.path)).toEqual(["a.ts", "b.ts"]);
+    expect(found.matched).toBe(3);
   });
 });
 

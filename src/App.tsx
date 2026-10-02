@@ -512,11 +512,9 @@ export function App() {
 
   /** Opens a file from Go to File, in a tab of its own. */
   const openInTab = useCallback((root: string, path: string, line?: number) => {
-    setTabs((current) =>
-      // A file from another repository means the session has moved, and the
-      // tabs from where it was are about nothing now.
-      openFile(forRoot(current, root), { kind: "file", root, path, line }),
-    );
+    // A file from another repository is one of the Workspace's other
+    // Projects, so the tabs from this one stay open beside it.
+    setTabs((current) => openFile(current, { kind: "file", root, path, line }));
   }, []);
 
   /**
@@ -1244,6 +1242,7 @@ export function App() {
             pane={session?.pane}
             noFiles={!session}
             sessions={sessionHits}
+            roots={browser.selectedProject ? [browser.selectedProject] : browser.selectedWorkspaceProjects}
             recent={recent(tabs)}
             onOpen={openInTab}
             onClose={() => setFinding(false)}
