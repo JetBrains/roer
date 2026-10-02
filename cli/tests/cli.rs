@@ -1006,7 +1006,7 @@ fn mcp_offers_the_session_tools_only_inside_a_roer_session() {
     let list = serde_json::json!({ "method": "tools/list" });
 
     let outside = mcp(&env, &[], std::slice::from_ref(&list));
-    assert_eq!(tool_names(&outside[0]), ["show_ui", "read_ui_actions"]);
+    assert_eq!(tool_names(&outside[0]), ["show_ui", "read_ui_actions", "describe_extension_api", "extension_dev", "extension_install", "extension_logs", "list_extensions"]);
     assert_eq!(outside[0]["result"]["tools"][0]["inputSchema"]["required"], serde_json::json!(["messages", "session"]));
 
     let vars = in_pane(&env, &here);
@@ -1022,7 +1022,12 @@ fn mcp_offers_the_session_tools_only_inside_a_roer_session() {
             "add_task",
             "update_task",
             "list_tasks",
-            "delete_task"
+            "delete_task",
+            "describe_extension_api",
+            "extension_dev",
+            "extension_install",
+            "extension_logs",
+            "list_extensions"
         ]
     );
 }
@@ -1068,7 +1073,7 @@ fn mcp_offers_claude_code_nothing_outside_a_roer_session() {
 
     let app = mcp(&env, &[], &[init("some-other-client"), list.clone()]);
     assert!(app[0]["result"]["instructions"].is_string());
-    assert_eq!(tool_names(&app[1]), ["show_ui", "read_ui_actions"]);
+    assert_eq!(tool_names(&app[1]), ["show_ui", "read_ui_actions", "describe_extension_api", "extension_dev", "extension_install", "extension_logs", "list_extensions"]);
 
     let vars = in_pane(&env, &here);
     let vars: Vec<(&str, &str)> = vars.iter().map(|(k, v)| (*k, v.as_str())).collect();
@@ -1087,8 +1092,9 @@ fn mcp_serves_the_guide_as_a_resource_too() {
 
     let replies = mcp(&env, &[], &[list, read("roer:catalog/1"), read("nonsense")]);
     let resources = replies[0]["result"]["resources"].as_array().unwrap();
-    assert_eq!(resources.len(), 1);
+    assert_eq!(resources.len(), 2);
     assert_eq!(resources[0]["uri"], "roer:catalog/1");
+    assert_eq!(resources[1]["uri"], "roer:extensions/1");
 
     let contents = &replies[1]["result"]["contents"][0];
     assert_eq!(contents["uri"], "roer:catalog/1");

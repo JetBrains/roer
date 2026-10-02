@@ -7,6 +7,7 @@
 //! binding all depend on them.
 
 mod agents;
+mod ext;
 mod mcp;
 mod mcp_install;
 mod names;
@@ -85,6 +86,8 @@ usage:
   roer handoff --resume <id>
                         hand a conversation over when this terminal is not a
                         roer session and so cannot be attached
+  roer ext              make, load and install extensions: tabs of your own
+                        in Roer's stage (`roer ext help` for more)
   roer plugin-ui        read one A2UI v1.0 JSON message from stdin and show
                         it in the app's Generative UI panel, for this
                         session's pane
@@ -235,6 +238,7 @@ impl Roer {
             "send" => self.send(args),
             "pr-draft" => self.pr_draft(args),
             "skills" => skills::run(&self.conf, args),
+            "ext" | "extension" | "extensions" => ext::run(&self.cwd, args),
             "mcp" => match args.first() {
                 None => mcp::serve(self),
                 Some(_) => mcp_install::run(args),

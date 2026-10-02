@@ -37,6 +37,9 @@ const VERSIONS: &[&str] = &["2024-11-05", "2025-03-26", "2025-06-18", "2025-11-2
 /// so a guess at reading "the catalog" lands on the real thing.
 const CATALOG_URI: &str = "roer:catalog/1";
 
+/// How to write an extension: `crate::ext::guide`, the guide and the API's types.
+const EXTENSIONS_URI: &str = "roer:extensions/1";
+
 pub fn serve(roer: &Roer) -> Result<(), Fail> {
     let server = Server { roer, here: roer.tmux.inside_roer().ok(), idle: Cell::new(false) };
     let stdin = std::io::stdin();
@@ -139,7 +142,11 @@ impl Server<'_> {
              `show_ui`, which shows the panel itself once the first message arrives.\n\n\
              Before drafting anything, read the `{CATALOG_URI}` resource: it has the whole catalog, every \
              field, and worked examples, none of which fits here reliably. There is no escape hatch to \
-             arbitrary markup, so whatever component you reach for is only documented there."
+             arbitrary markup, so whatever component you reach for is only documented there.\n\n\
+             Extensions are the other way to put something on screen: a tab of its own in Roer's stage, \
+             written in React, which stays there and stays live. Make one when the user asks for a tab or \
+             a view they will keep coming back to. Read `{EXTENSIONS_URI}` (or call `describe_extension_api`) \
+             before writing one, then load it with `extension_dev`."
         )
     }
 
@@ -147,20 +154,33 @@ impl Server<'_> {
         if self.idle.get() {
             return Vec::new();
         }
-        vec![json!({
-            "uri": CATALOG_URI,
-            "name": "Generative UI guide",
-            "description": "The A2UI v1.0 message kinds and the whole component catalog for show_ui, in full \
-                — read this if the server's instructions arrived cut short.",
-            "mimeType": "text/markdown",
-        })]
+        vec![
+            json!({
+                "uri": CATALOG_URI,
+                "name": "Generative UI guide",
+                "description": "The A2UI v1.0 message kinds and the whole component catalog for show_ui, in full \
+                    — read this if the server's instructions arrived cut short.",
+                "mimeType": "text/markdown",
+            }),
+            json!({
+                "uri": EXTENSIONS_URI,
+                "name": "Extensions guide",
+                "description": "How to write a Roer extension — a tab of its own in Roer's stage — and the whole \
+                    API's types. Read it in full before writing one.",
+                "mimeType": "text/markdown",
+            }),
+        ]
     }
 
     fn read_resource(&self, uri: &str) -> Result<Value, Fail> {
-        if self.idle.get() || uri != CATALOG_URI {
+        if self.idle.get() {
             return Err(Fail::new(2, format!("no such resource: {uri}")));
         }
-        Ok(json!({ "uri": CATALOG_URI, "mimeType": "text/markdown", "text": GUIDE }))
+        match uri {
+            CATALOG_URI => Ok(json!({ "uri": CATALOG_URI, "mimeType": "text/markdown", "text": GUIDE })),
+            EXTENSIONS_URI => Ok(json!({ "uri": EXTENSIONS_URI, "mimeType": "text/markdown", "text": crate::ext::guide() })),
+            _ => Err(Fail::new(2, format!("no such resource: {uri}"))),
+        }
     }
 
     fn tools(&self) -> Vec<Value> {
@@ -275,6 +295,44 @@ impl Server<'_> {
                 "inputSchema": { "type": "object", "properties": { "id": id }, "required": ["id"] },
             }));
         }
+        let folder = json!({
+            "type": "string",
+            "description": "The extension's folder, holding its extension.json; relative to the agent's working directory.",
+        });
+        let id = json!({ "type": "string", "description": "The extension's id, from its manifest." });
+        tools.push(json!({
+            "name": "describe_extension_api",
+            "description": format!("How to write a Roer extension (a tab of its own in Roer's stage, in React) and the \
+                whole API's types: the same as the {EXTENSIONS_URI} resource. Read it in full before writing one."),
+            "inputSchema": { "type": "object", "properties": {} },
+        }));
+        tools.push(json!({
+            "name": "extension_dev",
+            "description": "Load an extension's folder into Roer as a session extension and wait for it: returns its \
+                build errors and activation errors, or that its tab is up. Roer rebuilds and reloads it on every \
+                save after that, until it restarts. Call it again after a fix to see how that build went.",
+            "inputSchema": { "type": "object", "properties": { "dir": folder }, "required": ["dir"] },
+        }));
+        tools.push(json!({
+            "name": "extension_install",
+            "description": "Copy an extension's folder into ~/.roer/extensions, so Roer keeps it across restarts, \
+                and wait for it to load. Do this once the user is happy with it.",
+            "inputSchema": { "type": "object", "properties": { "dir": folder }, "required": ["dir"] },
+        }));
+        tools.push(json!({
+            "name": "extension_logs",
+            "description": "An extension's log, newest last: builds, activations, and what its tabs threw while rendering.",
+            "inputSchema": {
+                "type": "object",
+                "properties": { "id": id, "lines": { "type": "integer", "description": "How many of the last lines. Default 100." } },
+                "required": ["id"],
+            },
+        }));
+        tools.push(json!({
+            "name": "list_extensions",
+            "description": "The extensions Roer has, one per line: id, scope (session or user), ok or failed, folder.",
+            "inputSchema": { "type": "object", "properties": {} },
+        }));
         tools
     }
 
@@ -294,6 +352,17 @@ impl Server<'_> {
                 delivered(&pane, &ids, &format!("{} message(s)", messages.len()))
             }
             "read_ui_actions" => Ok(Roer::take_actions(&self.pane(args)?)?.join("\n")),
+            "describe_extension_api" => Ok(crate::ext::guide()),
+            "extension_dev" | "extension_install" => {
+                let dir = crate::ext::absolute(&self.roer.cwd, text(args, "dir"));
+                let verb = if name == "extension_dev" { "dev" } else { "install" };
+                crate::ext::act(verb, &dir)
+            }
+            "extension_logs" => {
+                let lines = args.get("lines").and_then(Value::as_u64).unwrap_or(100) as usize;
+                crate::ext::logs(text(args, "id"), lines)
+            }
+            "list_extensions" => Ok(crate::ext::list()),
             "save_ui" if self.here.is_some() => {
                 let name = text(args, "name");
                 let surface = args.get("surface").ok_or_else(|| Fail::new(2, "`surface` is required"))?;
