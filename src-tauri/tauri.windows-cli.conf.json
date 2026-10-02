@@ -6,7 +6,8 @@
       "windows-cli/psmux.exe": "roer/psmux.exe",
       "windows-cli/psmux-LICENSE.txt": "roer/psmux-LICENSE.txt",
       "windows-cli/roer-tmux.conf": "roer/roer-tmux.conf",
-      "windows-cli/skills/roer-handoff/SKILL.md": "roer/skills/roer-handoff/SKILL.md"
+      "windows-cli/skills/roer-handoff/SKILL.md": "roer/skills/roer-handoff/SKILL.md",
+      "windows-cli/skills/roer-extension-authoring/SKILL.md": "roer/skills/roer-extension-authoring/SKILL.md"
     },
     "windows": {
       "nsis": {
