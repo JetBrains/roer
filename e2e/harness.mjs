@@ -144,6 +144,25 @@ export class Roer {
     }
   }
 
+  /** Waits for `roer list --json`'s row for `pane` to satisfy `check`, and
+   * says what it and the pane's screen showed if it never does. */
+  async untilPane(what, pane, check, timeout) {
+    let row = null;
+    try {
+      return await this.until(
+        what,
+        () => check((row = this.roer(["list", "--json"]).split("\n").filter(Boolean).map((line) => JSON.parse(line)).find((r) => r.pane === pane) ?? null)),
+        timeout,
+      );
+    } catch (e) {
+      const engine = windows ? join(dirname(ROER), "psmux.exe") : "tmux";
+      const screen = spawnSync(engine, ["-L", this.socket, "capture-pane", "-p", "-t", pane], { env: this.env, encoding: "utf8" });
+      e.message += `\n--- roer list --json, ${pane} ---\n${JSON.stringify(row, null, 1)}`;
+      e.message += `\n--- its screen ---\n${screen.stdout}${screen.stderr}`;
+      throw e;
+    }
+  }
+
   /** `roer list`, a row per pane, by column. */
   sessions() {
     const columns = ["id", "session", "pane", "attached", "cwd", "command", "agent", "title"];
