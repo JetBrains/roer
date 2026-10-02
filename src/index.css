@@ -2923,6 +2923,11 @@ button.link.pr-title:hover {
   font-weight: 600;
 }
 
+.pr-bypass {
+  display: block;
+  margin-bottom: 8px;
+}
+
 .pr-merge-row {
   display: flex;
   flex-wrap: wrap;

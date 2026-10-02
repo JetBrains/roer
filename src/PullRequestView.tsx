@@ -18,6 +18,7 @@ import {
   draftPrPrompt,
   fixThreadsPrompt,
   ghMergeMethods,
+  ghPrCanBypass,
   ghPrCreate,
   ghPrForBranch,
   ghPrMerge,
@@ -87,6 +88,7 @@ export function PullRequestView({ cwd, pane, agent: running, active, onSent, onR
 
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
   const [methods, setMethods] = useState<MergeMethods | null>(null);
+  const [canBypass, setCanBypass] = useState(false);
 
   // Waiting on Copilot: from the moment it was asked (or found pending) until
   // it has submitted one more review than it had then.
@@ -122,17 +124,21 @@ export function PullRequestView({ cwd, pane, agent: running, active, onSent, onR
           names.find((name) => name !== on) ||
           "",
       );
-      const [fetched, allowed] = found
+      const [fetched, allowed, bypass] = found
         ? await Promise.all([
             ghPrReview(at, found.number),
             // Not knowing the settings is no reason to hide merging: offer all
             // three and let GitHub refuse the one it does not allow.
             ghMergeMethods(at).catch(() => ({ merge: true, squash: true, rebase: true })),
+            // Asked only of one held back by its rules. Not knowing is not
+            // offering: the plain merge is still there, for GitHub to refuse.
+            found.mergeStateStatus === "BLOCKED" ? ghPrCanBypass(at, found.number).catch(() => false) : false,
           ])
-        : [null, null];
+        : [null, null, false];
       if (!current()) return;
       setReview(fetched);
       setMethods(allowed);
+      setCanBypass(bypass);
     } catch (cause) {
       if (current()) setError(String(cause));
     } finally {
@@ -260,10 +266,10 @@ export function PullRequestView({ cwd, pane, agent: running, active, onSent, onR
       setWaitingSince(Date.now());
     });
 
-  const merge = (method: MergeMethod) =>
+  const merge = (method: MergeMethod, bypass: boolean) =>
     run("merge", async (current) => {
       if (!dir || !pr) return;
-      const merged = await ghPrMerge(dir, pr.number, method, pr.headRefOid);
+      const merged = await ghPrMerge(dir, pr.number, method, pr.headRefOid, bypass);
       if (current()) setPr(merged);
     });
 
@@ -444,7 +450,7 @@ export function PullRequestView({ cwd, pane, agent: running, active, onSent, onR
             ))
           )}
 
-          <MergeBox pr={pr} methods={methods} busy={busy} onMerge={merge} />
+          <MergeBox pr={pr} methods={methods} canBypass={canBypass} busy={busy} onMerge={merge} />
         </>
       )}
     </div>
@@ -474,25 +480,32 @@ function rememberMethod(method: MergeMethod) {
 /**
  * The end of a review: merge the pull request into its base, which closes
  * it. Two steps — pick and press, then confirm — since it cannot be undone
- * from here.
+ * from here. One held back by the base's rules can be merged anyway by
+ * someone GitHub lets bypass them, as on its own page, once they tick that.
  */
 function MergeBox({
   pr,
   methods,
+  canBypass,
   busy,
   onMerge,
 }: {
   pr: PrSummary;
   methods: MergeMethods | null;
+  canBypass: boolean;
   busy: string | null;
-  onMerge: (method: MergeMethod) => Promise<void>;
+  onMerge: (method: MergeMethod, bypass: boolean) => Promise<void>;
 }) {
   const allowed = MERGE_METHODS.filter((m) => methods?.[m.method]);
   const [picked, setPicked] = useState<MergeMethod | null>(rememberedMethod);
   const [confirming, setConfirming] = useState(false);
+  const [bypassTicked, setBypassTicked] = useState(false);
   // What was picked, if the repository still allows it; else its first.
   const method = allowed.find((m) => m.method === picked)?.method ?? allowed[0]?.method;
   const label = MERGE_METHODS.find((m) => m.method === method)?.label ?? "Merge";
+  const held = pr.mergeStateStatus === "BLOCKED";
+  // Only while it is still held back: a fresh status that is not drops it.
+  const bypass = held && canBypass && bypassTicked;
 
   if (pr.state === "MERGED") {
     return (
@@ -515,21 +528,43 @@ function MergeBox({
     <section className="pr-merge">
       <h3>Merge</h3>
       {blocked ? <p className="muted">{blocked}</p> : null}
+      {!blocked && held && !canBypass ? (
+        <p className="muted">
+          The rules for <code>{pr.baseRefName}</code> are not met yet, such as a review or a check; GitHub will refuse
+          the merge until they are.
+        </p>
+      ) : null}
+      {!blocked && held && canBypass ? (
+        <label className="pr-bypass">
+          <input
+            type="checkbox"
+            checked={bypassTicked}
+            disabled={busy !== null || confirming}
+            onChange={(e) => setBypassTicked(e.target.checked)}
+          />{" "}
+          Merge without waiting for requirements to be met (bypass rules)
+        </label>
+      ) : null}
       {confirming && method ? (
         <div className="pr-merge-row" role="group" aria-label="Confirm merge">
           <span>
-            {label} <strong>#{pr.number}</strong> into <code>{pr.baseRefName}</code>? This closes the pull request.
+            {label} <strong>#{pr.number}</strong> into <code>{pr.baseRefName}</code>
+            {bypass ? ", bypassing its rules" : ""}? This closes the pull request.
           </span>
           <button
             type="button"
-            className="primary"
+            className={bypass ? "primary danger" : "primary"}
             disabled={busy !== null}
             onClick={() => {
               rememberMethod(method);
-              void onMerge(method).finally(() => setConfirming(false));
+              void onMerge(method, bypass).finally(() => setConfirming(false));
             }}
           >
-            {busy === "merge" ? "Merging…" : `Confirm ${label.toLowerCase()}`}
+            {busy === "merge"
+              ? "Merging…"
+              : bypass
+                ? `Bypass rules and ${label.toLowerCase()}`
+                : `Confirm ${label.toLowerCase()}`}
           </button>
           <button type="button" disabled={busy === "merge"} onClick={() => setConfirming(false)}>
             Cancel

@@ -5,6 +5,7 @@ import { POLL_MS, PullRequestView } from "./PullRequestView";
 import { gitBranches, gitCurrentBranch } from "./lib/git";
 import {
   ghMergeMethods,
+  ghPrCanBypass,
   ghPrCreate,
   ghPrForBranch,
   ghPrMerge,
@@ -22,6 +23,7 @@ vi.mock("./lib/github", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./lib/github")>()),
   ghStatus: vi.fn(),
   ghMergeMethods: vi.fn(),
+  ghPrCanBypass: vi.fn(),
   ghPrMerge: vi.fn(),
   ghPrForBranch: vi.fn(),
   ghPrCreate: vi.fn(),
@@ -300,8 +302,60 @@ describe("PullRequestView", () => {
 
       expect(await screen.findByText(/Merged into/)).toBeInTheDocument();
       // Pinned to the head that was on screen.
-      expect(ghPrMerge).toHaveBeenCalledWith("/work/r", 19, "rebase", "abc123");
+      expect(ghPrMerge).toHaveBeenCalledWith("/work/r", 19, "rebase", "abc123", false);
       expect(localStorage.getItem("roer:merge-method")).toBe("rebase");
+    });
+
+    it("bypasses the base's rules only when ticked, by someone GitHub lets", async () => {
+      vi.mocked(ghPrForBranch).mockResolvedValue({ ...pr, mergeStateStatus: "BLOCKED" });
+      vi.mocked(ghPrCanBypass).mockResolvedValue(true);
+      vi.mocked(ghPrMerge).mockResolvedValue({ ...pr, state: "MERGED" });
+      view();
+
+      const box = await screen.findByRole("checkbox", { name: /bypass rules/ });
+      expect(box).not.toBeChecked();
+      expect(ghPrCanBypass).toHaveBeenCalledWith("/work/r", 19);
+      fireEvent.click(box);
+      fireEvent.click(screen.getByRole("button", { name: "Create a merge commit" }));
+
+      expect(screen.getByRole("group", { name: "Confirm merge" })).toHaveTextContent(
+        "Create a merge commit #19 into main, bypassing its rules? This closes the pull request.",
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Bypass rules and create a merge commit" }));
+      expect(await screen.findByText(/Merged into/)).toBeInTheDocument();
+      expect(ghPrMerge).toHaveBeenCalledWith("/work/r", 19, "merge", "abc123", true);
+    });
+
+    it("merges by the rules while the bypass is not ticked", async () => {
+      vi.mocked(ghPrForBranch).mockResolvedValue({ ...pr, mergeStateStatus: "BLOCKED" });
+      vi.mocked(ghPrCanBypass).mockResolvedValue(true);
+      vi.mocked(ghPrMerge).mockResolvedValue({ ...pr, state: "MERGED" });
+      view();
+
+      await screen.findByRole("checkbox", { name: /bypass rules/ });
+      fireEvent.click(screen.getByRole("button", { name: "Create a merge commit" }));
+      fireEvent.click(screen.getByRole("button", { name: "Confirm create a merge commit" }));
+      expect(await screen.findByText(/Merged into/)).toBeInTheDocument();
+      expect(ghPrMerge).toHaveBeenCalledWith("/work/r", 19, "merge", "abc123", false);
+    });
+
+    it("says why a held-back merge will be refused when it cannot be bypassed", async () => {
+      vi.mocked(ghPrForBranch).mockResolvedValue({ ...pr, mergeStateStatus: "BLOCKED" });
+      vi.mocked(ghPrCanBypass).mockResolvedValue(false);
+      view();
+
+      expect(await screen.findByText(/rules for/)).toHaveTextContent("GitHub will refuse the merge until they are.");
+      expect(screen.queryByRole("checkbox", { name: /bypass rules/ })).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Create a merge commit" })).toBeEnabled();
+    });
+
+    it("does not ask about bypassing a pull request nothing holds back", async () => {
+      vi.mocked(ghPrForBranch).mockResolvedValue({ ...pr, mergeStateStatus: "CLEAN" });
+      view();
+
+      await screen.findByRole("button", { name: "Create a merge commit" });
+      expect(ghPrCanBypass).not.toHaveBeenCalled();
+      expect(screen.queryByRole("checkbox", { name: /bypass rules/ })).not.toBeInTheDocument();
     });
 
     it("does nothing when the confirmation is cancelled", async () => {

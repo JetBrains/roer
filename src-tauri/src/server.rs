@@ -342,8 +342,9 @@ fn dispatch(state: &Arc<AppState>, cmd: &str, args: Value, cid: Option<&str>) ->
         "gh_pr_review" => call_res!(args, crate::gh::gh_pr_review, "dir": String, "number": u64),
         "gh_merge_methods" => call_res!(args, crate::gh::gh_merge_methods, "dir": String),
         "gh_pr_merge" => call_res!(
-            args, crate::gh::gh_pr_merge, "dir": String, "number": u64, "method": String, "head": String
+            args, crate::gh::gh_pr_merge, "dir": String, "number": u64, "method": String, "head": String, "bypass": bool
         ),
+        "gh_pr_can_bypass" => call_res!(args, crate::gh::gh_pr_can_bypass, "dir": String, "number": u64),
         // Opens on whatever machine `roer-server` runs on, not the browser
         // viewing it — fine when they are the same machine (the common
         // case), a known gap otherwise.
