@@ -7,6 +7,7 @@
         "MacOS/tmux": "macos-cli/tmux",
         "Resources/roer-tmux.conf": "macos-cli/roer-tmux.conf",
         "Resources/skills/roer-handoff/SKILL.md": "macos-cli/skills/roer-handoff/SKILL.md",
+        "Resources/skills/roer-extension-authoring/SKILL.md": "macos-cli/skills/roer-extension-authoring/SKILL.md",
         "Resources/licenses/tmux.txt": "macos-cli/tmux-LICENSE.txt",
         "Resources/licenses/libevent.txt": "macos-cli/libevent-LICENSE.txt",
         "Resources/licenses/utf8proc.txt": "macos-cli/utf8proc-LICENSE.txt",
