@@ -547,7 +547,7 @@ impl Roer {
         }
         if state == "clear" {
             for option in ["@roer_state", "@roer_note", "@roer_tool"] {
-                self.tmux.ok(&["set-option", "-p", "-u", "-t", &pane, option]);
+                self.set_status_option(&pane, option, None);
             }
             return Ok(());
         }
@@ -560,20 +560,42 @@ impl Roer {
                 return Ok(());
             }
         }
-        self.tmux.ok(&["set-option", "-p", "-t", &pane, "@roer_state", state]);
+        self.set_status_option(&pane, "@roer_state", Some(state));
         // The tool call the agent is at, for a permission request to match.
         if state == "working" && !tool.is_empty() {
-            self.tmux.ok(&["set-option", "-p", "-t", &pane, "@roer_tool", &tool]);
+            self.set_status_option(&pane, "@roer_tool", Some(&tool));
         } else if state != "waiting" {
-            self.tmux.ok(&["set-option", "-p", "-u", "-t", &pane, "@roer_tool"]);
+            self.set_status_option(&pane, "@roer_tool", None);
         }
         // A note belongs to the moment it was said: kept only with `waiting`.
         if state == "waiting" && !note.is_empty() {
-            self.tmux.ok(&["set-option", "-p", "-t", &pane, "@roer_note", &note]);
+            self.set_status_option(&pane, "@roer_note", Some(&note));
         } else {
-            self.tmux.ok(&["set-option", "-p", "-u", "-t", &pane, "@roer_note"]);
+            self.set_status_option(&pane, "@roer_note", None);
         }
         Ok(())
+    }
+
+    /// Sets one of what `status` keeps about a pane, or with `None` unsets
+    /// it. tmux keeps it on the pane. psmux refuses any user option on a pane
+    /// (it takes `remain-on-exit` alone), so there it goes on the session,
+    /// whose one pane a roer session's agent has to itself, as `@roer_agent`
+    /// does; formats read it there just the same.
+    fn set_status_option(&self, pane: &str, option: &str, value: Option<&str>) {
+        let session;
+        let mut args = vec!["set-option"];
+        if value.is_none() {
+            args.push("-u");
+        }
+        if self.tmux.is_psmux() {
+            session = format!("={}:", self.tmux.session_of(pane));
+            args.extend(["-t", &session]);
+        } else {
+            args.extend(["-p", "-t", pane]);
+        }
+        args.push(option);
+        args.extend(value);
+        self.tmux.ok(&args);
     }
 
     /// Ends the session a pane is in, with everything running in it.
