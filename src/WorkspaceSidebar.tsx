@@ -16,6 +16,8 @@ export type WorkspaceSidebarProps = Pick<
   | "handleCreateWorkspace"
   | "handleRenameWorkspace"
   | "handleDeleteWorkspace"
+  | "handleAttachExistingProject"
+  | "handleAttachNewProject"
   | "handleCreateProject"
   | "handleRenameProject"
   | "handleDeleteProject"
@@ -47,6 +49,8 @@ export function WorkspaceSidebar({
   handleCreateWorkspace,
   handleRenameWorkspace,
   handleDeleteWorkspace,
+  handleAttachExistingProject,
+  handleAttachNewProject,
   handleCreateProject,
   handleRenameProject,
   handleDeleteProject,
@@ -89,11 +93,14 @@ export function WorkspaceSidebar({
       {tab === "workspaces" ? (
         <WorkspaceSwitcher
           workspaces={workspaces}
+          projects={projects}
           selectedId={selectedWorkspaceId}
           onSelect={setSelectedWorkspaceId}
           onCreate={handleCreateWorkspace}
           onRename={handleRenameWorkspace}
           onDelete={handleDeleteWorkspace}
+          onAttachProject={handleAttachExistingProject}
+          onAttachNewProject={handleAttachNewProject}
         />
       ) : (
         <ProjectsPanel

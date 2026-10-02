@@ -433,9 +433,11 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
       .catch((cause: unknown) => setFailure(String(cause)));
   };
 
-  const handleAttachExistingProject = (projectId: string) => {
-    if (!selectedWorkspace) return;
-    void attachProject(selectedWorkspace.id, projectId)
+  /** Attaches to `workspaceId`, the selected Workspace unless another is
+   * named, as the sidebar's menu does for whichever one was right-clicked. */
+  const handleAttachExistingProject = (projectId: string, workspaceId = selectedWorkspace?.id) => {
+    if (!workspaceId) return;
+    void attachProject(workspaceId, projectId)
       .then((updated) => {
         if (!updated) return;
         setWorkspaces((current) =>
@@ -446,9 +448,10 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
   };
 
   /** Registers a brand new Project (deduped by path on the backend) and
-   * attaches it to the selected Workspace in one step. */
-  const handleAttachNewProject = (path: string) => {
-    if (!selectedWorkspace) return;
+   * attaches it to `workspaceId` (the selected Workspace by default) in one
+   * step. */
+  const handleAttachNewProject = (path: string, workspaceId = selectedWorkspace?.id) => {
+    if (!workspaceId) return;
     void createProject(folderName(path), path)
       .then((project) => {
         setProjects((current) =>
@@ -456,7 +459,7 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
             ? current
             : [...current, project],
         );
-        return attachProject(selectedWorkspace.id, project.id);
+        return attachProject(workspaceId, project.id);
       })
       .then((updated) => {
         if (!updated) return;
