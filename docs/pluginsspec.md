@@ -1,6 +1,8 @@
 # Roer Extensions API — draft
 
-Status: **draft / RFC**. Nothing here is implemented yet.
+Status: **draft / RFC**. Nothing here is implemented yet. These data-only
+extensions are now one kind of extension in
+[`extensions.md`](extensions.md), which wins where the two differ (its §9).
 
 ## Goal
 
