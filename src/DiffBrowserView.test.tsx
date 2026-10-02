@@ -373,7 +373,7 @@ describe("DiffBrowserView — commits and the local-changes slot together", () =
     );
     fireEvent.click(screen.getByRole("button", { name: /Next/ }));
     await waitFor(() => expect(screen.getByText("commit 1 of 2")).toBeInTheDocument());
-    expect(await screen.findByText("committed.txt")).toBeInTheDocument();
+    await waitFor(() => expect(selectedFile()).toBe("committed.txt"));
     expect(gitCommitFiles).toHaveBeenCalledWith("/work/roer", "hash-first");
   });
 
