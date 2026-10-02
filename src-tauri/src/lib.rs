@@ -65,6 +65,7 @@ pub fn run() {
             gh::gh_pr_review,
             gh::gh_merge_methods,
             gh::gh_pr_merge,
+            gh::gh_pr_can_bypass,
             gh::open_url,
             files::files_search,
             files::file_read,

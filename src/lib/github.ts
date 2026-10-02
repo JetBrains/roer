@@ -27,6 +27,8 @@ export interface PrSummary {
   headRefOid: string;
   baseRefName: string;
   reviewDecision: string | null;
+  /** `BLOCKED` while the base's rules (a review, a check) are not met. */
+  mergeStateStatus?: string | null;
 }
 
 export type MergeMethod = "merge" | "squash" | "rebase";
@@ -111,9 +113,21 @@ export const ghPrReview = (dir: string, number: number): Promise<PrReview> =>
 
 export const ghMergeMethods = (dir: string): Promise<MergeMethods> => invoke("gh_merge_methods", { dir });
 
-/** Merges and closes the pull request, only if its head is still `head`. */
-export const ghPrMerge = (dir: string, number: number, method: MergeMethod, head: string): Promise<PrSummary> =>
-  invoke("gh_pr_merge", { dir, number, method, head });
+/** Whether the person may merge before the base's rules are met. */
+export const ghPrCanBypass = (dir: string, number: number): Promise<boolean> =>
+  invoke("gh_pr_can_bypass", { dir, number });
+
+/**
+ * Merges and closes the pull request, only if its head is still `head`; with
+ * `bypass`, though the base's rules are not met yet.
+ */
+export const ghPrMerge = (
+  dir: string,
+  number: number,
+  method: MergeMethod,
+  head: string,
+  bypass = false,
+): Promise<PrSummary> => invoke("gh_pr_merge", { dir, number, method, head, bypass });
 
 export const gitUpstreamStatus = (cwd: string): Promise<Upstream> =>
   invoke("git_upstream_status", { cwd });

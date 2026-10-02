@@ -177,9 +177,15 @@ pub struct PrSummary {
     /// `APPROVED`, `CHANGES_REQUESTED`, `REVIEW_REQUIRED`, or empty.
     #[serde(default)]
     pub review_decision: Option<String>,
+    /// Whether it can be merged now: `BLOCKED` while the base's rules are
+    /// not met (a review, a check), `CLEAN`, `UNKNOWN` while GitHub works it
+    /// out, and so on.
+    #[serde(default)]
+    pub merge_state_status: Option<String>,
 }
 
-const PR_FIELDS: &str = "number,title,url,state,isDraft,headRefName,headRefOid,baseRefName,reviewDecision";
+const PR_FIELDS: &str =
+    "number,title,url,state,isDraft,headRefName,headRefOid,baseRefName,reviewDecision,mergeStateStatus";
 
 /// The pull request for the branch checked out in `dir`, if there is one.
 #[tauri::command(async)]
@@ -284,20 +290,51 @@ fn merge_flag(method: &str) -> Option<&'static str> {
     }
 }
 
+/// Whether the person may merge the pull request before the base's rules are
+/// met, as GitHub's "bypass rules": an admin, or someone a ruleset lets
+/// bypass. `gh pr view` has no field for it, so it is asked of GraphQL.
+#[tauri::command(async)]
+pub fn gh_pr_can_bypass(dir: String, number: u64) -> Result<bool, String> {
+    let number = format!("number={number}");
+    let out = gh(
+        &dir,
+        &[
+            "api", "graphql",
+            "-F", "owner={owner}", "-F", "repo={repo}", "-F", &number,
+            "-f", "query=query($owner: String!, $repo: String!, $number: Int!) { \
+                repository(owner: $owner, name: $repo) { pullRequest(number: $number) { viewerCanMergeAsAdmin } } }",
+            "--jq", ".data.repository.pullRequest.viewerCanMergeAsAdmin",
+        ],
+        None,
+    )?;
+    Ok(out.trim() == "true")
+}
+
+/// `gh pr merge`'s arguments for a merge of `number` by `flag`, pinned to
+/// `head`, and with `--admin` when it bypasses the base's rules.
+fn merge_args<'a>(number: &'a str, flag: &'a str, head: &'a str, bypass: bool) -> Vec<&'a str> {
+    let mut args = vec!["pr", "merge", number, flag, "--match-head-commit", head];
+    if bypass {
+        args.push("--admin");
+    }
+    args
+}
+
 /// Merges the pull request into its base, which closes it.
 ///
 /// Pinned to `head`, the commit the person was looking at when they
 /// confirmed: if anything was pushed since, GitHub refuses rather than
 /// merging code nobody on this screen has seen. The branch is left alone,
-/// here and on GitHub.
+/// here and on GitHub. With `bypass`, it merges though the base's rules are
+/// not met yet, which GitHub allows only to someone it lets bypass them.
 #[tauri::command(async)]
-pub fn gh_pr_merge(dir: String, number: u64, method: String, head: String) -> Result<PrSummary, String> {
+pub fn gh_pr_merge(dir: String, number: u64, method: String, head: String, bypass: bool) -> Result<PrSummary, String> {
     let flag = merge_flag(&method).ok_or_else(|| format!("unknown merge method: {method}"))?;
     if head.is_empty() {
         return Err("the pull request's head commit is unknown; refresh and try again".to_string());
     }
     let number = number.to_string();
-    gh(&dir, &["pr", "merge", &number, flag, "--match-head-commit", &head], None)?;
+    gh(&dir, &merge_args(&number, flag, &head, bypass), None)?;
     pr_view(&dir, Some(&number))?.ok_or_else(|| format!("merged #{number} but could not read it back"))
 }
 
@@ -588,6 +625,15 @@ mod tests {
         // And goes to the frontend under its own short names.
         let out = serde_json::to_value(&methods).unwrap();
         assert_eq!(out, serde_json::json!({"merge": false, "squash": true, "rebase": true}));
+    }
+
+    #[test]
+    fn bypasses_the_rules_only_when_asked() {
+        assert_eq!(merge_args("7", "--squash", "abc", false), ["pr", "merge", "7", "--squash", "--match-head-commit", "abc"]);
+        assert_eq!(
+            merge_args("7", "--squash", "abc", true),
+            ["pr", "merge", "7", "--squash", "--match-head-commit", "abc", "--admin"]
+        );
     }
 
     #[test]
