@@ -16,6 +16,7 @@ import { listProjects } from "./lib/projects";
 import { confirmAction } from "./lib/confirm";
 import {
   assignSession,
+  attachProject,
   deleteWorkspace,
   listWorkspaces,
   unassignSession,
@@ -98,6 +99,8 @@ function Harness({ onOpen }: { onOpen: (request: OpenRequest) => void }) {
         handleCreateWorkspace={browser.handleCreateWorkspace}
         handleRenameWorkspace={browser.handleRenameWorkspace}
         handleDeleteWorkspace={browser.handleDeleteWorkspace}
+        handleAttachExistingProject={browser.handleAttachExistingProject}
+        handleAttachNewProject={browser.handleAttachNewProject}
         handleCreateProject={browser.handleCreateProject}
         handleRenameProject={browser.handleRenameProject}
         handleDeleteProject={browser.handleDeleteProject}
@@ -727,6 +730,37 @@ describe("the selected workspace", () => {
 
     fireEvent.contextMenu(screen.getByRole("button", { name: /Feature work/ }));
     expect(await screen.findByText("Delete")).toBeInTheDocument();
+  });
+});
+
+describe("attaching a project from a workspace's menu", () => {
+  it("attaches to the workspace right-clicked, not the selected one", async () => {
+    vi.mocked(listProjects).mockResolvedValueOnce([
+      { id: "p1", name: "roer", path: "/work/roer" },
+      { id: "p2", name: "api", path: "/work/api" },
+    ]);
+    vi.mocked(listWorkspaces).mockResolvedValue([
+      { id: "w1", name: "Default", projects: [], items: [] },
+      { id: "w2", name: "Feature work", projects: ["p1"], items: [] },
+    ]);
+    vi.mocked(attachProject)
+      .mockReset()
+      .mockResolvedValue({ id: "w2", name: "Feature work", projects: ["p1", "p2"], items: [] });
+    renderList();
+
+    expect(await screen.findByRole("button", { name: /Default/ })).toHaveAttribute("aria-pressed", "true");
+    fireEvent.contextMenu(screen.getByRole("button", { name: /Feature work/ }));
+    // The Sessions view has an "Attach project" of its own, for the selected one.
+    fireEvent.click(await screen.findByRole("menuitem", { name: /Attach project/ }));
+
+    // Only what the Workspace lacks is offered, then a folder from disk.
+    const api = await screen.findByRole("menuitem", { name: "api" });
+    expect(screen.queryByRole("menuitem", { name: "roer" })).not.toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Attach a new project…" })).toBeInTheDocument();
+
+    fireEvent.click(api);
+    await waitFor(() => expect(attachProject).toHaveBeenCalledWith("w2", "p2"));
+    expect(await screen.findByRole("button", { name: /Feature work.*2 projects/ })).toBeInTheDocument();
   });
 });
 

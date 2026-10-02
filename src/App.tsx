@@ -938,6 +938,8 @@ export function App() {
           handleCreateWorkspace={browser.handleCreateWorkspace}
           handleRenameWorkspace={browser.handleRenameWorkspace}
           handleDeleteWorkspace={browser.handleDeleteWorkspace}
+          handleAttachExistingProject={browser.handleAttachExistingProject}
+          handleAttachNewProject={browser.handleAttachNewProject}
           handleCreateProject={browser.handleCreateProject}
           handleRenameProject={browser.handleRenameProject}
           handleDeleteProject={browser.handleDeleteProject}
