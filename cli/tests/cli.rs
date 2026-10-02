@@ -549,6 +549,34 @@ fn actions_are_delivered_to_their_pane_once_and_in_order() {
 }
 
 #[test]
+fn readers_at_the_same_moment_never_take_one_action_twice() {
+    let env = Env::new("actions-race");
+    let dir = env.home.join("plugin-ui-actions");
+    std::fs::create_dir_all(&dir).unwrap();
+    let count = 40;
+    for i in 0..count {
+        std::fs::write(dir.join(format!("{i:03}.json")), format!(r#"{{"pane":"%1","n":{i}}}"#)).unwrap();
+    }
+
+    // All started before any is waited for, so they read the directory together.
+    let readers: Vec<_> = (0..6)
+        .map(|_| env.roer(&["plugin-ui-actions", "--pane", "%1"]).stdin(Stdio::null()).stdout(Stdio::piped()).spawn().unwrap())
+        .collect();
+    let outputs: Vec<String> = readers
+        .into_iter()
+        .map(|reader| String::from_utf8_lossy(&reader.wait_with_output().unwrap().stdout).into_owned())
+        .collect();
+
+    let mut seen: Vec<String> = outputs.iter().flat_map(|out| out.lines().map(str::to_string)).collect();
+    seen.sort();
+    let total = seen.len();
+    seen.dedup();
+    assert_eq!(total, seen.len(), "an action was taken twice");
+    assert_eq!(total, count, "every action was taken");
+    assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 0, "nothing claimed is left behind");
+}
+
+#[test]
 fn a_pr_draft_reaches_the_app() {
     let env = Env::new("pr-draft");
     let out = env.run_with(&["pr-draft", "--pane", "%5"], r#"{"title":"T","body":"line 1\nline 2"}"#);
