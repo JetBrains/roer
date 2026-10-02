@@ -339,6 +339,33 @@ describe("PullRequestView", () => {
       expect(ghPrMerge).toHaveBeenCalledWith("/work/r", 19, "merge", "abc123", false);
     });
 
+    it("forgets a ticked bypass once the pull request on screen changes", async () => {
+      vi.mocked(ghPrForBranch).mockResolvedValue({ ...pr, mergeStateStatus: "BLOCKED" });
+      vi.mocked(ghPrCanBypass).mockResolvedValue(true);
+      vi.mocked(ghPrMerge).mockResolvedValue({ ...pr, state: "MERGED" });
+      view();
+      fireEvent.click(await screen.findByRole("checkbox", { name: /bypass rules/ }));
+
+      // Clean for a moment, then held back again: the tick does not come back.
+      vi.mocked(ghPrForBranch).mockResolvedValue({ ...pr, mergeStateStatus: "CLEAN" });
+      fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+      await waitFor(() => expect(screen.queryByRole("checkbox", { name: /bypass rules/ })).not.toBeInTheDocument());
+      vi.mocked(ghPrForBranch).mockResolvedValue({ ...pr, mergeStateStatus: "BLOCKED" });
+      fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+      expect(await screen.findByRole("checkbox", { name: /bypass rules/ })).not.toBeChecked();
+
+      // A new head, still held back: ticked for the old one, not for this.
+      fireEvent.click(screen.getByRole("checkbox", { name: /bypass rules/ }));
+      vi.mocked(ghPrForBranch).mockResolvedValue({ ...pr, headRefOid: "def456", mergeStateStatus: "BLOCKED" });
+      fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+      await waitFor(() => expect(screen.getByRole("checkbox", { name: /bypass rules/ })).not.toBeChecked());
+
+      fireEvent.click(screen.getByRole("button", { name: "Create a merge commit" }));
+      fireEvent.click(screen.getByRole("button", { name: "Confirm create a merge commit" }));
+      expect(await screen.findByText(/Merged into/)).toBeInTheDocument();
+      expect(ghPrMerge).toHaveBeenCalledWith("/work/r", 19, "merge", "def456", false);
+    });
+
     it("says why a held-back merge will be refused when it cannot be bypassed", async () => {
       vi.mocked(ghPrForBranch).mockResolvedValue({ ...pr, mergeStateStatus: "BLOCKED" });
       vi.mocked(ghPrCanBypass).mockResolvedValue(false);

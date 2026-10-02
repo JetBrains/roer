@@ -450,7 +450,16 @@ export function PullRequestView({ cwd, pane, agent: running, active, onSent, onR
             ))
           )}
 
-          <MergeBox pr={pr} methods={methods} canBypass={canBypass} busy={busy} onMerge={merge} />
+          {/* Started fresh for each head, merge state and permission: a bypass
+              ticked for one is never carried to another. */}
+          <MergeBox
+            key={`${pr.number}:${pr.headRefOid}:${pr.mergeStateStatus ?? ""}:${canBypass}`}
+            pr={pr}
+            methods={methods}
+            canBypass={canBypass}
+            busy={busy}
+            onMerge={merge}
+          />
         </>
       )}
     </div>
