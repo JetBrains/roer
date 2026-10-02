@@ -13,7 +13,12 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { DiffBrowserView } from "./DiffBrowserView";
+import { loadBundled } from "./extensions/bundled";
+import { useStageSession } from "./extensions/context";
+import { installHost } from "./extensions/host";
+import { useExternalExtensions } from "./extensions/loader";
+import { useBadges, useStageTabs } from "./extensions/registry";
+import { TabBody } from "./extensions/TabBody";
 import { FileView } from "./FileView";
 import { GenerativeUITab } from "./generative-ui/GenerativeUITab";
 import { applyAll, applyMessage } from "./generative-ui/apply";
@@ -80,8 +85,25 @@ import {
 import { logLine } from "./lib/log";
 import { onPluginUi, reportPluginUiReceipt, type PluginUiOutcome } from "./lib/pluginUi";
 
-/** The stage's fixed tabs, in the order Cmd+1 to Cmd+4 bring them up. */
-const FIXED_TABS = ["sessions", "terminal", "changes", "pullRequest"] as const;
+// Before anything renders: extensions read the host's React and SDK from
+// here, and the bundled ones are tabs from the first frame.
+installHost();
+loadBundled();
+
+/** One tab of the strip, built in or an extension's. */
+interface StripTab {
+  tabId: string;
+  title: string;
+  order: number;
+  needsSession: boolean;
+}
+
+/** The strip's built-in tabs. Extensions' go between and after them by `order`. */
+const CORE_TABS: readonly StripTab[] = [
+  { tabId: "sessions", title: "Sessions", order: 0, needsSession: false },
+  { tabId: "terminal", title: "Terminal", order: 10, needsSession: false },
+  { tabId: "pullRequest", title: "Pull Request", order: 30, needsSession: true },
+];
 
 interface SessionView extends OpenRequest {
   /** Set when this session was teleported in; a terminal is waiting on it.
@@ -125,10 +147,20 @@ export function App() {
   const [agents, setAgents] = useState<AgentList | null>(null);
   const [agentPickerOpen, setAgentPickerOpen] = useState(false);
   const [agentsDialog, setAgentsDialog] = useState<{ start: AgentsDialogStart; startAfterSave: boolean } | null>(null);
-  // The changes view stays mounted once opened, so switching back to the
-  // terminal and away again keeps the file that was selected. File tabs get
-  // this for free: being open is being in `tabs.files`.
-  const [everChanges, setEverChanges] = useState(false);
+  // An extension's tab stays mounted once opened, so switching back to the
+  // terminal and away again keeps what it was showing (Changes keeps the
+  // file that was selected). File tabs get this for free: being open is
+  // being in `tabs.files`.
+  const [everOpened, setEverOpened] = useState<ReadonlySet<string>>(() => new Set());
+  const opened = useCallback((tabId: string) => {
+    setEverOpened((current) => (current.has(tabId) ? current : new Set([...current, tabId])));
+  }, []);
+  useExternalExtensions();
+  const extensionTabs = useStageTabs();
+  const badges = useBadges();
+  const strip: StripTab[] = [...CORE_TABS, ...extensionTabs].sort((a, b) => a.order - b.order);
+  const stripRef = useRef(strip);
+  stripRef.current = strip;
   // Same for the pull request, which also keeps polling a pending review
   // while you are away in the terminal — which is when it would land.
   const [everPr, setEverPr] = useState(false);
@@ -137,7 +169,7 @@ export function App() {
   useEffect(() => {
     if (prBadge && tabs.active === "pullRequest") setPrBadge(false);
   }, [prBadge, tabs.active]);
-  // Same reasoning as `everChanges`: mount once, keep it mounted, so
+  // Same reasoning as `everOpened`: mount once, keep it mounted, so
   // collapsing the panel and reopening it does not lose a live surface.
   const [everGenerativeUI, setEverGenerativeUI] = useState(false);
   // The Generative UI panel's state: empty (a placeholder message) until a
@@ -504,6 +536,22 @@ export function App() {
   }, [staged]);
 
   /** A prompt went into the session: show it arriving. */
+  /** Brings a tab up by its id, mounting it if it never was: what an extension's `useActivateTab` does. */
+  const activateTab = useCallback(
+    (tabId: string) => {
+      if (tabId === "pullRequest") setEverPr(true);
+      else opened(tabId);
+      setTabs((current) => activate(current, tabId));
+    },
+    [opened],
+  );
+
+  /** A tab's Cmd+number, for its tooltip: the first nine in the strip have one. */
+  const number = (tabId: string): string | undefined => {
+    const at = strip.findIndex((tab) => tab.tabId === tabId);
+    return at >= 0 && at < 9 ? shortcutLabel.tab(at + 1) : undefined;
+  };
+
   const showTerminal = useCallback(() => {
     setTabs((current) => activate(current, "terminal"));
   }, []);
@@ -700,21 +748,32 @@ export function App() {
     useCallback(() => setShowingShortcuts((open) => !open), []),
   );
 
-  // Cmd+1 to Cmd+4 for the fixed tabs, in the strip's order. Changes and
-  // Pull Request need a session, as their tabs do.
+  // Cmd+1 to Cmd+9 for the strip's tabs, in its order. A tab that needs a
+  // session is out of reach without one, as its button is.
   useHotkey(
     isTabNumber,
-    useCallback((event: KeyboardEvent) => {
-      const id = FIXED_TABS[(tabNumber(event) ?? 0) - 1];
-      if (!id) return;
-      if (id === "changes" || id === "pullRequest") {
-        if (!stagedRef.current) return;
-        if (id === "changes") setEverChanges(true);
-        else setEverPr(true);
-      }
-      setTabs((current) => activate(current, id));
-    }, []),
+    useCallback(
+      (event: KeyboardEvent) => {
+        const tab = stripRef.current[(tabNumber(event) ?? 0) - 1];
+        if (!tab) return;
+        if (tab.needsSession && !stagedRef.current) return;
+        if (tab.tabId === "pullRequest") setEverPr(true);
+        else opened(tab.tabId);
+        setTabs((current) => activate(current, tab.tabId));
+      },
+      [opened],
+    ),
   );
+
+  // An extension's tab that went away (removed, or its session folder gone)
+  // cannot stay on top.
+  const stripIds = strip.map((tab) => tab.tabId).join("\n");
+  useEffect(() => {
+    const ids = stripIds.split("\n");
+    setTabs((current) =>
+      current.active.startsWith("file:") || ids.includes(current.active) ? current : activate(current, "terminal"),
+    );
+  }, [stripIds]);
 
   // The session on the stage before this one, for Ctrl+Tab: the pane it was
   // in, held while a different one comes up.
@@ -761,6 +820,12 @@ export function App() {
   // What the stage shows, named the way its row in Sessions names it, for
   // the title bar and the window's own title.
   const onStage = browser.visibleSessions.find((live) => live.pane === session?.pane);
+  // The session as extensions' tabs see it.
+  const stageSession = useStageSession(session, {
+    agent: (onStage && runningAgent(onStage)) ?? undefined,
+    busy: onStage?.state === "working",
+    changed,
+  });
   const stageName = !session
     ? ""
     : onStage
@@ -948,12 +1013,16 @@ export function App() {
         <section className="stage">
           <div className="tab-bar">
             <div className="tabs" role="tablist" aria-label="Stage">
+              {strip.map((tab) => {
+                if (tab.tabId === "sessions") {
+                  return (
               <button
+                key={tab.tabId}
                 type="button"
                 role="tab"
                 aria-selected={tabs.active === "sessions"}
                 className={tabs.active === "sessions" ? "tab on" : "tab"}
-                title={shortcutLabel.tab(1)}
+                title={number(tab.tabId)}
                 onClick={() =>
                   setTabs((current) => activate(current, "sessions"))
                 }
@@ -966,38 +1035,34 @@ export function App() {
                   </>
                 ) : null}
               </button>
+                  );
+                }
+                if (tab.tabId === "terminal") {
+                  return (
               <button
+                key={tab.tabId}
                 type="button"
                 role="tab"
                 aria-selected={tabs.active === "terminal"}
                 className={tabs.active === "terminal" ? "tab on" : "tab"}
-                title={shortcutLabel.tab(2)}
+                title={number(tab.tabId)}
                 onClick={() =>
                   setTabs((current) => activate(current, "terminal"))
                 }
               >
                 Terminal
               </button>
+                  );
+                }
+                if (tab.tabId === "pullRequest") {
+                  return (
               <button
-                type="button"
-                role="tab"
-                aria-selected={tabs.active === "changes"}
-                className={tabs.active === "changes" ? "tab on" : "tab"}
-                title={shortcutLabel.tab(3)}
-                disabled={!session}
-                onClick={() => {
-                  setEverChanges(true);
-                  setTabs((current) => activate(current, "changes"));
-                }}
-              >
-                Changes
-              </button>
-              <button
+                key={tab.tabId}
                 type="button"
                 role="tab"
                 aria-selected={tabs.active === "pullRequest"}
                 className={tabs.active === "pullRequest" ? "tab on" : "tab"}
-                title={shortcutLabel.tab(4)}
+                title={number(tab.tabId)}
                 disabled={!session}
                 onClick={() => {
                   setEverPr(true);
@@ -1012,6 +1077,28 @@ export function App() {
                   </>
                 ) : null}
               </button>
+                  );
+                }
+                const badge = badges.get(tab.tabId);
+                return (
+                  <button
+                    key={tab.tabId}
+                    type="button"
+                    role="tab"
+                    aria-selected={tabs.active === tab.tabId}
+                    className={tabs.active === tab.tabId ? "tab on" : "tab"}
+                    title={number(tab.tabId)}
+                    disabled={tab.needsSession && !session}
+                    onClick={() => {
+                      opened(tab.tabId);
+                      setTabs((current) => activate(current, tab.tabId));
+                    }}
+                  >
+                    {tab.title}
+                    {badge ? <span className="tab-badge">{badge}</span> : null}
+                  </button>
+                );
+              })}
               {tabs.files.map((file) => {
                 const id = tabId(file);
                 const name = tabName(file);
@@ -1128,16 +1215,19 @@ export function App() {
               close its PTY, which releases the session to whoever asks for it
               next. The terminal keeps its size too, so nothing reflows when
               the diff is on top of it. */}
-            {everChanges ? (
-              <div className="overlay" hidden={tabs.active !== "changes"}>
-                <DiffBrowserView
-                  cwd={session?.cwd}
-                  pane={session?.pane}
-                  active={tabs.active === "changes"}
-                  changed={changed}
-                />
-              </div>
-            ) : null}
+            {extensionTabs
+              .filter((tab) => everOpened.has(tab.tabId))
+              .map((tab) => (
+                <div key={tab.tabId} className="overlay" hidden={tabs.active !== tab.tabId}>
+                  <TabBody
+                    entry={tab}
+                    session={stageSession}
+                    active={tabs.active === tab.tabId}
+                    openFile={openInTab}
+                    activateTab={activateTab}
+                  />
+                </div>
+              ))}
 
             {everPr ? (
               <div className="overlay" hidden={tabs.active !== "pullRequest"}>
@@ -1236,7 +1326,7 @@ export function App() {
           />
         ) : null}
 
-        {showingShortcuts ? <ShortcutsDialog onClose={() => setShowingShortcuts(false)} /> : null}
+        {showingShortcuts ? <ShortcutsDialog tabs={strip.slice(0, 9).map((tab) => tab.title)} onClose={() => setShowingShortcuts(false)} /> : null}
 
         {finding ? (
           <GoToFile

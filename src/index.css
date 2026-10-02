@@ -2691,6 +2691,18 @@ button.gen-wi-source:hover {
   background: var(--roer-plus);
 }
 
+/* What an extension says on its tab: a count, or a word. */
+.tab-badge {
+  margin-left: 6px;
+  padding: 0 5px;
+  border-radius: 8px;
+  font-size: 10px;
+  line-height: 14px;
+  background: var(--roer-accent);
+  color: #fff;
+  vertical-align: middle;
+}
+
 .pr-view {
   flex: 1 1 auto;
   min-width: 0;

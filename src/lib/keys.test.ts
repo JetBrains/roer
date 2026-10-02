@@ -48,7 +48,8 @@ describe("shortcuts", () => {
 
   it("number the fixed tabs, by the physical digit key", () => {
     expect(tabNumber(key({ code: "Digit3", key: "3", metaKey: true }))).toBe(3);
-    expect(tabNumber(key({ code: "Digit5", key: "5", metaKey: true }))).toBeNull();
+    expect(tabNumber(key({ code: "Digit9", key: "9", metaKey: true }))).toBe(9);
+    expect(tabNumber(key({ code: "Digit0", key: "0", metaKey: true }))).toBeNull();
     expect(tabNumber(key({ code: "Digit1", key: "1" }))).toBeNull();
     expect(isShortcuts(key({ code: "Slash", key: "/", metaKey: true }))).toBe(true);
     onPlatform("Linux x86_64");

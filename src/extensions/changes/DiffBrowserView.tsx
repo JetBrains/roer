@@ -1,8 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-
-import { DiffPane } from "./DiffPane";
-import { type FilesChanged } from "./lib/files";
 import {
+  DiffPane,
   gitBranchCommits,
   gitBranches,
   gitChanges,
@@ -11,11 +9,15 @@ import {
   gitCurrentBranch,
   gitDiff,
   gitRoot,
+  isNextCommit,
+  isPrevCommit,
+  resolveDir,
+  shortcutLabel,
+  useHotkey,
   type Changes,
   type Commit,
-} from "./lib/git";
-import { isNextCommit, isPrevCommit, shortcutLabel, useHotkey } from "./lib/keys";
-import { resolveDir } from "./lib/session";
+  type FilesChanged,
+} from "roer";
 
 export interface DiffBrowserViewProps {
   /** Directory the session was opened in; the repository is whatever holds it. */

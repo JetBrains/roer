@@ -1,7 +1,5 @@
 import { ChevronDown } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   DropdownMenu,
@@ -11,6 +9,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Spans } from "./CodeLine";
+import { Markdown } from "./Markdown";
 import { parseDiff } from "./lib/diff";
 import { gitBranches, gitCurrentBranch } from "./lib/git";
 import {
@@ -645,7 +644,7 @@ function Reviews({ review }: { review: PrReview | null }) {
           <summary>
             <strong>{r.author}</strong> <span className={`pr-verdict ${r.state.toLowerCase()}`}>{verdict(r.state)}</span>
           </summary>
-          {r.body.trim() ? <Markdown>{r.body}</Markdown> : null}
+          {r.body.trim() ? <Markdown className="file-markdown pr-md">{r.body}</Markdown> : null}
         </details>
       ))}
     </section>
@@ -694,7 +693,7 @@ function Thread({ thread, selected, onToggle }: { thread: ReviewThread; selected
               view on GitHub
             </button>
           </div>
-          <Markdown>{comment.body}</Markdown>
+          <Markdown className="file-markdown pr-md">{comment.body}</Markdown>
         </div>
       ))}
     </details>
@@ -753,29 +752,3 @@ function Hunk({ text, path }: { text: string; path: string }) {
   );
 }
 
-/** Review text is markdown; a link in it must open in the browser, not
- * navigate the app's own window away. */
-function Markdown({ children }: { children: string }) {
-  return (
-    <div className="file-markdown pr-md">
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        components={{
-          a: ({ href, children: text }: { href?: string; children?: ReactNode }) => (
-            <a
-              href={href}
-              onClick={(e) => {
-                e.preventDefault();
-                if (href) void openUrl(href);
-              }}
-            >
-              {text}
-            </a>
-          ),
-        }}
-      >
-        {children}
-      </ReactMarkdown>
-    </div>
-  );
-}

@@ -1205,13 +1205,85 @@ fn read(root: &str, path: &str) -> Result<FileText, String> {
     })
 }
 
+/// One line `files_grep` found.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct GrepHit {
+    /// Repo-relative, as git spells it.
+    pub path: String,
+    pub line: u32,
+    /// The line, cut to its first 300 characters.
+    pub text: String,
+}
+
+/// The lines of the repository holding `cwd` that contain `pattern`, as a
+/// plain string: tracked files and new ones, `.gitignore` respected, binary
+/// files skipped. For extensions (`files.grep` in the `roer` SDK).
+#[tauri::command(async)]
+pub fn files_grep(
+    app: AppHandle,
+    state: tauri::State<'_, FileIndex>,
+    cwd: String,
+    pattern: String,
+    limit: Option<usize>,
+) -> Result<Vec<GrepHit>, String> {
+    files_grep_core(&app, &state, cwd, pattern, limit)
+}
+
+/// The search itself, for either host.
+pub(crate) fn files_grep_core<S: crate::events::Sink>(
+    app: &S,
+    state: &FileIndex,
+    cwd: String,
+    pattern: String,
+    limit: Option<usize>,
+) -> Result<Vec<GrepHit>, String> {
+    let root = git::root(&cwd)?;
+    // Searching the repository is asking to be told when it changes, so a
+    // tab that greps hears `files.changed` and can search again.
+    watch_root(app, state, &root);
+    let limit = limit.unwrap_or(500).min(5000);
+    let out = git::run(
+        &root,
+        &["grep", "-n", "-I", "-z", "--untracked", "--exclude-standard", "--fixed-strings", "-e", &pattern],
+    )?;
+    // 1 is git grep's "nothing matched".
+    if !out.status.success() && out.status.code() != Some(1) {
+        return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+    }
+    Ok(parse_grep(&String::from_utf8_lossy(&out.stdout), limit))
+}
+
+/// `path\0line\0text` per line, which is what `-z` makes of `git grep -n`.
+fn parse_grep(listing: &str, limit: usize) -> Vec<GrepHit> {
+    listing
+        .lines()
+        .filter_map(|row| {
+            let mut parts = row.splitn(3, '\0');
+            let path = parts.next()?.to_string();
+            let line = parts.next()?.parse().ok()?;
+            let text: String = parts.next()?.chars().take(300).collect();
+            Some(GrepHit { path, line, text })
+        })
+        .take(limit)
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         build, collect, patch, ranges, read, resolve, scan, search, split_line, subsequence, sweep,
         window, Duration, Index, Needle, SPLIT_OVER, STALE_AFTER, WATCHED_AFTER,
     };
+    use super::{parse_grep, GrepHit};
     use crate::testing::{commit, init, must, scratch, write};
+
+    #[test]
+    fn grep_rows_split_on_nul_whatever_the_text_holds() {
+        let hits = parse_grep("src/a.ts\x0012\x00\t// TODO: x:y\nb.md\x003\x00TODO\n", 10);
+        assert_eq!(hits[0], GrepHit { path: "src/a.ts".into(), line: 12, text: "\t// TODO: x:y".into() });
+        assert_eq!(hits[1].line, 3);
+        assert_eq!(parse_grep("a\x001\x00x\nb\x002\x00y\n", 1).len(), 1);
+    }
 
     /// An index over these paths, listed the way `git ls-files -z` lists
     /// them: every entry NUL-terminated, including the last.

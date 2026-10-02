@@ -2,8 +2,8 @@ import { useEffect, useRef } from "react";
 
 import { allShortcuts } from "./lib/keys";
 
-/** Every keyboard shortcut on one sheet. */
-export function ShortcutsDialog({ onClose }: { onClose: () => void }) {
+/** Every keyboard shortcut on one sheet. `tabs` are the strip's, in order. */
+export function ShortcutsDialog({ tabs, onClose }: { tabs?: readonly string[]; onClose: () => void }) {
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const back = document.activeElement;
@@ -28,7 +28,7 @@ export function ShortcutsDialog({ onClose }: { onClose: () => void }) {
       >
         <h2>Keyboard shortcuts</h2>
         <dl>
-          {allShortcuts().map(([what, keys]) => (
+          {allShortcuts(tabs).map(([what, keys]) => (
             <div key={what}>
               <dt>{what}</dt>
               <dd>

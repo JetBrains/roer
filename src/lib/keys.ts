@@ -64,17 +64,18 @@ export const shortcutLabel = {
   nextCommit: () => (isMac() ? "⌘→" : "Alt+→"),
 };
 
-/** Every shortcut, in the words the shortcut sheet lists them in. */
-export const allShortcuts = (): Array<[string, string]> => [
+/** The strip's tabs before any extension adds its own. */
+const DEFAULT_TABS = ["Sessions", "Terminal", "Changes", "Pull Request"];
+
+/** Every shortcut, in the words the shortcut sheet lists them in. `tabs` are
+ * the strip's, in order: the first nine have a number. */
+export const allShortcuts = (tabs: readonly string[] = DEFAULT_TABS): Array<[string, string]> => [
   ["New session", shortcutLabel.newSession()],
   ["New session with another agent", shortcutLabel.pickAgent()],
   ["Search sessions and files", shortcutLabel.goToFile()],
   ["Next waiting session", shortcutLabel.nextWaiting()],
   ["Previous session", shortcutLabel.previousSession()],
-  ["Sessions", shortcutLabel.tab(1)],
-  ["Terminal", shortcutLabel.tab(2)],
-  ["Changes", shortcutLabel.tab(3)],
-  ["Pull Request", shortcutLabel.tab(4)],
+  ...tabs.slice(0, 9).map((tab, i): [string, string] => [tab, shortcutLabel.tab(i + 1)]),
   ["Agents", shortcutLabel.agents()],
   ["Previous commit", shortcutLabel.prevCommit()],
   ["Next commit", shortcutLabel.nextCommit()],
@@ -138,14 +139,14 @@ export const isNextCommit = (event: KeyboardEvent): boolean =>
   (event.code === "ArrowRight" || (!event.code && event.key === "ArrowRight"));
 
 /**
- * Which of the stage's fixed tabs to bring up: `Cmd+1` to `Cmd+4`, the keys a
+ * Which of the strip's tabs to bring up: `Cmd+1` to `Cmd+9`, the keys a
  * browser and a terminal use for their tabs (`Ctrl+Shift` and a digit off
  * macOS). Matched on `code`, since `key` under Shift is the digit's symbol.
  * `null` for anything else.
  */
 export const tabNumber = (event: KeyboardEvent): number | null => {
   if (!appChord(event, false)) return null;
-  const digit = /^Digit([1-4])$/.exec(event.code)?.[1] ?? (!event.code && /^[1-4]$/.test(event.key) ? event.key : null);
+  const digit = /^Digit([1-9])$/.exec(event.code)?.[1] ?? (!event.code && /^[1-9]$/.test(event.key) ? event.key : null);
   return digit ? Number(digit) : null;
 };
 

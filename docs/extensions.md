@@ -1,6 +1,9 @@
 # Roer Extensions — code extensions
 
-Status: **draft / RFC**. Nothing here is implemented yet.
+Status: **draft / RFC**. Rollout step 2, the thin slice (§11), is
+implemented. Bun isn't bundled with the app yet: a build uses `ROER_BUN`,
+`~/.bun/bin/bun` or the `bun` on `PATH`. Everything after step 2 is still
+design.
 
 ## Goal
 
@@ -89,7 +92,7 @@ second place to keep in sync.
 ## 2. The frontend: `app.tsx`
 
 ```tsx
-import { defineExtension, useSession, files } from "roer";
+import { defineExtension, useSession, filesGrep } from "roer";
 import { useEffect, useState } from "react";
 
 function Todos() {
@@ -97,7 +100,7 @@ function Todos() {
   const [lines, setLines] = useState<string[]>([]);
   useEffect(() => {
     if (!session?.root) return;
-    files.grep(session.root, "TODO").then((hits) => setLines(hits.map((h) => `${h.path}:${h.line} ${h.text}`)));
+    filesGrep(session.root, "TODO").then((hits) => setLines(hits.map((h) => `${h.path}:${h.line} ${h.text}`)));
   }, [session?.root, session?.changed]);
   return <ul>{lines.map((l) => <li key={l}>{l}</li>)}</ul>;
 }
@@ -115,7 +118,7 @@ and on reload. An `activate` may also return a cleanup function.
 
 | Call | What it adds |
 | --- | --- |
-| `roer.stage.registerTab({ id, title, icon?, pinned?, order?, replaces?, component })` | A stage tab. A pinned tab is always in the strip. An unpinned one is listed in the strip's "+" menu and can be closed. `replaces: "changes" \| "pullRequest" \| "terminal"` takes over that tab's place, title and ⌘ number |
+| `roer.stage.registerTab({ id, title, component, order?, needsSession?, keepAcrossSessions?, pinned?, replaces? })` | A stage tab. `order` places it: Sessions is 0, Terminal 10, Changes 20, Pull Request 30, and the default is 100. The first nine tabs get ⌘1–9. `needsSession` (default true) disables it while no session is on the stage. A pinned tab is always in the strip; an unpinned one is listed in the strip's "+" menu and can be closed. `replaces: "changes" \| "pullRequest" \| "terminal"` takes over that tab's place, title and ⌘ number. In the slice, every tab is pinned and `replaces` isn't there yet |
 | `roer.sidePanel.register({ id, title, component })` | A panel on the right, where Generative UI shows today, beside the terminal instead of over it |
 | `roer.sidebar.registerSection({ id, title, order?, component })` | A section in the sidebar, under the session list |
 | `roer.badge.set(tabId, text \| null)` | A count or dot on one of its tabs |
@@ -167,7 +170,7 @@ the same way as `react`. Nothing is copied into the extension's build.
 | Export | From |
 | --- | --- |
 | `invoke`, `listen`, `Channel` | `src/lib/backend.ts`, so an extension works in the desktop app and over `roer-server` alike |
-| `git.*`, `github.*`, `files.*`, `pty.*` | the typed wrappers in `src/lib/`, plus `files.grep(root, pattern)`, which is new (a `files_grep` command on the walker `files_search` already uses) |
+| `gitChanges`, `gitDiff`, `ghPrForBranch`, `fileRead`, … | the typed wrappers in `src/lib/`, under their own names, which already say what they wrap. `filesGrep(cwd, pattern)` is new: `git grep` over tracked and new files, which also starts the worktree watch, so a tab that greps hears `files.changed` |
 | `DiffPane`, `Spans`, `TerminalView`, `Markdown` | the components the built-ins are made of. `Markdown` is new: the `react-markdown` + GFM setup `PullRequestView` uses today |
 | `parseDiff`, `buildTree`/`rows`, `highlight`, `langFor`, `useHotkey`, `shortcutLabel` | helpers |
 | `rpc`, `useRpc` | calls into the extension's own `server.ts` (§5) |
@@ -188,9 +191,12 @@ There is one React and one SDK, and the agent never runs a build step itself.
 CSS that the entry imports comes out as `app.css`, and Roer links it while
 the extension is active.
 
-**Serving.** The desktop app serves the cache through a URI scheme,
-`roer-ext://<id>/app.js?v=<hash>`. `roer-server` serves the same files at
-`GET /ext/<id>/app.js`. The frontend loads either one with `import()`.
+**Loading.** `extension_bundle(id)` returns the built `app.js` and `app.css`
+as text. The frontend imports the JS from a blob URL and puts the CSS in a
+`<style>`. That works the same in the desktop app and over `roer-server`,
+so neither host needs a URL scheme or a route of its own. The build runs
+with `NODE_ENV=production`, because the host's React has no development JSX
+runtime.
 
 **Hot reload.** Roer watches `~/.roer/extensions/` and every session scope
 folder, with the same debounced watcher as `watch.rs`. A change rebuilds the
@@ -293,7 +299,8 @@ release workflow fetches a pinned version and checks its checksum.
 | Session | any folder, registered with `roer ext dev` | until the folder is removed or Roer restarts |
 
 ```
-roer ext new <id> [--tab|--panel|--server]   scaffold a folder in the current directory
+roer ext new <id> [dir]                      scaffold <dir>/<id>, with roer.d.ts and a tsconfig
+roer ext guide                               the agent's guide and the API's types
 roer ext dev <dir>                           session scope: build, load, watch, stream logs
 roer ext install <dir>                       copy into user scope (replaces the same id)
 roer ext fork <bundled-id> [<new-id>]        copy a built-in's source, set replaces and forkedFrom
@@ -427,11 +434,13 @@ There's no compatibility promise. What Roer does instead:
    - Changes moved to `src/extensions/changes/`
    - the `roer` SDK, enough of it for Changes and the TODO example, with
      `files.grep`
-   - Bun bundled, building `app.tsx`
-   - `roer-ext://` and the `roer-server` route
+   - Bun building `app.tsx` (bundling Bun into the release moves to step 4,
+     with the servers)
+   - loading from text through a blob URL, under both hosts
    - hot reload
    - `roer ext new|dev|install|list|remove|logs`
-   - `roer:extensions/1`, `extension_dev` and `extension_logs`
+   - `roer:extensions/1`, `describe_extension_api`, `extension_dev`,
+     `extension_install`, `extension_logs` and `list_extensions`
    - the skill
 
    It's done when "make me a tab that lists the TODOs in this repo", asked
