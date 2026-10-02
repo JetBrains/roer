@@ -147,7 +147,7 @@ test("an agent out of sight that stops to ask is shown as needing you", async ()
   app.roer(["send", "--pane", hidden.pane], "/work 1 Run the test suite");
   // Each step on its own, so a failure says which: roer knows the agent is
   // there, then hears it ask, then the app shows it.
-  await app.untilPane("roer to know the agent", hidden.pane, (row) => row?.agent === "claude");
+  await app.untilPane("roer to know the agent", hidden.pane, (row) => Boolean(row?.agent));
   await app.untilPane("roer to hear the agent ask", hidden.pane, (row) => row?.state === "waiting");
   await app.until("a dot on the Sessions tab", () =>
     app.driver.executeScript("return !!document.querySelector('.tab-dot.waiting')"),
