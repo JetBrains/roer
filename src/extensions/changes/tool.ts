@@ -21,12 +21,12 @@ function read(raw: unknown): Omit<LocalComment, "id" | "code" | "author"> | stri
   };
 }
 
-/** `add_comments`: an agent's review, onto the branch's diff in the Review tab, for the person to decide on. */
+/** `add_comments`: an agent's review, onto the branch's diff in the Changes tab, for the person to decide on. */
 export function addCommentsTool(onAdded: (pending: number) => void): ToolOptions {
   return {
     name: "add_comments",
     description:
-      "Hand review comments on this branch's changes to the user, in Roer's Review tab: each is drawn on its " +
+      "Hand review comments on this branch's changes to the user, in Roer's Changes tab: each is drawn on its " +
       "line of the diff, and the user accepts, declines or answers it with an instruction, then sends their " +
       "decisions back to you as a prompt. Use it when asked to review the branch in Roer, instead of listing " +
       "findings in your reply, and do not act on them before the user has answered. `line` is the line's number " +
@@ -86,7 +86,7 @@ export function addCommentsTool(onAdded: (pending: number) => void): ToolOptions
 
       const outside = added.filter((c) => !drawn.has(spot(c.path, c.side, c.line))).length;
       return [
-        `Added ${added.length} ${added.length === 1 ? "comment" : "comments"} to Roer's Review tab, under Local changes.`,
+        `Added ${added.length} ${added.length === 1 ? "comment" : "comments"} to Roer's Changes tab, under Whole branch.`,
         ...(outside > 0 ? [`${outside} of them are on lines outside the diff, so they head their file.`] : []),
         ...(skipped.length > 0 ? [`Skipped: ${skipped.join("; ")}.`] : []),
         "The user will decide on each and send the decisions back to you; do not change code for them before then.",

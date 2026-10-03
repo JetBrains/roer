@@ -271,7 +271,7 @@ describe("ReviewView", () => {
       expect(screen.getByRole("button", { name: "Send 0 to Claude" })).toBeDisabled();
     });
 
-    /** What `roer mcp` hands over when Claude calls `code-review__add_comments`. */
+    /** What `roer mcp` hands over when Claude calls `changes__add_comments`. */
     async function claudeComments(comments: unknown[], onAdded = vi.fn()) {
       let said = "";
       await act(async () => {
@@ -291,7 +291,7 @@ describe("ReviewView", () => {
         ],
         onAdded,
       );
-      expect(said).toMatch(/^Added 1 comment to Roer's Review tab/);
+      expect(said).toMatch(/^Added 1 comment to Roer's Changes tab/);
       expect(said).toMatch(/Skipped: elsewhere\.ts: this branch does not change it; src\/a\.ts: no line\./);
       expect(said).toMatch(/do not change code for them before then/);
       expect(onAdded).toHaveBeenCalledWith(1);
@@ -329,7 +329,7 @@ describe("ReviewView", () => {
       await waitFor(() => expect(staged.send).toHaveBeenCalledTimes(1));
       const prompt = vi.mocked(staged.send).mock.calls[0][0];
       expect(prompt).toMatch(/git diff \$\(git merge-base HEAD origin\/main\)/);
-      expect(prompt).toMatch(/`code-review__add_comments` tool/);
+      expect(prompt).toMatch(/`changes__add_comments` tool/);
       expect(prompt).toMatch(/Don't change any code yet/);
     });
 

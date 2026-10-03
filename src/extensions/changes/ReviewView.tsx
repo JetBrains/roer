@@ -23,6 +23,7 @@ import { Button, DiffView, EmptyState, type NewNote, type NoteAction, type NoteA
 
 import {
   commentNote,
+  answered,
   lineText,
   localReviewPrompt,
   newCommentId,
@@ -46,6 +47,10 @@ export interface ReviewViewProps {
   onOpenPullRequest?: () => void;
   /** How many threads are still waiting on a decision. */
   onOpenCount?: (count: number) => void;
+  /** Shows one of the two, picked by the tab around it, which then has the switch; without it the view has its own. */
+  scope?: "pr" | "local";
+  /** Asks the tab around it for the other one, when `scope` is its to pick. */
+  onScope?: (scope: "pr" | "local") => void;
 }
 
 /** A decision, and whether it has gone to the agent yet. */
@@ -122,7 +127,7 @@ function threadNote(thread: ReviewThread, decided: Decided | undefined): DiffNot
  * review thread drawn on its line. Each thread is accepted, declined, or
  * given an instruction, and the decisions go to the session's agent together.
  */
-export function ReviewView({ session, active, onSent, onOpenPullRequest, onOpenCount }: ReviewViewProps) {
+export function ReviewView({ session, active, onSent, onOpenPullRequest, onOpenCount, scope, onScope }: ReviewViewProps) {
   const [loaded, setLoaded] = useState<Loaded>({ kind: "loading" });
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -210,7 +215,8 @@ export function ReviewView({ session, active, onSent, onOpenPullRequest, onOpenC
     if (active) void load();
   }, [active, load, branch]);
 
-  const mode = picked ?? (loaded.kind === "ready" ? "pr" : loaded.kind === "loading" ? null : "local");
+  const mode = scope ?? picked ?? (loaded.kind === "ready" ? "pr" : loaded.kind === "loading" ? null : "local");
+  const pick = (next: "pr" | "local") => (onScope ? onScope(next) : setPicked(next));
 
   // The local diff is the worktree's: it follows every save while it is on screen.
   const changed = session?.changed;
@@ -329,13 +335,15 @@ export function ReviewView({ session, active, onSent, onOpenPullRequest, onOpenC
   // diff altogether.
   const { localNotes, strays } = useMemo(() => {
     const patch = localReady?.diff ?? "";
+    // A comment on a commit counts its lines in that commit: By commit shows it there.
+    const now = comments.filter((c) => !c.commit);
     const files = new Set(splitPatch(patch).map((file) => file.path));
     const drawn = diffSpots(patch);
     return {
-      localNotes: comments
+      localNotes: now
         .filter((c) => files.has(c.path))
         .map((c) => commentNote(c, agent, drawn.has(spot(c.path, c.side, c.line)))),
-      strays: comments.filter((c) => !files.has(c.path)),
+      strays: now.filter((c) => !files.has(c.path)),
     };
   }, [comments, agent, localReady]);
   const toSend = readyToSend(comments);
@@ -366,28 +374,7 @@ export function ReviewView({ session, active, onSent, onOpenPullRequest, onOpenC
     [localReady, setKept],
   );
 
-  const answerLocal = useCallback(
-    ({ note, action, text }: NoteAnswer) => {
-      if (action === "delete") {
-        setKept((current) => current.filter((c) => c.id !== note.id));
-        return;
-      }
-      const verdict: ThreadVerdict | undefined =
-        action === "accept" || action === "decline"
-          ? { kind: action }
-          : action === "instruct" && text
-            ? { kind: "instruct", text }
-            : undefined;
-      setKept((current) =>
-        current.map((c) => {
-          if (c.id !== note.id) return c;
-          const { verdict: _, ...rest } = c;
-          return verdict ? { ...rest, verdict } : rest;
-        }),
-      );
-    },
-    [setKept],
-  );
+  const answerLocal = useCallback((answer: NoteAnswer) => setKept((current) => answered(current, answer)), [setKept]);
 
   const askForReview = async () => {
     if (!localReady || !session) return;
@@ -421,7 +408,7 @@ export function ReviewView({ session, active, onSent, onOpenPullRequest, onOpenC
 
   if (!session) return <p className="muted pad">No session on the stage.</p>;
 
-  const modes = (
+  const modes = scope ? null : (
     <div className="seg" role="group" aria-label="What to review">
       <button type="button" className={mode === "pr" ? "on" : undefined} aria-pressed={mode === "pr"} onClick={() => setPicked("pr")}>
         Pull request
@@ -454,9 +441,11 @@ export function ReviewView({ session, active, onSent, onOpenPullRequest, onOpenC
           <Button onClick={() => void askForReview()} disabled={!localReady || !localReady.diff || !session.pane}>
             Review with {agent}
           </Button>
-          <Button variant="primary" onClick={() => void sendLocal()} disabled={sending || toSend.length === 0 || !session.pane}>
-            Send {toSend.length} to {agent}
-          </Button>
+          {scope ? null : (
+            <Button variant="primary" onClick={() => void sendLocal()} disabled={sending || toSend.length === 0 || !session.pane}>
+              Send {toSend.length} to {agent}
+            </Button>
+          )}
         </header>
 
         {error ? <p className="error">{error}</p> : null}
@@ -553,7 +542,7 @@ export function ReviewView({ session, active, onSent, onOpenPullRequest, onOpenC
         <p className="notice">
           {awaiting[0].author} left {awaiting.length} {awaiting.length === 1 ? "comment" : "comments"} on your local
           changes.{" "}
-          <button type="button" className="link" onClick={() => setPicked("local")}>
+          <button type="button" className="link" onClick={() => pick("local")}>
             Show them
           </button>
         </p>

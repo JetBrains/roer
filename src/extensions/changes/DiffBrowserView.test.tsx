@@ -5,9 +5,11 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
+import { useState } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { DiffBrowserView } from "./DiffBrowserView";
+import type { LocalComment } from "./local";
 import { parseDiff } from "../../lib/diff";
 import { type FilesChanged } from "../../lib/files";
 import {
@@ -461,5 +463,114 @@ describe("DiffBrowserView — commits and the local-changes slot together", () =
 
     fireEvent.keyDown(window, { key: "ArrowLeft", code: "ArrowLeft", metaKey: true });
     expect(await screen.findByText("git.ts")).toBeInTheDocument();
+  });
+});
+
+describe("DiffBrowserView — comments", () => {
+  /** The view with comments kept the way the tab keeps them, readable afterwards. */
+  let kept: LocalComment[] = [];
+  function Commented({ initial = [] }: { initial?: LocalComment[] }) {
+    const [comments, setComments] = useState<LocalComment[]>(initial);
+    kept = comments;
+    return (
+      <DiffBrowserView
+        cwd="/work/roer/src"
+        active
+        comments={comments}
+        onComments={(update) => setComments(update)}
+        agent="Claude"
+      />
+    );
+  }
+
+  async function write(index: number, line: number, text: string) {
+    fireEvent.click(screen.getAllByRole("button", { name: `Comment on line ${line}` })[index]);
+    fireEvent.change(screen.getByRole("textbox", { name: `Comment on line ${line}` }), { target: { value: text } });
+    fireEvent.click(screen.getByRole("button", { name: "Comment" }));
+    await waitFor(() => expect(screen.getByText(text)).toBeInTheDocument());
+  }
+
+  beforeEach(() => {
+    kept = [];
+    vi.mocked(gitBranches).mockResolvedValue(["main", "feature"]);
+    vi.mocked(gitBranchCommits).mockResolvedValue([commit("only change")]);
+    vi.mocked(gitCommitFiles).mockResolvedValue([file("a.txt")]);
+    vi.mocked(gitCommitDiff).mockResolvedValue("@@ -1,1 +1,1 @@ h\n-old\n+new\n");
+  });
+
+  async function toCommit() {
+    await waitFor(() => expect(screen.getByRole("button", { name: /Next/ })).not.toBeDisabled());
+    fireEvent.click(screen.getByRole("button", { name: /Next/ }));
+    await screen.findByText("a.txt");
+    await waitFor(() => expect(screen.getAllByRole("button", { name: "Comment on line 1" })).toHaveLength(2));
+  }
+
+  it("leaves a comment on a commit, with the commit and the line's code, and shows it only there", async () => {
+    render(<Commented />);
+    await toCommit();
+    // The removed line is first, the added one second.
+    await write(1, 1, "Why new?");
+    expect(kept).toEqual([
+      expect.objectContaining({
+        path: "a.txt",
+        line: 1,
+        side: "new",
+        text: "Why new?",
+        code: "new",
+        commit: { hash: "hash-only change", short: "only ch", subject: "only change" },
+      }),
+    ]);
+
+    fireEvent.click(screen.getByRole("button", { name: /Previous/ }));
+    await screen.findByText("git.ts");
+    expect(screen.queryByText("Why new?")).toBeNull();
+  });
+
+  it("leaves a comment on what is not committed without a commit, and keeps it off the commits", async () => {
+    render(<Commented />);
+    await waitFor(() => expect(screen.getAllByRole("button", { name: "Comment on line 1" })).toHaveLength(2));
+    await write(0, 1, "Keep one?");
+    expect(kept).toEqual([expect.objectContaining({ path: "src/lib/git.ts", side: "old", code: "one" })]);
+    expect(kept[0].commit).toBeUndefined();
+
+    await toCommit();
+    expect(screen.queryByText("Keep one?")).toBeNull();
+  });
+
+  it("heads its file with a comment whose line the diff does not show", async () => {
+    render(
+      <Commented
+        initial={[{ id: "c1", path: "src/lib/git.ts", line: 50, side: "new", text: "Far down", code: "x" }]}
+      />,
+    );
+    expect(await screen.findByText("Far down")).toBeInTheDocument();
+    expect(screen.getByText("line 50")).toBeInTheDocument();
+  });
+
+  it("deletes a comment from its card", async () => {
+    render(<Commented initial={[{ id: "c1", path: "src/lib/git.ts", line: 1, side: "new", text: "Drop me", code: "ONE" }]} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Delete" }));
+    await waitFor(() => expect(kept).toEqual([]));
+  });
+});
+
+describe("DiffBrowserView — the file tree", () => {
+  beforeEach(() => localStorage.clear());
+
+  it("hides and shows the changed files, still stepping through them, and remembers it", async () => {
+    const { unmount } = view();
+    await screen.findByRole("list", { name: "Changed files" });
+    fireEvent.click(screen.getByRole("button", { name: "Hide files" }));
+    expect(screen.queryByRole("list", { name: "Changed files" })).toBeNull();
+    // The keys still go from file to file, which the diff's own header names.
+    await press("ArrowRight");
+    expect(await screen.findByText("src/lib/tree.ts")).toBeInTheDocument();
+    unmount();
+
+    view();
+    await screen.findByRole("button", { name: "Show files" });
+    expect(screen.queryByRole("list", { name: "Changed files" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Show files" }));
+    expect(screen.getByRole("list", { name: "Changed files" })).toBeInTheDocument();
   });
 });

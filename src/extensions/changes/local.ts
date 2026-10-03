@@ -1,3 +1,4 @@
+import { useCallback, useEffect, useState } from "react";
 import { parseDiff, splitPatch, UNTRUSTED_DECIDED, untrustedComment, type DiffNote, type NoteAction, type ThreadVerdict } from "roer";
 
 /** A comment on a line of the branch's own diff: the person's, or one an agent handed over with `add_comments`. */
@@ -15,6 +16,16 @@ export interface LocalComment {
   severity?: "info" | "warn" | "error";
   /** What the person decided about an agent's comment. Their own need none: they are the instruction. */
   verdict?: ThreadVerdict;
+  /** The commit it was left on, its lines counted as that commit left the file. Without one it is about the
+   * code as it is now: the whole branch, or what is not committed. */
+  commit?: CommitRef;
+}
+
+/** A commit as a comment names it. */
+export interface CommitRef {
+  hash: string;
+  short: string;
+  subject: string;
 }
 
 const listeners = new Set<() => void>();
@@ -35,6 +46,29 @@ export function updateComments(
   storeComments(root, branch, next);
   for (const listener of listeners) listener();
   return next;
+}
+
+/** A branch's comments, kept in step with every change to them, the tab's own or an agent's. */
+export function useBranchComments(
+  root: string | null,
+  branch: string | null,
+): [LocalComment[], (update: (current: LocalComment[]) => LocalComment[]) => void] {
+  const [comments, setComments] = useState<LocalComment[]>([]);
+  useEffect(() => {
+    if (!root) {
+      setComments([]);
+      return;
+    }
+    setComments(storedComments(root, branch));
+    return onCommentsChanged(() => setComments(storedComments(root, branch)));
+  }, [root, branch]);
+  const update = useCallback(
+    (change: (current: LocalComment[]) => LocalComment[]) => {
+      if (root) setComments(updateComments(root, branch, change));
+    },
+    [root, branch],
+  );
+  return [comments, update];
 }
 
 export const newCommentId = (): string => `c${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
@@ -110,6 +144,36 @@ export function lineText(patch: string, path: string, line: number, side: "old" 
   return "";
 }
 
+/** The text of `line` on `side` in one file's diff, or "" when it is not there. */
+export function lineInFile(fileDiff: string, line: number, side: "old" | "new"): string {
+  for (const hunk of parseDiff(fileDiff).hunks) {
+    for (const l of hunk.lines) {
+      const no = side === "old" ? (l.kind === "del" ? l.oldNo : undefined) : l.kind === "del" ? undefined : l.newNo;
+      if (no === line) return l.text;
+    }
+  }
+  return "";
+}
+
+/** The comments once one is answered: deleted, or an agent's decided on, or its decision taken back. */
+export function answered(
+  current: readonly LocalComment[],
+  { note, action, text }: { note: { id?: string }; action: string; text?: string },
+): LocalComment[] {
+  if (action === "delete") return current.filter((c) => c.id !== note.id);
+  const verdict: ThreadVerdict | undefined =
+    action === "accept" || action === "decline"
+      ? { kind: action }
+      : action === "instruct" && text
+        ? { kind: "instruct", text }
+        : undefined;
+  return current.map((c) => {
+    if (c.id !== note.id) return c;
+    const { verdict: _, ...rest } = c;
+    return verdict ? { ...rest, verdict } : rest;
+  });
+}
+
 /** Your own comments can only be taken back: what to do is in their words. */
 const OWN_ACTIONS: NoteAction[] = [{ label: "Delete", value: "delete" }];
 
@@ -168,11 +232,17 @@ export function localReviewPrompt(base: string, comments: readonly LocalComment[
         ]
       : []),
     "Line numbers are as the files were when I wrote the comments; if they have moved, find the spot by the code quoted under each.",
+    ...(comments.some((comment) => comment.commit)
+      ? [
+          "A comment that names a commit is about the code as that commit left it, and counts its lines there: find the spot by the quoted code, and change the code as it is now.",
+        ]
+      : []),
     "Don't commit: I'll look at the changes again first.",
   ];
   comments.forEach((comment, i) => {
     const where = comment.side === "old" ? `${comment.path}, removed line ${comment.line}` : `${comment.path}:${comment.line}`;
-    parts.push("", `## ${i + 1}. ${where}`);
+    const on = comment.commit ? ` in commit ${comment.commit.short} ("${comment.commit.subject}")` : "";
+    parts.push("", `## ${i + 1}. ${where}${on}`);
     if (comment.code.trim()) {
       const f = fence(comment.code);
       parts.push(f, comment.code, f);
@@ -196,7 +266,7 @@ export function localReviewPrompt(base: string, comments: readonly LocalComment[
 }
 
 /** The tool an agent hands its comments over with, as `roer mcp` names it. */
-export const ADD_COMMENTS_TOOL = "code-review__add_comments";
+export const ADD_COMMENTS_TOOL = "changes__add_comments";
 
 /** Asks the session's agent to review the branch and hand its findings to this tab rather than act on them. */
 export function reviewRequestPrompt(base: string): string {
@@ -206,7 +276,7 @@ export function reviewRequestPrompt(base: string): string {
   return [
     `Review ${what}.`,
     "Look for bugs, missed cases, and code that is hard to follow; skip style nits.",
-    `Hand every finding to Roer's Review tab with the \`${ADD_COMMENTS_TOOL}\` tool, in one call, each on the line it is about: the line's number in the file as it is on disk now, or \`side: "old"\` with its old number for a removed line. Say in each what is wrong and what you would change.`,
+    `Hand every finding to Roer's Changes tab with the \`${ADD_COMMENTS_TOOL}\` tool, in one call, each on the line it is about: the line's number in the file as it is on disk now, or \`side: "old"\` with its old number for a removed line. Say in each what is wrong and what you would change.`,
     "Don't change any code yet: I will accept, decline or answer each comment there and send my decisions back to you.",
   ].join("\n");
 }
