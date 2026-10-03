@@ -105,7 +105,7 @@ fn login_shell_path() -> Option<OsString> {
 }
 
 fn start(id: &str, entry: PathBuf, hash: String) -> Result<Arc<Server>, String> {
-    let bun = bun()?;
+    let bun = bun(id)?;
     let script = home().join("extension-cache").join("server.ts");
     std::fs::create_dir_all(cache_dir(id)).map_err(|e| format!("{}: {e}", cache_dir(id).display()))?;
     std::fs::write(&script, HOST_SCRIPT).map_err(|e| format!("{}: {e}", script.display()))?;

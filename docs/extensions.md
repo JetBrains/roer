@@ -4,9 +4,11 @@ Status: **draft / RFC**. Rollout step 2, the thin slice (§11), is
 implemented, and so is the first part of step 4: `server.ts` with `rpc` and
 `exec` (`extension_servers.rs`, `extension_server.ts`). A server starts on
 its first `rpc` call rather than at activation, and isn't restarted after a
-crash until the next call. Bun isn't bundled with the app yet: a build uses
-`ROER_BUN`, `~/.bun/bin/bun` or the `bun` on `PATH`. The rest is still
-design.
+crash until the next call. Bun isn't bundled with the app: a build uses
+`ROER_BUN`, a Bun beside the app, `~/.bun/bin/bun` or the `bun` on `PATH`,
+and with none of them Roer downloads a pinned release into
+`~/.roer/bun/<version>/` the first time, checked against its SHA-256, and
+uses it from then on (`bun_fetch.rs`). The rest is still design.
 
 ## Goal
 
@@ -33,7 +35,7 @@ reaches for when the catalog can express the feature (§9).
 | Built-ins | Terminal, Changes and Pull Request become bundled extensions. Sessions stays in the core for now |
 | Trust | Full trust. Extension code runs in Roer's own webview with the host's React |
 | Host access | Raw: `invoke`, `listen`, `Channel` and `fetch`, the same as built-in code. No capability gating |
-| Backend | Optional `server.ts`, run by a Bun that ships with Roer. It may register tools for agents |
+| Backend | Optional `server.ts`, run by the same Bun that builds extensions, downloaded on first use when the machine has none. It may register tools for agents |
 | Contribution points | Stage tab, replacing a built-in tab, side panel, sidebar section, badge, status and toast, commands and chords, context actions, session events |
 | Scope | User (`~/.roer/extensions/<id>/`) and session (a development folder, gone on restart). No project scope |
 | Agent loop | Errors and logs, a screenshot of the rendered tab, and comments the person pins in Comment mode |
@@ -186,7 +188,8 @@ the agent writes against, so they get the doc comments the agent needs.
 
 ## 3. Loading, building and hot reload
 
-**Building.** Roer builds `app.tsx` with its bundled Bun:
+**Building.** Roer builds `app.tsx` with Bun, the machine's own or the one
+it downloaded the first time it needed one (see the status above):
 `bun build app.tsx --format esm` into the extension's cache folder. A Bun
 plugin resolves `react`, `react/jsx-runtime`, `react-dom` and `roer` to
 small shims that read the host's own modules from `globalThis.__roerHost`.

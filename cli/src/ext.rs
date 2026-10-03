@@ -41,6 +41,8 @@ pub fn guide() -> String {
 
 /// How long the app gets to build an extension after the CLI hands it over.
 const BUILD_WAIT: Duration = Duration::from_secs(30);
+/// And how long more when it first has to download Bun to build with.
+const DOWNLOAD_WAIT: Duration = Duration::from_secs(300);
 /// And to load it into its window after that.
 const LOAD_WAIT: Duration = Duration::from_secs(10);
 
@@ -261,10 +263,17 @@ fn log_since(id: &str, since: u64) -> Vec<String> {
 /// Waits for the app to build `id` from `dir`, then to load it, and says how both went.
 fn report(id: &str, dir: &Path, started: u64, scope: &str) -> Result<String, Fail> {
     let dir_text = dir.to_string_lossy();
-    let deadline = Instant::now() + BUILD_WAIT;
+    let mut deadline = Instant::now() + BUILD_WAIT;
+    let mut downloading = false;
     let status = loop {
         if let Some(status) = read_status(id).filter(|s| s["dir"].as_str() == Some(&dir_text)) {
             break status;
+        }
+        // The first build on a machine without Bun downloads it first, which a slow network takes longer for.
+        if !downloading && log_since(id, started).iter().any(|line| line.starts_with("downloading Bun")) {
+            downloading = true;
+            deadline = Instant::now() + DOWNLOAD_WAIT;
+            eprintln!("Roer is downloading Bun to build extensions with, once; this can take a minute.");
         }
         if Instant::now() > deadline {
             return Err(Fail::new(

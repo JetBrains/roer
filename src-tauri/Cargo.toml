@@ -24,11 +24,13 @@ rand = "0.8"
 rust-embed = "8.5.0"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
+sha2 = "0.10"
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 tauri-plugin-notification = "2.4"
 tauri-plugin-single-instance = "2.4.4"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
+zip = { version = "4.2.0", default-features = false, features = ["deflate-flate2"] }
 
 [target.'cfg(unix)'.dependencies]
 # dup2, to point the app's stderr at its log file: see logfile.rs.

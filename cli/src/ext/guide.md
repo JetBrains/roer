@@ -93,7 +93,8 @@ The rules:
 - **Take keys only while `useActive()` is true.** A `useHotkey` that is
   registered while the tab is hidden takes the key from every other tab.
 - `react` and `roer` are Roer's own. Don't install them. Other npm packages
-  work: add a `package.json` and run `bun install` in the folder. An
+  work: add a `package.json` and run `bun install` in the folder (with no
+  `bun` on `PATH`, Roer's own is `~/.roer/bun/1.3.13/bun`). An
   extension runs in a browser window, so Node's modules aren't available
   there.
 - Whatever the API doesn't offer, `invoke(command, args)` can reach. Roer's
