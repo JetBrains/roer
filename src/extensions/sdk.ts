@@ -31,7 +31,7 @@ export type { DiffPaneProps } from "../DiffPane";
 export { Spans } from "../CodeLine";
 export { Markdown } from "../Markdown";
 export { parseDiff, splitPatch, pairRows } from "../lib/diff";
-export type { Diff, DiffLine, Hunk } from "../lib/diff";
+export type { Diff, DiffLine, DiffNote, Hunk, NoteAction } from "../lib/diff";
 export { buildTree, rows as treeRows, fileOrder } from "../lib/tree";
 export type { TreeNode } from "../lib/tree";
 export { highlight, highlightText, loadLang, paint, ready, toSpans } from "../lib/highlight";

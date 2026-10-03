@@ -13,7 +13,7 @@
 
 use std::collections::HashMap;
 use std::io::{Read, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 
 use serde::Serialize;
@@ -155,7 +155,12 @@ struct Bounded {
 /// [`Output`] would buffer the whole thing first, which for a generated or
 /// minified file is however many megabytes git feels like printing.
 fn run_bounded(dir: &str, args: &[&str], limit: usize) -> Result<Bounded, String> {
-    let mut child = command(dir, args)
+    bounded(command(dir, args), limit)
+}
+
+/// [`run_bounded`], for a git command set up by hand: one with an environment of its own, say.
+fn bounded(mut command: Command, limit: usize) -> Result<Bounded, String> {
+    let mut child = command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -492,6 +497,151 @@ pub fn git_commit_diff(root: String, commit: String, path: String) -> Result<Str
 
     let text = String::from_utf8_lossy(&out.stdout).into_owned();
     Ok(cap(text, out.truncated))
+}
+
+/// Everything a branch has changed since it left its base, as one patch: its
+/// commits and whatever is not committed yet, untracked files included. What
+/// its pull request will show once it is pushed, before there is one.
+#[derive(Clone, Debug, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct BranchDiff {
+    pub root: String,
+    /// The branch it is compared with, e.g. `origin/main`. Empty when there
+    /// is none, and then the patch is only what is uncommitted.
+    pub base: String,
+    /// Commits the branch has over its base.
+    pub commits: u32,
+    pub diff: String,
+    /// Why the patch is less than asked for, for the tab to say: no common
+    /// ancestor with the base (a shallow clone, an orphan branch), so it is
+    /// only what is uncommitted.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
+
+/// `base`, when given, is the branch to compare with (a pull request's base);
+/// otherwise the repository's default branch.
+#[tauri::command(async)]
+pub fn git_branch_diff(cwd: String, base: Option<String>) -> Result<BranchDiff, String> {
+    let root = root(&cwd)?;
+    branch_diff(&root, base.as_deref().filter(|b| !b.is_empty()))
+}
+
+fn branch_diff(root: &str, base: Option<&str>) -> Result<BranchDiff, String> {
+    let base = match base {
+        Some(base) => Some(base_ref(root, base).ok_or_else(|| format!("no branch named {base}"))?),
+        None => default_base(root),
+    };
+    let mut note = None;
+    let fork = match (&base, has_head(root)) {
+        (_, false) => None,
+        (Some(base), true) => match git(root, &["merge-base", "HEAD", base]) {
+            Ok(fork) => Some(fork.trim().to_string()),
+            // No common ancestor: still worth showing what is not committed.
+            Err(_) => {
+                note = Some(format!(
+                    "This branch has no commit in common with {base} (a shallow clone, or an orphan branch): \
+                     showing only what is not committed."
+                ));
+                Some("HEAD".to_string())
+            }
+        },
+        (None, true) => Some("HEAD".to_string()),
+    };
+    let commits = match &fork {
+        Some(fork) if fork != "HEAD" => git(root, &["rev-list", "--count", &format!("{fork}..HEAD")])?
+            .trim()
+            .parse()
+            .unwrap_or(0),
+        _ => 0,
+    };
+    let from = match fork {
+        Some(fork) => fork,
+        None => empty_tree(root)?,
+    };
+
+    // The worktree against the fork point: committed, staged and unstaged at
+    // once. Untracked files are in no tree, so they are marked as about to be
+    // added in a copy of the index, which puts them in the same single diff
+    // as new files, however many there are. The real index is not touched.
+    let index = TempIndex::new(root)?;
+    let mut add = command(root, &["add", "--intent-to-add", "--all"]);
+    add.env("GIT_INDEX_FILE", &index.0).stdin(Stdio::null());
+    let added = add.output().map_err(|e| format!("could not run git: {e}"))?;
+    if !added.status.success() {
+        return Err(String::from_utf8_lossy(&added.stderr).trim().to_string());
+    }
+    let mut args = vec!["diff", "--no-color"];
+    args.extend(NO_DRIVERS);
+    args.extend(["-M", from.as_str()]);
+    let mut diff_cmd = command(root, &args);
+    diff_cmd.env("GIT_INDEX_FILE", &index.0);
+    let out = bounded(diff_cmd, MAX_DIFF_BYTES)?;
+    if !out.success && !out.truncated {
+        return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+    }
+    let diff = out.stdout;
+    let truncated = out.truncated;
+
+    let text = String::from_utf8_lossy(&diff).into_owned();
+    Ok(BranchDiff {
+        root: root.to_string(),
+        base: base.unwrap_or_default(),
+        commits,
+        diff: cap(text, truncated),
+        note,
+    })
+}
+
+/// A copy of the repository's index in the temp folder, removed when dropped.
+struct TempIndex(PathBuf);
+
+impl TempIndex {
+    fn new(root: &str) -> Result<TempIndex, String> {
+        static COUNT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+        let n = COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!("roer-index-{}-{n}", std::process::id()));
+        let real = git(root, &["rev-parse", "--path-format=absolute", "--git-path", "index"])?;
+        // A repository with nothing added yet has no index: an empty one is the same.
+        match std::fs::copy(real.trim(), &path) {
+            Ok(_) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(format!("could not copy the index: {e}")),
+        }
+        Ok(TempIndex(path))
+    }
+}
+
+impl Drop for TempIndex {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+        let mut lock = self.0.clone().into_os_string();
+        lock.push(".lock");
+        let _ = std::fs::remove_file(lock);
+    }
+}
+
+/// `name` as a ref this repository has: the local branch, or else origin's.
+fn base_ref(root: &str, name: &str) -> Option<String> {
+    let exists = |r: &str| {
+        run(root, &["rev-parse", "--verify", "--quiet", &format!("{r}^{{commit}}")])
+            .is_ok_and(|out| out.status.success())
+    };
+    [name.to_string(), format!("origin/{name}")].into_iter().find(|r| exists(r))
+}
+
+/// The branch a new pull request would go into: what origin calls its
+/// default, else `main` or `master`. Origin's copy wins over a local one,
+/// which is often behind it.
+fn default_base(root: &str) -> Option<String> {
+    let head = git(root, &["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"]).ok();
+    if let Some(head) = head.map(|h| h.trim().to_string()).filter(|h| !h.is_empty()) {
+        return Some(head);
+    }
+    ["origin/main", "origin/master", "main", "master"]
+        .into_iter()
+        .find(|r| base_ref(root, r).as_deref() == Some(*r))
+        .map(str::to_string)
 }
 
 /// The files changed between two trees — a commit and its parent here,
@@ -861,7 +1011,7 @@ fn count_lines(path: &Path) -> (Option<u32>, bool) {
 #[cfg(test)]
 mod tests {
     use super::{
-        branch_commits, branches, changes, commit_files, count_lines, git, git_commit_diff,
+        branch_commits, branch_diff, branches, changes, commit_files, count_lines, git, git_commit_diff,
         git_diff, git_root, numstat, parse_name_status, parse_status, push_upstream, repo, root,
         upstream_status, Stat, Upstream, MAX_DIFF_BYTES,
     };
@@ -1335,6 +1485,126 @@ mod tests {
 
         let diff = git_commit_diff(at.clone(), head, "a.txt".to_string()).expect("diff");
         assert!(diff.contains("+one"), "{diff}");
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn diffs_a_branch_since_its_base_with_uncommitted_and_untracked_work() {
+        let dir = scratch("branch-diff");
+        let at = dir.to_string_lossy().to_string();
+        init(&at);
+
+        write(&dir, "a.txt", "one\n");
+        write(&dir, "b.txt", "keep\n");
+        must(&at, &["add", "."]);
+        commit(&at, "base");
+        must(&at, &["checkout", "-q", "-b", "feature"]);
+        write(&dir, "a.txt", "one\ntwo\n");
+        must(&at, &["add", "."]);
+        commit(&at, "on the branch");
+        // Moving main on afterwards must not show up as the branch undoing it.
+        must(&at, &["checkout", "-q", "main"]);
+        write(&dir, "c.txt", "main only\n");
+        must(&at, &["add", "."]);
+        commit(&at, "main moves on");
+        must(&at, &["checkout", "-q", "feature"]);
+
+        write(&dir, "b.txt", "keep\nedited\n");
+        write(&dir, "new.txt", "brand new\n");
+
+        let found = branch_diff(&at, None).expect("diff");
+        assert_eq!(found.base, "main");
+        assert_eq!(found.commits, 1);
+        assert!(found.diff.contains("+two"), "{}", found.diff);
+        assert!(found.diff.contains("+edited"), "{}", found.diff);
+        assert!(found.diff.contains("+brand new"), "{}", found.diff);
+        // Named the way a tracked file is, so it lands in the same tree.
+        assert!(found.diff.contains("+++ b/new.txt"), "{}", found.diff);
+        assert!(!found.diff.contains("c.txt"), "{}", found.diff);
+
+        let named = branch_diff(&at, Some("main")).expect("diff");
+        assert_eq!(named.diff, found.diff);
+        assert!(branch_diff(&at, Some("nope")).is_err());
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn on_its_base_a_branch_diff_is_what_is_uncommitted() {
+        let dir = scratch("branch-diff-base");
+        let at = dir.to_string_lossy().to_string();
+        init(&at);
+        write(&dir, "a.txt", "one\n");
+        must(&at, &["add", "."]);
+        commit(&at, "first");
+        write(&dir, "a.txt", "one\nmore\n");
+
+        let found = branch_diff(&at, None).expect("diff");
+        assert_eq!((found.base.as_str(), found.commits), ("main", 0));
+        assert!(found.diff.contains("+more"), "{}", found.diff);
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn diffs_many_untracked_files_in_one_go_and_leaves_the_index_alone() {
+        let dir = scratch("branch-diff-untracked");
+        let at = dir.to_string_lossy().to_string();
+        init(&at);
+        write(&dir, ".gitignore", "build/\n");
+        write(&dir, "a.txt", "one\n");
+        must(&at, &["add", "."]);
+        commit(&at, "first");
+        for n in 0..300 {
+            write(&dir, &format!("gen/f{n}.txt"), &format!("line {n}\n"));
+        }
+        write(&dir, "build/out.txt", "ignored\n");
+        write(&dir, "sp ace.txt", "é\n");
+
+        let found = branch_diff(&at, None).expect("diff");
+        assert_eq!(found.diff.matches("new file mode").count(), 301, "{}", found.diff);
+        assert!(found.diff.contains("+++ b/sp ace.txt"), "{}", found.diff);
+        assert!(!found.diff.contains("build/out.txt"), "ignored files stay out");
+        let status = git(&at, &["status", "--porcelain"]).unwrap();
+        assert!(status.contains("?? gen/"), "the real index has not had them added: {status}");
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn with_no_common_ancestor_a_branch_diff_says_so_and_shows_what_is_uncommitted() {
+        let dir = scratch("branch-diff-orphan");
+        let at = dir.to_string_lossy().to_string();
+        init(&at);
+        write(&dir, "a.txt", "one\n");
+        must(&at, &["add", "."]);
+        commit(&at, "first");
+        must(&at, &["checkout", "-q", "--orphan", "lonely"]);
+        must(&at, &["rm", "-rq", "--cached", "."]);
+        write(&dir, "b.txt", "two\n");
+        must(&at, &["add", "b.txt"]);
+        commit(&at, "elsewhere");
+        write(&dir, "b.txt", "two\nthree\n");
+
+        let found = branch_diff(&at, Some("main")).expect("diff");
+        assert!(found.note.as_deref().is_some_and(|n| n.contains("no commit in common with main")), "{:?}", found.note);
+        assert!(found.diff.contains("+three"), "{}", found.diff);
+        assert_eq!(found.commits, 0);
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn diffs_a_branch_before_its_first_commit() {
+        let dir = scratch("branch-diff-unborn");
+        let at = dir.to_string_lossy().to_string();
+        init(&at);
+        write(&dir, "a.txt", "one\n");
+
+        let found = branch_diff(&at, None).expect("diff");
+        assert_eq!((found.base.as_str(), found.commits), ("", 0));
+        assert!(found.diff.contains("+one"), "{}", found.diff);
 
         std::fs::remove_dir_all(&dir).unwrap();
     }

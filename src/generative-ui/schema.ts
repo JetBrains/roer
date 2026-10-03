@@ -11,6 +11,7 @@
  */
 
 import type { DiffNote } from "../lib/diff";
+import type { NoteAction } from "../DiffNote";
 
 export const A2UI_VERSION = "v1.0";
 
@@ -92,6 +93,9 @@ export type Justify =
   | "stretch";
 export type Align = "start" | "center" | "end" | "stretch";
 
+/** A `DiffView` note's answer, as sent: `NoteAction` itself. */
+export type NoteActionWire = NoteAction;
+
 type Variant<C extends string, P> = ComponentCommon & { component: C } & P;
 
 export type Component =
@@ -107,7 +111,7 @@ export type Component =
   | Variant<"Modal", { trigger: ComponentId; content: ComponentId }>
   | Variant<"Divider", { axis?: "horizontal" | "vertical" }>
   // A2UI basic catalog — display
-  | Variant<"Text", { text: DynamicString; variant?: "caption" | "body" }>
+  | Variant<"Text", { text: DynamicString; variant?: "h1" | "h2" | "h3" | "h4" | "h5" | "caption" | "body" }>
   | Variant<
       "Image",
       {
@@ -128,10 +132,14 @@ export type Component =
   | Variant<
       "TextField",
       {
-        label: DynamicString;
+        /** Roer: optional. Without one the field is a bare box, e.g. a filter. */
+        label?: DynamicString;
         value?: DynamicString;
         placeholder?: DynamicString;
-        variant?: "shortText" | "longText" | "number" | "obscured";
+        /** `search` is Roer's. */
+        variant?: "shortText" | "longText" | "number" | "obscured" | "search";
+        /** Roer: sent when Enter is pressed in a one-line field. */
+        action?: Action;
         checks?: CheckRule[];
       }
     >
@@ -167,6 +175,25 @@ export type Component =
   // Roer's additions
   | Variant<"Arrow", { direction?: "horizontal" | "vertical"; label?: DynamicString }>
   | Variant<"Expandable", { title: DynamicString; child: ComponentId; defaultExpanded?: boolean }>
+  /** A short label in a pill. `tone` may be bound, so a template can colour
+   * each item; anything but the five tones reads as `neutral`. */
+  | Variant<"Badge", { text: DynamicString | DynamicNumber; tone?: DynamicString }>
+  /** What shows in place of content: nothing yet, loading, or failed. */
+  | Variant<
+      "EmptyState",
+      { text: DynamicString; detail?: DynamicString; variant?: "empty" | "loading" | "error"; footer?: ComponentId }
+    >
+  /** Rows of records under headings; each cell is the row's field `key`. */
+  | Variant<
+      "Table",
+      {
+        columns: { key: string; title: DynamicString; align?: "start" | "end"; width?: number; mono?: boolean }[];
+        rows: DynamicList;
+        /** The row field whose value, read as a status, colours the row. */
+        toneKey?: string;
+        emptyText?: DynamicString;
+      }
+    >
   /** Roer's own diff viewer, fed a whole `git diff` as text. */
   | Variant<
       "DiffView",
@@ -175,8 +202,14 @@ export type Component =
         title?: DynamicString;
         layout?: "unified" | "split";
         emptyText?: DynamicString;
-        /** `{ path, line?, side?, text }[]`, drawn under the lines they are about. */
+        /** `{ path, line?, side?, text, tone?, id?, author?, replies?, tag?, url?, state?, answer? }[]`,
+         * drawn under the lines they are about. */
         notes?: DataBinding | DiffNote[];
+        /** `{ label, value, input?, primary?, done? }[]`: the answers a note
+         * with an `id` offers, each reported as `noteEvent`. */
+        noteActions?: NoteActionWire[];
+        /** The event an answer is reported as. @default "diffNote" */
+        noteEvent?: string;
       }
     >
   /** A KPI number for a dashboard, e.g. "12 running jobs". */

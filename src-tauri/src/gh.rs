@@ -418,6 +418,8 @@ pub struct ReviewThread {
     pub line: Option<u32>,
     /// The line it was written against, which an outdated thread still has.
     pub original_line: Option<u32>,
+    /// `LEFT` for a line of the old file, `RIGHT` for the new one.
+    pub diff_side: Option<String>,
     pub comments: Vec<ReviewComment>,
 }
 
@@ -446,7 +448,7 @@ query($owner: String!, $name: String!, $number: Int!) {
       reviewThreads(first: 100) {
         pageInfo { hasNextPage }
         nodes {
-          id isResolved isOutdated path line originalLine
+          id isResolved isOutdated path line originalLine diffSide
           comments(first: 50) { pageInfo { hasNextPage } nodes { author { login } body createdAt url diffHunk } }
         }
       }
@@ -454,6 +456,14 @@ query($owner: String!, $name: String!, $number: Int!) {
   }
 }
 "#;
+
+/// The pull request's whole change as GitHub has it, base to head: the diff
+/// its review threads' line numbers count in, whatever the local branch has
+/// done since.
+#[tauri::command(async)]
+pub fn gh_pr_diff(dir: String, number: u64) -> Result<String, String> {
+    gh(&dir, &["pr", "diff", &number.to_string(), "--color", "never"], None)
+}
 
 #[tauri::command(async)]
 pub fn gh_pr_review(dir: String, number: u64) -> Result<PrReview, String> {
@@ -513,6 +523,8 @@ struct RawThread {
     path: String,
     line: Option<u32>,
     original_line: Option<u32>,
+    #[serde(default)]
+    diff_side: Option<String>,
     comments: Nodes<RawComment>,
 }
 
@@ -585,6 +597,7 @@ fn parse_review(json: &str) -> Result<PrReview, String> {
                 path: t.path,
                 line: t.line,
                 original_line: t.original_line,
+                diff_side: t.diff_side,
                 comments: t
                     .comments
                     .nodes
@@ -676,7 +689,7 @@ mod tests {
                                         {"requestedReviewer":{"__typename":"Team","name":"core"}}]},
             "reviews":{"nodes":[{"author":null,"state":"COMMENTED","body":"Looks fine","submittedAt":"2026-09-01T00:00:00Z","url":"u1"}]},
             "reviewThreads":{"pageInfo":{"hasNextPage":false},"nodes":[{"id":"T1","isResolved":false,"isOutdated":true,"path":"src/a.ts",
-                "line":null,"originalLine":12,
+                "line":null,"originalLine":12,"diffSide":"LEFT",
                 "comments":{"nodes":[{"author":{"login":"copilot-pull-request-reviewer"},"body":"Off by one",
                     "createdAt":"2026-09-01T00:00:00Z","url":"u2","diffHunk":"@@ -1 +1 @@\n-a\n+b"}]}}]}
         }}}}"#;
@@ -685,6 +698,7 @@ mod tests {
         assert_eq!(review.reviews[0].author, "ghost");
         let thread = &review.threads[0];
         assert_eq!((thread.line, thread.original_line), (None, Some(12)));
+        assert_eq!(thread.diff_side.as_deref(), Some("LEFT"));
         assert!(thread.is_outdated);
         assert_eq!(thread.comments[0].body, "Off by one");
         assert!(!review.truncated);

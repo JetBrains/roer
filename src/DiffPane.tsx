@@ -13,6 +13,7 @@ import {
 } from "react";
 
 import { Spans } from "./CodeLine";
+import { isCardNote, NoteCard, NoteComposer, type NoteAction, type NoteAnswer } from "./DiffNote";
 import {
   changedRange,
   pairRows,
@@ -66,9 +67,34 @@ export interface DiffPaneProps {
   defaultLayout?: "unified" | "split";
   /** Notes drawn into the diff under the lines they are about. */
   notes?: DiffNote[];
+  /** How a note with an `id` can be answered: a button each, under it. */
+  noteActions?: readonly NoteAction[];
+  /** A note was answered with one of `noteActions`. */
+  onNoteAnswer?: (answer: NoteAnswer) => void;
   /** Selects `path` at the change holding `line`, each time `seq` changes —
    * how something outside the pane points into it. */
   reveal?: { path: string; line: number; side?: "old" | "new"; seq: number };
+  /** Lets the viewer write a comment on any line: each gets a + that opens
+   * a field under it, and what is written comes here. Drawing it is up to
+   * the owner, as one of `notes`. */
+  onAddNote?: (note: NewNote) => void;
+}
+
+/** A comment written on a line of the diff. */
+export interface NewNote {
+  path: string;
+  line: number;
+  side: "old" | "new";
+  text: string;
+}
+
+/** A line as a comment would name it: a removed line by its old number,
+ * any other by its new one. */
+type Spot = { line: number; side: "old" | "new" };
+
+function spotOf(line: DiffLine): Spot | undefined {
+  if (line.kind === "del") return line.oldNo === undefined ? undefined : { line: line.oldNo, side: "old" };
+  return line.newNo === undefined ? undefined : { line: line.newNo, side: "new" };
 }
 
 /** Where the selection is: a file, and which of its hunks. */
@@ -96,27 +122,82 @@ type Layout = "unified" | "split";
  */
 const Coloured = createContext<Colouring | null>(null);
 
-/** The selected file's notes by `side:line`, carried like `Coloured` so the
- * layouts need not know about them. */
-const Notes = createContext<ReadonlyMap<string, DiffNote[]>>(new Map());
+/** The selected file's notes by `side:line`, and how they are answered,
+ * carried like `Coloured` so the layouts need not know about them. */
+const Notes = createContext<{
+  byLine: ReadonlyMap<string, DiffNote[]>;
+  actions?: readonly NoteAction[];
+  onAnswer?: (answer: NoteAnswer) => void;
+  /** Set when lines take comments: the line being written on, and how. */
+  compose?: {
+    at: Spot | null;
+    open: (at: Spot) => void;
+    submit: (at: Spot, text: string) => void;
+    cancel: () => void;
+  };
+}>({ byLine: new Map() });
+
+/** The + beside a line that starts a comment on it. */
+function AddNote({ line }: { line: DiffLine }) {
+  const { compose } = useContext(Notes);
+  const at = spotOf(line);
+  if (!compose || !at) return null;
+  return (
+    <button
+      type="button"
+      className="line-add"
+      aria-label={`Comment on line ${at.line}`}
+      title="Comment on this line"
+      onClick={(event) => {
+        event.stopPropagation();
+        compose.open(at);
+      }}
+    >
+      +
+    </button>
+  );
+}
+
+/** A note as a plain line, or as a comment card when it is one. */
+function Note({
+  note,
+  actions,
+  onAnswer,
+  file,
+}: {
+  note: DiffNote;
+  actions?: readonly NoteAction[];
+  onAnswer?: (answer: NoteAnswer) => void;
+  file?: boolean;
+}) {
+  if (isCardNote(note, actions)) return <NoteCard note={note} actions={actions} onAnswer={onAnswer} file={file} />;
+  return (
+    <div className={`line-note ${file ? "file" : ""} ${note.tone ?? ""}`} role="note">
+      {note.text}
+    </div>
+  );
+}
 
 /** The notes under a line, found by the numbers it has on each side. */
 function LineNotes({ line }: { line?: DiffLine }) {
-  const notes = useContext(Notes);
+  const { byLine: notes, actions, onAnswer, compose } = useContext(Notes);
   if (!line) return null;
-  // A context line has an old number too, but a note about it is counted in
-  // the new file, and asking both would show it twice.
-  const old = line.kind === "del" ? notes.get(`old:${line.oldNo}`) : undefined;
+  const at = spotOf(line);
+  const writing = compose?.at && at && compose.at.line === at.line && compose.at.side === at.side ? compose.at : null;
+  // A context line has both numbers, and a note about it may be counted in
+  // either file: a review thread left on the old side names its old number.
+  const old = line.kind !== "add" && line.oldNo !== undefined ? notes.get(`old:${line.oldNo}`) : undefined;
   const now =
     line.newNo === undefined ? undefined : notes.get(`new:${line.newNo}`);
   const found = [...(old ?? []), ...(now ?? [])];
   return (
     <>
       {found.map((note, i) => (
-        <div key={i} className={`line-note ${note.tone ?? ""}`} role="note">
-          {note.text}
-        </div>
+        <Note key={note.id ?? i} note={note} actions={actions} onAnswer={onAnswer} />
       ))}
+      {writing && compose ? (
+        <NoteComposer line={writing.line} onSubmit={(text) => compose.submit(writing, text)} onCancel={compose.cancel} />
+      ) : null}
     </>
   );
 }
@@ -137,6 +218,7 @@ function Unified({ hunk }: { hunk: Hunk }) {
               }
             />
             <span className="text">
+              <AddNote line={line} />
               <Code line={line} side={line.kind === "del" ? "old" : "new"} />
             </span>
           </div>
@@ -187,6 +269,8 @@ function Side({
         data-no={(which === "old" ? line.oldNo : line.newNo) ?? ""}
       />
       <span className="text">
+        {/* A context line is on both sides; it takes its comment on the new one. */}
+        {which === "new" || line.kind === "del" ? <AddNote line={line} /> : null}
         <Code line={line} other={other} side={which} />
       </span>
     </span>
@@ -261,9 +345,13 @@ export function DiffPane({
   "aria-label": ariaLabel,
   defaultLayout = "unified",
   notes,
+  noteActions,
+  onNoteAnswer,
   reveal,
+  onAddNote,
 }: DiffPaneProps) {
   const [selection, setSelection] = useState<Selection | null>(null);
+  const [composing, setComposing] = useState<(Spot & { path: string }) | null>(null);
   const [diff, setDiff] = useState<{ path: string; text: string } | null>(null);
   const [diffError, setDiffError] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
@@ -388,6 +476,34 @@ export function DiffPane({
     }
     return [heading, byLine] as const;
   }, [notes, path]);
+
+  // How many notes each file has, for the tree to show where they are.
+  const notesPerFile = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const note of notes ?? []) counts.set(note.path, (counts.get(note.path) ?? 0) + 1);
+    return counts;
+  }, [notes]);
+
+  const noteContext = useMemo(
+    () => ({
+      byLine: lineNotes,
+      actions: noteActions,
+      onAnswer: onNoteAnswer,
+      compose:
+        onAddNote && path
+          ? {
+              at: composing?.path === path ? composing : null,
+              open: (at: Spot) => setComposing({ ...at, path }),
+              submit: (at: Spot, text: string) => {
+                setComposing(null);
+                onAddNote({ path, ...at, text });
+              },
+              cancel: () => setComposing(null),
+            }
+          : undefined,
+    }),
+    [lineNotes, noteActions, onNoteAnswer, onAddNote, path, composing],
+  );
 
   const index = useMemo(() => {
     const count = parsed?.hunks.length ?? 0;
@@ -572,6 +688,11 @@ export function DiffPane({
                       </span>
                       <span className="name">{row.name}</span>
                       {row.file.binary && <span className="muted">bin</span>}
+                      {notesPerFile.has(row.path) ? (
+                        <span className="note-count" title="Notes on this file">
+                          {notesPerFile.get(row.path)}
+                        </span>
+                      ) : null}
                       {row.file.counted && (
                         <span className="counts">
                           <span className="plus">+{row.file.added}</span>
@@ -620,12 +741,10 @@ export function DiffPane({
             ) : null}
 
             {fileNotes.map((note, i) => (
-              <div key={i} className={`line-note file ${note.tone ?? ""}`} role="note">
-                {note.text}
-              </div>
+              <Note key={note.id ?? i} note={note} actions={noteActions} onAnswer={onNoteAnswer} file />
             ))}
 
-            <Notes.Provider value={lineNotes}>
+            <Notes.Provider value={noteContext}>
               <Coloured.Provider value={coloured}>
                 {parsed?.hunks.map((hunk, i) => (
                   <div

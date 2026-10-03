@@ -7,7 +7,9 @@ file in the folder changes. Roer's own Changes tab is an extension written
 this way.
 
 Read all of this before writing anything. The type declarations at the end
-are the whole API: anything they don't declare isn't there.
+are the whole API: anything they don't declare isn't there. `roer` is the
+frontend's module, `roer/ui` its components, and `roer/server` the module
+for the backend.
 
 ## The folder
 
@@ -15,6 +17,7 @@ are the whole API: anything they don't declare isn't there.
 <id>/
   extension.json
   app.tsx        the entry point; it may import other files of the folder
+  server.ts      optional: a backend that can run programs (below)
   roer.d.ts      the API's types, written by `roer ext new`; the build doesn't read it
 ```
 
@@ -99,13 +102,94 @@ The rules:
 - Put a `data-roer-id` on the elements that matter. Comments the person
   leaves on the tab are pinned to them.
 
-### Looking like Roer
+## server.ts: running programs
 
-Use Roer's classes and colours, not your own palette, so the tab matches
-the light and dark themes:
+A tab runs in a browser window, so it can't start a program. When it needs
+one, such as a CLI whose output it shows, add a `server.ts` and name it in
+the manifest with `"server": "server.ts"`. Roer runs it with Bun, with full
+access and the login shell's `PATH`, and starts it on the first call.
 
-- Classes: `empty` (a centred message filling the tab), `muted`, `error`,
-  `primary` on a button, `link` on a button that reads as a link.
+```ts
+// server.ts
+import { defineServer } from "roer/server";
+
+export default defineServer((roer) => {
+  roer.rpc.handle("todos", async ({ root }: { root: string }) => {
+    const out = await roer.exec(["git", "grep", "-n", "TODO"], { cwd: root });
+    if (out.code > 1) throw new Error(out.stderr.trim());
+    return out.stdout.split("\n").filter(Boolean);
+  });
+});
+```
+
+```tsx
+// app.tsx
+import { useCall, useRpc } from "roer";
+
+const { data, error, loading, reload } = useRpc<string[]>("todos", { root });
+const call = useCall(); // for actions: await call("fix", { line })
+```
+
+- `exec` runs a program without a shell. Pass `argv` as a list and never
+  build a shell string. A non-zero exit doesn't throw, so check `code`.
+- What a handler returns must be JSON. What it throws reaches `useRpc`'s
+  `error`, or rejects `call`.
+- `console.log` in the server goes to the extension's log (`roer ext logs`).
+- Saving any file of the extension stops the server. The next call starts it
+  again with the new code.
+- Ask before your tab does anything with consequences, as the person would
+  expect from you. A button whose action can't be undone needs a confirm
+  step.
+
+### Looking like Roer: build from `roer/ui`
+
+Build the tab from `roer/ui`, the Generative UI catalog as React
+components. They are the same components a surface an agent draws with
+`show_ui` is made of, so the tab looks and behaves like the rest of Roer, in
+both themes. Reach for your own markup and CSS only for something the
+catalog has no component for.
+
+```tsx
+import { Button, Card, Column, Grid, Row, StatTile, StatusCard, Text } from "roer/ui";
+
+<Column>
+  <Grid minItemWidth={180}>
+    <StatTile label="Open TODOs" value={hits.length} />
+  </Grid>
+  <StatusCard title="CI" status="running" progress={40} footer={<Button onClick={retry}>Retry</Button>} />
+  <Card>
+    <Text variant="caption">Last run 5 minutes ago</Text>
+  </Card>
+</Column>
+```
+
+- Layout: `Row`, `Column`, `List`, `Grid` (wraps), `Card`, `Tabs`,
+  `Expandable`, `Modal`, `Divider`.
+- Display: `Text` (`variant` `h2` for the tab's title, `h3` for a
+  section's, `caption` for secondary text), `Badge`, `Table` (columns that
+  line up: a log, a list of jobs), `StatTile`, `StatusCard` (its `status`
+  is coloured by meaning: `statusTone`), `WorkItem`, `DiffView`, `Icon`,
+  `Image`.
+- `EmptyState` is what the tab shows in place of its content: `variant`
+  `empty`, `loading` or `error`, with a `footer` for a Retry button. Use it
+  rather than your own "Loading…" text.
+- Input: `Button`, `TextField`, `CheckBox`, `ChoicePicker` (`chips` for a
+  filter bar), `Slider`, `DateTimeInput`. They are controlled: pass `value`
+  and `onChange`. A `TextField` without a `label` is a bare box;
+  `variant="search"` makes it a filter, and `onSubmit` runs on Enter.
+- `DiffView` takes `notes` drawn under their lines. A note with an `author`
+  is a comment (markdown, `replies`); give notes an `id` and the view
+  `noteActions` (`{ label, value, input?, done? }[]`) and each gets those
+  buttons, reported to `onNoteAnswer`. Set the note's `state` to the answer
+  to keep it. Roer's own Review tab (`src/extensions/code-review/`) is built
+  this way: GitHub's review threads, accepted, declined or instructed.
+- `Surface` draws catalog JSON, the same `components` and data model that
+  `show_ui` and `save_ui` take, and hands its buttons' events to
+  `onAction`. Use it to turn a saved plugin UI into a tab.
+
+For anything else:
+
+- Classes: `muted`, `error`.
 - Variables: `--roer-bg`, `--roer-fg`, `--roer-panel`, `--roer-border`,
   `--roer-muted`, `--roer-accent`, `--roer-warn`, `--roer-plus`,
   `--roer-minus`, `--roer-row`, `--roer-row-hover`, `--roer-selected`.
@@ -113,6 +197,55 @@ the light and dark themes:
   when it scrolls.
 - Import a `.css` file from `app.tsx` and Roer adds it to the page. Prefix
   every class with the extension's id, because the page is shared.
+
+## Tools: agents handing things to the tab
+
+When an agent should feed the tab, such as a review's comments, findings
+to triage, or a plan to approve, register a tool in `app.tsx`. Agents see
+it through `roer mcp` as `<id>__<name>`, with a `session` argument added.
+It runs in the app's window, so it can update what the tab shows directly.
+
+```tsx
+import { defineExtension, resolveDir, gitRoot } from "roer";
+import { store } from "./store"; // the extension's own: localStorage plus listeners the tab subscribes to
+
+export default defineExtension((roer) => {
+  roer.stage.registerTab({ id: "main", title: "Findings", component: Findings });
+  roer.tools.register({
+    name: "add_findings",
+    description: "Hand findings to the user's Findings tab, where they triage each one. Don't act on them before they answer.",
+    inputSchema: {
+      type: "object",
+      properties: { findings: { type: "array", items: { type: "object", properties: { text: { type: "string" } }, required: ["text"] } } },
+      required: ["findings"],
+    },
+    async run(args, { cwd, pane }) {
+      const root = await gitRoot(await resolveDir(cwd, pane));
+      const added = store.add(root, args.findings);
+      roer.badge.set("main", String(added));
+      return `Added ${added}; the user will answer them in Roer.`;
+    },
+  });
+});
+```
+
+- Check every argument. The schema is a hint to the agent, and the tab gets
+  whatever it sends.
+- `context.pane` and `context.cwd` say which session called. Key what you
+  store by its repository, or its branch, so another session's tab doesn't
+  show it.
+- Whatever `run` returns is what the agent reads, so tell it what happens
+  next. A throw becomes its error.
+- The person usually answers in the tab, and the tab sends the answer back
+  with `session.send(prompt)`. Give the tab a button that asks the agent to
+  use the tool, naming it in the prompt.
+- An agent started before the extension loaded still sees the tool: `roer
+  mcp` tells it the list changed. To try the tool while developing, call it
+  from your own session once `extension_dev` reports the tab up.
+
+Roer's Review tab (`src/extensions/code-review/`) works this way:
+`code-review__add_comments` puts an agent's review on the diff, and the
+person accepts, declines or instructs each comment.
 
 ## The loop
 

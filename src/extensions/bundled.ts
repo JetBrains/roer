@@ -6,9 +6,13 @@
  */
 import type { Extension } from "./api";
 import changes from "./changes/app";
+import codeReview from "./code-review/app";
 import { registry, type Registry } from "./registry";
 
-export const BUNDLED: ReadonlyArray<{ id: string; extension: Extension }> = [{ id: "changes", extension: changes }];
+export const BUNDLED: ReadonlyArray<{ id: string; extension: Extension }> = [
+  { id: "changes", extension: changes },
+  { id: "code-review", extension: codeReview },
+];
 
 export function loadBundled(into: Registry = registry): void {
   for (const { id, extension } of BUNDLED) {

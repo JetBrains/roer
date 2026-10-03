@@ -1,6 +1,6 @@
 /**
  * Hands the host's own modules to extensions. An extension's build reads
- * `react`, `react-dom` and `roer` from `globalThis.__roerHost` instead of
+ * `react`, `react-dom`, `roer` and `roer/ui` from `globalThis.__roerHost` instead of
  * bundling copies (see `src-tauri/src/extension_build.ts`), so it renders
  * with the app's one React and calls the app's own code.
  */
@@ -11,6 +11,7 @@ import * as JsxDevRuntime from "react/jsx-dev-runtime";
 import * as JsxRuntime from "react/jsx-runtime";
 
 import * as sdk from "./sdk";
+import * as ui from "./ui";
 
 declare global {
   var __roerHost: Record<string, unknown> | undefined;
@@ -44,5 +45,6 @@ export function installHost(): void {
     "react/jsx-runtime": esm(JsxRuntime),
     "react/jsx-dev-runtime": jsxDev(),
     roer: esm(sdk),
+    "roer/ui": esm(ui),
   };
 }

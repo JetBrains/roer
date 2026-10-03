@@ -438,8 +438,8 @@ extension's capabilities. The manifest provides only the props.
 | `FileRow` | `path`, `status?`, `added?`, `deleted?`, `selected?: DynamicBoolean`, `action` | The row style Changes uses today |
 | `SplitPane` | `start`, `end`, `initial?`, `persistKey?` | A resizable two-pane layout |
 | `Select` | `options`, `valuePath` | Branch pickers (phase 3) |
-| `Badge` | `text`, `tone?: "neutral" \| "added" \| "deleted" \| "warning"` | A status letter or count |
-| `Spinner` / `ErrorText` | `text?` | Loading and error, bound to `/$sources/<id>/…` |
+| `Badge` | `text`, `tone?: "neutral" \| "accent" \| "success" \| "warning" \| "danger"` | A status letter or count. Built, as a plain catalog component |
+| `EmptyState` | `text`, `detail?`, `variant?: "empty" \| "loading" \| "error"`, `footer?` | Loading and error, bound to `/$sources/<id>/…`. Built, as a plain catalog component; it replaces the `Spinner` / `ErrorText` pair planned here |
 | `CodeBlock` | `text`, `lang?` | Read-only code built on `CodeLine` |
 
 A self-fetching component keeps large strings out of the data model. It

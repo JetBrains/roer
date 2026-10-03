@@ -44,7 +44,38 @@ export interface DiffNote {
   text: string;
   /** How much it matters, for a note that is a finding. Plain when unset. */
   tone?: "info" | "warn" | "error";
+  /** Names the note to whoever answers it; a note can only be answered with one. */
+  id?: string;
+  /** Who wrote it. A note with an author is a comment, and its text is markdown. */
+  author?: string;
+  /** The rest of the conversation under it, oldest first. */
+  replies?: { author: string; text: string }[];
+  /** A word on its corner, such as "outdated". */
+  tag?: string;
+  /** An https link to where the note lives, such as the thread on GitHub. */
+  url?: string;
+  /** What was decided about it, as one of the offered answers' `value`;
+   * drawn in place of the answers. */
+  state?: string;
+  /** The words that came with the decision, for an answer that takes some. */
+  answer?: string;
+  /** This note's own answers, in place of the ones the diff offers every note. */
+  actions?: NoteAction[];
 }
+
+/** One way a note can be answered. */
+export interface NoteAction {
+  /** What the button says. */
+  label: string;
+  /** What is reported, and the note's `state` once the owner takes it. */
+  value: string;
+  /** Asks for words before it is reported; the field's placeholder. */
+  input?: string;
+  primary?: boolean;
+  /** What a note answered this way says in place of the buttons. @default label */
+  done?: string;
+}
+
 
 /** One file of a multi-file patch, and the part of the patch that is its. */
 export interface PatchFile {
