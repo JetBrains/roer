@@ -45,7 +45,6 @@ describe("ExtensionsDialog", () => {
     render(<ExtensionsDialog onClose={vi.fn()} />);
     expect(await screen.findByText("Weather")).toBeInTheDocument();
     expect(screen.getByText("Changes")).toBeInTheDocument();
-    expect(screen.getByText("Review")).toBeInTheDocument();
     expect(screen.getByRole("switch", { name: "Weather enabled" })).toBeChecked();
     expect(screen.getByRole("switch", { name: "Dog Walk enabled" })).not.toBeChecked();
     expect(screen.getByText("Build failed")).toBeInTheDocument();
@@ -63,8 +62,8 @@ describe("ExtensionsDialog", () => {
     fireEvent.click(screen.getByRole("switch", { name: "Dog Walk enabled" }));
     expect(setExtensionEnabled).toHaveBeenCalledWith("dog-walk", true);
 
-    fireEvent.click(screen.getByRole("switch", { name: "Review enabled" }));
-    expect(setExtensionEnabled).toHaveBeenCalledWith("code-review", false);
+    fireEvent.click(screen.getByRole("switch", { name: "Changes enabled" }));
+    expect(setExtensionEnabled).toHaveBeenCalledWith("changes", false);
   });
 
   it("puts a switch back when the backend refuses it", async () => {

@@ -11,6 +11,7 @@ import {
   gitRoot,
   isNextCommit,
   isPrevCommit,
+  isUntracked,
   resolveDir,
   shortcutLabel,
   useHotkey,
@@ -18,6 +19,9 @@ import {
   type Commit,
   type FilesChanged,
 } from "roer";
+import type { NewNote, NoteAnswer } from "roer/ui";
+
+import { answered, commentNote, lineInFile, newCommentId, type LocalComment } from "./local";
 
 export interface DiffBrowserViewProps {
   /** Directory the session was opened in; the repository is whatever holds it. */
@@ -29,6 +33,12 @@ export interface DiffBrowserViewProps {
   /** The last thing a worktree watch reported, so the local-changes slot
    * does not have to be left and come back to before it moves. */
   changed?: FilesChanged | null;
+  /** The branch's comments, to draw on the slot they belong to: a commit's on that commit, the rest on what is
+   * not committed. Without `onComments` the view takes none. */
+  comments?: readonly LocalComment[];
+  onComments?: (update: (current: LocalComment[]) => LocalComment[]) => void;
+  /** Who the comments go to, for the buttons on an agent's. */
+  agent?: string;
 }
 
 function when(seconds: number): string {
@@ -48,7 +58,7 @@ function when(seconds: number): string {
  * actually checked out: uncommitted edits are relative to `HEAD`, so they
  * mean nothing next to some other branch's history you're just browsing.
  */
-export function DiffBrowserView({ cwd, pane, active, changed }: DiffBrowserViewProps) {
+export function DiffBrowserView({ cwd, pane, active, changed, comments, onComments, agent = "the agent" }: DiffBrowserViewProps) {
   const [root, setRoot] = useState<string | null>(null);
   // Discovery found no repository at all, which has nothing to diff: said so
   // rather than left as an empty view.
@@ -274,6 +284,35 @@ export function DiffBrowserView({ cwd, pane, active, changed }: DiffBrowserViewP
     [isLocalSelected, root, localChanges, commit],
   );
 
+  // The comments of the slot on screen. Lines are counted where the slot counts them: a commit's as it left the
+  // file, the rest in the file as it is now.
+  const notes = useMemo(
+    () =>
+      (comments ?? [])
+        .filter((c) => (isLocalSelected ? !c.commit : !!commit && c.commit?.hash === commit.hash))
+        .map((c) => commentNote(c, agent, true)),
+    [comments, isLocalSelected, commit, agent],
+  );
+
+  const files = isLocalSelected ? localChanges?.files ?? null : commitFiles;
+  const addComment = useCallback(
+    (note: NewNote) => {
+      if (!onComments) return;
+      const file = files?.find((f) => f.path === note.path);
+      const on = isLocalSelected || !commit ? undefined : { hash: commit.hash, short: commit.short, subject: commit.subject };
+      // The words on the line, read from its diff, are how the agent finds it once numbers move.
+      void loadDiff(note.path, file ? isUntracked(file) : false)
+        .then((text) => lineInFile(text, note.line, note.side))
+        .catch(() => "")
+        .then((code) => onComments((current) => [...current, { id: newCommentId(), ...note, code, ...(on ? { commit: on } : {}) }]));
+    },
+    [onComments, files, isLocalSelected, commit, loadDiff],
+  );
+  const answer = useCallback(
+    (one: NoteAnswer) => onComments?.((current) => answered(current, one)),
+    [onComments],
+  );
+
   const title = useMemo((): ReactNode => {
     if (isLocalSelected) {
       return (
@@ -385,7 +424,7 @@ export function DiffBrowserView({ cwd, pane, active, changed }: DiffBrowserViewP
 
       {count > 0 ? (
         <DiffPane
-          files={isLocalSelected ? localChanges?.files ?? null : commitFiles}
+          files={files}
           error={isLocalSelected ? localError : commitFilesError}
           active={active}
           loadDiff={loadDiff}
@@ -398,6 +437,9 @@ export function DiffBrowserView({ cwd, pane, active, changed }: DiffBrowserViewP
               : "This commit touched no files."
           }
           defaultLayout={isLocalSelected ? "split" : undefined}
+          notes={onComments ? notes : undefined}
+          onNoteAnswer={onComments ? answer : undefined}
+          onAddNote={onComments ? addComment : undefined}
           data-testid="changes"
           aria-label="Diff"
         />

@@ -12,7 +12,8 @@ Status: **draft / RFC**. What is built so far:
 - `roer/ui`: the Generative UI catalog as React components, for an
   extension's tab to be built from. The agent's guide (`roer ext guide`)
   documents it.
-- A Review tab, bundled beside Changes, built on the SDK alone (§4).
+- Changes as one tab for the branch's work, by commit, as a whole and as
+  its pull request, with comments on any line; built on the SDK alone (§4).
 - The Extensions dialog, which switches any extension off (§6).
 
 Bun isn't bundled with the app: a build uses `ROER_BUN`, a Bun beside the
@@ -238,8 +239,7 @@ is what `fork` copies.
 
 | Built-in | As an extension | What stays in the core |
 | --- | --- | --- |
-| Changes | `DiffBrowserView` as a pinned tab, using `DiffPane` from the SDK and the prev/next-commit chords | — |
-| Review (new) | `src/extensions/code-review/`: the pull request's diff (`ghPrDiff`) in `roer/ui`'s `DiffView`, its review threads as answerable notes (accept, decline, instruct), and the decisions sent with `session.send`. Written against the SDK only, as a fork would be | — |
+| Changes | `src/extensions/changes/`, one tab for the branch's work with three scopes. *By commit* is `DiffBrowserView`: the uncommitted edits, then each commit, with `DiffPane` and the prev/next-commit chords. *Whole branch* is everything since the base (`gitBranchDiff`) in `roer/ui`'s `DiffView`, where the person comments on any line and agents add theirs with `changes__add_comments`. *Pull request* is GitHub's diff (`ghPrDiff`) with its review threads as answerable notes (accept, decline, instruct). Every decision goes to the agent with `session.send`. Written against the SDK only, as a fork would be | — |
 | Pull Request | `PullRequestView` as a pinned tab, with its badge through `roer.badge` and `pr.draft` through `roer.events`. "Send to agent" becomes `session.send` | — |
 | Terminal | A pinned tab whose component renders the SDK's `TerminalView` | The PTY and the handoff state machine (`onAttached`, `onPane`, `onExit`). A replacement can wrap the terminal, with a toolbar or a split, but it can't reimplement the PTY |
 | Sessions | Not moved in this spec | All of it: `useSessionBrowser` is the app's session router |
