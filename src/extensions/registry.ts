@@ -69,6 +69,8 @@ export class Registry {
             keepAcrossSessions: tab.keepAcrossSessions ?? false,
           };
           next.tabs.push(entry);
+          // Registered during activation, it shows with the load; later, at once.
+          if (this.loaded.get(id) === next) this.changed();
           const dispose = () => {
             next.tabs = next.tabs.filter((one) => one !== entry);
             next.badges.delete(entry.tabId);

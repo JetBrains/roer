@@ -79,7 +79,7 @@ async function importText(js: string): Promise<{ default?: Extension }> {
 }
 
 /** Loads one extension as `info` describes it, or unloads it when there is nothing to run. */
-export async function loadOne(info: ExtensionInfo, into: Registry = registry): Promise<void> {
+export async function loadOne(info: ExtensionInfo, into: Registry = registry, announce = false): Promise<void> {
   if (info.disabled) {
     into.unload(info.id);
     setStyle(info.id, null);
@@ -95,7 +95,12 @@ export async function loadOne(info: ExtensionInfo, into: Registry = registry): P
     loadedHash.delete(info.id);
     return;
   }
-  if (loadedHash.get(info.id) === info.hash && into.has(info.id)) return;
+  if (loadedHash.get(info.id) === info.hash && into.has(info.id)) {
+    // Built again from the same sources, which `roer ext dev` asks for and then waits to hear about: what is
+    // running already is that build.
+    if (announce) void logExtension(info.id, "loaded");
+    return;
+  }
 
   try {
     const bundle = await invoke<Bundle>("extension_bundle", { id: info.id });
@@ -125,10 +130,9 @@ export function useExternalExtensions(): void {
         listDisabled().catch(() => [] as string[]),
       ]);
       if (cancelled) return;
-      syncBundled(new Set(disabled));
       const present = new Set(all.map((info) => info.id));
       for (const info of all) {
-        if (!only || only.includes(info.id)) await loadOne(info);
+        if (!only || only.includes(info.id)) await loadOne(info, registry, only !== undefined);
       }
       // Gone from disk: removed, or its session folder went away.
       for (const id of [...loadedHash.keys()]) {
@@ -138,6 +142,8 @@ export function useExternalExtensions(): void {
           loadedHash.delete(id);
         }
       }
+      // Last, so a built-in comes back in the same pass that unloaded a fork of it under its id.
+      syncBundled(new Set(disabled));
     };
 
     // One sync at a time, in order: two loads of one extension racing could

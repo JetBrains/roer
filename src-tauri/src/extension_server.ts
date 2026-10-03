@@ -76,8 +76,11 @@ if (!server || typeof server.setup !== "function") {
 await server.setup(roer);
 
 let buffered = "";
+// One decoder for the whole stream: a character split across two chunks is
+// held back until its rest arrives, instead of becoming two U+FFFDs.
+const decoder = new TextDecoder();
 for await (const chunk of process.stdin) {
-  buffered += typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk);
+  buffered += typeof chunk === "string" ? chunk : decoder.decode(chunk, { stream: true });
   let newline: number;
   while ((newline = buffered.indexOf("\n")) >= 0) {
     const line = buffered.slice(0, newline).trim();

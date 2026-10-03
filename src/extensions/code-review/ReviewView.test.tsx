@@ -2,8 +2,9 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Session } from "../api";
-import { gitBranchDiff } from "../../lib/git";
+import { gitBranchDiff, gitCurrentBranch } from "../../lib/git";
 import { ghPrDiff, ghPrForBranch, ghPrReview, ghStatus, type PrReview, type PrSummary } from "../../lib/github";
+import { storedComments } from "./local";
 import { ReviewView } from "./ReviewView";
 import { addCommentsTool } from "./tool";
 
@@ -370,6 +371,24 @@ describe("ReviewView", () => {
       expect(await screen.findByText(/A comment is on src\/a\.ts:2, which this diff no longer changes/)).toBeInTheDocument();
       fireEvent.click(screen.getByRole("button", { name: "Delete them" }));
       expect(screen.queryByText(/no longer changes/)).toBeNull();
+    });
+
+    it("keeps comments under the branch a save lands on, after a checkout", async () => {
+      const staged = session();
+      const { rerender } = render(<ReviewView session={staged} active />);
+      await screen.findByText("Off by one.");
+      fireEvent.click(screen.getByRole("button", { name: "Local changes" }));
+      await screen.findByText("2 commits since origin/main, and what is not committed");
+      comment(1, "Before the checkout.");
+
+      // A checkout in the pane, reported as a batch of changed files.
+      vi.mocked(gitCurrentBranch).mockResolvedValue("other");
+      rerender(<ReviewView session={{ ...staged, changed: { root: "/repo", paths: ["src/a.ts"], broad: false } }} active />);
+      await waitFor(() => expect(screen.queryByText("Before the checkout.")).toBeNull());
+      comment(1, "After the checkout.");
+      expect(storedComments("/repo", "other").map((c) => c.text)).toEqual(["After the checkout."]);
+      expect(storedComments("/repo", "feat").map((c) => c.text)).toEqual(["Before the checkout."]);
+      vi.mocked(gitCurrentBranch).mockResolvedValue("feat");
     });
 
     it("says why when the branch cannot be read", async () => {

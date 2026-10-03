@@ -441,9 +441,7 @@ pub(crate) fn log(id: &str, message: &str) {
     let path = dir.join("log");
     if std::fs::metadata(&path).is_ok_and(|meta| meta.len() > LOG_LIMIT) {
         if let Ok(text) = std::fs::read_to_string(&path) {
-            let half = text.len() / 2;
-            let cut = text[half..].find('\n').map_or(half, |at| half + at + 1);
-            let _ = std::fs::write(&path, &text[cut..]);
+            let _ = std::fs::write(&path, newer_half(&text));
         }
     }
     if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
@@ -451,6 +449,18 @@ pub(crate) fn log(id: &str, message: &str) {
             let _ = writeln!(file, "{} {line}", now());
         }
     }
+}
+
+/// The newer half of a log, from the first line that starts past its middle.
+/// The middle is a byte offset, which can fall inside a character; a newline
+/// never does, and without one the cut moves on to the next character.
+fn newer_half(text: &str) -> &str {
+    let half = text.len() / 2;
+    let cut = match text.as_bytes()[half..].iter().position(|&b| b == b'\n') {
+        Some(at) => half + at + 1,
+        None => (half..=text.len()).find(|&at| text.is_char_boundary(at)).unwrap_or(text.len()),
+    };
+    &text[cut..]
 }
 
 /// The `server.ts` an extension runs, and the hash of the sources it is
@@ -541,13 +551,17 @@ pub fn extension_log(id: String, message: String) {
     log(&id, &message);
 }
 
-/// What makes a window load an extension again: its build, and whether it is
-/// switched on. A bundled one, which no scan finds, is here only while it is off.
-fn states() -> HashMap<String, (String, bool)> {
-    let mut states: HashMap<String, (String, bool)> =
-        extensions_list().into_iter().map(|info| (info.id, (info.hash, info.disabled))).collect();
+/// What a window is told about: an extension's sources, a fresh build of the
+/// same ones (`roer ext dev` asks for one, and waits to hear it was loaded),
+/// and whether it is switched on. A bundled one, which no scan finds, is here
+/// only while it is off.
+fn states() -> HashMap<String, (String, u64, bool)> {
+    let mut states: HashMap<String, (String, u64, bool)> = extensions_list()
+        .into_iter()
+        .map(|info| (info.id, (info.hash, info.built_at, info.disabled)))
+        .collect();
     for id in disabled() {
-        states.entry(id).or_insert((String::new(), true));
+        states.entry(id).or_insert((String::new(), 0, true));
     }
     states
 }
@@ -616,6 +630,20 @@ pub fn watch<S: Sink>(sink: S) -> notify::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn keeps_the_newer_half_of_a_log_whatever_characters_its_middle_falls_in() {
+        // Every byte offset of this one is tried as the middle, accents and emoji included.
+        let text = "1 première ligne\n2 zweite Zeile ü\n3 третья 🚀\n4 last\n";
+        for pad in 0..12 {
+            let padded = format!("{}{text}", "é".repeat(pad));
+            let kept = newer_half(&padded);
+            assert!(padded.ends_with(kept));
+            assert!(kept.is_empty() || kept.starts_with(|c: char| c.is_ascii_digit()), "{kept:?}");
+        }
+        let one_line = "ééééééééé";
+        assert!(one_line.ends_with(newer_half(one_line)));
+    }
 
     #[test]
     fn ids_are_lowercase_words_joined_by_dashes() {

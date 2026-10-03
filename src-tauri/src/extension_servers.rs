@@ -104,11 +104,31 @@ fn login_shell_path() -> Option<OsString> {
     None
 }
 
+/// Writes `path` aside and renames it into place. Every server start writes the
+/// one shared host script, and a Bun started a moment earlier may still be
+/// reading it: a rename leaves that Bun the whole old file, where writing in
+/// place would truncate it under its feet.
+fn write_whole(path: &std::path::Path, text: &str) -> Result<(), String> {
+    // The same for every start of this Roer: written once, then only read. Windows cannot rename over a file
+    // another process has open, so not writing at all is what keeps a second start from failing there.
+    if std::fs::read_to_string(path).is_ok_and(|on_disk| on_disk == text) {
+        return Ok(());
+    }
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let partial = path.with_extension(format!("ts.partial-{}-{n}", std::process::id()));
+    std::fs::write(&partial, text).map_err(|e| format!("{}: {e}", partial.display()))?;
+    std::fs::rename(&partial, path).map_err(|e| {
+        let _ = std::fs::remove_file(&partial);
+        format!("{}: {e}", path.display())
+    })
+}
+
 fn start(id: &str, entry: PathBuf, hash: String) -> Result<Arc<Server>, String> {
     let bun = bun(id)?;
     let script = home().join("extension-cache").join("server.ts");
     std::fs::create_dir_all(cache_dir(id)).map_err(|e| format!("{}: {e}", cache_dir(id).display()))?;
-    std::fs::write(&script, HOST_SCRIPT).map_err(|e| format!("{}: {e}", script.display()))?;
+    write_whole(&script, HOST_SCRIPT)?;
 
     let mut child = crate::process::command(&bun)
         .arg(&script)
@@ -255,6 +275,22 @@ pub fn extension_rpc(id: String, method: String, params: Option<Value>) -> Resul
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn writes_the_host_script_whole_and_then_leaves_it_alone() {
+        let dir = crate::testing::scratch("host-script");
+        let path = dir.join("server.ts");
+        std::fs::write(&path, "an older host").unwrap();
+        write_whole(&path, "the host").unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "the host");
+        let before = std::fs::metadata(&path).unwrap().modified().unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        write_whole(&path, "the host").unwrap();
+        assert_eq!(std::fs::metadata(&path).unwrap().modified().unwrap(), before);
+        // Nothing left beside it.
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     #[test]
     fn reads_answers_and_leaves_other_output_alone() {
