@@ -19,6 +19,22 @@ describe("Registry", () => {
     expect(registry.tabs()[1]).toMatchObject({ order: 100, needsSession: true, keepAcrossSessions: false });
   });
 
+  it("shows a tab registered after activation at once", () => {
+    const registry = new Registry();
+    let later: (() => void) | undefined;
+    registry.load(
+      "late",
+      defineExtension((roer) => {
+        later = () => void roer.stage.registerTab({ id: "main", title: "Late", component: View });
+      }),
+    );
+    const seen = vi.fn();
+    registry.subscribe(seen);
+    later?.();
+    expect(registry.tabs().map((tab) => tab.tabId)).toEqual(["ext:late/main"]);
+    expect(seen).toHaveBeenCalled();
+  });
+
   it("keeps a badge the new version sets as it activates, on a reload too", () => {
     const registry = new Registry();
     const version = (text: string) =>

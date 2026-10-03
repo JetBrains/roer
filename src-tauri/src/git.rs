@@ -621,13 +621,17 @@ impl Drop for TempIndex {
     }
 }
 
-/// `name` as a ref this repository has: the local branch, or else origin's.
+/// Whether `r` names a commit in this repository.
+fn is_commit(root: &str, r: &str) -> bool {
+    run(root, &["rev-parse", "--verify", "--quiet", &format!("{r}^{{commit}}")]).is_ok_and(|out| out.status.success())
+}
+
+/// `name` as a ref this repository has: origin's copy, or else the local
+/// branch. Origin's wins for the same reason it does in [`default_base`]: a
+/// pull request goes into the branch as GitHub has it, and the local one is
+/// often behind it, which would put upstream commits into the branch's diff.
 fn base_ref(root: &str, name: &str) -> Option<String> {
-    let exists = |r: &str| {
-        run(root, &["rev-parse", "--verify", "--quiet", &format!("{r}^{{commit}}")])
-            .is_ok_and(|out| out.status.success())
-    };
-    [name.to_string(), format!("origin/{name}")].into_iter().find(|r| exists(r))
+    [format!("origin/{name}"), name.to_string()].into_iter().find(|r| is_commit(root, r))
 }
 
 /// The branch a new pull request would go into: what origin calls its
@@ -638,10 +642,7 @@ fn default_base(root: &str) -> Option<String> {
     if let Some(head) = head.map(|h| h.trim().to_string()).filter(|h| !h.is_empty()) {
         return Some(head);
     }
-    ["origin/main", "origin/master", "main", "master"]
-        .into_iter()
-        .find(|r| base_ref(root, r).as_deref() == Some(*r))
-        .map(str::to_string)
+    ["origin/main", "origin/master", "main", "master"].into_iter().find(|r| is_commit(root, r)).map(str::to_string)
 }
 
 /// The files changed between two trees — a commit and its parent here,
@@ -1623,6 +1624,40 @@ mod tests {
         assert_eq!(names, vec!["feature".to_string(), "main".to_string()]);
 
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn compares_with_origins_copy_of_a_named_base_not_a_stale_local_one() {
+        let base = scratch("stale-base");
+        let remote = base.join("remote.git");
+        let work = base.join("work");
+        std::fs::create_dir_all(&remote).unwrap();
+        std::fs::create_dir_all(&work).unwrap();
+        let (remote, work) = (remote.to_str().unwrap(), work.to_str().unwrap());
+        must(remote, &["init", "-q", "--bare"]);
+        init(work);
+        must(work, &["remote", "add", "origin", remote]);
+        write(std::path::Path::new(work), "a.txt", "one\n");
+        commit_all(work, "first");
+        must(work, &["checkout", "-q", "-b", "develop"]);
+        must(work, &["push", "-q", "origin", "develop"]);
+        // Upstream moves on; the local develop stays where it was.
+        write(std::path::Path::new(work), "upstream.txt", "theirs\n");
+        commit_all(work, "upstream work");
+        must(work, &["push", "-q", "origin", "develop"]);
+        must(work, &["reset", "-q", "--hard", "HEAD~1"]);
+        // The feature is cut from develop as GitHub has it.
+        must(work, &["checkout", "-q", "-b", "feature", "origin/develop"]);
+        write(std::path::Path::new(work), "mine.txt", "mine\n");
+        commit_all(work, "my work");
+
+        let found = branch_diff(work, Some("develop")).expect("diff");
+        assert_eq!(found.base, "origin/develop");
+        assert_eq!(found.commits, 1);
+        assert!(found.diff.contains("mine.txt"), "{}", found.diff);
+        assert!(!found.diff.contains("upstream.txt"), "{}", found.diff);
+
+        std::fs::remove_dir_all(&base).ok();
     }
 
     #[test]

@@ -216,10 +216,20 @@ export function ReviewView({ session, active, onSent, onOpenPullRequest, onOpenC
   const changed = session?.changed;
   useEffect(() => {
     if (!active || mode !== "local" || !changed || local.kind !== "ready" || changed.root !== local.diff.root) return;
-    const { branch: onBranch, asked } = local;
-    void gitBranchDiff(local.diff.root, asked)
-      .then((diff) => setLocal({ kind: "ready", diff, branch: onBranch, ...(asked ? { asked } : {}) }))
-      .catch((cause: unknown) => setLocal({ kind: "error", text: String(cause) }));
+    const { asked } = local;
+    const root = local.diff.root;
+    // A save can come with a checkout: the branch is read again with the diff, and comments go under it. A
+    // load that starts meanwhile is the newer answer, so this one is dropped.
+    const mine = generation.current;
+    void Promise.all([gitBranchDiff(root, asked), gitCurrentBranch(root).catch(() => null)])
+      .then(([diff, onBranch]) => {
+        if (mine !== generation.current) return;
+        setComments(storedComments(diff.root, onBranch));
+        setLocal({ kind: "ready", diff, branch: onBranch, ...(asked ? { asked } : {}) });
+      })
+      .catch((cause: unknown) => {
+        if (mine === generation.current) setLocal({ kind: "error", text: String(cause) });
+      });
     // Keyed on the batch of changes alone: a fresh diff is the answer to it, not a reason for another.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [changed]);

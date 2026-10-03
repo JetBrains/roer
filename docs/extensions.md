@@ -1,14 +1,27 @@
 # Roer Extensions — code extensions
 
-Status: **draft / RFC**. Rollout step 2, the thin slice (§11), is
-implemented, and so is the first part of step 4: `server.ts` with `rpc` and
-`exec` (`extension_servers.rs`, `extension_server.ts`). A server starts on
-its first `rpc` call rather than at activation, and isn't restarted after a
-crash until the next call. Bun isn't bundled with the app: a build uses
-`ROER_BUN`, a Bun beside the app, `~/.bun/bin/bun` or the `bun` on `PATH`,
-and with none of them Roer downloads a pinned release into
-`~/.roer/bun/<version>/` the first time, checked against its SHA-256, and
-uses it from then on (`bun_fetch.rs`). The rest is still design.
+Status: **draft / RFC**. What is built so far:
+
+- Rollout step 2, the thin slice (§11): the registry, loading and hot
+  reload, the `roer` SDK, `roer ext`, the MCP tools and the skill.
+- From step 4, `server.ts` with `rpc` and `exec` (`extension_servers.rs`,
+  `extension_server.ts`), and tools: `roer.tools.register` offers agents a
+  tool through `roer mcp` as `<id>__<name>`, run in the app's window. A
+  server starts on its first `rpc` call rather than at activation, and
+  isn't restarted after a crash until the next call.
+- `roer/ui`: the Generative UI catalog as React components, for an
+  extension's tab to be built from. The agent's guide (`roer ext guide`)
+  documents it.
+- A Review tab, bundled beside Changes, built on the SDK alone (§4).
+- The Extensions dialog, which switches any extension off (§6).
+
+Bun isn't bundled with the app: a build uses `ROER_BUN`, a Bun beside the
+app, `~/.bun/bin/bun` or the `bun` on `PATH`, and with none of them Roer
+downloads a pinned release into `~/.roer/bun/<version>/` the first time,
+checked against its SHA-256, and uses it from then on (`bun_fetch.rs`).
+
+Everything else here, from `replaces` and forking to the side panel,
+events, commands and safe mode, is still design.
 
 ## Goal
 
