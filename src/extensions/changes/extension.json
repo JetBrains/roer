@@ -2,7 +2,7 @@
   "apiVersion": 1,
   "id": "changes",
   "name": "Changes",
-  "description": "The worktree's uncommitted changes and the branch's commits, file by file.",
+  "description": "The branch's work: its uncommitted edits and commits, the whole branch with comments on its lines, and its pull request with the review threads. Each comment is decided on and handed to the agent.",
   "roer": ">=0.8",
   "app": "app.tsx"
 }

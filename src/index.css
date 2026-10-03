@@ -887,6 +887,23 @@ button.row.active {
   font-size: 12px;
 }
 
+/* Shows or hides the file tree beside the diff. */
+.tree-toggle {
+  align-self: center;
+  display: flex;
+  padding: 3px;
+  color: var(--roer-muted);
+  background: none;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.tree-toggle:hover {
+  color: var(--roer-fg);
+  background: var(--roer-row-hover);
+}
+
 .changes-head .keys {
   margin-left: auto;
 }
@@ -930,6 +947,42 @@ button.row.active {
 
 /* Branch diff: a branch and a base picker above the same tree-and-diff pane
    local changes use, one commit of the range at a time ----------------- */
+
+/* The Changes tab: its scope bar over whichever view the scope shows. */
+.changes-view {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.changes-scopes {
+  display: flex;
+  align-items: center;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--roer-border);
+  background: var(--roer-panel);
+  font-size: 12px;
+}
+
+.changes-scopes {
+  gap: 10px;
+}
+
+.changes-said {
+  font-size: 12px;
+}
+
+.changes-scope {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+}
+
+.changes-scope > * {
+  flex: 1 1 auto;
+  min-width: 0;
+}
 
 .branch-diff {
   flex: 1 1 auto;

@@ -11,6 +11,7 @@ import {
   type ReactNode,
   type KeyboardEvent,
 } from "react";
+import { PanelLeftClose, PanelLeftOpen } from "lucide-react";
 
 import { Spans } from "./CodeLine";
 import { isCardNote, NoteCard, NoteComposer, type NoteAction, type NoteAnswer } from "./DiffNote";
@@ -322,6 +323,16 @@ function storedLayout(): Layout | null {
   }
 }
 
+const TREE_KEY = "roer:diff-tree-hidden";
+
+function storedTreeHidden(): boolean {
+  try {
+    return localStorage.getItem(TREE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
 /**
  * A file tree on the left, the selected file's diff on the right, and the
  * arrow keys stepping through the changes themselves.
@@ -362,6 +373,19 @@ export function DiffPane({
     setLayoutRaw(next);
     try {
       localStorage.setItem(LAYOUT_KEY, next);
+    } catch {
+      /* not kept, still shown */
+    }
+  };
+
+  // Hidden by hand to give the diff the width, everywhere and across launches,
+  // like the layout. The arrow keys step through the files all the same.
+  const [treeHidden, setTreeHiddenRaw] = useState(storedTreeHidden);
+  const setTreeHidden = (next: boolean) => {
+    setTreeHiddenRaw(next);
+    try {
+      if (next) localStorage.setItem(TREE_KEY, "1");
+      else localStorage.removeItem(TREE_KEY);
     } catch {
       /* not kept, still shown */
     }
@@ -463,6 +487,18 @@ export function DiffPane({
   );
 
   const [fileNotes, lineNotes] = useMemo(() => {
+    // The lines this diff draws, keyed the way `LineNotes` looks them up.
+    // Until it has loaded nothing is known, and every note waits for it.
+    let drawn: Set<string> | null = null;
+    if (parsed) {
+      drawn = new Set();
+      for (const hunk of parsed.hunks) {
+        for (const line of hunk.lines) {
+          if (line.kind !== "add" && line.oldNo !== undefined) drawn.add(`old:${line.oldNo}`);
+          if (line.newNo !== undefined) drawn.add(`new:${line.newNo}`);
+        }
+      }
+    }
     const byLine = new Map<string, DiffNote[]>();
     const heading: DiffNote[] = [];
     for (const note of notes ?? []) {
@@ -472,10 +508,17 @@ export function DiffPane({
         continue;
       }
       const key = `${note.side ?? "new"}:${note.line}`;
+      // A note on a line this diff does not show heads the file, naming its
+      // line, rather than vanishing.
+      if (drawn && !drawn.has(key)) {
+        const { line, ...rest } = note;
+        heading.push({ ...rest, tag: note.tag ?? (note.side === "old" ? `removed line ${line}` : `line ${line}`) });
+        continue;
+      }
       byLine.set(key, [...(byLine.get(key) ?? []), note]);
     }
     return [heading, byLine] as const;
-  }, [notes, path]);
+  }, [notes, path, parsed]);
 
   // How many notes each file has, for the tree to show where they are.
   const notesPerFile = useMemo(() => {
@@ -603,6 +646,16 @@ export function DiffPane({
       aria-label={ariaLabel ?? "Diff"}
     >
       <header className="changes-head">
+        <button
+          type="button"
+          className="tree-toggle"
+          aria-label={treeHidden ? "Show files" : "Hide files"}
+          title={treeHidden ? "Show the changed files" : "Hide the changed files"}
+          aria-pressed={!treeHidden}
+          onClick={() => setTreeHidden(!treeHidden)}
+        >
+          {treeHidden ? <PanelLeftOpen size={14} /> : <PanelLeftClose size={14} />}
+        </button>
         <strong>{title}</strong>
         {files ? (
           <>
@@ -645,66 +698,68 @@ export function DiffPane({
 
       {count > 0 ? (
         <div className="changes-body">
-          <ul className="tree" aria-label="Changed files">
-            {visible.map((row) => {
-              const isSelected =
-                row.kind === "file" && row.path === selection?.path;
-              const indent = { paddingLeft: `${6 + row.depth * 12}px` };
-              return (
-                <li key={`${row.kind}:${row.path}`}>
-                  {row.kind === "dir" ? (
-                    <button
-                      type="button"
-                      className="tree-row dir"
-                      style={indent}
-                      onClick={() => toggle(row.path)}
-                      aria-expanded={!collapsed.has(row.path)}
-                    >
-                      <span className="caret">
-                        {collapsed.has(row.path) ? "▸" : "▾"}
-                      </span>
-                      <span className="name">{row.name}</span>
-                      <span className="muted">{row.count}</span>
-                    </button>
-                  ) : (
-                    <button
-                      type="button"
-                      ref={(node) => {
-                        rowRefs.current.set(row.path, node);
-                      }}
-                      className={
-                        isSelected ? "tree-row file selected" : "tree-row file"
-                      }
-                      style={indent}
-                      aria-current={isSelected ? "true" : undefined}
-                      onClick={() => select({ path: row.path, at: 0 })}
-                    >
-                      <span
-                        className={
-                          isStaged(row.file) ? "letter staged" : "letter"
-                        }
+          {treeHidden ? null : (
+            <ul className="tree" aria-label="Changed files">
+              {visible.map((row) => {
+                const isSelected =
+                  row.kind === "file" && row.path === selection?.path;
+                const indent = { paddingLeft: `${6 + row.depth * 12}px` };
+                return (
+                  <li key={`${row.kind}:${row.path}`}>
+                    {row.kind === "dir" ? (
+                      <button
+                        type="button"
+                        className="tree-row dir"
+                        style={indent}
+                        onClick={() => toggle(row.path)}
+                        aria-expanded={!collapsed.has(row.path)}
                       >
-                        {statusLetter(row.file)}
-                      </span>
-                      <span className="name">{row.name}</span>
-                      {row.file.binary && <span className="muted">bin</span>}
-                      {notesPerFile.has(row.path) ? (
-                        <span className="note-count" title="Notes on this file">
-                          {notesPerFile.get(row.path)}
+                        <span className="caret">
+                          {collapsed.has(row.path) ? "▸" : "▾"}
                         </span>
-                      ) : null}
-                      {row.file.counted && (
-                        <span className="counts">
-                          <span className="plus">+{row.file.added}</span>
-                          <span className="minus">−{row.file.deleted}</span>
+                        <span className="name">{row.name}</span>
+                        <span className="muted">{row.count}</span>
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        ref={(node) => {
+                          rowRefs.current.set(row.path, node);
+                        }}
+                        className={
+                          isSelected ? "tree-row file selected" : "tree-row file"
+                        }
+                        style={indent}
+                        aria-current={isSelected ? "true" : undefined}
+                        onClick={() => select({ path: row.path, at: 0 })}
+                      >
+                        <span
+                          className={
+                            isStaged(row.file) ? "letter staged" : "letter"
+                          }
+                        >
+                          {statusLetter(row.file)}
                         </span>
-                      )}
-                    </button>
-                  )}
-                </li>
-              );
-            })}
-          </ul>
+                        <span className="name">{row.name}</span>
+                        {row.file.binary && <span className="muted">bin</span>}
+                        {notesPerFile.has(row.path) ? (
+                          <span className="note-count" title="Notes on this file">
+                            {notesPerFile.get(row.path)}
+                          </span>
+                        ) : null}
+                        {row.file.counted && (
+                          <span className="counts">
+                            <span className="plus">+{row.file.added}</span>
+                            <span className="minus">−{row.file.deleted}</span>
+                          </span>
+                        )}
+                      </button>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          )}
 
           <div className="diff" aria-label="Diff">
             {selected ? (

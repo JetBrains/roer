@@ -182,7 +182,7 @@ import { Button, Card, Column, Grid, Row, StatTile, StatusCard, Text } from "roe
   is a comment (markdown, `replies`); give notes an `id` and the view
   `noteActions` (`{ label, value, input?, done? }[]`) and each gets those
   buttons, reported to `onNoteAnswer`. Set the note's `state` to the answer
-  to keep it. Roer's own Review tab (`src/extensions/code-review/`) is built
+  to keep it. Roer's own Changes tab (`src/extensions/changes/`) is built
   this way: GitHub's review threads, accepted, declined or instructed.
 - `Surface` draws catalog JSON, the same `components` and data model that
   `show_ui` and `save_ui` take, and hands its buttons' events to
@@ -244,8 +244,8 @@ export default defineExtension((roer) => {
   mcp` tells it the list changed. To try the tool while developing, call it
   from your own session once `extension_dev` reports the tab up.
 
-Roer's Review tab (`src/extensions/code-review/`) works this way:
-`code-review__add_comments` puts an agent's review on the diff, and the
+Roer's Changes tab (`src/extensions/changes/`) works this way:
+`changes__add_comments` puts an agent's review on the branch's diff, and the
 person accepts, declines or instructs each comment.
 
 ## The loop
