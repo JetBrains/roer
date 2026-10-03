@@ -331,6 +331,15 @@ roer ext safe-mode on|off
 `install` takes a local folder only. Installing from git or npm needs a
 pinning and update story, and nobody has asked to share extensions yet.
 
+**Switching one off.** The Extensions dialog (the puzzle icon in the title
+bar) lists every extension, bundled ones included, with its scope, folder and
+build errors, and a switch for each. A switched-off extension isn't built or
+loaded: its tabs leave the strip, its tools leave `roer mcp`, and its server
+stops. The ids are kept in `~/.roer/extensions/.disabled.json`, inside the
+watched folder, so a switch reaches every window the way an edit does, and
+`roer ext list` reports them as `disabled`. `roer ext enable|disable` would
+write the same file; the dialog is the only way so far.
+
 ---
 
 ## 7. How the agent learns the API

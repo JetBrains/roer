@@ -24,7 +24,7 @@ usage:
                               rebuilt on every save until Roer restarts; reports the
                               build's errors
   roer ext install <dir>      copy the folder into ~/.roer/extensions, to keep
-  roer ext list               id<TAB>scope<TAB>ok|failed<TAB>folder, one per line
+  roer ext list               id<TAB>scope<TAB>ok|failed|disabled<TAB>folder, one per line
   roer ext logs <id> [lines]  the extension's log: builds, activations, render errors
   roer ext remove <id>        take the extension away, from either scope
   roer ext guide              how to write one, and the API's types
@@ -339,9 +339,15 @@ pub fn list() -> String {
     if rows.is_empty() {
         return "No extensions. `roer ext new <id>` writes one.".to_string();
     }
+    // Switched off in the app's Extensions dialog: the app neither builds nor loads these.
+    let off: Vec<String> = std::fs::read_to_string(user_dir().join(".disabled.json"))
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_default();
     rows.iter()
         .map(|(id, scope, dir)| {
             let state = match read_status(id) {
+                _ if off.contains(id) => "disabled",
                 Some(status) if status["ok"] == json!(true) => "ok",
                 Some(_) => "failed",
                 None => "unbuilt",

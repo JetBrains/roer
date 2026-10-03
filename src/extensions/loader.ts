@@ -10,6 +10,7 @@ import { useEffect } from "react";
 
 import { invoke, listen } from "../lib/backend";
 import type { Extension } from "./api";
+import { syncBundled } from "./bundled";
 import { registry, type Registry } from "./registry";
 
 export const EXTENSIONS_EVENT = "roer://extensions";
@@ -24,8 +25,11 @@ export interface ExtensionInfo {
   hash: string;
   ok: boolean;
   hasApp: boolean;
+  hasServer?: boolean;
   errors: string[];
   builtAt: number;
+  /** Switched off: neither built nor loaded. */
+  disabled?: boolean;
 }
 
 interface Bundle {
@@ -35,6 +39,13 @@ interface Bundle {
 }
 
 export const listExtensions = (): Promise<ExtensionInfo[]> => invoke("extensions_list");
+
+/** The ids switched off, bundled ones included. */
+export const listDisabled = (): Promise<string[]> => invoke("extensions_disabled");
+
+/** Switches one on or off; every window loads or unloads it once the backend has written it down. */
+export const setExtensionEnabled = (id: string, enabled: boolean): Promise<void> =>
+  invoke("extension_set_enabled", { id, enabled });
 
 /** Writes to the extension's log, which `roer ext logs` and its agent read. */
 export const logExtension = (id: string, message: string): Promise<void> =>
@@ -69,6 +80,12 @@ async function importText(js: string): Promise<{ default?: Extension }> {
 
 /** Loads one extension as `info` describes it, or unloads it when there is nothing to run. */
 export async function loadOne(info: ExtensionInfo, into: Registry = registry): Promise<void> {
+  if (info.disabled) {
+    into.unload(info.id);
+    setStyle(info.id, null);
+    loadedHash.delete(info.id);
+    return;
+  }
   if (!info.ok || !info.hasApp) {
     // A failed build keeps the last good version running, as an activation
     // that throws does: the agent fixes it, and the person's tab stays up.
@@ -103,8 +120,12 @@ export function useExternalExtensions(): void {
     let unlisten: (() => void) | undefined;
 
     const sync = async (only?: readonly string[]) => {
-      const all = await listExtensions().catch(() => [] as ExtensionInfo[]);
+      const [all, disabled] = await Promise.all([
+        listExtensions().catch(() => [] as ExtensionInfo[]),
+        listDisabled().catch(() => [] as string[]),
+      ]);
       if (cancelled) return;
+      syncBundled(new Set(disabled));
       const present = new Set(all.map((info) => info.id));
       for (const info of all) {
         if (!only || only.includes(info.id)) await loadOne(info);

@@ -8,6 +8,7 @@ import {
   PanelLeftOpen,
   PanelRightClose,
   PanelRightOpen,
+  Puzzle,
   Search,
   Sun,
 } from "lucide-react";
@@ -38,6 +39,7 @@ import {
   shorten,
   type OpenRequest,
 } from "./SessionBrowser";
+import { ExtensionsDialog } from "./ExtensionsDialog";
 import { ShortcutsDialog } from "./ShortcutsDialog";
 import { TerminalView } from "./TerminalView";
 import { WorkspaceSidebar } from "./WorkspaceSidebar";
@@ -140,6 +142,7 @@ export function App() {
   const [tabs, setTabs] = useState<Tabs>(noTabs);
   const [finding, setFinding] = useState(false);
   const [showingShortcuts, setShowingShortcuts] = useState(false);
+  const [showingExtensions, setShowingExtensions] = useState(false);
   // The Claude Code setup on screen, if it is: put there by the app on the
   // first launch that finds Claude Code, or asked for from the menu.
   const [setup, setSetup] = useState<{ status: SetupStatus; firstRun: boolean } | null>(null);
@@ -947,6 +950,16 @@ export function App() {
 
         <button
           type="button"
+          className="extensions-toggle"
+          aria-label="Extensions"
+          title="Extensions"
+          onClick={() => setShowingExtensions(true)}
+        >
+          <Puzzle size={15} />
+        </button>
+
+        <button
+          type="button"
           className="theme-toggle"
           aria-label={`Theme: ${themeChoice}`}
           title={`Theme: ${themeChoice === "system" ? "match system" : themeChoice}`}
@@ -1329,6 +1342,7 @@ export function App() {
           />
         ) : null}
 
+        {showingExtensions ? <ExtensionsDialog onClose={() => setShowingExtensions(false)} /> : null}
         {showingShortcuts ? <ShortcutsDialog tabs={strip.slice(0, 9).map((tab) => tab.title)} onClose={() => setShowingShortcuts(false)} /> : null}
 
         {finding ? (

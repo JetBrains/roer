@@ -12,7 +12,7 @@
 //! went: they share no process with the app, only `$ROER_HOME`.
 
 use std::collections::hash_map::DefaultHasher;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::hash::{Hash, Hasher};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -46,6 +46,32 @@ fn user_dir() -> PathBuf {
 
 fn dev_dir() -> PathBuf {
     home().join("extensions-dev")
+}
+
+/// The ids the person switched off, as a JSON array. Inside the watched
+/// folder, so a switch reaches every window the way an edit does, and a dot
+/// file, which no scan takes for an extension.
+fn disabled_path() -> PathBuf {
+    user_dir().join(".disabled.json")
+}
+
+/// The extensions switched off, bundled ones included.
+pub(crate) fn disabled() -> BTreeSet<String> {
+    std::fs::read_to_string(disabled_path())
+        .ok()
+        .and_then(|text| serde_json::from_str::<Vec<String>>(&text).ok())
+        .map(|ids| ids.into_iter().filter(|id| valid_id(id)).collect())
+        .unwrap_or_default()
+}
+
+fn set_disabled(ids: &BTreeSet<String>) -> Result<(), String> {
+    let path = disabled_path();
+    std::fs::create_dir_all(user_dir()).map_err(|e| format!("{}: {e}", user_dir().display()))?;
+    let text = serde_json::to_string_pretty(&ids.iter().collect::<Vec<_>>()).map_err(|e| e.to_string())?;
+    // Written aside and moved in, so a reader never sees half a list.
+    let partial = path.with_extension("json.partial");
+    std::fs::write(&partial, text).map_err(|e| format!("{}: {e}", partial.display()))?;
+    std::fs::rename(&partial, &path).map_err(|e| format!("{}: {e}", path.display()))
 }
 
 pub(crate) fn cache_dir(id: &str) -> PathBuf {
@@ -96,6 +122,9 @@ pub struct ExtensionInfo {
     pub errors: Vec<String>,
     /// Seconds since the epoch.
     pub built_at: u64,
+    /// Switched off by the person: neither built nor loaded, and its server not started.
+    #[serde(default)]
+    pub disabled: bool,
 }
 
 /// What the frontend imports: the built module, and its stylesheet if any.
@@ -305,6 +334,7 @@ fn build(found: &Found, hash: String) -> ExtensionInfo {
         has_server: false,
         errors: Vec::new(),
         built_at: now(),
+        disabled: false,
     };
     let manifest = match &found.manifest {
         Ok(manifest) => manifest,
@@ -418,6 +448,9 @@ pub(crate) fn log(id: &str, message: &str) {
 /// The `server.ts` an extension runs, and the hash of the sources it is
 /// part of: a server started from another hash is out of date.
 pub(crate) fn server_entry(id: &str) -> Result<(PathBuf, String), String> {
+    if disabled().contains(id) {
+        return Err(format!("{id} is switched off"));
+    }
     let found = scan().into_iter().find(|found| found.id == id).ok_or_else(|| format!("no such extension: {id}"))?;
     let manifest = found.manifest.as_ref().map_err(Clone::clone)?;
     let server = manifest.server.as_ref().ok_or_else(|| format!("{id} has no server: its manifest names no \"server\""))?;
@@ -430,7 +463,55 @@ pub(crate) fn server_entry(id: &str) -> Result<(PathBuf, String), String> {
 
 #[tauri::command(async)]
 pub fn extensions_list() -> Vec<ExtensionInfo> {
-    scan().iter().map(ensure).collect()
+    let off = disabled();
+    scan().iter().map(|found| if off.contains(&found.id) { described(found) } else { ensure(found) }).collect()
+}
+
+/// A switched-off extension as it was last built, or as its manifest names
+/// it: nothing is built for one that will not run.
+fn described(found: &Found) -> ExtensionInfo {
+    let mut info = read_status(&found.id)
+        .filter(|status| status.dir == found.dir.to_string_lossy())
+        .unwrap_or_else(|| ExtensionInfo {
+            id: found.id.clone(),
+            name: found.manifest.as_ref().map_or_else(|_| found.id.clone(), |m| m.name.clone()),
+            description: found.manifest.as_ref().ok().and_then(|m| m.description.clone()),
+            scope: found.scope.to_string(),
+            dir: found.dir.to_string_lossy().into_owned(),
+            hash: String::new(),
+            ok: true,
+            has_app: false,
+            has_server: false,
+            errors: Vec::new(),
+            built_at: 0,
+            disabled: false,
+        });
+    info.scope = found.scope.to_string();
+    info.disabled = true;
+    info
+}
+
+/// The ids switched off, for the extensions that ship inside the app, which
+/// no scan finds.
+#[tauri::command(async)]
+pub fn extensions_disabled() -> Vec<String> {
+    disabled().into_iter().collect()
+}
+
+/// Switches an extension on or off. The watcher sees the list change and
+/// tells every window, which loads or unloads it.
+#[tauri::command(async)]
+pub fn extension_set_enabled(id: String, enabled: bool) -> Result<(), String> {
+    if !valid_id(&id) {
+        return Err(format!("no such extension: {id}"));
+    }
+    let mut ids = disabled();
+    let changed = if enabled { ids.remove(&id) } else { ids.insert(id.clone()) };
+    if changed {
+        set_disabled(&ids)?;
+        log(&id, if enabled { "switched on" } else { "switched off" });
+    }
+    Ok(())
 }
 
 #[tauri::command(async)]
@@ -450,6 +531,17 @@ pub fn extension_bundle(id: String) -> Result<Bundle, String> {
 #[tauri::command]
 pub fn extension_log(id: String, message: String) {
     log(&id, &message);
+}
+
+/// What makes a window load an extension again: its build, and whether it is
+/// switched on. A bundled one, which no scan finds, is here only while it is off.
+fn states() -> HashMap<String, (String, bool)> {
+    let mut states: HashMap<String, (String, bool)> =
+        extensions_list().into_iter().map(|info| (info.id, (info.hash, info.disabled))).collect();
+    for id in disabled() {
+        states.entry(id).or_insert((String::new(), true));
+    }
+    states
 }
 
 /// Rebuilds whatever changed whenever the extension folders do, and emits
@@ -472,8 +564,7 @@ pub fn watch<S: Sink>(sink: S) -> notify::Result<()> {
         let _ = watcher.watch(&user_dir(), RecursiveMode::Recursive);
         let _ = watcher.watch(&dev_dir(), RecursiveMode::NonRecursive);
         let mut watched: Vec<PathBuf> = Vec::new();
-        let mut known: HashMap<String, String> =
-            extensions_list().into_iter().map(|info| (info.id, info.hash)).collect();
+        let mut known = states();
 
         loop {
             // Session folders come and go with their pointers.
@@ -492,8 +583,7 @@ pub fn watch<S: Sink>(sink: S) -> notify::Result<()> {
             }
             while rx.recv_timeout(SETTLE).is_ok() {}
 
-            let now: HashMap<String, String> =
-                extensions_list().into_iter().map(|info| (info.id, info.hash)).collect();
+            let now = states();
             let mut changed: Vec<String> = now
                 .iter()
                 .filter(|(id, hash)| known.get(*id) != Some(hash))
