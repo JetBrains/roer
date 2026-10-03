@@ -1405,3 +1405,57 @@ fn mcp_adds_updates_lists_and_deletes_tasks() {
     assert_eq!(replies[4]["result"]["isError"], false);
     assert_eq!(text(5), "[]");
 }
+
+#[test]
+fn mcp_offers_extension_tools_and_hands_their_calls_to_the_app() {
+    let env = Env::new("mcp-ext-tools");
+    let here = pane(&env, "work", "sh");
+    std::fs::create_dir_all(&env.home).unwrap();
+    std::fs::write(
+        env.home.join("extension-tools.json"),
+        serde_json::json!({ "tools": [{
+            "extension": "code-review", "name": "add_comments", "description": "Hand over comments.",
+            "inputSchema": { "type": "object", "properties": { "comments": { "type": "array" } }, "required": ["comments"] },
+        }] })
+        .to_string(),
+    )
+    .unwrap();
+
+    // The app: takes each call by removing its record, and answers with a receipt named after it.
+    let calls = env.home.join("extension-calls");
+    let receipts = env.home.join("extension-call-receipts");
+    let app = std::thread::spawn(move || {
+        for _ in 0..200 {
+            let found = std::fs::read_dir(&calls).into_iter().flatten().flatten().map(|e| e.path());
+            for path in found.filter(|p| p.extension().is_some_and(|x| x == "json")) {
+                let call: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+                std::fs::remove_file(&path).unwrap();
+                std::fs::create_dir_all(&receipts).unwrap();
+                let answer = serde_json::json!({ "result": format!(
+                    "{} {} from {} with {}", call["extension"], call["tool"], call["pane"], call["args"]
+                ) });
+                std::fs::write(receipts.join(format!("{}.json", call["id"].as_str().unwrap())), answer.to_string()).unwrap();
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+    });
+
+    let vars = in_pane(&env, &here);
+    let vars: Vec<(&str, &str)> = vars.iter().map(|(k, v)| (*k, v.as_str())).collect();
+    let replies = mcp(
+        &env,
+        &vars,
+        &[serde_json::json!({ "method": "tools/list" }), call("code-review__add_comments", serde_json::json!({ "comments": [] }))],
+    );
+    app.join().unwrap();
+
+    let tool = replies[0]["result"]["tools"].as_array().unwrap().iter().find(|t| t["name"] == "code-review__add_comments");
+    let tool = tool.unwrap_or_else(|| panic!("not listed: {}", replies[0]));
+    assert!(tool["inputSchema"]["properties"]["session"].is_object(), "{tool}");
+    assert_eq!(tool["inputSchema"]["required"], serde_json::json!(["comments"]), "optional inside a session");
+
+    let text = replies[1]["result"]["content"][0]["text"].as_str().unwrap();
+    assert_eq!(replies[1]["result"]["isError"], false, "{}", replies[1]);
+    assert_eq!(text, format!(r#""code-review" "add_comments" from "{here}" with {{"comments":[]}}"#));
+}

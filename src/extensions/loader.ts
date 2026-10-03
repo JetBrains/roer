@@ -119,8 +119,15 @@ export function useExternalExtensions(): void {
       }
     };
 
-    void sync();
-    void listen<{ changed: string[] }>(EXTENSIONS_EVENT, (event) => void sync(event.payload.changed)).then(
+    // One sync at a time, in order: two loads of one extension racing could
+    // leave the older bundle active, and nothing later would put it right.
+    let queue: Promise<void> = Promise.resolve();
+    const enqueue = (only?: readonly string[]) => {
+      queue = queue.then(() => sync(only)).catch(() => undefined);
+    };
+
+    enqueue();
+    void listen<{ changed: string[] }>(EXTENSIONS_EVENT, (event) => enqueue(event.payload.changed)).then(
       (stop) => {
         if (cancelled) stop();
         else unlisten = stop;

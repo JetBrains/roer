@@ -36,7 +36,7 @@ const LOG_LIMIT: u64 = 1024 * 1024;
 /// several files is one build, not one per file.
 const SETTLE: Duration = Duration::from_millis(300);
 
-fn home() -> PathBuf {
+pub(crate) fn home() -> PathBuf {
     crate::history::roer_home()
 }
 
@@ -48,7 +48,7 @@ fn dev_dir() -> PathBuf {
     home().join("extensions-dev")
 }
 
-fn cache_dir(id: &str) -> PathBuf {
+pub(crate) fn cache_dir(id: &str) -> PathBuf {
     home().join("extension-cache").join(id)
 }
 
@@ -63,6 +63,8 @@ struct Manifest {
     description: Option<String>,
     #[serde(default)]
     app: Option<String>,
+    #[serde(default)]
+    server: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -87,6 +89,9 @@ pub struct ExtensionInfo {
     pub ok: bool,
     /// Whether there is an `app.js` to load.
     pub has_app: bool,
+    /// Whether the manifest names a `server.ts`, which runs on the first `rpc`.
+    #[serde(default)]
+    pub has_server: bool,
     #[serde(default)]
     pub errors: Vec<String>,
     /// Seconds since the epoch.
@@ -240,7 +245,7 @@ fn now() -> u64 {
 /// The Bun that builds extensions: `ROER_BUN`, then the one beside the app,
 /// then Bun's own install location, then `PATH`. Never the shell's `PATH`
 /// alone, which an app started from the Finder does not have.
-fn bun() -> Result<PathBuf, String> {
+pub(crate) fn bun() -> Result<PathBuf, String> {
     if let Some(explicit) = std::env::var_os("ROER_BUN").filter(|v| !v.is_empty()) {
         return Ok(PathBuf::from(explicit));
     }
@@ -297,6 +302,7 @@ fn build(found: &Found, hash: String) -> ExtensionInfo {
         hash,
         ok: false,
         has_app: false,
+        has_server: false,
         errors: Vec::new(),
         built_at: now(),
     };
@@ -310,6 +316,15 @@ fn build(found: &Found, hash: String) -> ExtensionInfo {
     };
     info.name = manifest.name.clone();
     info.description = manifest.description.clone();
+    if let Some(server) = &manifest.server {
+        info.has_server = true;
+        if !found.dir.join(server).is_file() {
+            let error = format!("{}: no such file (the manifest's \"server\")", found.dir.join(server).display());
+            log(&found.id, &format!("manifest: {error}"));
+            info.errors.push(error);
+            return info;
+        }
+    }
     let Some(app) = &manifest.app else {
         info.ok = true;
         return info;
@@ -400,6 +415,19 @@ pub(crate) fn log(id: &str, message: &str) {
     }
 }
 
+/// The `server.ts` an extension runs, and the hash of the sources it is
+/// part of: a server started from another hash is out of date.
+pub(crate) fn server_entry(id: &str) -> Result<(PathBuf, String), String> {
+    let found = scan().into_iter().find(|found| found.id == id).ok_or_else(|| format!("no such extension: {id}"))?;
+    let manifest = found.manifest.as_ref().map_err(Clone::clone)?;
+    let server = manifest.server.as_ref().ok_or_else(|| format!("{id} has no server: its manifest names no \"server\""))?;
+    let entry = found.dir.join(server);
+    if !entry.is_file() {
+        return Err(format!("{}: no such file (the manifest's \"server\")", entry.display()));
+    }
+    Ok((entry, fingerprint(&found)))
+}
+
 #[tauri::command(async)]
 pub fn extensions_list() -> Vec<ExtensionInfo> {
     scan().iter().map(ensure).collect()
@@ -473,6 +501,11 @@ pub fn watch<S: Sink>(sink: S) -> notify::Result<()> {
                 .chain(known.keys().filter(|id| !now.contains_key(*id)).cloned())
                 .collect();
             changed.sort();
+            // A changed server.ts, or one whose extension went away, stops;
+            // the next rpc starts it from the new sources.
+            for id in &changed {
+                crate::extension_servers::stop(id);
+            }
             known = now;
             if !changed.is_empty() {
                 sink.emit(EXTENSIONS_EVENT, &serde_json::json!({ "changed": changed }));

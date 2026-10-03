@@ -378,9 +378,21 @@ fn dispatch(state: &Arc<AppState>, cmd: &str, args: Value, cid: Option<&str>) ->
             crate::files::files_grep_core(&state.bus, &state.files, cwd, pattern, limit)
                 .and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string()))
         }
+        "files_list" => {
+            let cwd = parse(&args, "cwd")?;
+            let limit = parse(&args, "limit")?;
+            crate::files::files_list_core(&state.bus, &state.files, cwd, limit)
+                .and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string()))
+        }
         "extensions_list" => call!(args, crate::extensions::extensions_list,),
         "extension_bundle" => call_res!(args, crate::extensions::extension_bundle, "id": String),
         "extension_log" => call!(args, crate::extensions::extension_log, "id": String, "message": String),
+        "extension_rpc" => call_res!(args, crate::extension_servers::extension_rpc, "id": String, "method": String, "params": Option<Value>),
+        "extension_tools_publish" => call_res!(args, crate::extension_tools::extension_tools_publish, "tools": Vec<Value>),
+        "extension_call_claim" => call!(args, crate::extension_tools::extension_call_claim, "id": String),
+        "extension_call_reply" => call_res!(
+            args, crate::extension_tools::extension_call_reply, "id": String, "result": Option<Value>, "error": Option<String>
+        ),
 
                 "handoff_pending" => call!(args, crate::handoff::handoff_pending_core,),
         "handoff_claim" => call_res!(args, crate::handoff::handoff_claim, "record": String),
@@ -643,6 +655,9 @@ async fn start(addr: SocketAddr, own_watchers: bool) -> std::io::Result<Started>
         }
         if let Err(e) = crate::pr_draft::watch(state.bus.clone()) {
             eprintln!("roer-server: could not start the PR-draft watcher: {e}");
+        }
+        if let Err(e) = crate::extension_tools::watch(state.bus.clone()) {
+            eprintln!("roer-server: could not start the extension-call watcher: {e}");
         }
         if let Err(e) = crate::extensions::watch(state.bus.clone()) {
             eprintln!("roer-server: could not start the extensions watcher: {e}");

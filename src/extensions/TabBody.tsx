@@ -55,7 +55,7 @@ export function TabBody({ entry, session, active, openFile, activateTab }: TabBo
   // Another session is another tab, unless the tab asked to keep its state.
   const key = entry.keepAcrossSessions ? "kept" : (session?.pane ?? "none");
   return (
-    <HostProvider value={{ session, active, openFile, activateTab }}>
+    <HostProvider value={{ extension: entry.extension, session, active, openFile, activateTab }}>
       {/* A new component (a reload) starts the boundary over, and so does another session. */}
       <Catch key={`${entry.generation}:${key}`} extension={entry.extension}>
         <View />

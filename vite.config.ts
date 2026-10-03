@@ -7,12 +7,13 @@ import react from "@vitejs/plugin-react";
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   resolve: {
-    alias: {
-      "@": path.resolve(import.meta.dirname, "./src"),
+    alias: [
+      { find: "@", replacement: path.resolve(import.meta.dirname, "./src") },
       // What an extension imports the host's own code as; bundled extensions
       // too, so their source builds unchanged as somebody's fork.
-      roer: path.resolve(import.meta.dirname, "./src/extensions/sdk.ts"),
-    },
+      { find: /^roer$/, replacement: path.resolve(import.meta.dirname, "./src/extensions/sdk.ts") },
+      { find: /^roer\/ui$/, replacement: path.resolve(import.meta.dirname, "./src/extensions/ui.ts") },
+    ],
   },
   // Tauri expects a fixed port and serves the built assets from dist/.
   server: {

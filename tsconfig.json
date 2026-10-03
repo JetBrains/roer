@@ -17,7 +17,8 @@
     "baseUrl": ".",
     "paths": {
       "@/*": ["./src/*"],
-      "roer": ["./src/extensions/sdk.ts"]
+      "roer": ["./src/extensions/sdk.ts"],
+      "roer/ui": ["./src/extensions/ui.ts"]
     }
   },
   "include": ["src", "vite.config.ts"]

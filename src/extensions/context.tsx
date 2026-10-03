@@ -12,6 +12,8 @@ import { resolveDir } from "../lib/session";
 import type { Session } from "./api";
 
 interface Host {
+  /** The extension whose tab this is. */
+  extension: string;
   session: Session | null;
   active: boolean;
   openFile: (root: string, path: string, line?: number) => void;
@@ -19,6 +21,7 @@ interface Host {
 }
 
 const HostContext = createContext<Host>({
+  extension: "",
   session: null,
   active: false,
   openFile: () => undefined,
@@ -41,37 +44,46 @@ export const useOpenFile = (): Host["openFile"] => useContext(HostContext).openF
 /** Brings a tab to the top, by its id ("terminal", "changes", …). */
 export const useActivateTab = (): Host["activateTab"] => useContext(HostContext).activateTab;
 
+/** The id of the extension whose tab is rendering. */
+export const useExtensionId = (): string => useContext(HostContext).extension;
+
 /**
  * The stage's session as tabs see it, with its repository and branch looked
- * up. Looked up again when the session or its watch moves; a `cd` that
- * leaves the repository shows on the next change the watch reports.
+ * up. Looked up again when the session moves and on every batch its watch
+ * reports, so a `git checkout` or a `cd` in the terminal shows on the next
+ * change. What was found is kept with the session it was found for, so a
+ * tab never sees one session's pane with another's repository.
  */
 export function useStageSession(
   staged: { cwd?: string; pane?: string } | null,
   info: { agent?: string; busy: boolean; changed: FilesChanged | null },
 ): Session | null {
-  const [where, setWhere] = useState<{ root: string | null; branch: string | null }>({ root: null, branch: null });
   const cwd = staged?.cwd;
   const pane = staged?.pane;
-  const changedRoot = info.changed?.root;
+  const key = `${cwd ?? ""}\0${pane ?? ""}`;
+  const [found, setFound] = useState<{ key: string; root: string | null; branch: string | null } | null>(null);
+  const changed = info.changed;
   const has = staged !== null;
 
   useEffect(() => {
-    if (!has) {
-      setWhere({ root: null, branch: null });
-      return;
-    }
+    if (!has) return;
     let cancelled = false;
     void (async () => {
       const dir = await resolveDir(cwd, pane);
       const root = await gitRoot(dir).catch(() => null);
       const branch = root ? await gitCurrentBranch(root).catch(() => null) : null;
-      if (!cancelled) setWhere({ root, branch });
+      if (cancelled) return;
+      // The same answer keeps the same object, so a batch that moved nothing re-renders nothing.
+      setFound((last) => (last?.key === key && last.root === root && last.branch === branch ? last : { key, root, branch }));
     })();
     return () => {
       cancelled = true;
     };
-  }, [has, cwd, pane, changedRoot]);
+  }, [has, cwd, pane, key, changed]);
+
+  const where = found?.key === key ? found : null;
+  const root = where?.root ?? null;
+  const branch = where?.branch ?? null;
 
   return useMemo(
     () =>
@@ -79,14 +91,14 @@ export function useStageSession(
         ? {
             pane,
             cwd,
-            root: where.root,
-            branch: where.branch,
+            root,
+            branch,
             agent: info.agent,
             busy: info.busy,
             changed: info.changed,
             send: (text: string) => (pane ? sendToSession(pane, text) : Promise.reject(new Error("no pane yet"))),
           }
         : null,
-    [staged, pane, cwd, where, info.agent, info.busy, info.changed],
+    [staged, pane, cwd, root, branch, info.agent, info.busy, info.changed],
   );
 }

@@ -39,6 +39,25 @@ export interface TabOptions {
   keepAcrossSessions?: boolean;
 }
 
+/** Where an agent's tool call came from. */
+export interface ToolContext {
+  /** The pane the calling agent runs in, when it runs in a Roer session. */
+  pane?: string;
+  /** The calling agent's working directory. */
+  cwd?: string;
+}
+
+export interface ToolOptions {
+  /** Unique within the extension; agents see it as `<extension id>__<name>`. */
+  name: string;
+  /** What it does and when to call it, written for the agent that will. */
+  description: string;
+  /** JSON Schema for its arguments. Default: an object with no properties. */
+  inputSchema?: Record<string, unknown>;
+  /** Answers the call: a string goes to the agent as it is, anything else as JSON. A throw is the agent's error. */
+  run(args: Record<string, unknown>, context: ToolContext): unknown;
+}
+
 export interface Roer {
   /** The extension's id, from its manifest. */
   readonly id: string;
@@ -49,6 +68,15 @@ export interface Roer {
   badge: {
     /** A count or a word on one of this extension's tabs; null clears it. */
     set(tab: string, text: string | null): void;
+  };
+  rpc: {
+    /** Calls a method the extension's `server.ts` handles; rejects with what it threw. */
+    call<T = unknown>(method: string, params?: unknown): Promise<T>;
+  };
+  tools: {
+    /** Offers agents a tool, through `roer mcp`, for as long as the extension is loaded.
+     * The returned function takes it away again. */
+    register(tool: ToolOptions): () => void;
   };
 }
 

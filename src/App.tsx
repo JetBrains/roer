@@ -17,6 +17,7 @@ import { loadBundled } from "./extensions/bundled";
 import { useStageSession } from "./extensions/context";
 import { installHost } from "./extensions/host";
 import { useExternalExtensions } from "./extensions/loader";
+import { serveTools } from "./extensions/tools";
 import { useBadges, useStageTabs } from "./extensions/registry";
 import { TabBody } from "./extensions/TabBody";
 import { FileView } from "./FileView";
@@ -156,6 +157,8 @@ export function App() {
     setEverOpened((current) => (current.has(tabId) ? current : new Set([...current, tabId])));
   }, []);
   useExternalExtensions();
+  // Agents call extensions' tools through this window.
+  useEffect(() => serveTools(), []);
   const extensionTabs = useStageTabs();
   const badges = useBadges();
   const strip: StripTab[] = [...CORE_TABS, ...extensionTabs].sort((a, b) => a.order - b.order);
@@ -1218,7 +1221,7 @@ export function App() {
             {extensionTabs
               .filter((tab) => everOpened.has(tab.tabId))
               .map((tab) => (
-                <div key={tab.tabId} className="overlay" hidden={tabs.active !== tab.tabId}>
+                <div key={tab.tabId} className="overlay ext-tab" hidden={tabs.active !== tab.tabId}>
                   <TabBody
                     entry={tab}
                     session={stageSession}

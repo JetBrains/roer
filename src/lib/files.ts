@@ -73,6 +73,12 @@ export interface GrepHit {
 export const filesGrep = (cwd: string, pattern: string, limit?: number): Promise<GrepHit[]> =>
   invoke("files_grep", { cwd, pattern, limit });
 
+/**
+ * Every path in the repository holding `cwd`, sorted: tracked and new files,
+ * `.gitignore` respected. 50,000 at most unless `limit` says otherwise.
+ */
+export const filesList = (cwd: string, limit?: number): Promise<string[]> => invoke("files_list", { cwd, limit });
+
 /** The best `limit` paths for `query`, in the repository holding `cwd`. */
 export const filesSearch = (cwd: string, query: string, limit = 50): Promise<Hits> =>
   invoke("files_search", { cwd, query, limit });

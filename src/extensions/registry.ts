@@ -9,7 +9,8 @@
  */
 import { useSyncExternalStore } from "react";
 
-import type { Extension, Roer, TabOptions } from "./api";
+import type { Extension, Roer, TabOptions, ToolOptions } from "./api";
+import { rpcCall } from "./rpc";
 
 export interface StageTabEntry extends Required<Omit<TabOptions, "id">> {
   /** The tab's id in the stage's tab model. */
@@ -20,8 +21,15 @@ export interface StageTabEntry extends Required<Omit<TabOptions, "id">> {
   id: string;
 }
 
+export interface ToolEntry extends ToolOptions {
+  extension: string;
+}
+
 interface Loaded {
   tabs: StageTabEntry[];
+  tools: ToolEntry[];
+  /** By tab id. Kept with the load, so a reload swaps them with its tabs. */
+  badges: Map<string, string>;
   /** Run last first on unload. */
   disposers: Array<() => void>;
 }
@@ -35,15 +43,15 @@ export const extensionTabId = (extension: string, tab: string, bundled: boolean)
 
 export class Registry {
   private loaded = new Map<string, Loaded>();
-  private badges = new Map<string, string>();
   private listeners = new Set<() => void>();
   private tabsCache: readonly StageTabEntry[] = [];
   private badgesCache: ReadonlyMap<string, string> = new Map();
+  private toolsCache: readonly ToolEntry[] = [];
   private generation = 0;
 
   /** Activates `extension` as `id`, replacing what was loaded under it. Throws what the activation threw. */
   load(id: string, extension: Extension, options: { bundled?: boolean } = {}): void {
-    const next: Loaded = { tabs: [], disposers: [] };
+    const next: Loaded = { tabs: [], tools: [], badges: new Map(), disposers: [] };
     const generation = ++this.generation;
     const roer: Roer = {
       id,
@@ -63,7 +71,7 @@ export class Registry {
           next.tabs.push(entry);
           const dispose = () => {
             next.tabs = next.tabs.filter((one) => one !== entry);
-            this.badges.delete(entry.tabId);
+            next.badges.delete(entry.tabId);
             this.changed();
           };
           return dispose;
@@ -72,9 +80,24 @@ export class Registry {
       badge: {
         set: (tab, text) => {
           const tabId = extensionTabId(id, tab, options.bundled ?? false);
-          if (text === null) this.badges.delete(tabId);
-          else this.badges.set(tabId, text);
+          if (text === null) next.badges.delete(tabId);
+          else next.badges.set(tabId, text);
           this.changed();
+        },
+      },
+      rpc: {
+        call: (method, params) => rpcCall(id, method, params),
+      },
+      tools: {
+        register: (tool) => {
+          const entry: ToolEntry = { ...tool, extension: id };
+          next.tools.push(entry);
+          // Registered during activation, it shows with the load; later, at once.
+          if (this.loaded.get(id) === next) this.changed();
+          return () => {
+            next.tools = next.tools.filter((one) => one !== entry);
+            this.changed();
+          };
         },
       },
     };
@@ -107,6 +130,16 @@ export class Registry {
     return this.badgesCache;
   }
 
+  /** Every tool agents are offered, by extension, then name. */
+  tools(): readonly ToolEntry[] {
+    return this.toolsCache;
+  }
+
+  /** The loaded tool `name` of `extension`, if there is one. */
+  tool(extension: string, name: string): ToolEntry | undefined {
+    return this.loaded.get(extension)?.tools.find((tool) => tool.name === name);
+  }
+
   subscribe = (listener: () => void): (() => void) => {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
@@ -115,7 +148,6 @@ export class Registry {
   private dispose(id: string): void {
     const old = this.loaded.get(id);
     if (!old) return;
-    for (const tab of old.tabs) this.badges.delete(tab.tabId);
     for (const dispose of [...old.disposers].reverse()) {
       try {
         dispose();
@@ -129,7 +161,10 @@ export class Registry {
     this.tabsCache = [...this.loaded.values()]
       .flatMap((one) => one.tabs)
       .sort((a, b) => a.order - b.order || a.extension.localeCompare(b.extension) || a.id.localeCompare(b.id));
-    this.badgesCache = new Map(this.badges);
+    this.badgesCache = new Map([...this.loaded.values()].flatMap((one) => [...one.badges]));
+    this.toolsCache = [...this.loaded.values()]
+      .flatMap((one) => one.tools)
+      .sort((a, b) => a.extension.localeCompare(b.extension) || a.name.localeCompare(b.name));
     for (const listener of this.listeners) listener();
   }
 }

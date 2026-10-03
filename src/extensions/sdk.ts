@@ -7,8 +7,12 @@
  * builds as it is. `docs/extensions.md` §2 lists it.
  */
 export { defineExtension } from "./api";
-export type { Activate, Extension, Roer, Session, TabOptions } from "./api";
+export type { Activate, Extension, Roer, Session, TabOptions, ToolContext, ToolOptions } from "./api";
 export { useActivateTab, useActive, useOpenFile, useSession } from "./context";
+
+// The extension's own server.ts.
+export { useCall, useRpc } from "./rpc";
+export type { RpcState } from "./rpc";
 
 // The backend, under either host (desktop app or `roer-server`).
 export { Channel, invoke, listen } from "../lib/backend";
@@ -17,7 +21,7 @@ export type { UnlistenFn } from "../lib/backend";
 // git, GitHub and files.
 export * from "../lib/git";
 export * from "../lib/github";
-export { fileRead, filesGrep, filesSearch, onFilesChanged, baseName } from "../lib/files";
+export { fileRead, filesGrep, filesList, filesSearch, onFilesChanged, baseName } from "../lib/files";
 export type { FilesChanged, FileText, GrepHit, Hit, Hits } from "../lib/files";
 export { resolveDir } from "../lib/session";
 
