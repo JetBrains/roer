@@ -13,6 +13,7 @@
 import { useCallback, useEffect, useId, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 
 import { DiffPane, type DiffPaneProps } from "../DiffPane";
+import type { NoteAction, NoteAnswer } from "../DiffNote";
 import { splitPatch, type DiffNote } from "../lib/diff";
 import type { FileChange } from "../lib/git";
 import { openUrl } from "../lib/github";
@@ -66,7 +67,10 @@ export function PatchPane({
   layout,
   emptyText,
   notes,
+  noteActions,
+  onNoteAnswer,
   reveal,
+  onAddNote,
   "aria-label": label,
   ...common
 }: {
@@ -75,7 +79,12 @@ export function PatchPane({
   layout?: "unified" | "split";
   emptyText: string;
   notes?: DiffNote[];
+  /** How a note with an `id` can be answered: accept, decline, say what to do. */
+  noteActions?: readonly NoteAction[];
+  onNoteAnswer?: (answer: NoteAnswer) => void;
   reveal?: DiffPaneProps["reveal"];
+  /** Lets the viewer comment on any line; see `DiffPane`. */
+  onAddNote?: DiffPaneProps["onAddNote"];
   "aria-label"?: string;
   style?: CSSProperties;
 }) {
@@ -116,7 +125,10 @@ export function PatchPane({
         emptyMessage={emptyText}
         defaultLayout={layout}
         notes={notes}
+        noteActions={noteActions}
+        onNoteAnswer={onNoteAnswer}
         reveal={reveal}
+        onAddNote={onAddNote}
         aria-label={label ?? "Diff"}
       />
     </div>

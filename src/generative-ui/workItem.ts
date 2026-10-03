@@ -6,6 +6,7 @@
  * right and drops the rest, one element at a time: a typo in one finding
  * costs that finding, not the whole view.
  */
+import type { NoteAction } from "../DiffNote";
 import type { DiffNote } from "../lib/diff";
 
 export interface Requirement {
@@ -103,11 +104,42 @@ export const readNotes = (v: unknown): DiffNote[] =>
     const path = str(w.path);
     const text = str(w.text);
     if (!path || !text) return undefined;
+    const replies = each(w.replies, (r) => {
+      const author = str(r.author);
+      const said = str(r.text);
+      return author !== undefined && said !== undefined ? { author, text: said } : undefined;
+    });
+    const tone = SEVERITIES.find((t) => t === w.tone);
+    const extra = (["id", "author", "tag", "url", "state", "answer"] as const).flatMap((key) => {
+      const v = str(w[key]);
+      return v === undefined ? [] : [[key, v] as const];
+    });
     return {
       path,
       text,
       ...(typeof w.line === "number" ? { line: w.line } : {}),
       ...(w.side === "old" ? { side: "old" as const } : {}),
+      ...(tone ? { tone } : {}),
+      ...(Array.isArray(w.replies) ? { replies } : {}),
+      ...(Array.isArray(w.actions) ? { actions: readNoteActions(w.actions) } : {}),
+      ...Object.fromEntries(extra),
+    };
+  });
+
+/** A `DiffView`'s `noteActions`: each needs a `label` and a `value`. */
+export const readNoteActions = (v: unknown): NoteAction[] =>
+  each(v, (w) => {
+    const label = str(w.label);
+    const value = str(w.value);
+    if (!label || !value) return undefined;
+    const input = str(w.input);
+    const done = str(w.done);
+    return {
+      label,
+      value,
+      ...(input !== undefined ? { input } : {}),
+      ...(w.primary === true ? { primary: true } : {}),
+      ...(done !== undefined ? { done } : {}),
     };
   });
 

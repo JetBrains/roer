@@ -5,30 +5,65 @@
  * being skipped silently, so a catalog gap is a bug you can see, not one an
  * agent can quietly exploit into running something else.
  */
-import { Fragment, useState, type CSSProperties, type ReactNode } from "react";
+import { Fragment, type CSSProperties, type ReactNode } from "react";
 
-import { openUrl } from "../lib/github";
-
+import {
+  Arrow,
+  AudioPlayer,
+  Badge,
+  Button,
+  Card,
+  CheckBox,
+  ChoicePicker,
+  Column,
+  DateTimeInput,
+  DiffView,
+  Divider,
+  EmptyState,
+  Expandable,
+  Grid,
+  Icon,
+  Image,
+  List,
+  Modal,
+  Row,
+  Slider,
+  StatTile,
+  StatusCard,
+  Table,
+  Tabs,
+  Text,
+  TextField,
+  Video,
+  WorkItem,
+  type Tone,
+} from "./components";
 import { asString, boundPointer, evaluate, type Scope } from "./evaluate";
 import {
   readPointer,
   resolvePointer,
   type Action,
-  type Align,
   type ChildList,
   type Component,
   type ComponentId,
   type DataModel,
   type JsonPointer,
-  type Justify,
   type SurfaceState,
 } from "./schema";
-import { readChanges, readComments, readDecisions, readFindings, readNotes, readRequirements, readSources } from "./workItem";
+import {
+  readChanges,
+  readComments,
+  readDecisions,
+  readFindings,
+  readNoteActions,
+  readNotes,
+  readRequirements,
+  readSources,
+} from "./workItem";
 import {
   CommentsNode,
   DecisionsNode,
   FindingsNode,
-  PatchPane,
   RequirementsNode,
   SourcesSection,
   WorkItemDetail,
@@ -70,22 +105,25 @@ function renderNode(
   id: ComponentId,
   ctx: Ctx,
   scope: Scope,
-  ancestors: ReadonlySet<ComponentId>,
+  ancestors: ReadonlySet<string>,
   key: string = id,
 ): ReactNode {
   const node = ctx.components[id];
   if (!node) return <p key={key} className="gen-text muted">[missing component: {id}]</p>;
   // Child ids are agent-provided; a self-referential Card/Row would recurse
   // forever without this, so a cycle renders as a placeholder instead of
-  // overflowing the stack and taking the whole panel down.
-  if (ancestors.has(id)) {
+  // overflowing the stack and taking the whole panel down. A component met
+  // again over a deeper element of the data model is not a cycle but a tree
+  // (a folder template inside its own folders): the data runs out first.
+  const visit = `${id}\0${scope.item ?? ""}`;
+  if (ancestors.has(visit)) {
     return <p key={key} className="gen-text muted">[cyclic component: {id}]</p>;
   }
-  const seen = new Set(ancestors).add(id);
+  const seen = new Set(ancestors).add(visit);
   return <Fragment key={key}>{renderBody(node, ctx, scope, seen)}</Fragment>;
 }
 
-function renderBody(node: Component, ctx: Ctx, scope: Scope, seen: ReadonlySet<ComponentId>): ReactNode {
+function renderBody(node: Component, ctx: Ctx, scope: Scope, seen: ReadonlySet<string>): ReactNode {
   const value = (v: unknown) => evaluate(v, ctx.dataModel, scope);
   const text = (v: unknown) => asString(value(v));
   const child = (childId: ComponentId) => renderNode(childId, ctx, scope, seen);
@@ -101,162 +139,107 @@ function renderBody(node: Component, ctx: Ctx, scope: Scope, seen: ReadonlySet<C
 
   switch (node.component) {
     case "Row":
-      return (
-        <div {...common} className="gen-row" style={{ ...common.style, ...flexStyle(node.justify, node.align) }}>
-          {children(node.children)}
-        </div>
-      );
+      return <Row {...common} justify={node.justify} align={node.align}>{children(node.children)}</Row>;
     case "Column":
-      return (
-        <div {...common} className="gen-column" style={{ ...common.style, ...flexStyle(node.justify, node.align) }}>
-          {children(node.children)}
-        </div>
-      );
+      return <Column {...common} justify={node.justify} align={node.align}>{children(node.children)}</Column>;
     case "List":
-      return (
-        <div
-          {...common}
-          className={node.direction === "horizontal" ? "gen-list horizontal" : "gen-list"}
-          style={{ ...common.style, ...flexStyle(undefined, node.align) }}
-        >
-          {children(node.children)}
-        </div>
-      );
+      return <List {...common} direction={node.direction} align={node.align}>{children(node.children)}</List>;
     case "Card":
-      return (
-        <div {...common} className="gen-card">
-          {child(node.child)}
-        </div>
-      );
+      return <Card {...common}>{child(node.child)}</Card>;
     case "Grid":
-      return (
-        <div
-          {...common}
-          className="gen-grid"
-          style={{ ...common.style, ...gridStyle(node.columns, node.minItemWidth) }}
-        >
-          {children(node.children)}
-        </div>
-      );
+      return <Grid {...common} columns={node.columns} minItemWidth={node.minItemWidth}>{children(node.children)}</Grid>;
     case "Divider":
-      return <hr {...common} className={node.axis === "vertical" ? "gen-divider vertical" : "gen-divider"} />;
+      return <Divider {...common} axis={node.axis} />;
     case "Text":
-      return (
-        <p {...common} className={node.variant === "caption" ? "gen-text muted" : "gen-text"}>
-          {text(node.text)}
-        </p>
-      );
+      return <Text {...common} variant={node.variant}>{text(node.text)}</Text>;
     case "Image":
       return (
-        <img
+        <Image
           {...common}
-          className={`gen-image ${node.variant ?? "mediumFeature"}`}
-          style={{ ...common.style, objectFit: objectFit(node.fit) }}
-          src={text(node.url)}
-          alt={text(node.description)}
+          url={text(node.url)}
+          description={text(node.description)}
+          fit={node.fit}
+          variant={node.variant}
         />
       );
     case "Icon":
-      return renderIcon(node.name, text, common);
+      return <Icon {...common} name={iconName(node.name, text)} />;
     case "Video":
-      return (
-        <video {...common} className="gen-image" src={text(node.url)} poster={text(node.posterUrl) || undefined} controls />
-      );
+      return <Video {...common} url={text(node.url)} posterUrl={text(node.posterUrl)} />;
     case "AudioPlayer":
       return (
-        <figure {...common} className="gen-audio">
-          <audio src={text(node.url)} controls />
-          {node.description ? <figcaption className="gen-text muted">{text(node.description)}</figcaption> : null}
-        </figure>
+        <AudioPlayer {...common} url={text(node.url)} description={node.description ? text(node.description) : undefined} />
       );
     case "Button":
       return (
-        <button
+        <Button
           {...common}
-          type="button"
-          className={node.variant && node.variant !== "default" ? `gen-button ${node.variant}` : "gen-button"}
+          variant={node.variant}
           onClick={() => {
             const event = resolveEvent(node.action, value);
             if (event) ctx.onAction(event, node.id);
           }}
         >
           {child(node.child)}
-        </button>
+        </Button>
       );
     case "TextField": {
-      const current = text(node.value);
-      const set = write(node.value);
-      const placeholder = text(node.placeholder) || undefined;
+      const submit = node.action;
       return (
-        <label {...common} className="gen-field">
-          <span className="gen-field-label">{text(node.label)}</span>
-          {node.variant === "longText" ? (
-            <textarea value={current} placeholder={placeholder} onChange={(e) => set(e.target.value)} />
-          ) : (
-            <input
-              type={node.variant === "number" ? "number" : node.variant === "obscured" ? "password" : "text"}
-              value={current}
-              placeholder={placeholder}
-              onChange={(e) => set(node.variant === "number" ? Number(e.target.value) : e.target.value)}
-            />
-          )}
-        </label>
+        <TextField
+          {...common}
+          label={node.label === undefined ? undefined : text(node.label)}
+          value={text(node.value)}
+          placeholder={text(node.placeholder)}
+          variant={node.variant}
+          onChange={write(node.value)}
+          onSubmit={
+            submit
+              ? () => {
+                  const event = resolveEvent(submit, value);
+                  if (event) ctx.onAction(event, node.id);
+                }
+              : undefined
+          }
+        />
       );
     }
-    case "CheckBox": {
-      const set = write(node.value);
-      return (
-        <label {...common} className="gen-checkbox">
-          <input type="checkbox" checked={Boolean(value(node.value))} onChange={(e) => set(e.target.checked)} />
-          {text(node.label)}
-        </label>
-      );
-    }
+    case "CheckBox":
+      return <CheckBox {...common} label={text(node.label)} checked={Boolean(value(node.value))} onChange={write(node.value)} />;
     case "Slider": {
       const min = node.min ?? 0;
-      const current = Number(value(node.value) ?? min);
-      const set = write(node.value);
       return (
-        <label {...common} className="gen-slider">
-          {node.label ? <span className="gen-field-label">{text(node.label)}</span> : null}
-          <input
-            type="range"
-            min={min}
-            max={node.max}
-            step={node.steps ? (node.max - min) / node.steps : "any"}
-            value={current}
-            onChange={(e) => set(Number(e.target.value))}
-          />
-          <span className="gen-slider-value">{current}</span>
-        </label>
+        <Slider
+          {...common}
+          label={node.label ? text(node.label) : undefined}
+          min={min}
+          max={node.max}
+          steps={node.steps}
+          value={Number(value(node.value) ?? min)}
+          onChange={write(node.value)}
+        />
       );
     }
-    case "DateTimeInput": {
-      // Both flags default to off in v1.0; with neither set, offer both
-      // rather than an input that can pick nothing.
-      const type = node.enableDate && !node.enableTime ? "date" : node.enableTime && !node.enableDate ? "time" : "datetime-local";
-      const set = write(node.value);
+    case "DateTimeInput":
       return (
-        <label {...common} className="gen-field">
-          {node.label ? <span className="gen-field-label">{text(node.label)}</span> : null}
-          <input
-            type={type}
-            className="gen-datetime"
-            value={text(node.value)}
-            min={text(node.min) || undefined}
-            max={text(node.max) || undefined}
-            onChange={(e) => set(e.target.value)}
-          />
-        </label>
+        <DateTimeInput
+          {...common}
+          label={node.label ? text(node.label) : undefined}
+          value={text(node.value)}
+          enableDate={node.enableDate}
+          enableTime={node.enableTime}
+          min={text(node.min)}
+          max={text(node.max)}
+          onChange={write(node.value)}
+        />
       );
-    }
     case "ChoicePicker":
       return (
-        <ChoicePickerNode
+        <ChoicePicker
           {...common}
           label={node.label ? text(node.label) : undefined}
           options={node.options.map((option) => ({ label: text(option.label), value: option.value }))}
-          selected={toStrings(value(node.value))}
+          value={toStrings(value(node.value))}
           multiple={node.variant === "multipleSelection"}
           chips={node.displayStyle === "chips"}
           filterable={node.filterable ?? false}
@@ -264,64 +247,81 @@ function renderBody(node: Component, ctx: Ctx, scope: Scope, seen: ReadonlySet<C
         />
       );
     case "Tabs":
-      return (
-        <TabsNode
-          {...common}
-          tabs={node.tabs.map((tab) => ({ title: text(tab.title), child: tab.child }))}
-          renderChild={child}
-        />
-      );
+      return <Tabs {...common} tabs={node.tabs.map((tab) => ({ title: text(tab.title), content: child(tab.child) }))} />;
     case "Modal":
-      return <ModalNode {...common} trigger={child(node.trigger)} content={child(node.content)} />;
+      return <Modal {...common} trigger={child(node.trigger)}>{child(node.content)}</Modal>;
     case "Arrow":
-      return (
-        <div {...common} className={node.direction === "vertical" ? "gen-arrow vertical" : "gen-arrow horizontal"}>
-          {node.label ? <span className="gen-arrow-label">{text(node.label)}</span> : null}
-          <span className="gen-arrow-line" />
-        </div>
-      );
+      return <Arrow {...common} direction={node.direction} label={node.label ? text(node.label) : undefined} />;
     case "Expandable":
       return (
-        <ExpandableNode
+        <Expandable {...common} title={text(node.title)} defaultExpanded={node.defaultExpanded}>
+          {child(node.child)}
+        </Expandable>
+      );
+    case "Badge":
+      return <Badge {...common} tone={toneOf(value(node.tone))}>{text(node.text)}</Badge>;
+    case "EmptyState":
+      return (
+        <EmptyState
           {...common}
-          title={text(node.title)}
-          defaultExpanded={node.defaultExpanded}
-          content={child(node.child)}
+          text={text(node.text)}
+          detail={node.detail === undefined ? undefined : text(node.detail)}
+          variant={node.variant}
+          footer={node.footer === undefined ? null : child(node.footer)}
         />
       );
+    case "Table": {
+      const rows = value(node.rows);
+      return (
+        <Table
+          {...common}
+          columns={node.columns.map((column) => ({ ...column, title: text(column.title) }))}
+          rows={Array.isArray(rows) ? rows.filter(isRecord).map((row) => mapValues(row, asString)) : []}
+          toneKey={node.toneKey}
+          emptyText={node.emptyText === undefined ? undefined : text(node.emptyText)}
+        />
+      );
+    }
     case "DiffView":
       return (
-        <PatchPane
+        <DiffView
           {...common}
           patch={text(node.diff)}
           title={node.title === undefined ? "" : text(node.title)}
           layout={node.layout}
           emptyText={node.emptyText === undefined ? "No changes." : text(node.emptyText)}
           notes={readNotes(value(node.notes))}
+          noteActions={readNoteActions(node.noteActions)}
+          onNoteAnswer={({ note, action, text: words }) =>
+            report(node.noteEvent ?? "diffNote", {
+              id: note.id,
+              path: note.path,
+              line: note.line ?? null,
+              side: note.side ?? "new",
+              action,
+              ...(words === undefined ? {} : { text: words }),
+            })
+          }
         />
       );
     case "StatTile":
       return (
-        <StatTileNode
+        <StatTile
           {...common}
           label={text(node.label)}
           value={text(node.value)}
-          trend={
-            node.trend
-              ? { delta: text(node.trend.delta), direction: node.trend.direction }
-              : undefined
-          }
-          icon={node.icon === undefined ? undefined : renderIcon(node.icon, text)}
+          trend={node.trend ? { delta: text(node.trend.delta), direction: node.trend.direction } : undefined}
+          icon={node.icon === undefined ? undefined : <Icon name={iconName(node.icon, text)} />}
         />
       );
     case "StatusCard":
       return (
-        <StatusCardNode
+        <StatusCard
           {...common}
           title={text(node.title)}
           subtitle={node.subtitle === undefined ? "" : text(node.subtitle)}
           meta={node.meta === undefined ? "" : text(node.meta)}
-          icon={node.icon === undefined ? undefined : renderIcon(node.icon, text)}
+          icon={node.icon === undefined ? undefined : <Icon name={iconName(node.icon, text)} />}
           status={node.status === undefined ? "" : text(node.status)}
           progress={node.progress === undefined ? undefined : progressValue(value(node.progress))}
           url={node.url === undefined ? "" : text(node.url)}
@@ -330,7 +330,7 @@ function renderBody(node: Component, ctx: Ctx, scope: Scope, seen: ReadonlySet<C
       );
     case "WorkItem":
       return (
-        <WorkItemNode
+        <WorkItem
           {...common}
           title={text(node.title)}
           source={node.source === undefined ? "" : text(node.source)}
@@ -382,7 +382,7 @@ function renderBody(node: Component, ctx: Ctx, scope: Scope, seen: ReadonlySet<C
 
 /** A fixed list of ids, or one copy of the template per element of the
  * list it is bound to, each evaluated against its own element. */
-function renderChildren(list: ChildList, ctx: Ctx, scope: Scope, ancestors: ReadonlySet<ComponentId>): ReactNode {
+function renderChildren(list: ChildList, ctx: Ctx, scope: Scope, ancestors: ReadonlySet<string>): ReactNode {
   if (Array.isArray(list)) return list.map((id) => renderNode(id, ctx, scope, ancestors));
   if (typeof list !== "object" || list === null) return null;
   const pointer = resolvePointer(list.path, scope.item);
@@ -422,171 +422,23 @@ function aria(node: Component, value: (v: unknown) => unknown) {
 
 const toStrings = (v: unknown): string[] => (Array.isArray(v) ? v.map(String) : []);
 
+const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
+
+const mapValues = <T,>(record: Record<string, unknown>, f: (v: unknown) => T): Record<string, T> =>
+  Object.fromEntries(Object.entries(record).map(([k, v]) => [k, f(v)]));
+
+const TONES: readonly string[] = ["neutral", "accent", "success", "warning", "danger"] satisfies Tone[];
+const toneOf = (v: unknown): Tone => (typeof v === "string" && TONES.includes(v) ? (v as Tone) : "neutral");
+
 const weightStyle = (weight?: number): CSSProperties | undefined =>
   weight === undefined ? undefined : { flexGrow: weight };
 
-function flexStyle(justify?: Justify, align?: Align): CSSProperties {
-  const justifyMap: Record<Justify, string> = {
-    start: "flex-start",
-    center: "center",
-    end: "flex-end",
-    spaceBetween: "space-between",
-    spaceAround: "space-around",
-    spaceEvenly: "space-evenly",
-    stretch: "stretch",
-  };
-  const alignMap: Record<Align, string> = { start: "flex-start", center: "center", end: "flex-end", stretch: "stretch" };
-  return {
-    justifyContent: justify ? justifyMap[justify] : undefined,
-    alignItems: align ? alignMap[align] : undefined,
-  };
-}
-
-function objectFit(fit?: "contain" | "cover" | "fill" | "none" | "scaleDown"): CSSProperties["objectFit"] {
-  return fit === "scaleDown" ? "scale-down" : fit;
-}
-
-/** `columns` wins when both are set: a fixed count reads as the agent's
- * intent, `minItemWidth` as "wrap by however many fit". */
-function gridStyle(columns?: number, minItemWidth?: number): CSSProperties {
-  return {
-    gridTemplateColumns:
-      columns !== undefined
-        ? `repeat(${columns}, 1fr)`
-        : minItemWidth !== undefined
-          ? `repeat(auto-fill, minmax(${minItemWidth}px, 1fr))`
-          : undefined,
-  };
-}
-
-interface Common {
-  "aria-label"?: string;
-  "aria-description"?: string;
-  "aria-live"?: "polite" | "assertive";
-  "aria-hidden"?: boolean;
-  style?: CSSProperties;
-}
-
-/** `Icon`'s own body, shared with `StatTile`/`StatusCard` icons: an svg for
- * `{ svgPath }`, otherwise the name shown as text. */
-function renderIcon(name: unknown, text: (v: unknown) => string, common?: Common): ReactNode {
+/** An icon's `name`, a string or `{ svgPath }`, with its bindings resolved. */
+function iconName(name: unknown, text: (v: unknown) => string): string | { svgPath: string } {
   if (typeof name === "object" && name !== null && "svgPath" in name) {
-    return (
-      <svg {...common} className="gen-icon" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
-        <path d={text((name as { svgPath: unknown }).svgPath)} fill="currentColor" />
-      </svg>
-    );
+    return { svgPath: text((name as { svgPath: unknown }).svgPath) };
   }
-  return (
-    <span {...common} className="gen-icon" aria-hidden="true">
-      {text(name)}
-    </span>
-  );
-}
-
-function ChoicePickerNode({
-  label,
-  options,
-  selected,
-  multiple,
-  chips,
-  filterable,
-  onChange,
-  ...common
-}: Common & {
-  label?: string;
-  options: { label: string; value: string }[];
-  selected: string[];
-  multiple: boolean;
-  chips: boolean;
-  filterable: boolean;
-  onChange: (next: string[]) => void;
-}) {
-  const [filter, setFilter] = useState("");
-  const picked = new Set(selected);
-  const toggle = (value: string) => {
-    if (!multiple) return onChange(picked.has(value) ? [] : [value]);
-    const next = new Set(picked);
-    if (next.has(value)) next.delete(value);
-    else next.add(value);
-    onChange(Array.from(next));
-  };
-  const shown = filter
-    ? options.filter((option) => option.label.toLowerCase().includes(filter.toLowerCase()))
-    : options;
-  return (
-    <div {...common} className={chips ? "gen-choice-picker chips" : "gen-choice-picker"}>
-      {label ? <span className="gen-field-label">{label}</span> : null}
-      {filterable ? (
-        <input className="gen-bundles-input" placeholder="Filter…" value={filter} onChange={(e) => setFilter(e.target.value)} />
-      ) : null}
-      {shown.map((option) =>
-        chips ? (
-          <button
-            key={option.value}
-            type="button"
-            aria-pressed={picked.has(option.value)}
-            className={picked.has(option.value) ? "gen-chip on" : "gen-chip"}
-            onClick={() => toggle(option.value)}
-          >
-            {option.label}
-          </button>
-        ) : (
-          <label key={option.value} className="gen-choice-option">
-            <input
-              type={multiple ? "checkbox" : "radio"}
-              checked={picked.has(option.value)}
-              onChange={() => toggle(option.value)}
-            />
-            {option.label}
-          </label>
-        ),
-      )}
-    </div>
-  );
-}
-
-/** Local, client-only state: whether the modal is open is not part of the
- * protocol, so the trigger and the open flag both live here. */
-function ModalNode({ trigger, content, ...common }: Common & { trigger: ReactNode; content: ReactNode }) {
-  const [open, setOpen] = useState(false);
-  return (
-    <>
-      <span {...common} className="gen-modal-trigger" onClick={() => setOpen(true)}>
-        {trigger}
-      </span>
-      {open ? (
-        <div className="gen-modal-backdrop" onClick={() => setOpen(false)}>
-          <div className="gen-modal" onClick={(e) => e.stopPropagation()}>
-            {content}
-          </div>
-        </div>
-      ) : null}
-    </>
-  );
-}
-
-/** How each tracker is named on an item; anything else is shown as sent. */
-const SOURCES: Record<string, string> = {
-  github: "GitHub",
-  youtrack: "YouTrack",
-  notion: "Notion",
-  jira: "Jira",
-  personal: "Personal",
-};
-
-/** A status, by what it means for the work rather than what a tracker calls
- * it: every tracker spells "finished" its own way. */
-function statusTone(status: string): "done" | "doing" | "blocked" | "failed" | "todo" {
-  const s = status.toLowerCase().replace(/[\s_-]+/g, " ").trim();
-  if (
-    ["done", "closed", "fixed", "resolved", "completed", "merged", "verified", "success", "succeeded", "passed", "deployed"].includes(s)
-  )
-    return "done";
-  if (["doing", "in progress", "in review", "active", "started", "review", "working", "running"].includes(s)) return "doing";
-  if (["blocked", "on hold", "waiting"].includes(s)) return "blocked";
-  if (["failed", "failure", "error", "errored", "broken"].includes(s)) return "failed";
-  return "todo";
+  return text(name);
 }
 
 /** A bound `progress` resolves to nothing for an item that has none — a
@@ -597,208 +449,4 @@ function statusTone(status: string): "done" | "doing" | "blocked" | "failed" | "
 function progressValue(raw: unknown): number | undefined {
   const n = typeof raw === "number" ? raw : typeof raw === "string" && raw.trim() !== "" ? Number(raw) : NaN;
   return Number.isFinite(n) ? n : undefined;
-}
-
-function StatTileNode({
-  label,
-  value,
-  trend,
-  icon,
-  ...common
-}: Common & {
-  label: string;
-  value: string;
-  trend?: { delta: string; direction: "up" | "down" | "flat" };
-  icon?: ReactNode;
-}) {
-  return (
-    <div {...common} className="gen-stat-tile">
-      {icon ? <div className="gen-stat-tile-icon">{icon}</div> : null}
-      <div className="gen-stat-tile-body">
-        <span className="gen-stat-tile-value">{value}</span>
-        <span className="gen-stat-tile-label">{label}</span>
-      </div>
-      {trend ? (
-        <span className={`gen-stat-tile-trend ${trend.direction}`}>
-          {trend.direction === "up" ? "▲" : trend.direction === "down" ? "▼" : "•"} {trend.delta}
-        </span>
-      ) : null}
-    </div>
-  );
-}
-
-/** A generic SDLC entity — a ticket, a CI run, a deployment, a running job —
- * dense enough to sit beside unrelated kinds of thing on one dashboard,
- * unlike `WorkItemNode`'s tracker-specific layout. */
-function StatusCardNode({
-  title,
-  subtitle,
-  meta,
-  icon,
-  status,
-  progress,
-  url,
-  footer,
-  ...common
-}: Common & {
-  title: string;
-  subtitle: string;
-  meta: string;
-  icon?: ReactNode;
-  status: string;
-  progress?: number;
-  url: string;
-  footer: ReactNode;
-}) {
-  // The backend refuses anything but an https link too; checking here keeps
-  // a title that could not open from looking like a link.
-  const link = url.startsWith("https://") ? url : "";
-  const clampedProgress = progress === undefined ? undefined : Math.min(100, Math.max(0, progress));
-  return (
-    <article {...common} className="gen-status-card">
-      <header className="gen-status-card-head">
-        {icon ? <span className="gen-status-card-icon">{icon}</span> : null}
-        {link ? (
-          <button type="button" className="link gen-status-card-title" title={link} onClick={() => void openUrl(link)}>
-            {title}
-          </button>
-        ) : (
-          <span className="gen-status-card-title">{title}</span>
-        )}
-        {status ? <span className={`gen-status-card-status ${statusTone(status)}`}>{status}</span> : null}
-      </header>
-      {subtitle || meta ? (
-        <p className="gen-status-card-meta">{[subtitle, meta].filter(Boolean).join(" · ")}</p>
-      ) : null}
-      {clampedProgress === undefined ? null : (
-        <div
-          className="gen-status-card-progress"
-          role="progressbar"
-          aria-valuemin={0}
-          aria-valuemax={100}
-          aria-valuenow={clampedProgress}
-        >
-          <div className="gen-status-card-progress-fill" style={{ width: `${clampedProgress}%` }} />
-        </div>
-      )}
-      {footer ? <div className="gen-status-card-footer">{footer}</div> : null}
-    </article>
-  );
-}
-
-function WorkItemNode({
-  title,
-  source,
-  itemKey,
-  status,
-  url,
-  assignee,
-  labels,
-  meta,
-  footer,
-  detail,
-  ...common
-}: Common & {
-  title: string;
-  source: string;
-  itemKey: string;
-  status: string;
-  url: string;
-  assignee: string;
-  labels: string[];
-  meta: string;
-  footer: ReactNode;
-  /** The opened-up body, for `variant: "detail"`. */
-  detail?: ReactNode;
-}) {
-  const sourceLabel = SOURCES[source.toLowerCase()] ?? source;
-  // The backend refuses anything but an https link too; checking here keeps
-  // a title that could not open from looking like a link.
-  const link = url.startsWith("https://") ? url : "";
-  return (
-    <article
-      {...common}
-      className={detail ? "gen-workitem detail" : "gen-workitem"}
-      data-source={source.toLowerCase() || undefined}
-    >
-      <header className="gen-workitem-head">
-        {sourceLabel ? <span className="gen-workitem-source">{sourceLabel}</span> : null}
-        {itemKey ? <span className="gen-workitem-key">{itemKey}</span> : null}
-        {status ? <span className={`gen-workitem-status ${statusTone(status)}`}>{status}</span> : null}
-      </header>
-      {link ? (
-        <button type="button" className="link gen-workitem-title" title={link} onClick={() => void openUrl(link)}>
-          {title}
-        </button>
-      ) : (
-        <span className="gen-workitem-title">{title}</span>
-      )}
-      {labels.length > 0 ? (
-        <ul className="gen-workitem-labels" aria-label="Labels">
-          {labels.map((label) => (
-            <li key={label}>{label}</li>
-          ))}
-        </ul>
-      ) : null}
-      {assignee || meta ? (
-        <p className="gen-workitem-meta">{[assignee, meta].filter(Boolean).join(" · ")}</p>
-      ) : null}
-      {detail}
-      {footer ? <div className="gen-workitem-footer">{footer}</div> : null}
-    </article>
-  );
-}
-
-/** Same reasoning as `ModalNode`: whether a node is expanded is client-only
- * state, never part of the data model an agent reads or writes. */
-function ExpandableNode({
-  title,
-  defaultExpanded,
-  content,
-  ...common
-}: Common & { title: string; defaultExpanded?: boolean; content: ReactNode }) {
-  const [open, setOpen] = useState(defaultExpanded ?? false);
-  return (
-    <div {...common} className="gen-expandable">
-      <button
-        type="button"
-        className="gen-expandable-header"
-        aria-expanded={open}
-        onClick={() => setOpen((o) => !o)}
-      >
-        <span className={open ? "gen-expandable-chevron open" : "gen-expandable-chevron"}>▶</span>
-        {title}
-      </button>
-      {open ? <div className="gen-expandable-body">{content}</div> : null}
-    </div>
-  );
-}
-
-/** Same reasoning as `ModalNode`: which tab is active is client-only state,
- * never part of the data model an agent reads or writes. */
-function TabsNode({
-  tabs,
-  renderChild,
-  ...common
-}: Common & { tabs: { title: string; child: ComponentId }[]; renderChild: (id: ComponentId) => ReactNode }) {
-  const [active, setActive] = useState(0);
-  return (
-    <div {...common} className="gen-tabs">
-      <div className="gen-tabs-bar" role="tablist">
-        {tabs.map((tab, i) => (
-          <button
-            key={tab.child}
-            type="button"
-            role="tab"
-            aria-selected={active === i}
-            className={active === i ? "gen-tabs-btn on" : "gen-tabs-btn"}
-            onClick={() => setActive(i)}
-          >
-            {tab.title}
-          </button>
-        ))}
-      </div>
-      <div className="gen-tabs-panel">{tabs[active] ? renderChild(tabs[active].child) : null}</div>
-    </div>
-  );
 }

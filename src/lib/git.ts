@@ -50,6 +50,25 @@ export const gitRoot = (cwd: string): Promise<string | null> => invoke("git_root
 export const gitDiff = (root: string, path: string, untracked: boolean): Promise<string> =>
   invoke("git_diff", { root, path, untracked });
 
+/** Everything a branch has changed since it left its base, as one patch:
+ * its commits and what is not committed yet, untracked files included. */
+export interface BranchDiff {
+  root: string;
+  /** What it is compared with, e.g. `origin/main`; empty when there is no
+   * such branch, and then the patch is only what is uncommitted. */
+  base: string;
+  /** Commits the branch has over its base. */
+  commits: number;
+  diff: string;
+  /** Why the patch is less than asked for: no commit in common with the base, so only what is uncommitted. */
+  note?: string;
+}
+
+/** `base` is the branch to compare with, a pull request's base for one;
+ * without it, the repository's default branch. */
+export const gitBranchDiff = (cwd: string, base?: string): Promise<BranchDiff> =>
+  invoke("git_branch_diff", { cwd, base: base ?? null });
+
 /** One commit, as much as the branch-diff view names it by. */
 export interface Commit {
   hash: string;

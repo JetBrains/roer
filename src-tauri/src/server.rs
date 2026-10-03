@@ -244,6 +244,7 @@ fn dispatch(state: &Arc<AppState>, cmd: &str, args: Value, cid: Option<&str>) ->
             call_res!(args, crate::git::git_commit_diff, "root": String, "commit": String, "path": String)
         }
         "git_upstream_status" => call_res!(args, crate::git::git_upstream_status, "cwd": String),
+        "git_branch_diff" => call_res!(args, crate::git::git_branch_diff, "cwd": String, "base": Option<String>),
         "git_changes" => {
             let cwd = parse(&args, "cwd")?;
             crate::git::git_changes_core(&state.bus, &state.files, cwd).and_then(|v| {
@@ -340,6 +341,7 @@ fn dispatch(state: &Arc<AppState>, cmd: &str, args: Value, cid: Option<&str>) ->
             call_res!(args, crate::gh::gh_request_copilot_review, "dir": String, "number": u64)
         }
         "gh_pr_review" => call_res!(args, crate::gh::gh_pr_review, "dir": String, "number": u64),
+        "gh_pr_diff" => call_res!(args, crate::gh::gh_pr_diff, "dir": String, "number": u64),
         "gh_merge_methods" => call_res!(args, crate::gh::gh_merge_methods, "dir": String),
         "gh_pr_merge" => call_res!(
             args, crate::gh::gh_pr_merge, "dir": String, "number": u64, "method": String, "head": String, "bypass": bool
