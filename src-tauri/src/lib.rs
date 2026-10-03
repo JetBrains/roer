@@ -1,6 +1,7 @@
 mod agents;
 mod assets;
 mod browse;
+mod bun_fetch;
 mod claude;
 mod claude_setup;
 mod codex;

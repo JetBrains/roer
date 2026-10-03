@@ -271,10 +271,12 @@ fn now() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs())
 }
 
-/// The Bun that builds extensions: `ROER_BUN`, then the one beside the app,
-/// then Bun's own install location, then `PATH`. Never the shell's `PATH`
-/// alone, which an app started from the Finder does not have.
-pub(crate) fn bun() -> Result<PathBuf, String> {
+/// The Bun that builds extensions and runs their servers: `ROER_BUN`, then the
+/// one beside the app, then the one Roer downloaded, then Bun's own install
+/// location, then `PATH`. Never the shell's `PATH` alone, which an app started
+/// from the Finder does not have. With none of them, Roer downloads its own,
+/// once, saying so in the log of `id`, the extension waiting for it.
+pub(crate) fn bun(id: &str) -> Result<PathBuf, String> {
     if let Some(explicit) = std::env::var_os("ROER_BUN").filter(|v| !v.is_empty()) {
         return Ok(PathBuf::from(explicit));
     }
@@ -284,12 +286,18 @@ pub(crate) fn bun() -> Result<PathBuf, String> {
     let on_path = std::env::var_os("PATH")
         .map(|path| std::env::split_paths(&path).map(|dir| dir.join(name)).collect::<Vec<_>>())
         .unwrap_or_default();
-    beside
+    let found = beside
         .into_iter()
+        .chain([crate::bun_fetch::installed()])
         .chain(installed)
         .chain(on_path)
-        .find(|path| path.is_file())
-        .ok_or_else(|| "Bun was not found: extensions are built with it. Set ROER_BUN, or install it from bun.sh.".to_string())
+        .find(|path| path.is_file());
+    if let Some(found) = found {
+        return Ok(found);
+    }
+    crate::bun_fetch::fetch(|what| log(id, what)).map_err(|why| {
+        format!("Extensions are built with Bun, and Roer could not download it: {why}. Install it from bun.sh, or set ROER_BUN.")
+    })
 }
 
 /// Builds run one at a time: two at once would write the same cache.
@@ -382,7 +390,7 @@ fn run_build(id: &str, entry: &Path) -> Result<(), Vec<String>> {
     if !entry.is_file() {
         return Err(vec![format!("{}: no such file (the manifest's \"app\")", entry.display())]);
     }
-    let bun = bun().map_err(|e| vec![e])?;
+    let bun = bun(id).map_err(|e| vec![e])?;
     let cache = cache_dir(id);
     let script = home().join("extension-cache").join("build.ts");
     let out = cache.join("out.partial");
