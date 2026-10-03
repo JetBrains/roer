@@ -13,7 +13,7 @@
 
 const [entry, outdir] = process.argv.slice(2);
 
-const HOST = /^(react|react-dom|react-dom\/client|react\/jsx-runtime|react\/jsx-dev-runtime|roer)$/;
+const HOST = /^(react|react-dom|react-dom\/client|react\/jsx-runtime|react\/jsx-dev-runtime|roer|roer\/ui)$/;
 
 const result = await Bun.build({
   entrypoints: [entry],

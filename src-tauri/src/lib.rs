@@ -6,6 +6,8 @@ mod claude_setup;
 mod codex;
 mod cli_link;
 pub mod events;
+mod extension_servers;
+mod extension_tools;
 mod extensions;
 mod files;
 mod gh;
@@ -108,9 +110,14 @@ pub fn run() {
             server::start_browser_server,
             logfile::app_log,
             files::files_grep,
+            files::files_list,
             extensions::extensions_list,
             extensions::extension_bundle,
             extensions::extension_log,
+            extension_servers::extension_rpc,
+            extension_tools::extension_tools_publish,
+            extension_tools::extension_call_claim,
+            extension_tools::extension_call_reply,
         ])
         .setup(|app| {
             menu(app)?;
@@ -118,6 +125,7 @@ pub fn run() {
             handoff::watch(app.handle().clone())?;
             plugin_ui::watch(server::DesktopWatchSink(app.handle().clone()))?;
             pr_draft::watch(server::DesktopWatchSink(app.handle().clone()))?;
+            extension_tools::watch(server::DesktopWatchSink(app.handle().clone()))?;
             extensions::watch(server::DesktopWatchSink(app.handle().clone()))?;
             Ok(())
         })

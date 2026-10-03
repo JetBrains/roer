@@ -19,6 +19,20 @@ describe("Registry", () => {
     expect(registry.tabs()[1]).toMatchObject({ order: 100, needsSession: true, keepAcrossSessions: false });
   });
 
+  it("keeps a badge the new version sets as it activates, on a reload too", () => {
+    const registry = new Registry();
+    const version = (text: string) =>
+      defineExtension((roer) => {
+        roer.stage.registerTab({ id: "main", title: "TODOs", component: View });
+        roer.badge.set("main", text);
+      });
+    registry.load("todos", version("1"));
+    registry.load("todos", version("2"));
+    expect(registry.badgesByTab().get("ext:todos/main")).toBe("2");
+    registry.unload("todos");
+    expect(registry.badgesByTab().size).toBe(0);
+  });
+
   it("keeps the version that works when a new one throws", () => {
     const registry = new Registry();
     registry.load("todos", defineExtension((roer) => void roer.stage.registerTab({ id: "main", title: "v1", component: View })));

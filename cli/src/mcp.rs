@@ -17,6 +17,7 @@
 
 use std::cell::Cell;
 use std::io::{BufRead, Write};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde_json::{json, Value};
 
@@ -40,8 +41,37 @@ const CATALOG_URI: &str = "roer:catalog/1";
 /// How to write an extension: `crate::ext::guide`, the guide and the API's types.
 const EXTENSIONS_URI: &str = "roer:extensions/1";
 
+/// Set once a client that is offered tools has initialized: from then on a
+/// change to the extensions' tools is worth telling it about.
+static OFFERING: AtomicBool = AtomicBool::new(false);
+
+/// Tells the client its tool list changed whenever the app publishes a new
+/// set of extension tools, so a tool an extension just registered is there
+/// without restarting the agent.
+fn watch_extension_tools() {
+    std::thread::spawn(|| {
+        let mut seen = crate::ext_tools::published_at();
+        loop {
+            std::thread::sleep(std::time::Duration::from_secs(1));
+            let now = crate::ext_tools::published_at();
+            if now == seen {
+                continue;
+            }
+            seen = now;
+            if OFFERING.load(Ordering::Relaxed) {
+                let note = json!({ "jsonrpc": "2.0", "method": "notifications/tools/list_changed" });
+                let mut stdout = std::io::stdout().lock();
+                if writeln!(stdout, "{note}").and_then(|()| stdout.flush()).is_err() {
+                    return;
+                }
+            }
+        }
+    });
+}
+
 pub fn serve(roer: &Roer) -> Result<(), Fail> {
     let server = Server { roer, here: roer.tmux.inside_roer().ok(), idle: Cell::new(false) };
+    watch_extension_tools();
     let stdin = std::io::stdin();
     let mut stdout = std::io::stdout();
     for line in stdin.lock().lines() {
@@ -85,12 +115,13 @@ impl Server<'_> {
                 self.idle.set(self.here.is_none() && client == "claude-code");
                 let mut reply = json!({
                     "protocolVersion": version,
-                    "capabilities": { "tools": {}, "resources": {} },
+                    "capabilities": { "tools": { "listChanged": true }, "resources": {} },
                     "serverInfo": { "name": "roer", "version": env!("CARGO_PKG_VERSION") },
                 });
                 if !self.idle.get() {
                     reply["instructions"] = self.instructions().into();
                 }
+                OFFERING.store(!self.idle.get(), Ordering::Relaxed);
                 result(id, reply)
             }
             "ping" => result(id, json!({})),
@@ -333,7 +364,34 @@ impl Server<'_> {
             "description": "The extensions Roer has, one per line: id, scope (session or user), ok or failed, folder.",
             "inputSchema": { "type": "object", "properties": {} },
         }));
+        tools.extend(self.extension_tools(&session));
         tools
+    }
+
+    /// The tools Roer's extensions offer, as `<extension>__<tool>`, each also
+    /// taking the `session` every other tool does.
+    fn extension_tools(&self, session: &Value) -> Vec<Value> {
+        crate::ext_tools::published()
+            .into_iter()
+            .map(|tool| {
+                let mut schema = tool.input_schema;
+                if !schema["properties"].is_object() {
+                    schema["properties"] = json!({});
+                }
+                schema["properties"]["session"] = session.clone();
+                if self.here.is_none() {
+                    match schema["required"].as_array_mut() {
+                        Some(required) => required.push("session".into()),
+                        None => schema["required"] = json!(["session"]),
+                    }
+                }
+                json!({
+                    "name": format!("{}{}{}", tool.extension, crate::ext_tools::SEPARATOR, tool.name),
+                    "description": format!("{} (From the {} extension in Roer.)", tool.description, tool.extension),
+                    "inputSchema": schema,
+                })
+            })
+            .collect()
     }
 
     fn call(&self, name: &str, args: &Value) -> Result<String, Fail> {
@@ -394,7 +452,20 @@ impl Server<'_> {
                 self.roer.tasks().remove(id)?;
                 Ok(format!("Deleted {id}."))
             }
-            _ => Err(Fail::new(2, format!("unknown tool: {name}"))),
+            _ => match crate::ext_tools::split(name) {
+                Some((extension, tool)) => {
+                    let pane = match args.get("session") {
+                        Some(_) => Some(self.pane(args)?),
+                        None => self.here.clone(),
+                    };
+                    let mut args = args.clone();
+                    if let Some(fields) = args.as_object_mut() {
+                        fields.remove("session");
+                    }
+                    crate::ext_tools::call(extension, tool, args, pane.as_deref(), &self.roer.cwd)
+                }
+                None => Err(Fail::new(2, format!("unknown tool: {name}"))),
+            },
         }
     }
 

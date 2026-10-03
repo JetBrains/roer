@@ -1,8 +1,11 @@
 # Roer Extensions — code extensions
 
 Status: **draft / RFC**. Rollout step 2, the thin slice (§11), is
-implemented. Bun isn't bundled with the app yet: a build uses `ROER_BUN`,
-`~/.bun/bin/bun` or the `bun` on `PATH`. Everything after step 2 is still
+implemented, and so is the first part of step 4: `server.ts` with `rpc` and
+`exec` (`extension_servers.rs`, `extension_server.ts`). A server starts on
+its first `rpc` call rather than at activation, and isn't restarted after a
+crash until the next call. Bun isn't bundled with the app yet: a build uses
+`ROER_BUN`, `~/.bun/bin/bun` or the `bun` on `PATH`. The rest is still
 design.
 
 ## Goal
@@ -170,7 +173,7 @@ the same way as `react`. Nothing is copied into the extension's build.
 | Export | From |
 | --- | --- |
 | `invoke`, `listen`, `Channel` | `src/lib/backend.ts`, so an extension works in the desktop app and over `roer-server` alike |
-| `gitChanges`, `gitDiff`, `ghPrForBranch`, `fileRead`, … | the typed wrappers in `src/lib/`, under their own names, which already say what they wrap. `filesGrep(cwd, pattern)` is new: `git grep` over tracked and new files, which also starts the worktree watch, so a tab that greps hears `files.changed` |
+| `gitChanges`, `gitDiff`, `ghPrForBranch`, `fileRead`, … | the typed wrappers in `src/lib/`, under their own names, which already say what they wrap. `filesGrep(cwd, pattern)` is new: `git grep` over tracked and new files, which also starts the worktree watch, so a tab that greps hears `files.changed`. `filesList(cwd)` is new too: every path `git ls-files` names, tracked and new, for a tab that draws the whole tree |
 | `DiffPane`, `Spans`, `TerminalView`, `Markdown` | the components the built-ins are made of. `Markdown` is new: the `react-markdown` + GFM setup `PullRequestView` uses today |
 | `parseDiff`, `buildTree`/`rows`, `highlight`, `langFor`, `useHotkey`, `shortcutLabel` | helpers |
 | `rpc`, `useRpc` | calls into the extension's own `server.ts` (§5) |
@@ -220,6 +223,7 @@ is what `fork` copies.
 | Built-in | As an extension | What stays in the core |
 | --- | --- | --- |
 | Changes | `DiffBrowserView` as a pinned tab, using `DiffPane` from the SDK and the prev/next-commit chords | — |
+| Review (new) | `src/extensions/code-review/`: the pull request's diff (`ghPrDiff`) in `roer/ui`'s `DiffView`, its review threads as answerable notes (accept, decline, instruct), and the decisions sent with `session.send`. Written against the SDK only, as a fork would be | — |
 | Pull Request | `PullRequestView` as a pinned tab, with its badge through `roer.badge` and `pr.draft` through `roer.events`. "Send to agent" becomes `session.send` | — |
 | Terminal | A pinned tab whose component renders the SDK's `TerminalView` | The PTY and the handoff state machine (`onAttached`, `onPane`, `onExit`). A replacement can wrap the terminal, with a toolbar or a split, but it can't reimplement the PTY |
 | Sessions | Not moved in this spec | All of it: `useSessionBrowser` is the app's session router |
@@ -277,12 +281,25 @@ bare system `PATH`.
 - `tools.register(…)`: tools for agents.
 - `sessions.list()` and `sessions.send(pane, text)`.
 
-**Agent tools.** `roer mcp` lists every active extension's tools as
-`<id>__<name>`, and sends `notifications/tools/list_changed` when they
-change. A call is forwarded to the app, which forwards it to that
-extension's server. `roer mcp` reaches the app over a local socket,
-`$ROER_HOME/ext.sock`. If the app isn't running, the extension tools just
-aren't listed.
+**Agent tools.** An extension registers tools in `app.tsx`, with
+`roer.tools.register({ name, description, inputSchema, run(args, { pane, cwd }) })`.
+They run in the app's window, beside the tab they feed. `roer mcp` lists
+every loaded extension's tools as `<id>__<name>` and sends
+`notifications/tools/list_changed` when they change.
+
+They ride the same files as the Generative UI panel, so agents reach the
+app one way:
+
+| File | Written by | Read by |
+| --- | --- | --- |
+| `~/.roer/extension-tools.json` | the frontend, whenever the registry's tools change | `roer mcp`, on `tools/list`, and polled for `list_changed` |
+| `~/.roer/extension-calls/<id>.json`: `{ id, extension, tool, args, pane, cwd }` | `roer mcp`, on `tools/call` | the app's watcher, which hands it to the frontend and removes it |
+| `~/.roer/extension-call-receipts/<id>.json`: `{ result }` or `{ error }` | the window that claimed the call (`extension_call_claim`, first one wins) | `roer mcp`, which returns it as the tool's result |
+
+A record nobody takes within 3 s is removed again, and the agent is told
+the app isn't running. A taken call that gets no receipt within 120 s is
+reported as unanswered. Tools in `server.ts` would be forwarded to the
+server the same way; they aren't there yet.
 
 **Bundling Bun.** About 60 MB per platform, as an `externalBin` next to `roer`
 and `tmux`, in the macOS `.dmg` and the Windows and Linux packages. The
@@ -451,7 +468,7 @@ There's no compatibility promise. What Roer does instead:
    - error cards, the fallback, safe mode and `roer ext check`
 4. **Servers.**
    - `server.ts` on Bun, `rpc`, `storage`, `exec`
-   - agent tools through `roer mcp` and `ext.sock`
+   - tools in `server.ts`, forwarded over the same files as `app.tsx` tools
 5. **Seeing.** Screenshots and Comment mode.
 6. **Remaining contribution points, and data extensions.**
    - side panel, sidebar sections, status bar, context menus
@@ -460,9 +477,6 @@ There's no compatibility promise. What Roer does instead:
 
 ## Open questions
 
-- **`roer mcp` to the app.** Is a new `ext.sock` right, or should agent tool
-  calls ride on the existing file-based channel that `plugin-ui` uses? The
-  socket is simpler and has lower latency, but it's a second transport.
 - **Servers under `roer-server`.** Servers run on the machine `roer-server`
   runs on. That's right for a remote dev box, but a browser tab on a laptop
   can't reach a server on the laptop. Is that acceptable?

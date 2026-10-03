@@ -1242,15 +1242,87 @@ pub(crate) fn files_grep_core<S: crate::events::Sink>(
     // tab that greps hears `files.changed` and can search again.
     watch_root(app, state, &root);
     let limit = limit.unwrap_or(500).min(5000);
-    let out = git::run(
+    if pattern.is_empty() {
+        return Err("files.grep needs a pattern: an empty one matches every line".to_string());
+    }
+    // Read as git writes, and stopped once `limit` rows are in: a common
+    // pattern in a big repository is far more output than anyone keeps.
+    let mut child = git::command(
         &root,
         &["grep", "-n", "-I", "-z", "--untracked", "--exclude-standard", "--fixed-strings", "-e", &pattern],
-    )?;
-    // 1 is git grep's "nothing matched".
-    if !out.status.success() && out.status.code() != Some(1) {
+    )
+    .stdin(std::process::Stdio::null())
+    .stdout(std::process::Stdio::piped())
+    .stderr(std::process::Stdio::piped())
+    .spawn()
+    .map_err(|e| format!("could not run git: {e}"))?;
+    let mut rows = std::io::BufReader::new(child.stdout.take().expect("stdout is a pipe"));
+    let mut hits = Vec::new();
+    let mut row = Vec::new();
+    while hits.len() < limit {
+        row.clear();
+        match std::io::BufRead::read_until(&mut rows, b'\n', &mut row) {
+            Ok(0) => break,
+            Ok(_) => hits.extend(parse_grep(&String::from_utf8_lossy(&row), 1)),
+            Err(e) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!("could not read from git: {e}"));
+            }
+        }
+    }
+    let full = hits.len() >= limit;
+    if full {
+        // Git is blocked writing into a pipe nobody will drain; killing it is what ends it.
+        let _ = child.kill();
+    }
+    drop(rows);
+    let out = child.wait_with_output().map_err(|e| format!("could not wait for git: {e}"))?;
+    // 1 is git grep's "nothing matched"; a kill is our own doing.
+    if !full && !out.status.success() && out.status.code() != Some(1) {
         return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
     }
-    Ok(parse_grep(&String::from_utf8_lossy(&out.stdout), limit))
+    Ok(hits)
+}
+
+/// Every path in the repository holding `cwd`, sorted: tracked files and new
+/// ones, `.gitignore` respected. For extensions (`filesList` in the `roer`
+/// SDK), which want the whole tree rather than the best few of a search.
+#[tauri::command(async)]
+pub fn files_list(
+    app: AppHandle,
+    state: tauri::State<'_, FileIndex>,
+    cwd: String,
+    limit: Option<usize>,
+) -> Result<Vec<String>, String> {
+    files_list_core(&app, &state, cwd, limit)
+}
+
+/// The listing itself, for either host.
+pub(crate) fn files_list_core<S: crate::events::Sink>(
+    app: &S,
+    state: &FileIndex,
+    cwd: String,
+    limit: Option<usize>,
+) -> Result<Vec<String>, String> {
+    let root = git::root(&cwd)?;
+    // As with `files_grep`: a tab that lists the tree hears `files.changed`.
+    watch_root(app, state, &root);
+    let out = git::run(&root, &["ls-files", "-z", "--cached", "--others", "--exclude-standard"])?;
+    if !out.status.success() {
+        return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+    }
+    Ok(parse_list(&String::from_utf8_lossy(&out.stdout), limit.unwrap_or(50_000)))
+}
+
+/// `git ls-files -z`, sorted and deduplicated: an unmerged path is listed
+/// once per stage.
+fn parse_list(listing: &str, limit: usize) -> Vec<String> {
+    let mut paths: Vec<String> = listing.split('\0').filter(|one| !one.is_empty()).map(str::to_string).collect();
+    paths.sort_unstable();
+    paths.dedup();
+    paths.truncate(limit);
+    paths
 }
 
 /// `path\0line\0text` per line, which is what `-z` makes of `git grep -n`.
@@ -1274,8 +1346,30 @@ mod tests {
         build, collect, patch, ranges, read, resolve, scan, search, split_line, subsequence, sweep,
         window, Duration, Index, Needle, SPLIT_OVER, STALE_AFTER, WATCHED_AFTER,
     };
-    use super::{parse_grep, GrepHit};
+    use super::{parse_grep, parse_list, GrepHit};
     use crate::testing::{commit, init, must, scratch, write};
+
+    #[test]
+    fn grep_stops_at_its_limit_and_refuses_an_empty_pattern() {
+        let dir = scratch("files-grep-limit");
+        let at = dir.to_string_lossy().to_string();
+        init(&at);
+        write(&dir, "a.txt", &"match\n".repeat(2000));
+        write(&dir, "b.txt", "match too\nno\n");
+        must(&at, &["add", "."]);
+        commit(&at, "first");
+        let bus = crate::events::Bus::new();
+        let index = super::FileIndex::default();
+
+        let hits = super::files_grep_core(&bus, &index, at.clone(), "match".into(), Some(10)).unwrap();
+        assert_eq!(hits.len(), 10);
+        let all = super::files_grep_core(&bus, &index, at.clone(), "too".into(), None).unwrap();
+        assert_eq!(all, vec![GrepHit { path: "b.txt".into(), line: 1, text: "match too".into() }]);
+        assert!(super::files_grep_core(&bus, &index, at.clone(), "nowhere".into(), None).unwrap().is_empty());
+        assert!(super::files_grep_core(&bus, &index, at, String::new(), None).is_err());
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     #[test]
     fn grep_rows_split_on_nul_whatever_the_text_holds() {
@@ -1283,6 +1377,12 @@ mod tests {
         assert_eq!(hits[0], GrepHit { path: "src/a.ts".into(), line: 12, text: "\t// TODO: x:y".into() });
         assert_eq!(hits[1].line, 3);
         assert_eq!(parse_grep("a\x001\x00x\nb\x002\x00y\n", 1).len(), 1);
+    }
+
+    #[test]
+    fn listed_paths_come_back_sorted_once_each() {
+        assert_eq!(parse_list("b.md\0a/x.ts\0b.md\0", 10), ["a/x.ts", "b.md"]);
+        assert_eq!(parse_list("b\0a\0c\0", 2), ["a", "b"]);
     }
 
     /// An index over these paths, listed the way `git ls-files -z` lists
