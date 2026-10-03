@@ -389,6 +389,10 @@ fn dispatch(state: &Arc<AppState>, cmd: &str, args: Value, cid: Option<&str>) ->
         "extensions_list" => call!(args, crate::extensions::extensions_list,),
         "extension_bundle" => call_res!(args, crate::extensions::extension_bundle, "id": String),
         "extension_log" => call!(args, crate::extensions::extension_log, "id": String, "message": String),
+        "extensions_disabled" => call!(args, crate::extensions::extensions_disabled,),
+        "extension_set_enabled" => {
+            call_res!(args, crate::extensions::extension_set_enabled, "id": String, "enabled": bool)
+        }
         "extension_rpc" => call_res!(args, crate::extension_servers::extension_rpc, "id": String, "method": String, "params": Option<Value>),
         "extension_tools_publish" => call_res!(args, crate::extension_tools::extension_tools_publish, "tools": Vec<Value>),
         "extension_call_claim" => call!(args, crate::extension_tools::extension_call_claim, "id": String),
