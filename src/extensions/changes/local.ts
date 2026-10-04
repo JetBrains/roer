@@ -73,8 +73,9 @@ export function useBranchComments(
 
 export const newCommentId = (): string => `c${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 
-/** Comments are kept per repository and branch, until they go to the agent. */
-const storeKey = (root: string, branch: string | null) => `roer:review:local:${root}:${branch ?? "(detached)"}`;
+/** Comments are kept per repository and branch, until they go to the agent. A detached HEAD is one key, however
+ * it was read: git says "" for it where the tab says null. */
+const storeKey = (root: string, branch: string | null) => `roer:review:local:${root}:${branch || "(detached)"}`;
 
 export function storedComments(root: string, branch: string | null): LocalComment[] {
   try {
@@ -294,6 +295,11 @@ export function commitDraftPrompt(pane: string): string {
     "ROER_COMMIT_DRAFT",
   ].join("\n");
 }
+
+/** Whether there is an agent to hand a prompt to: a pane, and not a plain shell, which prose must never be typed
+ * into. While the session is not yet listed it is taken to have one. */
+export const canAsk = (session: { pane?: string; agent?: string | null } | null | undefined): boolean =>
+  Boolean(session?.pane) && session?.agent !== null;
 
 /** The tool an agent hands its comments over with, as `roer mcp` names it. */
 export const ADD_COMMENTS_TOOL = "changes__add_comments";

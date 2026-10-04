@@ -150,7 +150,8 @@ export interface PrDraftRecord {
   pane: string;
   /** `"commit"` for a commit message (`roer commit-draft`); absent for a pull request. */
   kind?: "commit";
-  draft: { title: string; body: string };
+  /** `branch` is the one the draft was asked for, when the agent said; a form for another branch ignores it. */
+  draft: { title: string; body: string; branch?: string };
 }
 
 function isPrDraftRecord(value: unknown): value is PrDraftRecord {
@@ -202,7 +203,7 @@ export function draftPrPrompt(pane: string, branch: string, base: string): strin
     "Do not create the pull request and do not push. When the draft is ready, hand it to Roer by running exactly:",
     "",
     `roer pr-draft --pane ${pane} <<'ROER_PR_DRAFT'`,
-    '{"title": "<title>", "body": "<description, JSON-escaped>"}',
+    `{"branch": ${JSON.stringify(branch)}, "title": "<title>", "body": "<description, JSON-escaped>"}`,
     "ROER_PR_DRAFT",
   ].join("\n");
 }

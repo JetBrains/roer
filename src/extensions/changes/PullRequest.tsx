@@ -22,7 +22,7 @@ import {
 } from "roer";
 import { Button } from "roer/ui";
 
-import { onBranch } from "./local";
+import { canAsk, onBranch } from "./local";
 
 /** How often a pending Copilot review is checked on, and for how long. */
 export const POLL_MS = 30_000;
@@ -82,9 +82,14 @@ export function OpenPullRequest({ dir, branch: other, session, agent, onCreated,
   }, [dir, other]);
 
   const pane = session.pane;
+  // A draft says which branch it was asked for; one for another branch, asked for before the picker moved, is not
+  // this form's.
+  const shown = useRef(branch);
+  shown.current = branch;
   useEffect(() => {
     const unlisten = onPrDraft((record) => {
       if (record.pane !== pane) return;
+      if (record.draft.branch && record.draft.branch !== shown.current) return;
       setTitle(record.draft.title);
       setBody(record.draft.body);
       setDrafting(false);
@@ -93,6 +98,16 @@ export function OpenPullRequest({ dir, branch: other, session, agent, onCreated,
       void unlisten.then((stop) => stop());
     };
   }, [pane]);
+
+  // The form is another branch's once the picker moves: a creation still running then must not reload the view,
+  // which by now shows that other branch.
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
 
   const run = async (what: "draft" | "create", job: () => Promise<void>) => {
     setBusy(what);
@@ -117,7 +132,7 @@ export function OpenPullRequest({ dir, branch: other, session, agent, onCreated,
   const create = () =>
     run("create", async () => {
       await ghPrCreate(dir, { title: title.trim(), body, base, draft, ...(other ? { head: other } : {}) });
-      await onCreated();
+      if (mounted.current) await onCreated();
     });
 
   return (
@@ -145,8 +160,14 @@ export function OpenPullRequest({ dir, branch: other, session, agent, onCreated,
         <button
           type="button"
           className="gen-button primary"
-          disabled={busy !== null || !base || !branch || !pane}
-          title={pane ? undefined : "Needs a live session to send the prompt to"}
+          disabled={busy !== null || !base || !branch || !canAsk(session)}
+          title={
+            !pane
+              ? "Needs a live session to send the prompt to"
+              : session.agent === null
+                ? "Only a shell is running in this session: start an agent in it first"
+                : undefined
+          }
           onClick={() => void askForDraft()}
         >
           {drafting ? `Waiting for ${agent}…` : `Draft with ${agent}`}

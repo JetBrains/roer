@@ -3,7 +3,7 @@ import { gitBranches, gitCurrentBranch, gitRoot, resolveDir, type Session } from
 import { Button } from "roer/ui";
 
 import { DiffBrowserView } from "./DiffBrowserView";
-import { localReviewPrompt, onBranch, ready, storedBase, useBranchComments } from "./local";
+import { canAsk, localReviewPrompt, onBranch, ready, storedBase, useBranchComments } from "./local";
 import { ReviewView } from "./ReviewView";
 
 /** What the tab shows: the edits and commits one at a time, the whole branch at once, or its pull request. */
@@ -61,6 +61,9 @@ export function ChangesView({ session, active, onSent, onOpenCount }: ChangesVie
   const cwd = session?.cwd;
   const pane = session?.pane;
   const sessionBranch = session?.branch;
+  // Looked up again when the session's repository changes (a `cd` into another one) and when the tab comes up,
+  // so comments are never kept or sent under the repository it was in before.
+  const sessionRoot = session?.root;
   useEffect(() => {
     let gone = false;
     void resolveDir(cwd, pane)
@@ -77,10 +80,11 @@ export function ChangesView({ session, active, onSent, onOpenCount }: ChangesVie
     return () => {
       gone = true;
     };
-  }, [cwd, pane, sessionBranch]);
+  }, [cwd, pane, sessionBranch, sessionRoot, active]);
 
-  // Another session starts again from its own branch.
-  useEffect(() => setPicked(null), [cwd, pane]);
+  // Another session, or another repository, starts again from its own branch.
+  const root = where?.root;
+  useEffect(() => setPicked(null), [cwd, pane, root]);
 
   const agent = agentName(session);
   const toSend = ready(comments);
@@ -126,12 +130,16 @@ export function ChangesView({ session, active, onSent, onOpenCount }: ChangesVie
           title="The branch every view shows"
           value={branch ?? ""}
           disabled={!where}
-          onChange={(e) => setPicked(e.target.value === checkedOut ? null : e.target.value)}
+          onChange={(e) => setPicked(e.target.value === "" || e.target.value === checkedOut ? null : e.target.value)}
         >
           {branch && !where?.branches.includes(branch) ? <option value={branch}>{branch}</option> : null}
           {/* The checked-out one first, under its own heading: the open list says which it is, the closed picker
-              stays as short as the name. */}
-          {checkedOut && where?.branches.includes(checkedOut) ? (
+              stays as short as the name. A detached HEAD is offered as itself, so every view shows the same. */}
+          {where && !checkedOut ? (
+            <optgroup label="Checked out here">
+              <option value="">HEAD (detached)</option>
+            </optgroup>
+          ) : checkedOut && where?.branches.includes(checkedOut) ? (
             <optgroup label="Checked out here">
               <option value={checkedOut}>{checkedOut}</option>
             </optgroup>
@@ -160,7 +168,7 @@ export function ChangesView({ session, active, onSent, onOpenCount }: ChangesVie
             variant="primary"
             aria-label={`Send ${toSend.length} to ${agent}`}
             onClick={() => void send()}
-            disabled={sending || !session?.pane}
+            disabled={sending || !canAsk(session)}
           >
             Send {toSend.length}
           </Button>
@@ -168,8 +176,10 @@ export function ChangesView({ session, active, onSent, onOpenCount }: ChangesVie
       </div>
       <div className="changes-scope" hidden={scope !== "commits"}>
         <DiffBrowserView
+          // Another repository is another history: started over rather than left on the old one's commits.
+          key={root ?? ""}
           toolbar={slot}
-          branch={branch ?? undefined}
+          branch={branch ?? (where ? "HEAD" : undefined)}
           cwd={session?.cwd}
           pane={session?.pane}
           active={active && scope === "commits"}
@@ -177,7 +187,7 @@ export function ChangesView({ session, active, onSent, onOpenCount }: ChangesVie
           comments={comments}
           onComments={where ? update : undefined}
           agent={agent}
-          send={session?.pane ? session.send : undefined}
+          send={session && canAsk(session) ? session.send : undefined}
           onSent={onSent}
           onCommitted={(short) => setSaid(`Committed ${short}.`)}
         />

@@ -19,6 +19,9 @@ pub struct PrDraft {
     pub title: String,
     #[serde(default)]
     pub body: String,
+    /// The branch the draft was asked for, so a form for another one can tell it is not its own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
@@ -47,6 +50,12 @@ mod tests {
         assert_eq!(record.draft.title, "Add PR tab");
         assert_eq!(record.draft.body, "Line one\nLine two");
         assert_eq!(record.kind, None);
+        assert_eq!(record.draft.branch, None);
+
+        let raw = r#"{"pane": "%4", "draft": {"branch": "feat", "title": "T", "body": ""}}"#;
+        let record: PrDraftRecord = serde_json::from_str(raw).unwrap();
+        assert_eq!(record.draft.branch.as_deref(), Some("feat"));
+        assert!(serde_json::to_string(&record).unwrap().contains(r#""branch":"feat""#));
 
         let raw = r#"{"pane": "%4", "kind": "commit", "draft": {"title": "Fix it", "body": ""}}"#;
         let record: PrDraftRecord = serde_json::from_str(raw).unwrap();

@@ -15,8 +15,9 @@ export interface Session {
   /** The repository the session is in now, or null outside one. */
   root: string | null;
   branch: string | null;
-  /** The agent it runs ("claude", "codex", …), once the session is listed. */
-  agent?: string;
+  /** The agent it runs ("claude", "codex", …), once the session is listed; null when only a shell runs, which
+   * nothing should type a prompt into. */
+  agent?: string | null;
   /** The agent is working rather than waiting for the person. */
   busy: boolean;
   /** The latest batch the worktree watch reported. */
