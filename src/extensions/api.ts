@@ -30,7 +30,7 @@ export interface TabOptions {
   id: string;
   title: string;
   component: ComponentType;
-  /** Where in the strip: Sessions is 0, Terminal 10, Changes 20, Pull Request 30. Default 100. */
+  /** Where in the strip: Sessions is 0, Terminal 10, Changes 20. Default 100. */
   order?: number;
   /** Disabled with no session on the stage. Default true. */
   needsSession?: boolean;

@@ -24,7 +24,7 @@ use std::path::PathBuf;
 use serde_json::{json, Value};
 
 use names::{is_agent_id, is_bundle_name, is_pane_id, session_name};
-use records::{emit_plugin_ui, emit_pr_draft, publish};
+use records::{emit_commit_draft, emit_plugin_ui, emit_pr_draft, publish};
 use tasks::Tasks;
 use tmux::Tmux;
 
@@ -126,7 +126,12 @@ usage:
                         the program running in the session's pane
   roer pr-draft [--pane <id>]
                         read {\"title\": ..., \"body\": ...} JSON from stdin and
-                        fill it into the app's Pull Request form
+                        fill it into the form that opens a pull request
+                        in the app's Changes tab
+  roer commit-draft [--pane <id>]
+                        read {\"title\": <subject>, \"body\": ...} JSON from
+                        stdin and fill it into the commit box over the
+                        local changes in the app's Changes tab
   roer skills [list]    the skills that drive roer, and whether each is
                         installed for Claude Code (~/.claude/skills)
   roer skills install   link them there, so sessions in any project have
@@ -238,6 +243,7 @@ impl Roer {
             "task" | "tasks" => self.task(args),
             "send" => self.send(args),
             "pr-draft" => self.pr_draft(args),
+            "commit-draft" => self.commit_draft(args),
             "skills" => skills::run(&self.conf, args),
             "ext" | "extension" | "extensions" => ext::run(&self.cwd, args),
             "mcp" => match args.first() {
@@ -938,6 +944,12 @@ impl Roer {
         let pane = resolve_pane(&self.tmux, args)?;
         let draft = read_json_stdin("pr-draft needs {\"title\": ..., \"body\": ...} JSON on stdin")?;
         emit_pr_draft(&pane, draft)
+    }
+
+    fn commit_draft(&self, args: &[&str]) -> Outcome {
+        let pane = resolve_pane(&self.tmux, args)?;
+        let draft = read_json_stdin("commit-draft needs {\"title\": ..., \"body\": ...} JSON on stdin")?;
+        emit_commit_draft(&pane, draft)
     }
 
     /// `roer task …`: the project's personal tasks, see `tasks`.

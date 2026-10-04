@@ -62,6 +62,7 @@ pub fn run() {
             git::git_commit_files,
             git::git_commit_diff,
             git::git_branch_diff,
+            git::git_commit_all,
             git::git_upstream_status,
             gh::gh_status,
             gh::gh_pr_for_branch,

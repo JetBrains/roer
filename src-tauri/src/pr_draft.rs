@@ -1,10 +1,13 @@
 //! Drafted pull requests, terminal → app.
 //!
-//! The Pull Request tab asks the session's agent to draft a title and body,
-//! and the agent answers with `roer pr-draft`, which drops a record into
-//! ~/.roer/pr-draft. Same fire-and-forget shape as a plugin-UI message, so
-//! it rides the same watcher; the tab fills its form from whichever record
-//! is tagged with the pane it is showing.
+//! Changes, on a branch with no pull request, asks the session's agent to
+//! draft a title and body, and the agent answers with `roer pr-draft`, which
+//! drops a record into ~/.roer/pr-draft. Same fire-and-forget shape as a
+//! plugin-UI message, so it rides the same watcher; the tab fills its form
+//! from whichever record is tagged with the pane it is showing.
+//!
+//! A commit message rides the same way: `roer commit-draft` writes the same
+//! record with `kind: "commit"`, for the commit box over the local changes.
 
 use serde::{Deserialize, Serialize};
 
@@ -21,6 +24,9 @@ pub struct PrDraft {
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 pub struct PrDraftRecord {
     pub pane: String,
+    /// `"commit"` for a commit message; absent for a pull request.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
     pub draft: PrDraft,
 }
 
@@ -40,5 +46,10 @@ mod tests {
         assert_eq!(record.pane, "%4");
         assert_eq!(record.draft.title, "Add PR tab");
         assert_eq!(record.draft.body, "Line one\nLine two");
+        assert_eq!(record.kind, None);
+
+        let raw = r#"{"pane": "%4", "kind": "commit", "draft": {"title": "Fix it", "body": ""}}"#;
+        let record: PrDraftRecord = serde_json::from_str(raw).unwrap();
+        assert_eq!(record.kind.as_deref(), Some("commit"));
     }
 }

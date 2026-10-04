@@ -62,6 +62,8 @@ export interface DiffPaneProps {
   emptyMessage: ReactNode;
   /** Extra controls in the header, alongside the layout toggle. */
   headerExtra?: ReactNode;
+  /** Shown between the header and the diff, at its full width: a commit's whole message. */
+  banner?: ReactNode;
   "data-testid"?: string;
   "aria-label"?: string;
   /** The layout shown before the viewer picks one. @default "unified" */
@@ -352,6 +354,7 @@ export function DiffPane({
   title,
   emptyMessage,
   headerExtra,
+  banner,
   "data-testid": testId,
   "aria-label": ariaLabel,
   defaultLayout = "unified",
@@ -656,7 +659,7 @@ export function DiffPane({
         >
           {treeHidden ? <PanelLeftOpen size={14} /> : <PanelLeftClose size={14} />}
         </button>
-        <strong>{title}</strong>
+        <strong className="changes-title">{title}</strong>
         {files ? (
           <>
             <span className="muted">
@@ -687,6 +690,7 @@ export function DiffPane({
         </div>
         {headerExtra}
       </header>
+      {banner}
 
       {error ? <p className="error">{error}</p> : null}
 

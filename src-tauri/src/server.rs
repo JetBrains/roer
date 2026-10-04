@@ -244,7 +244,10 @@ fn dispatch(state: &Arc<AppState>, cmd: &str, args: Value, cid: Option<&str>) ->
             call_res!(args, crate::git::git_commit_diff, "root": String, "commit": String, "path": String)
         }
         "git_upstream_status" => call_res!(args, crate::git::git_upstream_status, "cwd": String),
-        "git_branch_diff" => call_res!(args, crate::git::git_branch_diff, "cwd": String, "base": Option<String>),
+        "git_commit_all" => call_res!(args, crate::git::git_commit_all, "cwd": String, "message": String),
+        "git_branch_diff" => {
+            call_res!(args, crate::git::git_branch_diff, "cwd": String, "base": Option<String>, "head": Option<String>)
+        }
         "git_changes" => {
             let cwd = parse(&args, "cwd")?;
             crate::git::git_changes_core(&state.bus, &state.files, cwd).and_then(|v| {
@@ -333,9 +336,10 @@ fn dispatch(state: &Arc<AppState>, cmd: &str, args: Value, cid: Option<&str>) ->
 
         // GitHub
         "gh_status" => call!(args, crate::gh::gh_status, "dir": String),
-        "gh_pr_for_branch" => call_res!(args, crate::gh::gh_pr_for_branch, "dir": String),
+        "gh_pr_for_branch" => call_res!(args, crate::gh::gh_pr_for_branch, "dir": String, "branch": Option<String>),
         "gh_pr_create" => call_res!(
-            args, crate::gh::gh_pr_create, "dir": String, "title": String, "body": String, "base": String, "draft": bool
+            args, crate::gh::gh_pr_create, "dir": String, "title": String, "body": String, "base": String, "draft": bool,
+            "head": Option<String>
         ),
         "gh_request_copilot_review" => {
             call_res!(args, crate::gh::gh_request_copilot_review, "dir": String, "number": u64)

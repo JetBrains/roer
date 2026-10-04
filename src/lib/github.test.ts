@@ -47,7 +47,7 @@ describe("draftPrPrompt", () => {
   it("names the branch, the base, and the exact command to answer with", () => {
     const text = draftPrPrompt("%3", "feat", "main");
     expect(text).toContain("`feat` against `main`");
-    expect(text).toContain("git diff main...HEAD");
+    expect(text).toContain("git diff main...feat");
     expect(text).toContain("roer pr-draft --pane %3 <<'ROER_PR_DRAFT'");
     expect(text).toMatch(/Do not create the pull request/);
   });

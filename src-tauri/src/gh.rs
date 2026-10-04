@@ -123,7 +123,7 @@ fn spawn_error(e: &std::io::Error) -> String {
 const NOT_INSTALLED: &str = "gh is not installed. Install the GitHub CLI (brew install gh) to use pull requests in Roer.";
 
 /// Whether GitHub is reachable from this directory at all, and as whom — what
-/// the Pull Request tab needs to know before it can offer anything.
+/// the pull request view in Changes needs to know before it can offer anything.
 #[derive(Clone, Debug, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct GhStatus {
@@ -189,8 +189,8 @@ const PR_FIELDS: &str =
 
 /// The pull request for the branch checked out in `dir`, if there is one.
 #[tauri::command(async)]
-pub fn gh_pr_for_branch(dir: String) -> Result<Option<PrSummary>, String> {
-    pr_view(&dir, None)
+pub fn gh_pr_for_branch(dir: String, branch: Option<String>) -> Result<Option<PrSummary>, String> {
+    pr_view(&dir, branch.as_deref().filter(|b| !b.is_empty()))
 }
 
 fn pr_view(dir: &str, which: Option<&str>) -> Result<Option<PrSummary>, String> {
@@ -211,18 +211,31 @@ fn is_no_pr(stderr: &str) -> bool {
 }
 
 /// Pushes the branch if it needs it, opens a pull request from it, and hands
-/// back the one that was made.
+/// back the one that was made. The branch is `head` when given, checked out
+/// or not, else the one checked out.
 #[tauri::command(async)]
-pub fn gh_pr_create(dir: String, title: String, body: String, base: String, draft: bool) -> Result<PrSummary, String> {
+pub fn gh_pr_create(
+    dir: String,
+    title: String,
+    body: String,
+    base: String,
+    draft: bool,
+    head: Option<String>,
+) -> Result<PrSummary, String> {
     let root = crate::git::root(&dir)?;
-    let branch = crate::git::git(&root, &["branch", "--show-current"])?.trim().to_string();
+    let current = crate::git::git(&root, &["branch", "--show-current"])?.trim().to_string();
+    let branch = head.filter(|h| !h.is_empty()).unwrap_or_else(|| current.clone());
     if branch.is_empty() {
         return Err("HEAD is detached; check out a branch to open a pull request from.".to_string());
     }
     if branch == base {
         return Err(format!("{branch} is the base branch; open the pull request from another branch."));
     }
-    crate::git::push_upstream(&root)?;
+    if branch == current {
+        crate::git::push_upstream(&root)?;
+    } else {
+        crate::git::push_branch(&root, &branch)?;
+    }
 
     let mut args = vec![
         "pr", "create", "--title", &title, "--body-file", "-", "--base", &base, "--head", &branch,

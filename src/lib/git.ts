@@ -65,9 +65,10 @@ export interface BranchDiff {
 }
 
 /** `base` is the branch to compare with, a pull request's base for one;
- * without it, the repository's default branch. */
-export const gitBranchDiff = (cwd: string, base?: string): Promise<BranchDiff> =>
-  invoke("git_branch_diff", { cwd, base: base ?? null });
+ * without it, the repository's default branch. `head` is another branch to
+ * diff than the one checked out: its commits alone, nothing uncommitted. */
+export const gitBranchDiff = (cwd: string, base?: string, head?: string): Promise<BranchDiff> =>
+  invoke("git_branch_diff", { cwd, base: base ?? null, head: head ?? null });
 
 /** One commit, as much as the branch-diff view names it by. */
 export interface Commit {
@@ -77,7 +78,13 @@ export interface Commit {
   /** Unix seconds, author date. */
   date: number;
   subject: string;
+  /** The rest of the message, after the subject; empty when there is none. */
+  body: string;
 }
+
+/** Commits everything the worktree has changed, new files included, hooks and all; the new commit's short hash. */
+export const gitCommitAll = (cwd: string, message: string): Promise<string> =>
+  invoke("git_commit_all", { cwd, message });
 
 /** Every local branch, for the branch-diff view's two pickers. */
 export const gitBranches = (cwd: string): Promise<string[]> => invoke("git_branches", { cwd });

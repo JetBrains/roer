@@ -29,7 +29,6 @@ import { AgentsDialog, type AgentsDialogStart } from "./AgentsDialog";
 import { ClaudeSetup } from "./ClaudeSetup";
 import { GoToFile, type SessionHit } from "./GoToFile";
 import { NewSessionButton } from "./NewSessionButton";
-import { PullRequestView } from "./PullRequestView";
 import {
   SessionBrowser,
   isWorking,
@@ -105,7 +104,6 @@ interface StripTab {
 const CORE_TABS: readonly StripTab[] = [
   { tabId: "sessions", title: "Sessions", order: 0, needsSession: false },
   { tabId: "terminal", title: "Terminal", order: 10, needsSession: false },
-  { tabId: "pullRequest", title: "Pull Request", order: 30, needsSession: true },
 ];
 
 interface SessionView extends OpenRequest {
@@ -167,14 +165,6 @@ export function App() {
   const strip: StripTab[] = [...CORE_TABS, ...extensionTabs].sort((a, b) => a.order - b.order);
   const stripRef = useRef(strip);
   stripRef.current = strip;
-  // Same for the pull request, which also keeps polling a pending review
-  // while you are away in the terminal — which is when it would land.
-  const [everPr, setEverPr] = useState(false);
-  // A review Roer was waiting on landed while the tab was not on top.
-  const [prBadge, setPrBadge] = useState(false);
-  useEffect(() => {
-    if (prBadge && tabs.active === "pullRequest") setPrBadge(false);
-  }, [prBadge, tabs.active]);
   // Same reasoning as `everOpened`: mount once, keep it mounted, so
   // collapsing the panel and reopening it does not lose a live surface.
   const [everGenerativeUI, setEverGenerativeUI] = useState(false);
@@ -244,11 +234,6 @@ export function App() {
   );
 
   const target = targetOf(session);
-  // The dot is about the session that was on stage when its review landed;
-  // another session has no such review to announce.
-  useEffect(() => {
-    setPrBadge(false);
-  }, [target]);
 
   // What is on the stage, read synchronously. The handoff listener is
   // registered once and cannot close over a render's values, and a handoff
@@ -541,12 +526,10 @@ export function App() {
     }
   }, [staged]);
 
-  /** A prompt went into the session: show it arriving. */
   /** Brings a tab up by its id, mounting it if it never was: what an extension's `useActivateTab` does. */
   const activateTab = useCallback(
     (tabId: string) => {
-      if (tabId === "pullRequest") setEverPr(true);
-      else opened(tabId);
+      opened(tabId);
       setTabs((current) => activate(current, tabId));
     },
     [opened],
@@ -557,12 +540,6 @@ export function App() {
     const at = strip.findIndex((tab) => tab.tabId === tabId);
     return at >= 0 && at < 9 ? shortcutLabel.tab(at + 1) : undefined;
   };
-
-  const showTerminal = useCallback(() => {
-    setTabs((current) => activate(current, "terminal"));
-  }, []);
-
-  const markReviewLanded = useCallback(() => setPrBadge(true), []);
 
   /** Opens a file from Go to File, in a tab of its own. */
   const openInTab = useCallback((root: string, path: string, line?: number) => {
@@ -763,8 +740,7 @@ export function App() {
         const tab = stripRef.current[(tabNumber(event) ?? 0) - 1];
         if (!tab) return;
         if (tab.needsSession && !stagedRef.current) return;
-        if (tab.tabId === "pullRequest") setEverPr(true);
-        else opened(tab.tabId);
+        opened(tab.tabId);
         setTabs((current) => activate(current, tab.tabId));
       },
       [opened],
@@ -1071,31 +1047,6 @@ export function App() {
               </button>
                   );
                 }
-                if (tab.tabId === "pullRequest") {
-                  return (
-              <button
-                key={tab.tabId}
-                type="button"
-                role="tab"
-                aria-selected={tabs.active === "pullRequest"}
-                className={tabs.active === "pullRequest" ? "tab on" : "tab"}
-                title={number(tab.tabId)}
-                disabled={!session}
-                onClick={() => {
-                  setEverPr(true);
-                  setTabs((current) => activate(current, "pullRequest"));
-                }}
-              >
-                Pull Request
-                {prBadge ? (
-                  <>
-                    <span className="tab-dot" aria-hidden="true" />
-                    <span className="sr-only"> (new review)</span>
-                  </>
-                ) : null}
-              </button>
-                  );
-                }
                 const badge = badges.get(tab.tabId);
                 return (
                   <button
@@ -1245,24 +1196,6 @@ export function App() {
                   />
                 </div>
               ))}
-
-            {everPr ? (
-              <div className="overlay" hidden={tabs.active !== "pullRequest"}>
-                <PullRequestView
-                  cwd={session?.cwd}
-                  pane={session?.pane}
-                  agent={(() => {
-                    // Unknown until the session is listed: then the buttons
-                    // keep their default rather than going dead.
-                    const live = browser.visibleSessions.find((listed) => listed.pane === session?.pane);
-                    return live ? runningAgent(live) : undefined;
-                  })()}
-                  active={tabs.active === "pullRequest"}
-                  onSent={showTerminal}
-                  onReviewLanded={markReviewLanded}
-                />
-              </div>
-            ) : null}
 
             {/* Open is mounted, for the same reason: a file tab keeps its scroll
               position while you are away in the terminal. */}

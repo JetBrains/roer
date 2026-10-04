@@ -409,6 +409,31 @@ pub(crate) fn push_upstream(root: &str) -> Result<(), String> {
     git(root, &["push", "--quiet", "-u", "origin", "HEAD"]).map(|_| ())
 }
 
+/// Commits everything the worktree has changed, new files included, with
+/// `message`, hooks and all, and hands back the new commit's short hash. A
+/// hook that refuses is git's answer, passed on whole; what was staged stays
+/// staged, as it would after a `git commit` in a terminal.
+#[tauri::command(async)]
+pub fn git_commit_all(cwd: String, message: String) -> Result<String, String> {
+    if message.trim().is_empty() {
+        return Err("A commit needs a message.".to_string());
+    }
+    let root = root(&cwd)?;
+    git(&root, &["add", "--all"])?;
+    let fed = feed(&root, &["commit", "--file", "-", "--cleanup=strip"], message)?;
+    if fed.code != Some(0) {
+        let said: Vec<&str> = [fed.stderr.trim(), fed.stdout.trim()].into_iter().filter(|s| !s.is_empty()).collect();
+        return Err(if said.is_empty() { "git commit failed".to_string() } else { said.join("\n") });
+    }
+    Ok(git(&root, &["rev-parse", "--short", "HEAD"])?.trim().to_string())
+}
+
+/// Pushes a branch that need not be checked out, under its own name, and makes
+/// origin's copy its upstream. Nothing to send is not an error.
+pub(crate) fn push_branch(root: &str, branch: &str) -> Result<(), String> {
+    git(root, &["push", "--quiet", "-u", "origin", &format!("refs/heads/{branch}:refs/heads/{branch}")]).map(|_| ())
+}
+
 /// One commit, as much as the branch-diff view names it by.
 #[derive(Clone, Debug, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -419,7 +444,13 @@ pub struct Commit {
     /// Unix seconds, author date.
     pub date: i64,
     pub subject: String,
+    /// The rest of the message, after the subject; empty when there is none.
+    pub body: String,
 }
+
+/// Record separator between `git log` entries: a message body spans lines,
+/// so a line is no longer one commit.
+const RECORD_SEP: char = '\x1e';
 
 /// Field separator within one `git log` record. `\x1f` (unit separator)
 /// rather than a tab or comma: nothing a person types ever contains it, so a
@@ -435,20 +466,21 @@ pub fn git_branch_commits(root: String, branch: String, base: String) -> Result<
 }
 
 fn branch_commits(root: &str, branch: &str, base: &str) -> Result<Vec<Commit>, String> {
-    let format = format!("%H{FIELD_SEP}%h{FIELD_SEP}%an{FIELD_SEP}%at{FIELD_SEP}%s");
+    let format = format!("%H{FIELD_SEP}%h{FIELD_SEP}%an{FIELD_SEP}%at{FIELD_SEP}%s{FIELD_SEP}%b{RECORD_SEP}");
     let range = format!("{base}..{branch}");
     let out = git(root, &["log", "--reverse", &format!("--format={format}"), &range])?;
-    Ok(out.lines().filter(|line| !line.is_empty()).filter_map(parse_commit).collect())
+    Ok(out.split(RECORD_SEP).map(str::trim).filter(|record| !record.is_empty()).filter_map(parse_commit).collect())
 }
 
-fn parse_commit(line: &str) -> Option<Commit> {
-    let mut fields = line.splitn(5, FIELD_SEP);
+fn parse_commit(record: &str) -> Option<Commit> {
+    let mut fields = record.splitn(6, FIELD_SEP);
     Some(Commit {
         hash: fields.next()?.to_string(),
         short: fields.next()?.to_string(),
         author: fields.next()?.to_string(),
         date: fields.next()?.parse().ok()?,
         subject: fields.next()?.to_string(),
+        body: fields.next().unwrap_or_default().trim().to_string(),
     })
 }
 
@@ -520,18 +552,75 @@ pub struct BranchDiff {
 }
 
 /// `base`, when given, is the branch to compare with (a pull request's base);
-/// otherwise the repository's default branch.
+/// otherwise the repository's default branch. `head`, when given and not the
+/// branch checked out, is another branch to diff instead: its commits alone,
+/// since what is not committed belongs to the checked-out one.
 #[tauri::command(async)]
-pub fn git_branch_diff(cwd: String, base: Option<String>) -> Result<BranchDiff, String> {
+pub fn git_branch_diff(cwd: String, base: Option<String>, head: Option<String>) -> Result<BranchDiff, String> {
     let root = root(&cwd)?;
-    branch_diff(&root, base.as_deref().filter(|b| !b.is_empty()))
+    let base = base.as_deref().filter(|b| !b.is_empty());
+    match head.as_deref().filter(|h| !h.is_empty()) {
+        Some(head) if git(&root, &["branch", "--show-current"])?.trim() != head => other_branch_diff(&root, base, head),
+        _ => branch_diff(&root, base),
+    }
+}
+
+/// `base` as the ref to diff against: the one asked for, else the default.
+fn base_or_default(root: &str, base: Option<&str>) -> Result<Option<String>, String> {
+    match base {
+        Some(base) => Ok(Some(base_ref(root, base).ok_or_else(|| format!("no branch named {base}"))?)),
+        None => Ok(default_base(root)),
+    }
+}
+
+/// A branch that is not checked out, against its base: its commits since it
+/// left the base, as its pull request will show them.
+fn other_branch_diff(root: &str, base: Option<&str>, head: &str) -> Result<BranchDiff, String> {
+    if !is_commit(root, head) {
+        return Err(format!("no branch named {head}"));
+    }
+    let base = base_or_default(root, base)?;
+    let mut note = None;
+    let fork = match &base {
+        Some(base) => match git(root, &["merge-base", head, base]) {
+            Ok(fork) => Some(fork.trim().to_string()),
+            Err(_) => {
+                note = Some(format!(
+                    "{head} has no commit in common with {base} (a shallow clone, or an orphan branch): \
+                     showing everything it has."
+                ));
+                None
+            }
+        },
+        None => None,
+    };
+    let from = match &fork {
+        Some(fork) => fork.clone(),
+        None => empty_tree(root)?,
+    };
+    let commits = match &fork {
+        Some(fork) => git(root, &["rev-list", "--count", &format!("{fork}..{head}")])?.trim().parse().unwrap_or(0),
+        None => git(root, &["rev-list", "--count", head])?.trim().parse().unwrap_or(0),
+    };
+    let mut args = vec!["diff", "--no-color"];
+    args.extend(NO_DRIVERS);
+    args.extend(["-M", from.as_str(), head, "--"]);
+    let out = run_bounded(root, &args, MAX_DIFF_BYTES)?;
+    if !out.success && !out.truncated {
+        return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+    }
+    let text = String::from_utf8_lossy(&out.stdout).into_owned();
+    Ok(BranchDiff {
+        root: root.to_string(),
+        base: base.unwrap_or_default(),
+        commits,
+        diff: cap(text, out.truncated),
+        note,
+    })
 }
 
 fn branch_diff(root: &str, base: Option<&str>) -> Result<BranchDiff, String> {
-    let base = match base {
-        Some(base) => Some(base_ref(root, base).ok_or_else(|| format!("no branch named {base}"))?),
-        None => default_base(root),
-    };
+    let base = base_or_default(root, base)?;
     let mut note = None;
     let fork = match (&base, has_head(root)) {
         (_, false) => None,
@@ -1012,7 +1101,7 @@ fn count_lines(path: &Path) -> (Option<u32>, bool) {
 #[cfg(test)]
 mod tests {
     use super::{
-        branch_commits, branch_diff, branches, changes, commit_files, count_lines, git, git_commit_diff,
+        branch_commits, branch_diff, branches, changes, git_branch_diff, git_commit_all, commit_files, count_lines, git, git_commit_diff,
         git_diff, git_root, numstat, parse_name_status, parse_status, push_upstream, repo, root,
         upstream_status, Stat, Upstream, MAX_DIFF_BYTES,
     };
@@ -1424,9 +1513,11 @@ mod tests {
         commit(&at, "second commit");
         write(&dir, "b.txt", "new\n");
         must(&at, &["add", "."]);
-        commit(&at, "third commit");
+        commit(&at, "third commit\n\nWhy it was made,\nover two lines.");
 
         let commits = branch_commits(&at, "feature", "main").expect("commits");
+        assert_eq!(commits[0].body, "");
+        assert_eq!(commits[1].body, "Why it was made,\nover two lines.");
         let subjects: Vec<_> = commits.iter().map(|c| c.subject.as_str()).collect();
         // Oldest first: stepping through them is reading the branch in the
         // order it was written.
@@ -1527,6 +1618,40 @@ mod tests {
         let named = branch_diff(&at, Some("main")).expect("diff");
         assert_eq!(named.diff, found.diff);
         assert!(branch_diff(&at, Some("nope")).is_err());
+
+        // From main, the feature branch is its commit alone: the edits on disk are main's worktree's now.
+        must(&at, &["stash", "-u", "-q"]);
+        must(&at, &["checkout", "-q", "main"]);
+        write(&dir, "c.txt", "uncommitted on main\n");
+        let other = git_branch_diff(at.clone(), None, Some("feature".into())).expect("diff");
+        assert_eq!((other.base.as_str(), other.commits), ("main", 1));
+        assert!(other.diff.contains("+two"), "{}", other.diff);
+        assert!(!other.diff.contains("edited"), "{}", other.diff);
+        assert!(!other.diff.contains("c.txt"), "{}", other.diff);
+        // Naming the branch checked out is the ordinary diff, worktree and all.
+        let here = git_branch_diff(at.clone(), None, Some("main".into())).expect("diff");
+        assert!(here.diff.contains("uncommitted on main"), "{}", here.diff);
+        assert!(git_branch_diff(at.clone(), None, Some("nope".into())).is_err());
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn commits_everything_the_worktree_changed_with_the_message_given() {
+        let dir = scratch("commit-all");
+        let at = dir.to_string_lossy().to_string();
+        init(&at);
+        write(&dir, "a.txt", "one\n");
+        must(&at, &["add", "."]);
+        commit(&at, "first");
+        write(&dir, "a.txt", "one\ntwo\n");
+        write(&dir, "new.txt", "brand new\n");
+
+        assert!(git_commit_all(at.clone(), "  \n".into()).is_err());
+        let short = git_commit_all(at.clone(), "Add two and a new file\n\nWhy, in a line.".into()).expect("commit");
+        assert!(git(&at, &["rev-parse", "HEAD"]).unwrap().starts_with(&short));
+        assert_eq!(git(&at, &["log", "-1", "--format=%B"]).unwrap().trim(), "Add two and a new file\n\nWhy, in a line.");
+        assert_eq!(git(&at, &["status", "--porcelain"]).unwrap(), "");
 
         std::fs::remove_dir_all(&dir).unwrap();
     }

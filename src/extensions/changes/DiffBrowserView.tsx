@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import {
   DiffPane,
   gitBranchCommits,
@@ -21,9 +22,15 @@ import {
 } from "roer";
 import type { NewNote, NoteAnswer } from "roer/ui";
 
+import { CommitBox } from "./CommitBox";
 import { answered, commentNote, lineInFile, newCommentId, type LocalComment } from "./local";
 
 export interface DiffBrowserViewProps {
+  /** Where to put the base picker, Refresh and the commit stepper: the bar of the tab around it. Without it they
+   * sit in a bar of the view's own. */
+  toolbar?: HTMLElement | null;
+  /** The branch to show, picked by the tab around it, which then has the picker; without it the view has its own. */
+  branch?: string;
   /** Directory the session was opened in; the repository is whatever holds it. */
   cwd?: string;
   /** The session's pane, so a `cd` inside it moves this view with it. */
@@ -39,6 +46,12 @@ export interface DiffBrowserViewProps {
   onComments?: (update: (current: LocalComment[]) => LocalComment[]) => void;
   /** Who the comments go to, for the buttons on an agent's. */
   agent?: string;
+  /** Types a prompt into the session, which is how the commit box asks the agent for a message. */
+  send?: (text: string) => Promise<void>;
+  /** A prompt went to the session; show it. */
+  onSent?: () => void;
+  /** The local changes were committed; the new commit's short hash. */
+  onCommitted?: (short: string) => void;
 }
 
 function when(seconds: number): string {
@@ -58,13 +71,27 @@ function when(seconds: number): string {
  * actually checked out: uncommitted edits are relative to `HEAD`, so they
  * mean nothing next to some other branch's history you're just browsing.
  */
-export function DiffBrowserView({ cwd, pane, active, changed, comments, onComments, agent = "the agent" }: DiffBrowserViewProps) {
+export function DiffBrowserView({
+  toolbar,
+  branch: given,
+  cwd,
+  pane,
+  active,
+  changed,
+  comments,
+  onComments,
+  agent = "the agent",
+  send,
+  onSent,
+  onCommitted,
+}: DiffBrowserViewProps) {
   const [root, setRoot] = useState<string | null>(null);
   // Discovery found no repository at all, which has nothing to diff: said so
   // rather than left as an empty view.
   const [notRepo, setNotRepo] = useState(false);
   const [branches, setBranches] = useState<string[]>([]);
-  const [branch, setBranch] = useState("");
+  const [own, setBranch] = useState("");
+  const branch = given || own;
   const [base, setBase] = useState("");
   const [currentBranch, setCurrentBranch] = useState("");
   const [commits, setCommits] = useState<Commit[] | null>(null);
@@ -120,7 +147,7 @@ export function DiffBrowserView({ cwd, pane, active, changed, comments, onCommen
         setRoot(rootDir);
         setBranches(names);
         setCurrentBranch(current);
-        const branchToUse = current || names[0] || "";
+        const branchToUse = given || current || names[0] || "";
         setBranch((existing) => existing || branchToUse);
         // `main` when the repository has one; otherwise anything but the
         // branch itself, since diffing a branch against its own name is
@@ -139,7 +166,7 @@ export function DiffBrowserView({ cwd, pane, active, changed, comments, onCommen
     return () => {
       cancelled = true;
     };
-  }, [active, dir, root]);
+  }, [active, dir, root, given]);
 
   // Whether the worktree's own uncommitted edits belong in this list: only
   // when the picker is showing the branch actually checked out. Browsing
@@ -322,7 +349,7 @@ export function DiffBrowserView({ cwd, pane, active, changed, comments, onCommen
       );
     }
     if (!commit) return "Branch diff";
-    return `${commit.subject} — ${commit.short} by ${commit.author}, ${when(commit.date)}`;
+    return <code>{commit.short}</code>;
   }, [isLocalSelected, localChanges, commit]);
 
   // `Cmd+Left`/`Cmd+Right` (`Alt` off macOS) step through the whole list — local changes, when
@@ -348,9 +375,9 @@ export function DiffBrowserView({ cwd, pane, active, changed, comments, onCommen
     );
   }
 
-  return (
-    <div className="branch-diff" aria-label="Changes">
-      <div className="branch-diff-pickers">
+  const controls = (
+    <div className={toolbar === undefined ? "branch-diff-pickers" : "branch-diff-pickers inline"}>
+      {given ? null : (
         <label>
           Branch
           <select value={branch} onChange={(e) => setBranch(e.target.value)}>
@@ -362,57 +389,63 @@ export function DiffBrowserView({ cwd, pane, active, changed, comments, onCommen
             ))}
           </select>
         </label>
-        <label>
-          vs.
-          <select value={base} onChange={(e) => setBase(e.target.value)}>
-            {!branches.includes(base) ? <option value={base}>{base}</option> : null}
-            {branches.map((name) => (
-              <option key={name} value={name}>
-                {name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <button
-          type="button"
-          className="link"
-          onClick={() => {
-            setToken((n) => n + 1);
-            setLocalToken((n) => n + 1);
-          }}
-        >
-          Refresh
-        </button>
-        {count > 0 ? (
-          <div className="seg" role="group" aria-label="Commit">
-            <button
-              type="button"
-              aria-label="Previous commit"
-              title={`Previous commit (${shortcutLabel.prevCommit()})`}
-              disabled={index <= 0}
-              onClick={() => setIndex((i) => Math.max(0, i - 1))}
-            >
-              {shortcutLabel.prevCommit()}
-            </button>
-            {isLocalSelected ? (
-              <span className="badge here">Local changes</span>
-            ) : (
-              <span className="muted">
-                commit {commitIndex + 1} of {commits?.length ?? 0}
-              </span>
-            )}
-            <button
-              type="button"
-              aria-label="Next commit"
-              title={`Next commit (${shortcutLabel.nextCommit()})`}
-              disabled={index >= count - 1}
-              onClick={() => setIndex((i) => Math.min(count - 1, i + 1))}
-            >
-              {shortcutLabel.nextCommit()}
-            </button>
-          </div>
-        ) : null}
-      </div>
+      )}
+      <label>
+        vs.
+        <select value={base} onChange={(e) => setBase(e.target.value)}>
+          {!branches.includes(base) ? <option value={base}>{base}</option> : null}
+          {branches.map((name) => (
+            <option key={name} value={name}>
+              {name}
+            </option>
+          ))}
+        </select>
+      </label>
+      <button
+        type="button"
+        className="link"
+        onClick={() => {
+          setToken((n) => n + 1);
+          setLocalToken((n) => n + 1);
+        }}
+      >
+        Refresh
+      </button>
+      {count > 0 ? (
+        <div className="seg" role="group" aria-label="Commit">
+          <button
+            type="button"
+            aria-label="Previous commit"
+            title={`Previous commit (${shortcutLabel.prevCommit()})`}
+            disabled={index <= 0}
+            onClick={() => setIndex((i) => Math.max(0, i - 1))}
+          >
+            {shortcutLabel.prevCommit()}
+          </button>
+          {isLocalSelected ? (
+            <span className="badge here">Local changes</span>
+          ) : (
+            <span className="muted">
+              commit {commitIndex + 1} of {commits?.length ?? 0}
+            </span>
+          )}
+          <button
+            type="button"
+            aria-label="Next commit"
+            title={`Next commit (${shortcutLabel.nextCommit()})`}
+            disabled={index >= count - 1}
+            onClick={() => setIndex((i) => Math.min(count - 1, i + 1))}
+          >
+            {shortcutLabel.nextCommit()}
+          </button>
+        </div>
+      ) : null}
+    </div>
+  );
+
+  return (
+    <div className="branch-diff" aria-label="Changes">
+      {toolbar === undefined ? controls : toolbar && active ? createPortal(controls, toolbar) : null}
 
       {commitsError ? <p className="error">{commitsError}</p> : null}
 
@@ -431,6 +464,28 @@ export function DiffBrowserView({ cwd, pane, active, changed, comments, onCommen
           resetKey={isLocalSelected ? `local:${localChanges?.root ?? ""}` : (commit?.hash ?? "")}
           refreshToken={isLocalSelected ? localToken : undefined}
           title={title}
+          banner={
+            isLocalSelected ? (
+              localChanges && localChanges.files.length > 0 ? (
+                <CommitBox
+                  root={localChanges.root}
+                  pane={pane}
+                  send={send}
+                  agent={agent}
+                  unsent={(comments ?? []).filter((c) => !c.commit).length}
+                  onSent={onSent}
+                  onCommitted={(short) => {
+                    // The new commit joins the list, and what was uncommitted is gone from the first slot.
+                    setToken((n) => n + 1);
+                    setLocalToken((n) => n + 1);
+                    onCommitted?.(short);
+                  }}
+                />
+              ) : undefined
+            ) : commit ? (
+              <CommitMessage key={commit.hash} commit={commit} />
+            ) : undefined
+          }
           emptyMessage={
             isLocalSelected
               ? "No local changes. The worktree matches HEAD."
@@ -444,6 +499,36 @@ export function DiffBrowserView({ cwd, pane, active, changed, comments, onCommen
           aria-label="Diff"
         />
       ) : null}
+    </div>
+  );
+}
+
+/** A commit message past this many lines of body is cut there until it is asked for in full. */
+const BODY_LINES = 4;
+
+/**
+ * A commit's whole message above its diff: the subject in full however long,
+ * the body under it (an agent's can run long, so past a few lines it waits to
+ * be opened), and who made it when.
+ */
+function CommitMessage({ commit }: { commit: Commit }) {
+  const [open, setOpen] = useState(false);
+  const lines = commit.body ? commit.body.split("\n") : [];
+  const long = lines.length > BODY_LINES;
+  return (
+    <div className="commit-message">
+      <p className="commit-subject">{commit.subject}</p>
+      {commit.body ? (
+        <p className="commit-body">{long && !open ? `${lines.slice(0, BODY_LINES).join("\n")}…` : commit.body}</p>
+      ) : null}
+      <p className="commit-meta muted">
+        {commit.author}, {when(commit.date)}
+        {long ? (
+          <button type="button" className="link" onClick={() => setOpen((was) => !was)}>
+            {open ? "Show less" : `Show all ${lines.length} lines`}
+          </button>
+        ) : null}
+      </p>
     </div>
   );
 }
