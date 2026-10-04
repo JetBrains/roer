@@ -10,7 +10,8 @@
 //! The same functions back the `extension_*` tools of `roer mcp`.
 
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::io::Write;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde_json::{json, Value};
 
@@ -191,11 +192,11 @@ fn dev(dir: &Path) -> Result<String, Fail> {
     let dir = dunce(dir)?;
     let (_, id) = manifest(&dir)?;
     std::fs::create_dir_all(dev_dir()).map_err(|e| Fail::new(1, format!("{}: {e}", dev_dir().display())))?;
-    let started = log_end(&id);
+    let started = mark_attempt(&id, "roer ext dev")?;
     // A status of the same sources would be taken as this build's.
     let _ = std::fs::remove_file(cache_dir(&id).join("status.json"));
     write_atomic(&dev_dir().join(format!("{id}.json")), &json!({ "dir": dir }).to_string())?;
-    report(&id, &dir, started, "session")
+    report(&id, &dir, &started, "session")
 }
 
 fn install(dir: &Path) -> Result<String, Fail> {
@@ -209,13 +210,13 @@ fn install(dir: &Path) -> Result<String, Fail> {
     let partial = user_dir().join(format!(".{id}.partial"));
     let _ = std::fs::remove_dir_all(&partial);
     copy_tree(&dir, &partial).map_err(|e| Fail::new(1, format!("copying {}: {e}", dir.display())))?;
-    let started = log_end(&id);
+    let started = mark_attempt(&id, "roer ext install")?;
     let _ = std::fs::remove_file(cache_dir(&id).join("status.json"));
     let _ = std::fs::remove_dir_all(&target);
     std::fs::rename(&partial, &target).map_err(|e| Fail::new(1, format!("{}: {e}", target.display())))?;
     // Installed means done iterating: the copy takes over from the draft.
     let _ = std::fs::remove_file(dev_dir().join(format!("{id}.json")));
-    report(&id, &target, started, "user")
+    report(&id, &target, &started, "user")
 }
 
 fn dunce(dir: &Path) -> Result<PathBuf, Fail> {
@@ -245,27 +246,41 @@ fn read_status(id: &str) -> Option<Value> {
     serde_json::from_str(&std::fs::read_to_string(cache_dir(id).join("status.json")).ok()?).ok()
 }
 
-/// Where the log ends now: what the app writes about this attempt comes after it. A position rather than a
-/// time, since the log's times are whole seconds and two attempts can share one.
-fn log_end(id: &str) -> u64 {
-    std::fs::metadata(cache_dir(id).join("log")).map_or(0, |meta| meta.len())
+/// Writes a line into the extension's log that this attempt alone says, and hands it back: what the app writes
+/// about the attempt comes after it. Neither a time (the log's are whole seconds, and two attempts can share
+/// one) nor a position (the app cuts a long log back to its newer half) would tell this attempt's lines apart
+/// from the last one's; the line survives a cut, being among the newest.
+fn mark_attempt(id: &str, what: &str) -> Result<String, Fail> {
+    let dir = cache_dir(id);
+    std::fs::create_dir_all(&dir).map_err(|e| Fail::new(1, format!("{}: {e}", dir.display())))?;
+    let at = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
+    let mark = format!("{what} began (attempt {}-{})", std::process::id(), at.as_nanos());
+    let mut log = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(dir.join("log"))
+        .map_err(|e| Fail::new(1, format!("{}: {e}", dir.display())))?;
+    writeln!(log, "{} {mark}", at.as_secs()).map_err(|e| Fail::new(1, format!("{}: {e}", dir.display())))?;
+    Ok(mark)
 }
 
-/// The log's lines written after `end`, without their timestamps.
-fn log_since(id: &str, end: u64) -> Vec<String> {
+/// The log's lines after `mark`, without their timestamps.
+fn log_since(id: &str, mark: &str) -> Vec<String> {
     let text = std::fs::read_to_string(cache_dir(id).join("log")).unwrap_or_default();
-    lines_after(&text, end)
+    lines_after(&text, mark)
 }
 
-/// `text`'s lines past byte `end`. A log cut back meanwhile, which keeps its newer half, is now shorter than
-/// `end`: then all of it is newer than the cut, and is read.
-fn lines_after(text: &str, end: u64) -> Vec<String> {
-    let rest = usize::try_from(end).ok().and_then(|at| text.get(at..)).unwrap_or(text);
-    rest.lines().filter_map(|line| line.split_once(' ').map(|(_, said)| said.to_string())).collect()
+/// `text`'s lines after the last one saying `mark`; none while it has none.
+fn lines_after(text: &str, mark: &str) -> Vec<String> {
+    let said: Vec<&str> = text.lines().filter_map(|line| line.split_once(' ').map(|(_, said)| said)).collect();
+    match said.iter().rposition(|line| *line == mark) {
+        Some(at) => said[at + 1..].iter().map(|line| line.to_string()).collect(),
+        None => Vec::new(),
+    }
 }
 
 /// Waits for the app to build `id` from `dir`, then to load it, and says how both went.
-fn report(id: &str, dir: &Path, started: u64, scope: &str) -> Result<String, Fail> {
+fn report(id: &str, dir: &Path, started: &str, scope: &str) -> Result<String, Fail> {
     let dir_text = dir.to_string_lossy();
     let mut deadline = Instant::now() + BUILD_WAIT;
     let mut downloading = false;
@@ -406,13 +421,19 @@ mod tests {
 
     #[test]
     fn reads_only_what_the_log_gained_since_the_attempt_began() {
-        let before = "1700000000 built\n1700000000 loaded\n";
-        let after = format!("{before}1700000000 built\n1700000000 activation failed: boom\n");
-        // The same second as the last attempt's "loaded", which a time could not tell apart.
-        assert_eq!(lines_after(&after, before.len() as u64), ["built", "activation failed: boom"]);
-        assert!(lines_after(before, before.len() as u64).is_empty());
-        // Cut back to its newer half meanwhile: shorter than where it ended, so all of it is new.
-        assert_eq!(lines_after("1700000001 loaded\n", 4096), ["loaded"]);
+        let mark = "roer ext dev began (attempt 7-1)";
+        // The last attempt's "loaded" in the same second, before this attempt's mark: not this one's.
+        let log = format!("1700000000 built\n1700000000 loaded\n1700000000 {mark}\n1700000000 built\n1700000000 activation failed: boom\n");
+        assert_eq!(lines_after(&log, mark), ["built", "activation failed: boom"]);
+        assert!(lines_after(&format!("1700000000 loaded\n1700000000 {mark}\n"), mark).is_empty());
+        // Cut back to its newer half, which still holds the mark and the old lines just before it.
+        let cut = format!("1700000000 loaded\n1700000001 {mark}\n1700000002 built\n");
+        assert_eq!(lines_after(&cut, mark), ["built"]);
+        // No mark at all, say a cut that lost it: nothing is taken for this attempt's.
+        assert!(lines_after("1700000000 loaded\n", mark).is_empty());
+        // Another attempt's mark is not this one's.
+        let other = "roer ext dev began (attempt 8-2)";
+        assert!(lines_after(&format!("1700000000 {mark}\n1700000001 {other}\n1700000001 loaded\n"), other) == ["loaded"]);
     }
 
     #[test]
