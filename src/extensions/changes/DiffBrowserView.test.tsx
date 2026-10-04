@@ -472,6 +472,35 @@ describe("DiffBrowserView — commits and the local-changes slot together", () =
     );
   });
 
+  it("steps on a Cmd+Right pressed the moment the commits arrive", async () => {
+    let arrive: (commits: Commit[]) => void = () => {};
+    vi.mocked(gitBranches).mockResolvedValue(["main", "feature"]);
+    vi.mocked(gitBranchCommits).mockImplementation(() => new Promise((done) => (arrive = done)));
+    vi.mocked(gitCommitFiles).mockResolvedValue([file("a.txt")]);
+    view();
+    // Local changes load on a path of their own: the commits have to have been asked for too, or there is
+    // nothing yet for `arrive` to answer.
+    await waitFor(() => expect(screen.getByText("git.ts")).toBeInTheDocument());
+    await waitFor(() => expect(gitBranchCommits).toHaveBeenCalled());
+
+    // The key goes in as soon as Next is enabled on screen: after the render that counted the commit, before
+    // React's effects have run, which is when a handler made for the old count would still be listening.
+    const next = screen.getByRole("button", { name: /Next/ }) as HTMLButtonElement;
+    const pressed = new Promise<void>((done) => {
+      const watch = new MutationObserver(() => {
+        if (next.disabled) return;
+        watch.disconnect();
+        window.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", code: "ArrowRight", metaKey: true }));
+        done();
+      });
+      watch.observe(next, { attributes: true, attributeFilter: ["disabled"] });
+    });
+    // Outside act, as in the app: React renders the commit's arrival and runs its effects in separate turns.
+    arrive([commit("only change")]);
+    await pressed;
+    expect(await screen.findAllByText("a.txt")).not.toHaveLength(0);
+  });
+
   it("steps across commits and local changes with Cmd+Left and Cmd+Right", async () => {
     vi.mocked(gitBranches).mockResolvedValue(["main", "feature"]);
     vi.mocked(gitBranchCommits).mockResolvedValue([commit("only change")]);
@@ -487,13 +516,11 @@ describe("DiffBrowserView — commits and the local-changes slot together", () =
       expect(screen.getByRole("button", { name: /Next/ })).not.toBeDisabled(),
     );
 
-    // Each step loads a slot's files and draws its first diff: a busy CI runner has taken over the default
-    // second for it, where a laptop takes a few milliseconds.
     fireEvent.keyDown(window, { key: "ArrowRight", code: "ArrowRight", metaKey: true });
-    expect(await screen.findByText("a.txt", undefined, { timeout: 5000 })).toBeInTheDocument();
+    expect(await screen.findByText("a.txt")).toBeInTheDocument();
 
     fireEvent.keyDown(window, { key: "ArrowLeft", code: "ArrowLeft", metaKey: true });
-    expect(await screen.findByText("git.ts", undefined, { timeout: 5000 })).toBeInTheDocument();
+    expect(await screen.findByText("git.ts")).toBeInTheDocument();
   });
 });
 

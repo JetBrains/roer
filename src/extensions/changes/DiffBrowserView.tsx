@@ -362,9 +362,14 @@ export function DiffBrowserView({
     useCallback((event: KeyboardEvent) => active && isPrevCommit(event), [active]),
     useCallback(() => setIndex((i) => Math.max(0, i - 1)), []),
   );
+  // The count is read when the key lands, not when the handler was made: a handler only takes over in an effect,
+  // after the render that changed the count, and a key pressed in between (the list of commits just arrived,
+  // Next already enabled on screen) would otherwise step against the old count and go nowhere.
+  const countRef = useRef(count);
+  countRef.current = count;
   useHotkey(
     useCallback((event: KeyboardEvent) => active && isNextCommit(event), [active]),
-    useCallback(() => setIndex((i) => Math.min(count - 1, i + 1)), [count]),
+    useCallback(() => setIndex((i) => Math.min(countRef.current - 1, i + 1)), []),
   );
 
   if (notRepo) {
