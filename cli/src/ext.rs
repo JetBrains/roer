@@ -10,7 +10,7 @@
 //! The same functions back the `extension_*` tools of `roer mcp`.
 
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 
@@ -116,10 +116,6 @@ fn manifest(dir: &Path) -> Result<(Value, String), Fail> {
     Ok((manifest, id))
 }
 
-fn now() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs())
-}
-
 fn write_atomic(path: &Path, text: &str) -> Result<(), Fail> {
     let partial = path.with_extension("partial");
     std::fs::write(&partial, text)
@@ -195,7 +191,7 @@ fn dev(dir: &Path) -> Result<String, Fail> {
     let dir = dunce(dir)?;
     let (_, id) = manifest(&dir)?;
     std::fs::create_dir_all(dev_dir()).map_err(|e| Fail::new(1, format!("{}: {e}", dev_dir().display())))?;
-    let started = now();
+    let started = log_end(&id);
     // A status of the same sources would be taken as this build's.
     let _ = std::fs::remove_file(cache_dir(&id).join("status.json"));
     write_atomic(&dev_dir().join(format!("{id}.json")), &json!({ "dir": dir }).to_string())?;
@@ -213,7 +209,7 @@ fn install(dir: &Path) -> Result<String, Fail> {
     let partial = user_dir().join(format!(".{id}.partial"));
     let _ = std::fs::remove_dir_all(&partial);
     copy_tree(&dir, &partial).map_err(|e| Fail::new(1, format!("copying {}: {e}", dir.display())))?;
-    let started = now();
+    let started = log_end(&id);
     let _ = std::fs::remove_file(cache_dir(&id).join("status.json"));
     let _ = std::fs::remove_dir_all(&target);
     std::fs::rename(&partial, &target).map_err(|e| Fail::new(1, format!("{}: {e}", target.display())))?;
@@ -249,15 +245,23 @@ fn read_status(id: &str) -> Option<Value> {
     serde_json::from_str(&std::fs::read_to_string(cache_dir(id).join("status.json")).ok()?).ok()
 }
 
-/// The log's lines from `since` on, without their timestamps.
-fn log_since(id: &str, since: u64) -> Vec<String> {
+/// Where the log ends now: what the app writes about this attempt comes after it. A position rather than a
+/// time, since the log's times are whole seconds and two attempts can share one.
+fn log_end(id: &str) -> u64 {
+    std::fs::metadata(cache_dir(id).join("log")).map_or(0, |meta| meta.len())
+}
+
+/// The log's lines written after `end`, without their timestamps.
+fn log_since(id: &str, end: u64) -> Vec<String> {
     let text = std::fs::read_to_string(cache_dir(id).join("log")).unwrap_or_default();
-    text.lines()
-        .filter_map(|line| {
-            let (at, rest) = line.split_once(' ')?;
-            (at.parse::<u64>().ok()? >= since).then(|| rest.to_string())
-        })
-        .collect()
+    lines_after(&text, end)
+}
+
+/// `text`'s lines past byte `end`. A log cut back meanwhile, which keeps its newer half, is now shorter than
+/// `end`: then all of it is newer than the cut, and is read.
+fn lines_after(text: &str, end: u64) -> Vec<String> {
+    let rest = usize::try_from(end).ok().and_then(|at| text.get(at..)).unwrap_or(text);
+    rest.lines().filter_map(|line| line.split_once(' ').map(|(_, said)| said.to_string())).collect()
 }
 
 /// Waits for the app to build `id` from `dir`, then to load it, and says how both went.
@@ -399,6 +403,17 @@ fn remove(id: &str) -> Result<String, Fail> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reads_only_what_the_log_gained_since_the_attempt_began() {
+        let before = "1700000000 built\n1700000000 loaded\n";
+        let after = format!("{before}1700000000 built\n1700000000 activation failed: boom\n");
+        // The same second as the last attempt's "loaded", which a time could not tell apart.
+        assert_eq!(lines_after(&after, before.len() as u64), ["built", "activation failed: boom"]);
+        assert!(lines_after(before, before.len() as u64).is_empty());
+        // Cut back to its newer half meanwhile: shorter than where it ended, so all of it is new.
+        assert_eq!(lines_after("1700000001 loaded\n", 4096), ["loaded"]);
+    }
 
     #[test]
     fn a_new_extension_is_a_manifest_an_entry_and_the_types() {

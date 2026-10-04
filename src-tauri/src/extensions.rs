@@ -516,6 +516,11 @@ pub fn extensions_disabled() -> Vec<String> {
     disabled().into_iter().collect()
 }
 
+/// Held from reading the switched-off list to writing it back, so two
+/// switches at once (two windows, or two quick clicks) can't each write a
+/// list missing the other's change.
+static SWITCHING: Mutex<()> = Mutex::new(());
+
 /// Switches an extension on or off. The watcher sees the list change and
 /// tells every window, which loads or unloads it.
 #[tauri::command(async)]
@@ -523,6 +528,7 @@ pub fn extension_set_enabled(id: String, enabled: bool) -> Result<(), String> {
     if !valid_id(&id) {
         return Err(format!("no such extension: {id}"));
     }
+    let _switching = SWITCHING.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     let mut ids = disabled();
     let changed = if enabled { ids.remove(&id) } else { ids.insert(id.clone()) };
     if changed {
