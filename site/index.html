@@ -78,19 +78,19 @@
       </figure>
     </div>
 
-    <div class="wrap"><p class="eyebrow new-in" id="new-in">New in 0.6 and 0.7</p></div>
+    <div class="wrap"><p class="eyebrow new-in" id="new-in">New in 0.8</p></div>
     <div class="wrap points points-new" role="group" aria-labelledby="new-in">
       <div class="point">
-        <h3>Bring any agent</h3>
-        <p>New session starts Claude Code, Codex, pi, Gemini CLI, Junie or opencode. The arrow beside it (<kbd>⌥⌘T</kbd>) picks one, and the Resume list reopens Codex conversations as well as Claude&rsquo;s.</p>
+        <h3>Tabs your agent builds</h3>
+        <p>&ldquo;Make me a tab that lists the TODOs in this repo.&rdquo; The agent writes it, Roer builds it and puts it in the strip, and every save reloads it. Keep the ones you like; switch any of them off from the Extensions dialog.</p>
       </div>
       <div class="point">
-        <h3>Agents you can commit</h3>
-        <p>Save an agent with its model, reasoning effort, permissions and instructions. It is a Markdown file: keep it in <code>~/.roer/agents</code>, or commit it to <code>.roer/agents</code> so the whole team starts the same one.</p>
+        <h3>One tab for the branch</h3>
+        <p>Changes walks a branch commit by commit, as a whole, or as its pull request, for any branch you pick. Comment on any line, then commit the local changes right there: leave the message empty and the agent writes one for you to read first.</p>
       </div>
       <div class="point">
-        <h3>Roer&rsquo;s UI in Claude Code</h3>
-        <p>The roer-ui plugin (preview) draws the same panels in a Claude Code pane: <code>/roer</code> and what you want to see, no Roer app needed.</p>
+        <h3>Review with your agent</h3>
+        <p>Ask the agent for a review and its comments land on the lines they are about. Accept, decline or answer each one, and Send hands every decision back in one prompt.</p>
       </div>
     </div>
   </section>
@@ -118,14 +118,14 @@
 
     <div class="wrap pr">
       <div class="pr-copy">
-        <h3>Then open the pull request. Same window.</h3>
-        <p>The Pull Request tab uses your own GitHub login. Review comments go straight back into the running session.</p>
+        <h3>Then open the pull request. Same tab.</h3>
+        <p>Changes uses your own GitHub login, from the first draft to the merge. Review comments go straight back into the running session.</p>
       </div>
       <ol class="flow">
         <li><b>Draft</b><span>Your agent writes the title and description.</span></li>
-        <li><b>Push</b><span>Roer pushes the branch and opens the PR.</span></li>
-        <li><b>Review</b><span>Request a Copilot review. Roer waits for it.</span></li>
-        <li><b>Fix</b><span>Pick threads and hand them to the agent with <em>Fix</em>.</span></li>
+        <li><b>Push</b><span>Roer pushes the branch, checked out or not, and opens the PR.</span></li>
+        <li><b>Review</b><span>Ask Copilot for a review. Accept, decline or instruct on each thread, right on the diff.</span></li>
+        <li><b>Merge</b><span>Pick the method and merge without leaving the tab.</span></li>
       </ol>
     </div>
   </section>
