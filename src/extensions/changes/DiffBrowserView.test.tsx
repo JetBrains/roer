@@ -487,11 +487,13 @@ describe("DiffBrowserView — commits and the local-changes slot together", () =
       expect(screen.getByRole("button", { name: /Next/ })).not.toBeDisabled(),
     );
 
+    // Each step loads a slot's files and draws its first diff: a busy CI runner has taken over the default
+    // second for it, where a laptop takes a few milliseconds.
     fireEvent.keyDown(window, { key: "ArrowRight", code: "ArrowRight", metaKey: true });
-    expect(await screen.findByText("a.txt")).toBeInTheDocument();
+    expect(await screen.findByText("a.txt", undefined, { timeout: 5000 })).toBeInTheDocument();
 
     fireEvent.keyDown(window, { key: "ArrowLeft", code: "ArrowLeft", metaKey: true });
-    expect(await screen.findByText("git.ts")).toBeInTheDocument();
+    expect(await screen.findByText("git.ts", undefined, { timeout: 5000 })).toBeInTheDocument();
   });
 });
 
