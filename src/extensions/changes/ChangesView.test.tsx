@@ -78,7 +78,8 @@ describe("ChangesView", () => {
     const { rerender } = render(<ChangesView session={session} active />);
     const picker = await screen.findByRole("combobox", { name: "Branch" });
     await waitFor(() => expect(picker).toHaveValue("feat"));
-    expect(screen.getByRole("option", { name: "feat (checked out)" })).toBeInTheDocument();
+    // The checked-out one heads the list under its own heading, the closed picker showing just its name.
+    expect(screen.getByRole("group", { name: "Checked out here" })).toHaveTextContent("feat");
     expect(screen.getByText("by commit active on feat")).toBeInTheDocument();
     expect(screen.getByText("review of the checked-out branch")).toBeInTheDocument();
 
