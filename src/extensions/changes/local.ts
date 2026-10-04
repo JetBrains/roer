@@ -265,6 +265,36 @@ export function localReviewPrompt(base: string, comments: readonly LocalComment[
   return parts.join("\n");
 }
 
+/**
+ * A prompt about `branch` when that is not the branch checked out in the
+ * session: the agent is told first, so it does not change, commit or push the
+ * wrong one. Without `branch`, the prompt as it is.
+ */
+export function onBranch(prompt: string, branch?: string): string {
+  if (!branch) return prompt;
+  return [
+    `This is about the branch \`${branch}\`, which is not the one checked out here. Make any change on \`${branch}\`: work in the worktree that has it checked out, or switch to it first, and leave the branch checked out here alone.`,
+    "",
+    prompt,
+  ].join("\n");
+}
+
+/**
+ * Asks the session's agent for a message for everything not committed yet, handed back to the commit box with
+ * `roer commit-draft`. Short on purpose: an agent's commit messages run long unless told not to.
+ */
+export function commitDraftPrompt(pane: string): string {
+  return [
+    "Write a commit message for everything that is not committed yet. Base it on `git status` and `git diff HEAD`, and on what we did in this session.",
+    "The subject says what the change does, in the imperative, under 72 characters. Add a body only if the subject leaves the why unclear: two or three short lines, no list of files.",
+    "Do not commit, stage or push anything. When the message is ready, hand it to Roer by running exactly:",
+    "",
+    `roer commit-draft --pane ${pane} <<'ROER_COMMIT_DRAFT'`,
+    '{"title": "<subject>", "body": "<body, JSON-escaped, or empty>"}',
+    "ROER_COMMIT_DRAFT",
+  ].join("\n");
+}
+
 /** The tool an agent hands its comments over with, as `roer mcp` names it. */
 export const ADD_COMMENTS_TOOL = "changes__add_comments";
 

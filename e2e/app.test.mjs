@@ -85,7 +85,7 @@ test("roer app hands a terminal's session to the app", async () => {
   const pane = await app.untilSessions("the project's session in roer list", (rows) =>
     rows.find((row) => row.cwd?.replace(/\\/g, "/").endsWith("/e2e-project") && row.attached === "attached")?.pane,
   );
-  // Typed into the pane by roer, the way the Pull Request tab sends prompts.
+  // Typed into the pane by roer, the way the Changes tab sends prompts.
   app.roer(["send", "--pane", pane], "echo handed-over-ok");
   await app.waitForTerminal("handed-over-ok");
 

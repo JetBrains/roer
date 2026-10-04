@@ -5,7 +5,7 @@ import { ChangesView } from "./ChangesView";
 import { addCommentsTool } from "./tool";
 
 /** The Changes tab: the session's branch, its edits and commits, the whole of it with comments on its lines, and
- * its pull request with the review threads, and what to do about each comment. */
+ * its pull request from opening it to merging it, with the review threads and what to do about each comment. */
 export default defineExtension((roer) => {
   function Changes() {
     const session = useSession();
@@ -18,7 +18,6 @@ export default defineExtension((roer) => {
         session={session}
         active={active}
         onSent={() => activateTab("terminal")}
-        onOpenPullRequest={() => activateTab("pullRequest")}
         onOpenCount={onOpenCount}
       />
     );

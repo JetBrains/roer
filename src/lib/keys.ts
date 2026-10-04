@@ -65,7 +65,7 @@ export const shortcutLabel = {
 };
 
 /** The strip's tabs before any extension adds its own. */
-const DEFAULT_TABS = ["Sessions", "Terminal", "Changes", "Pull Request"];
+const DEFAULT_TABS = ["Sessions", "Terminal", "Changes"];
 
 /** Every shortcut, in the words the shortcut sheet lists them in. `tabs` are
  * the strip's, in order: the first nine have a number. */

@@ -64,7 +64,7 @@ declare module "roer" {
     title: string;
     /** Takes no props: read the session with `useSession()`. */
     component: ComponentType;
-    /** Where in the strip: Sessions is 0, Terminal 10, Changes 20, Pull Request 30. Default 100. */
+    /** Where in the strip: Sessions is 0, Terminal 10, Changes 20. Default 100. */
     order?: number;
     /** Disabled while no session is on the stage. Default true. */
     needsSession?: boolean;
@@ -97,7 +97,7 @@ declare module "roer" {
   export function useActive(): boolean;
   /** Opens a file of the repository at `root` in a tab of its own. */
   export function useOpenFile(): (root: string, path: string, line?: number) => void;
-  /** Brings a tab to the top: "sessions", "terminal", "changes", "pullRequest", or an extension's `ext:<id>/<tab>`. */
+  /** Brings a tab to the top: "sessions", "terminal", "changes", or an extension's `ext:<id>/<tab>`. */
   export function useActivateTab(): (tabId: string) => void;
 
   // ---------------------------------------------------------------- server.ts
@@ -191,6 +191,8 @@ declare module "roer" {
     /** Unix seconds. */
     date: number;
     subject: string;
+    /** The rest of the message, after the subject; empty when there is none. */
+    body: string;
   }
 
   /** The uncommitted changes of the repository holding `cwd`. */
@@ -213,10 +215,13 @@ declare module "roer" {
     note?: string;
   }
   /** Everything the branch holding `cwd` has changed since it left `base` (default: the repository's default
-   * branch), as one patch: its commits and what is not committed yet, untracked files included. */
-  export function gitBranchDiff(cwd: string, base?: string): Promise<BranchDiff>;
+   * branch), as one patch: its commits and what is not committed yet, untracked files included. With `head`, another
+   * branch than the one checked out: its commits alone. */
+  export function gitBranchDiff(cwd: string, base?: string, head?: string): Promise<BranchDiff>;
   /** The commits on `branch` that are not on `base`, oldest first. */
   export function gitBranchCommits(root: string, branch: string, base: string): Promise<Commit[]>;
+  /** Commits everything the worktree has changed, new files included, hooks and all; the new commit's short hash. */
+  export function gitCommitAll(cwd: string, message: string): Promise<string>;
   export function gitCommitFiles(root: string, commit: string): Promise<FileChange[]>;
   export function gitCommitDiff(root: string, commit: string, path: string): Promise<string>;
   export function isUntracked(file: FileChange): boolean;
@@ -244,8 +249,8 @@ declare module "roer" {
     reviewDecision: string | null;
   }
   export function ghStatus(dir: string): Promise<GhStatus>;
-  /** The pull request for the branch checked out in `dir`, if there is one. */
-  export function ghPrForBranch(dir: string): Promise<PrSummary | null>;
+  /** The pull request from `branch`, else from the branch checked out in `dir`, if there is one. */
+  export function ghPrForBranch(dir: string, branch?: string): Promise<PrSummary | null>;
   /** The pull request's whole diff as GitHub has it: what its threads' lines count in. */
   export function ghPrDiff(dir: string, number: number): Promise<string>;
 

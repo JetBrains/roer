@@ -171,12 +171,21 @@ pub fn await_plugin_ui(ids: &[String]) -> Option<Vec<Delivery>> {
     )
 }
 
-/// Hands a drafted PR title and body to the app's Pull Request form.
+/// Hands a drafted PR title and body to the form in the app's Changes tab that opens one.
 pub fn emit_pr_draft(pane: &str, draft: Value) -> Result<(), Fail> {
     let dir = home().join("pr-draft");
     ensure_dir(&dir)?;
     let file = dir.join(format!("{}.json", stamp()));
     write_atomic(&file, &format!("{}\n", json!({ "pane": pane, "draft": draft })))
+}
+
+/// Hands a drafted commit message, subject as `title`, to the commit box over the local changes in the app's
+/// Changes tab. It rides with the pull request drafts, marked as a commit's.
+pub fn emit_commit_draft(pane: &str, draft: Value) -> Result<(), Fail> {
+    let dir = home().join("pr-draft");
+    ensure_dir(&dir)?;
+    let file = dir.join(format!("{}.json", stamp()));
+    write_atomic(&file, &format!("{}\n", json!({ "pane": pane, "kind": "commit", "draft": draft })))
 }
 
 /// How long Roer has to pick a record up, and then how long it may take to

@@ -6,8 +6,8 @@ description: Make a Roer extension, a tab of its own in the Roer app's stage wri
 # Make a Roer extension
 
 A Roer extension is a folder holding an `extension.json` and an `app.tsx`.
-Roer builds it with Bun, adds its tab to the strip beside Terminal, Changes
-and Pull Request, and rebuilds and reloads it on every save.
+Roer builds it with Bun, adds its tab to the strip beside Terminal and
+Changes, and rebuilds and reloads it on every save.
 
 ## Do this
 

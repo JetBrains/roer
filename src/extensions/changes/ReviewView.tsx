@@ -27,6 +27,7 @@ import {
   lineText,
   localReviewPrompt,
   newCommentId,
+  onBranch,
   onCommentsChanged,
   ready as readyToSend,
   reviewRequestPrompt,
@@ -37,14 +38,15 @@ import {
   updateComments,
   type LocalComment,
 } from "./local";
+import { MergeBox, OpenPullRequest, Reviews, useCopilotReview } from "./PullRequest";
 
 export interface ReviewViewProps {
   session: Session | null;
   active: boolean;
+  /** Another branch than the one checked out, to show instead: its commits and its pull request. */
+  branch?: string;
   /** The prompt went to the session; show it. */
   onSent?: () => void;
-  /** Asks for the Pull Request tab, which is where one is opened. */
-  onOpenPullRequest?: () => void;
   /** How many threads are still waiting on a decision. */
   onOpenCount?: (count: number) => void;
   /** Shows one of the two, picked by the tab around it, which then has the switch; without it the view has its own. */
@@ -62,7 +64,7 @@ interface Decided {
 type Loaded =
   | { kind: "loading" }
   | { kind: "message"; text: string }
-  | { kind: "noPr" }
+  | { kind: "noPr"; dir: string }
   | { kind: "ready"; dir: string; pr: PrSummary; diff: string; review: PrReview };
 
 /** The branch's own diff, which needs no pull request and no GitHub. */
@@ -123,11 +125,12 @@ function threadNote(thread: ReviewThread, decided: Decided | undefined): DiffNot
 }
 
 /**
- * The branch's pull request as a reviewer left it: GitHub's diff, with every
- * review thread drawn on its line. Each thread is accepted, declined, or
- * given an instruction, and the decisions go to the session's agent together.
+ * The branch's pull request from start to end: the form that opens it, then
+ * GitHub's diff with every review thread drawn on its line, Copilot asked to
+ * review, and the merge. Each thread is accepted, declined, or given an
+ * instruction, and the decisions go to the session's agent together.
  */
-export function ReviewView({ session, active, onSent, onOpenPullRequest, onOpenCount, scope, onScope }: ReviewViewProps) {
+export function ReviewView({ session, active, branch: other, onSent, onOpenCount, scope, onScope }: ReviewViewProps) {
   const [loaded, setLoaded] = useState<Loaded>({ kind: "loading" });
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -155,7 +158,7 @@ export function ReviewView({ session, active, onSent, onOpenPullRequest, onOpenC
     setError(null);
     // Another branch's pull request, and what was decided on it, must not stay on screen (or be sent) while
     // this one's is looked up, or if looking it up fails.
-    const key = `${cwd ?? ""}\0${pane ?? ""}\0${branch ?? ""}`;
+    const key = `${cwd ?? ""}\0${pane ?? ""}\0${branch ?? ""}\0${other ?? ""}`;
     if (loadedFor.current !== key) {
       loadedFor.current = key;
       setLoaded({ kind: "loading" });
@@ -166,12 +169,12 @@ export function ReviewView({ session, active, onSent, onOpenPullRequest, onOpenC
     const readLocal = async (base?: string) => {
       try {
         const dir = await resolveDir(cwd, pane);
-        const diff = await gitBranchDiff(dir, base);
-        const onBranch = await gitCurrentBranch(diff.root).catch(() => null);
+        const diff = await gitBranchDiff(dir, base, other);
+        const shown = other ?? (await gitCurrentBranch(diff.root).catch(() => null));
         if (!current()) return;
-        storeBase(diff.root, onBranch, base);
-        setComments(storedComments(diff.root, onBranch));
-        setLocal({ kind: "ready", diff, branch: onBranch, ...(base ? { asked: base } : {}) });
+        storeBase(diff.root, shown, base);
+        setComments(storedComments(diff.root, shown));
+        setLocal({ kind: "ready", diff, branch: shown, ...(base ? { asked: base } : {}) });
         return diff;
       } catch (cause) {
         if (current()) setLocal({ kind: "error", text: String(cause) });
@@ -187,10 +190,10 @@ export function ReviewView({ session, active, onSent, onOpenPullRequest, onOpenC
         setLoaded({ kind: "message", text: gh.message ?? "This directory is not in a GitHub repository." });
         return;
       }
-      const pr = await ghPrForBranch(dir);
+      const pr = await ghPrForBranch(dir, other);
       if (!current()) return;
       if (!pr) {
-        setLoaded({ kind: "noPr" });
+        setLoaded({ kind: "noPr", dir });
         return;
       }
       localAgain = localFirst.then((diff) => {
@@ -208,7 +211,7 @@ export function ReviewView({ session, active, onSent, onOpenPullRequest, onOpenC
       await localAgain;
       if (current()) setRefreshing(false);
     }
-  }, [cwd, pane, branch]);
+  }, [cwd, pane, branch, other]);
 
   // Again whenever the tab comes to the top: comments land while it is away.
   useEffect(() => {
@@ -218,10 +221,10 @@ export function ReviewView({ session, active, onSent, onOpenPullRequest, onOpenC
   const mode = scope ?? picked ?? (loaded.kind === "ready" ? "pr" : loaded.kind === "loading" ? null : "local");
   const pick = (next: "pr" | "local") => (onScope ? onScope(next) : setPicked(next));
 
-  // The local diff is the worktree's: it follows every save while it is on screen.
+  // The local diff is the worktree's: it follows every save while it is on screen. Another branch's is not.
   const changed = session?.changed;
   useEffect(() => {
-    if (!active || mode !== "local" || !changed || local.kind !== "ready" || changed.root !== local.diff.root) return;
+    if (other || !active || mode !== "local" || !changed || local.kind !== "ready" || changed.root !== local.diff.root) return;
     const { asked } = local;
     const root = local.diff.root;
     // A save can come with a checkout: the branch is read again with the diff, and comments go under it. A
@@ -247,6 +250,32 @@ export function ReviewView({ session, active, onSent, onOpenPullRequest, onOpenC
   }, [changed]);
 
   const ready = loaded.kind === "ready" ? loaded : null;
+
+  // What comes back for a pull request lands only while that one is still on screen.
+  const reviewed = useCallback(
+    (url: string, review: PrReview) =>
+      setLoaded((current) => (current.kind === "ready" && current.pr.url === url ? { ...current, review } : current)),
+    [],
+  );
+  const merged = useCallback(
+    (pr: PrSummary) =>
+      setLoaded((current) => (current.kind === "ready" && current.pr.url === pr.url ? { ...current, pr } : current)),
+    [],
+  );
+  const copilot = useCopilotReview(ready?.dir ?? null, ready?.pr ?? null, ready?.review ?? null, reviewed);
+  const [asking, setAsking] = useState(false);
+  const requestCopilot = async () => {
+    setAsking(true);
+    setError(null);
+    try {
+      await copilot.request();
+    } catch (cause) {
+      setError(String(cause));
+    } finally {
+      setAsking(false);
+    }
+  };
+
   const threads = useMemo(() => ready?.review.threads ?? [], [ready]);
   const open = threads.filter((thread) => !thread.isResolved);
   const undecided = open.filter((thread) => !decided[thread.id]);
@@ -310,9 +339,12 @@ export function ReviewView({ session, active, onSent, onOpenPullRequest, onOpenC
     setSending(true);
     setError(null);
     try {
-      const prompt = reviewDecisionsPrompt(
-        ready.pr,
-        unsent.map((thread) => ({ thread, verdict: decided[thread.id].verdict })),
+      const prompt = onBranch(
+        reviewDecisionsPrompt(
+          ready.pr,
+          unsent.map((thread) => ({ thread, verdict: decided[thread.id].verdict })),
+        ),
+        other,
       );
       await session.send(prompt);
       setDecided((current) => {
@@ -394,7 +426,7 @@ export function ReviewView({ session, active, onSent, onOpenPullRequest, onOpenC
     setError(null);
     try {
       const sent = toSend;
-      await session.send(localReviewPrompt(localReady.base, sent));
+      await session.send(onBranch(localReviewPrompt(localReady.base, sent), other));
       // Sent comments are done with: the agent is about to move the lines they sat on.
       setKept((current) => current.filter((c) => !sent.some((one) => one.id === c.id)));
       setSentNote(`Sent ${sent.length} ${sent.length === 1 ? "comment" : "comments"} to ${agent}.`);
@@ -425,9 +457,14 @@ export function ReviewView({ session, active, onSent, onOpenPullRequest, onOpenC
   );
 
   if (mode === "local") {
-    const since = localReady?.base
-      ? `${localReady.commits} ${localReady.commits === 1 ? "commit" : "commits"} since ${localReady.base}, and what is not committed`
-      : "what is not committed";
+    const commits = `${localReady?.commits} ${localReady?.commits === 1 ? "commit" : "commits"}`;
+    const since = other
+      ? localReady?.base
+        ? `${commits} since ${localReady.base}`
+        : commits
+      : localReady?.base
+        ? `${commits} since ${localReady.base}, and what is not committed`
+        : "what is not committed";
     return (
       <div className="review">
         <header className="review-head">
@@ -438,9 +475,12 @@ export function ReviewView({ session, active, onSent, onOpenPullRequest, onOpenC
           <Button onClick={() => void load()} disabled={refreshing}>
             {refreshing ? "Refreshing…" : "Refresh"}
           </Button>
-          <Button onClick={() => void askForReview()} disabled={!localReady || !localReady.diff || !session.pane}>
-            Review with {agent}
-          </Button>
+          {/* The agent's comments are filed under the branch checked out where it runs, so only that one is offered. */}
+          {other ? null : (
+            <Button onClick={() => void askForReview()} disabled={!localReady || !localReady.diff || !session.pane}>
+              Review with {agent}
+            </Button>
+          )}
           {scope ? null : (
             <Button variant="primary" onClick={() => void sendLocal()} disabled={sending || toSend.length === 0 || !session.pane}>
               Send {toSend.length} to {agent}
@@ -478,7 +518,7 @@ export function ReviewView({ session, active, onSent, onOpenPullRequest, onOpenC
             ) : null}
             <DiffView
               patch={localReady.diff}
-              title={session.branch ?? "Local changes"}
+              title={other ?? session.branch ?? "Local changes"}
               layout="unified"
               emptyText="Nothing has changed on this branch yet."
               notes={localNotes}
@@ -503,12 +543,13 @@ export function ReviewView({ session, active, onSent, onOpenPullRequest, onOpenC
               </button>{" "}
               {ready.pr.title}
             </strong>
+            <span className={`pr-state ${ready.pr.state.toLowerCase()}`}>{ready.pr.isDraft ? "DRAFT" : ready.pr.state}</span>
             <span className="muted">
               {open.length} open · {undecided.length} to decide
             </span>
           </>
         ) : (
-          <strong>Review</strong>
+          <strong>Pull request</strong>
         )}
         <span className="review-spacer" />
         {modes}
@@ -526,6 +567,11 @@ export function ReviewView({ session, active, onSent, onOpenPullRequest, onOpenC
         <Button onClick={() => void load()} disabled={refreshing}>
           {refreshing ? "Refreshing…" : "Refresh"}
         </Button>
+        {ready?.pr.state === "OPEN" ? (
+          <Button onClick={() => void requestCopilot()} disabled={asking || copilot.waiting}>
+            {copilot.waiting ? "Copilot is reviewing…" : "Request Copilot review"}
+          </Button>
+        ) : null}
         {ready ? (
           <Button
             variant="primary"
@@ -551,14 +597,16 @@ export function ReviewView({ session, active, onSent, onOpenPullRequest, onOpenC
       {loaded.kind === "loading" ? <p className="muted pad">Loading the pull request…</p> : null}
       {loaded.kind === "message" ? <p className="muted pad">{loaded.text}</p> : null}
       {loaded.kind === "noPr" ? (
-        <p className="muted pad">
-          This branch has no pull request yet.{" "}
-          {onOpenPullRequest ? (
-            <button type="button" className="link" onClick={onOpenPullRequest}>
-              Open one
-            </button>
-          ) : null}
-        </p>
+        // Read again for each branch: a checkout is another pull request to open.
+        <OpenPullRequest
+          key={`${loaded.dir}\0${other ?? branch ?? ""}`}
+          dir={loaded.dir}
+          branch={other}
+          session={session}
+          agent={agent}
+          onCreated={load}
+          onSent={onSent}
+        />
       ) : null}
 
       {ready ? (
@@ -568,6 +616,15 @@ export function ReviewView({ session, active, onSent, onOpenPullRequest, onOpenC
               This pull request has more review comments than Roer loads at once; some are not shown.
             </p>
           ) : null}
+          <div className="pr-summary">
+            <Reviews review={ready.review} />
+            <MergeBox
+              key={`${ready.pr.number}:${ready.pr.headRefOid}:${ready.pr.mergeStateStatus ?? ""}`}
+              dir={ready.dir}
+              pr={ready.pr}
+              onMerged={merged}
+            />
+          </div>
           <DiffView
             patch={ready.diff}
             title={`${ready.pr.headRefName} → ${ready.pr.baseRefName}`}
