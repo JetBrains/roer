@@ -8,6 +8,9 @@ import {
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "./App";
+import { defineExtension } from "./extensions/api";
+import { useActivateTab } from "./extensions/context";
+import { registry } from "./extensions/registry";
 import { fileRead, filesSearch } from "./lib/files";
 import {
   ackHandoff,
@@ -735,6 +738,30 @@ describe("App", () => {
       deliver("%7");
       expect(reportPluginUiReceipt).toHaveBeenCalledWith("r-%7", "pane-unknown", undefined);
     });
+  });
+
+  it("falls back to Terminal when a tab asks for one the strip doesn't have", async () => {
+    function Asker() {
+      const activate = useActivateTab();
+      return (
+        <button type="button" onClick={() => activate("ext:nowhere/main")}>
+          Go nowhere
+        </button>
+      );
+    }
+    registry.load(
+      "asker",
+      defineExtension((roer) => void roer.stage.registerTab({ id: "main", title: "Asker", component: Asker, needsSession: false })),
+    );
+    try {
+      render(<App />);
+      fireEvent.click(await screen.findByRole("tab", { name: "Asker" }));
+      fireEvent.click(await screen.findByRole("button", { name: "Go nowhere" }));
+      // A typo in the id would otherwise leave nothing on the stage.
+      await waitFor(() => expect(screen.getByRole("tab", { name: "Terminal" })).toHaveAttribute("aria-selected", "true"));
+    } finally {
+      registry.unload("asker");
+    }
   });
 
   it("has no changes to show until a session is staged", async () => {

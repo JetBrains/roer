@@ -57,21 +57,42 @@ fn disabled_path() -> PathBuf {
 
 /// The extensions switched off, bundled ones included.
 pub(crate) fn disabled() -> BTreeSet<String> {
-    std::fs::read_to_string(disabled_path())
+    read_disabled(&disabled_path())
+}
+
+fn read_disabled(path: &Path) -> BTreeSet<String> {
+    std::fs::read_to_string(path)
         .ok()
         .and_then(|text| serde_json::from_str::<Vec<String>>(&text).ok())
         .map(|ids| ids.into_iter().filter(|id| valid_id(id)).collect())
         .unwrap_or_default()
 }
 
-fn set_disabled(ids: &BTreeSet<String>) -> Result<(), String> {
-    let path = disabled_path();
-    std::fs::create_dir_all(user_dir()).map_err(|e| format!("{}: {e}", user_dir().display()))?;
+fn write_disabled(path: &Path, ids: &BTreeSet<String>) -> Result<(), String> {
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    }
     let text = serde_json::to_string_pretty(&ids.iter().collect::<Vec<_>>()).map_err(|e| e.to_string())?;
     // Written aside and moved in, so a reader never sees half a list.
     let partial = path.with_extension("json.partial");
     std::fs::write(&partial, text).map_err(|e| format!("{}: {e}", partial.display()))?;
-    std::fs::rename(&partial, &path).map_err(|e| format!("{}: {e}", path.display()))
+    std::fs::rename(&partial, path).map_err(|e| format!("{}: {e}", path.display()))
+}
+
+/// Held from reading the switched-off list to writing it back, so two
+/// switches at once (two windows, or two quick clicks) can't each write a
+/// list missing the other's change.
+static SWITCHING: Mutex<()> = Mutex::new(());
+
+/// Switches `id` on or off in the list at `path`; whether that changed it.
+fn switch(path: &Path, id: &str, enabled: bool) -> Result<bool, String> {
+    let _switching = SWITCHING.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut ids = read_disabled(path);
+    let changed = if enabled { ids.remove(id) } else { ids.insert(id.to_string()) };
+    if changed {
+        write_disabled(path, &ids)?;
+    }
+    Ok(changed)
 }
 
 pub(crate) fn cache_dir(id: &str) -> PathBuf {
@@ -516,11 +537,6 @@ pub fn extensions_disabled() -> Vec<String> {
     disabled().into_iter().collect()
 }
 
-/// Held from reading the switched-off list to writing it back, so two
-/// switches at once (two windows, or two quick clicks) can't each write a
-/// list missing the other's change.
-static SWITCHING: Mutex<()> = Mutex::new(());
-
 /// Switches an extension on or off. The watcher sees the list change and
 /// tells every window, which loads or unloads it.
 #[tauri::command(async)]
@@ -528,11 +544,7 @@ pub fn extension_set_enabled(id: String, enabled: bool) -> Result<(), String> {
     if !valid_id(&id) {
         return Err(format!("no such extension: {id}"));
     }
-    let _switching = SWITCHING.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-    let mut ids = disabled();
-    let changed = if enabled { ids.remove(&id) } else { ids.insert(id.clone()) };
-    if changed {
-        set_disabled(&ids)?;
+    if switch(&disabled_path(), &id, enabled)? {
         log(&id, if enabled { "switched on" } else { "switched off" });
     }
     Ok(())
@@ -649,6 +661,26 @@ mod tests {
         }
         let one_line = "ééééééééé";
         assert!(one_line.ends_with(newer_half(one_line)));
+    }
+
+    #[test]
+    fn switches_at_once_each_keep_the_others_change() {
+        let dir = std::env::temp_dir().join(format!("roer-switches-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let path = dir.join(".disabled.json");
+        let ids: Vec<String> = (0..24).map(|n| format!("ext-{n}")).collect();
+        std::thread::scope(|scope| {
+            for id in &ids {
+                let path = &path;
+                scope.spawn(move || switch(path, id, false).unwrap());
+            }
+        });
+        assert_eq!(read_disabled(&path), ids.iter().cloned().collect());
+        // Switching one back on leaves the rest off, and switching it on again changes nothing.
+        assert!(switch(&path, "ext-3", true).unwrap());
+        assert!(!switch(&path, "ext-3", true).unwrap());
+        assert_eq!(read_disabled(&path).len(), 23);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
