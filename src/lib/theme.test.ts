@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   applyTheme,
   currentTheme,
+  hostColors,
   nextChoice,
   onThemeChange,
   storedChoice,
@@ -137,5 +138,18 @@ describe("terminalTheme", () => {
     expect(terminalTheme("dark")).toEqual({ background: "#1e1e1e", foreground: "#d4d4d4" });
     expect(terminalTheme("light")).toMatchObject({ background: "#ffffff", foreground: "#000000" });
     expect(terminalTheme("light").yellow).toBeDefined();
+  });
+});
+
+describe("hostColors", () => {
+  it("names every colour the terminal draws with, in psmux's form", () => {
+    expect(hostColors("light")).toBe(
+      "fg=000000,bg=ffffff,0=1e1f22,1=c62d42,2=208a3c,3=a76e00,4=3574f0,5=a23ab4,6=0b7c85,7=818594," +
+        "8=6c707e,9=e04b5b,10=2fa54a,11=c28e00,12=5c8ff5,13=c057d4,14=1aa0ab,15=a8adbd,dark=0",
+    );
+    expect(hostColors("dark")).toBe(
+      "fg=d4d4d4,bg=1e1e1e,0=2e3436,1=cc0000,2=4e9a06,3=c4a000,4=3465a4,5=75507b,6=06989a,7=d3d7cf," +
+        "8=555753,9=ef2929,10=8ae234,11=fce94f,12=729fcf,13=ad7fa8,14=34e2e2,15=eeeeec,dark=1",
+    );
   });
 });

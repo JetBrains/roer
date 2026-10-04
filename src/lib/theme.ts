@@ -120,3 +120,32 @@ export function terminalTheme(theme: Theme): ITheme {
     brightWhite: "#a8adbd",
   };
 }
+
+/** xterm.js's own ANSI colours, which a theme naming none of its own (dark)
+ * is drawn with. */
+const XTERM_ANSI = [
+  "#2e3436", "#cc0000", "#4e9a06", "#c4a000", "#3465a4", "#75507b", "#06989a", "#d3d7cf",
+  "#555753", "#ef2929", "#8ae234", "#fce94f", "#729fcf", "#ad7fa8", "#34e2e2", "#eeeeec",
+];
+const ANSI_KEYS = [
+  "black", "red", "green", "yellow", "blue", "magenta", "cyan", "white",
+  "brightBlack", "brightRed", "brightGreen", "brightYellow",
+  "brightBlue", "brightMagenta", "brightCyan", "brightWhite",
+] as const;
+
+/**
+ * The terminal's colours as psmux takes them in `PSMUX_HOST_COLORS`
+ * (`fg=RRGGBB,bg=RRGGBB,0=RRGGBB,…,15=RRGGBB,dark=1`), to answer the colour
+ * queries of what runs in a pane. Given, so that psmux need not ask the
+ * terminal on attach: see `spawn` in `pty.rs`.
+ */
+export function hostColors(theme: Theme): string {
+  const colors = terminalTheme(theme);
+  const hex = (color: string | undefined) => (color ?? "").replace(/^#/, "");
+  return [
+    `fg=${hex(colors.foreground)}`,
+    `bg=${hex(colors.background)}`,
+    ...ANSI_KEYS.map((key, i) => `${i}=${hex(colors[key] ?? XTERM_ANSI[i])}`),
+    `dark=${theme === "dark" ? 1 : 0}`,
+  ].join(",");
+}
