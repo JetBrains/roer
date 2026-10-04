@@ -5,7 +5,7 @@ import "@xterm/xterm/css/xterm.css";
 
 import { closePty, decodeOutput, resizePty, spawnPty, writePty } from "./lib/pty";
 import { logLine } from "./lib/log";
-import { currentTheme, onThemeChange, terminalTheme } from "./lib/theme";
+import { currentTheme, hostColors, onThemeChange, terminalTheme } from "./lib/theme";
 
 /**
  * How long output has to keep flowing before the session counts as attached.
@@ -173,6 +173,7 @@ export function TerminalView({ args, cwd, onAttached, onPane, onExit }: Terminal
           logLine(`terminal ${target}: exited with ${event.code}${attached ? "" : " before it attached"}`);
           onExitRef.current?.(event.code);
         },
+        hostColors(currentTheme()),
       )
         .then((id) => {
           // A window closed while the PTY was starting still leaves a client

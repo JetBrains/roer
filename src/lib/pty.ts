@@ -107,6 +107,7 @@ export function spawnPty(
   cwd: string | undefined,
   size: { cols: number; rows: number },
   onEvent: (event: PtyEvent) => void,
+  hostColors?: string,
 ): Promise<string> {
   const channel = new Channel<PtyEvent>();
   channel.onmessage = onEvent;
@@ -115,6 +116,7 @@ export function spawnPty(
     cwd,
     cols: size.cols,
     rows: size.rows,
+    hostColors,
     onEvent: channel,
   }).then(
     (id) => {

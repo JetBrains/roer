@@ -415,10 +415,11 @@ fn dispatch(state: &Arc<AppState>, cmd: &str, args: Value, cid: Option<&str>) ->
             let cwd: Option<String> = parse(&args, "cwd")?;
             let cols: u16 = parse(&args, "cols")?;
             let rows: u16 = parse(&args, "rows")?;
+            let host_colors: Option<String> = parse(&args, "hostColors")?;
             let channel_id: String = parse(&args, "onEvent")?;
             let cid = cid.ok_or_else(|| "pty_spawn: missing connection id".to_string())?.to_string();
             let sink = ChannelBus { id: channel_id, cid: cid.clone(), state: state.clone() };
-            let id = crate::pty::spawn(&state.pty, args_v, cwd, cols, rows, sink)?;
+            let id = crate::pty::spawn(&state.pty, args_v, cwd, cols, rows, host_colors, sink)?;
             let mut owners = state.pty_owners.lock().unwrap();
             // PTYs that exited on their own are pruned here, keeping the map
             // bounded by what is actually running.

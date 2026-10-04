@@ -111,9 +111,10 @@ pub fn pty_spawn(
     cwd: Option<String>,
     cols: u16,
     rows: u16,
+    host_colors: Option<String>,
     on_event: Channel<PtyEvent>,
 ) -> Result<String, String> {
-    spawn(&state, args, cwd, cols, rows, on_event)
+    spawn(&state, args, cwd, cols, rows, host_colors, on_event)
 }
 
 /// The spawn itself, generic over [`PtySink`] so `roer-server` can hand it a
@@ -124,6 +125,7 @@ pub(crate) fn spawn<P: PtySink>(
     cwd: Option<String>,
     cols: u16,
     rows: u16,
+    host_colors: Option<String>,
     on_event: P,
 ) -> Result<String, String> {
     let size = PtySize {
@@ -170,6 +172,14 @@ pub(crate) fn spawn<P: PtySink>(
     // Asks roer to say, in this terminal, which pane it attached: the only way
     // to know it for a session this starts. The frontend's terminal reads it.
     cmd.env("ROER_REPORT_PANE", "1");
+    // The terminal's colours, for psmux to answer a pane's colour queries
+    // with. Without them psmux asks the terminal on every attach and stops
+    // listening at the reply to the DA1 that closes its questions, which
+    // ConPTY sends at once, ahead of xterm's: the colour replies landing after
+    // it are read as keys and typed into the pane. tmux ignores it.
+    if let Some(colors) = host_colors.filter(|c| !c.is_empty()) {
+        cmd.env("PSMUX_HOST_COLORS", colors);
+    }
 
     let command = format!("roer {} in {}", args.join(" "), cmd.get_cwd().map(|d| d.to_string_lossy()).unwrap_or_default());
     let child = pair.slave.spawn_command(cmd).map_err(|e| {
