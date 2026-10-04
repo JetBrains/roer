@@ -219,17 +219,23 @@ export function ReviewView({ session, active, onSent, onOpenPullRequest, onOpenC
     const { asked } = local;
     const root = local.diff.root;
     // A save can come with a checkout: the branch is read again with the diff, and comments go under it. A
-    // load that starts meanwhile is the newer answer, so this one is dropped.
+    // load that starts meanwhile is the newer answer, so this one is dropped, and so is it once the next batch
+    // has come: its read is the newer one, whichever finishes first.
     const mine = generation.current;
+    let superseded = false;
+    const current = () => !superseded && mine === generation.current;
     void Promise.all([gitBranchDiff(root, asked), gitCurrentBranch(root).catch(() => null)])
       .then(([diff, onBranch]) => {
-        if (mine !== generation.current) return;
+        if (!current()) return;
         setComments(storedComments(diff.root, onBranch));
         setLocal({ kind: "ready", diff, branch: onBranch, ...(asked ? { asked } : {}) });
       })
       .catch((cause: unknown) => {
-        if (mine === generation.current) setLocal({ kind: "error", text: String(cause) });
+        if (current()) setLocal({ kind: "error", text: String(cause) });
       });
+    return () => {
+      superseded = true;
+    };
     // Keyed on the batch of changes alone: a fresh diff is the answer to it, not a reason for another.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [changed]);

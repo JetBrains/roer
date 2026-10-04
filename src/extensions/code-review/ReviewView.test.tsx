@@ -391,6 +391,25 @@ describe("ReviewView", () => {
       vi.mocked(gitCurrentBranch).mockResolvedValue("feat");
     });
 
+    it("keeps the newest save's diff when an older read finishes after it", async () => {
+      const staged = session();
+      const { rerender } = render(<ReviewView session={staged} active />);
+      await screen.findByText("Off by one.");
+      fireEvent.click(screen.getByRole("button", { name: "Local changes" }));
+      await screen.findByText("2 commits since origin/main, and what is not committed");
+
+      // The first save's read is slow; the second's comes back at once, with a commit more.
+      let slow: (diff: Awaited<ReturnType<typeof gitBranchDiff>>) => void = () => {};
+      vi.mocked(gitBranchDiff).mockImplementationOnce(() => new Promise((done) => (slow = done)));
+      rerender(<ReviewView session={{ ...staged, changed: { root: "/repo", paths: ["src/a.ts"], broad: false } }} active />);
+      vi.mocked(gitBranchDiff).mockResolvedValueOnce({ root: "/repo", base: "origin/main", commits: 3, diff: patch });
+      rerender(<ReviewView session={{ ...staged, changed: { root: "/repo", paths: ["src/b.ts"], broad: false } }} active />);
+      await screen.findByText("3 commits since origin/main, and what is not committed");
+
+      await act(async () => slow({ root: "/repo", base: "origin/main", commits: 2, diff: patch }));
+      expect(screen.getByText("3 commits since origin/main, and what is not committed")).toBeInTheDocument();
+    });
+
     it("says why when the branch cannot be read", async () => {
       vi.mocked(gitBranchDiff).mockRejectedValue("/repo is not in a git repository.");
       vi.mocked(ghPrForBranch).mockResolvedValue(null);

@@ -772,14 +772,15 @@ export function App() {
   );
 
   // An extension's tab that went away (removed, or its session folder gone)
-  // cannot stay on top.
+  // cannot stay on top, nor can one asked for by an id the strip never had
+  // (`useActivateTab` with a typo): either would leave the stage blank.
   const stripIds = strip.map((tab) => tab.tabId).join("\n");
   useEffect(() => {
     const ids = stripIds.split("\n");
     setTabs((current) =>
       current.active.startsWith("file:") || ids.includes(current.active) ? current : activate(current, "terminal"),
     );
-  }, [stripIds]);
+  }, [stripIds, tabs.active]);
 
   // The session on the stage before this one, for Ctrl+Tab: the pane it was
   // in, held while a different one comes up.
