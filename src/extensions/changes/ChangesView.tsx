@@ -176,8 +176,9 @@ export function ChangesView({ session, active, onSent, onOpenCount }: ChangesVie
       </div>
       <div className="changes-scope" hidden={scope !== "commits"}>
         <DiffBrowserView
-          // Another repository is another history: started over rather than left on the old one's commits.
-          key={root ?? ""}
+          // Another repository or branch is another history: started over, rather than leaving the old one's
+          // commits on screen (and taking comments on them) until the new one's arrive.
+          key={`${root ?? ""}\0${branch ?? ""}`}
           toolbar={slot}
           branch={branch ?? (where ? "HEAD" : undefined)}
           cwd={session?.cwd}
@@ -194,6 +195,9 @@ export function ChangesView({ session, active, onSent, onOpenCount }: ChangesVie
       </div>
       <div className="changes-scope" hidden={scope === "commits"}>
         <ReviewView
+          // Started over for the same reason: the old branch's diff and comments must not stay answerable under
+          // the new one's name.
+          key={`${root ?? ""}\0${branch ?? ""}`}
           session={session}
           branch={elsewhere}
           active={active && scope !== "commits"}
