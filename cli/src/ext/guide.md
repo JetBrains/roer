@@ -1,7 +1,7 @@
 # Writing a Roer extension
 
-A Roer extension adds a tab to Roer's stage, next to Terminal, Changes and
-Pull Request. It is a folder with a manifest and a React entry point. Roer
+A Roer extension adds a tab to Roer's stage, next to Terminal and Changes.
+It is a folder with a manifest and a React entry point. Roer
 builds it with Bun, loads it into its own window and reloads it every time a
 file in the folder changes. Roer's own Changes tab is an extension written
 this way.

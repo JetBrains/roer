@@ -32,8 +32,8 @@ writes it, installs it and iterates on it until it's right. No Roer release
 is involved.
 
 To prove that the API is enough to build real features, Roer's own
-Terminal, Changes and Pull Request tabs move onto it as **bundled
-extensions**. Their source also serves as the starting point for a fork: a
+Terminal and Changes tabs move onto it as **bundled extensions** (the
+pull request lives in Changes). Their source also serves as the starting point for a fork: a
 replacement Changes tab begins as a copy of the built-in, not a blank file.
 
 This spec adds **code extensions**. The data-only extensions of
@@ -46,7 +46,7 @@ reaches for when the catalog can express the feature (§9).
 | Question | Decision |
 | --- | --- |
 | Author | The end user, through their agent. Roer developers move the built-ins onto the same API |
-| Built-ins | Terminal, Changes and Pull Request become bundled extensions. Sessions stays in the core for now |
+| Built-ins | Terminal and Changes become bundled extensions; Changes holds the pull request too. Sessions stays in the core for now |
 | Trust | Full trust. Extension code runs in Roer's own webview with the host's React |
 | Host access | Raw: `invoke`, `listen`, `Channel` and `fetch`, the same as built-in code. No capability gating |
 | Backend | Optional `server.ts`, run by the same Bun that builds extensions, downloaded on first use when the machine has none. It may register tools for agents |
@@ -137,7 +137,7 @@ and on reload. An `activate` may also return a cleanup function.
 
 | Call | What it adds |
 | --- | --- |
-| `roer.stage.registerTab({ id, title, component, order?, needsSession?, keepAcrossSessions?, pinned?, replaces? })` | A stage tab. `order` places it: Sessions is 0, Terminal 10, Changes 20, Pull Request 30, and the default is 100. The first nine tabs get ⌘1–9. `needsSession` (default true) disables it while no session is on the stage. A pinned tab is always in the strip; an unpinned one is listed in the strip's "+" menu and can be closed. `replaces: "changes" \| "pullRequest" \| "terminal"` takes over that tab's place, title and ⌘ number. In the slice, every tab is pinned and `replaces` isn't there yet |
+| `roer.stage.registerTab({ id, title, component, order?, needsSession?, keepAcrossSessions?, pinned?, replaces? })` | A stage tab. `order` places it: Sessions is 0, Terminal 10, Changes 20, and the default is 100. The first nine tabs get ⌘1–9. `needsSession` (default true) disables it while no session is on the stage. A pinned tab is always in the strip; an unpinned one is listed in the strip's "+" menu and can be closed. `replaces: "changes" \| "terminal"` takes over that tab's place, title and ⌘ number. In the slice, every tab is pinned and `replaces` isn't there yet |
 | `roer.sidePanel.register({ id, title, component })` | A panel on the right, where Generative UI shows today, beside the terminal instead of over it |
 | `roer.sidebar.registerSection({ id, title, order?, component })` | A section in the sidebar, under the session list |
 | `roer.badge.set(tabId, text \| null)` | A count or dot on one of its tabs |
@@ -190,7 +190,7 @@ the same way as `react`. Nothing is copied into the extension's build.
 | --- | --- |
 | `invoke`, `listen`, `Channel` | `src/lib/backend.ts`, so an extension works in the desktop app and over `roer-server` alike |
 | `gitChanges`, `gitDiff`, `ghPrForBranch`, `fileRead`, … | the typed wrappers in `src/lib/`, under their own names, which already say what they wrap. `filesGrep(cwd, pattern)` is new: `git grep` over tracked and new files, which also starts the worktree watch, so a tab that greps hears `files.changed`. `filesList(cwd)` is new too: every path `git ls-files` names, tracked and new, for a tab that draws the whole tree |
-| `DiffPane`, `Spans`, `TerminalView`, `Markdown` | the components the built-ins are made of. `Markdown` is new: the `react-markdown` + GFM setup `PullRequestView` uses today |
+| `DiffPane`, `Spans`, `TerminalView`, `Markdown` | the components the built-ins are made of. `Markdown` is new: the `react-markdown` + GFM setup the pull request's reviews are drawn with |
 | `parseDiff`, `buildTree`/`rows`, `highlight`, `langFor`, `useHotkey`, `shortcutLabel` | helpers |
 | `rpc`, `useRpc` | calls into the extension's own `server.ts` (§5) |
 | the `src/components/ui` primitives | buttons, inputs, menus, and Roer's theme tokens |
@@ -239,8 +239,7 @@ is what `fork` copies.
 
 | Built-in | As an extension | What stays in the core |
 | --- | --- | --- |
-| Changes | `src/extensions/changes/`, one tab for the branch's work with three scopes. *By commit* is `DiffBrowserView`: the uncommitted edits, then each commit, with `DiffPane` and the prev/next-commit chords. *Whole branch* is everything since the base (`gitBranchDiff`) in `roer/ui`'s `DiffView`, where the person comments on any line and agents add theirs with `changes__add_comments`. *Pull request* is GitHub's diff (`ghPrDiff`) with its review threads as answerable notes (accept, decline, instruct). Every decision goes to the agent with `session.send`. Written against the SDK only, as a fork would be | — |
-| Pull Request | `PullRequestView` as a pinned tab, with its badge through `roer.badge` and `pr.draft` through `roer.events`. "Send to agent" becomes `session.send` | — |
+| Changes | `src/extensions/changes/`, one tab for the branch's work with three scopes. *By commit* is `DiffBrowserView`: the uncommitted edits, then each commit, with `DiffPane` and the prev/next-commit chords. *Whole branch* is everything since the base (`gitBranchDiff`) in `roer/ui`'s `DiffView`, where the person comments on any line and agents add theirs with `changes__add_comments`. *Pull request* is the branch's pull request from start to end: the form that opens one (drafted by the agent through `roer pr-draft`), then GitHub's diff (`ghPrDiff`) with its review threads as answerable notes (accept, decline, instruct), a Copilot review asked for and polled until it lands, and the merge. Every decision goes to the agent with `session.send`. Written against the SDK only, as a fork would be | — |
 | Terminal | A pinned tab whose component renders the SDK's `TerminalView` | The PTY and the handoff state machine (`onAttached`, `onPane`, `onExit`). A replacement can wrap the terminal, with a toolbar or a split, but it can't reimplement the PTY |
 | Sessions | Not moved in this spec | All of it: `useSessionBrowser` is the app's session router |
 
@@ -488,7 +487,7 @@ There's no compatibility promise. What Roer does instead:
    It's done when "make me a tab that lists the TODOs in this repo", asked
    of Claude Code in a Roer pane, ends with that tab in the strip, with no
    hand edits.
-3. **Pull Request and Terminal moved, and forking.**
+3. **Terminal moved, and forking.**
    - `replaces`, `roer ext fork`
    - error cards, the fallback, safe mode and `roer ext check`
 4. **Servers.**

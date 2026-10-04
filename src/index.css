@@ -906,6 +906,91 @@ button.row.active {
 
 .changes-head .keys {
   margin-left: auto;
+  white-space: nowrap;
+}
+
+.changes-head .seg button {
+  white-space: nowrap;
+}
+
+/* A branch name or a commit's hash: one line, cut short before anything wraps. */
+.changes-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.changes-head > .muted:not(.keys) {
+  white-space: nowrap;
+}
+
+/* Commits the local changes, between the diff's header and the diff. */
+.commit-box {
+  flex: none;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--roer-border);
+  font-size: 12px;
+}
+
+.commit-box-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.commit-box-row .gen-button {
+  white-space: nowrap;
+}
+
+.commit-box textarea {
+  flex: 1 1 auto;
+  min-width: 0;
+  resize: vertical;
+  font: inherit;
+  font-size: 12px;
+  color: var(--roer-fg);
+  background: var(--roer-bg);
+  border: 1px solid var(--roer-border);
+  border-radius: 6px;
+  padding: 5px 8px;
+}
+
+.commit-box .notice,
+.commit-box .error {
+  margin: 6px 0 0;
+}
+
+/* A commit's whole message, between the diff's header and the diff. */
+.commit-message {
+  flex: none;
+  max-height: 35%;
+  overflow: auto;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--roer-border);
+  font-size: 12px;
+}
+
+.commit-message p {
+  margin: 0;
+}
+
+.commit-subject {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--roer-fg);
+}
+
+.commit-body {
+  margin-top: 4px !important;
+  white-space: pre-wrap;
+  color: var(--roer-fg);
+}
+
+.commit-meta {
+  display: flex;
+  gap: 10px;
+  margin-top: 4px !important;
 }
 
 /* Two ways to read the same diff: a terminal's, and an IDE's. */
@@ -967,9 +1052,58 @@ button.row.active {
 
 .changes-scopes {
   gap: 10px;
+  flex-wrap: wrap;
+}
+
+/* By commit's own controls, put in the bar beside the branch. */
+.changes-slot {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+}
+
+.changes-slot[hidden] {
+  display: none;
+}
+
+.branch-diff-pickers.inline {
+  flex: 1 1 auto;
+  padding: 0;
+  border: none;
+  background: none;
+}
+
+.branch-diff-pickers.inline label,
+.branch-diff-pickers.inline button {
+  white-space: nowrap;
 }
 
 .changes-said {
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.changes-scopes .seg button,
+.changes-scopes .gen-button {
+  white-space: nowrap;
+}
+
+/* The branch every view shows, picked once for all three. */
+.changes-branch {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--roer-muted);
+}
+
+.changes-branch select {
+  min-width: 0;
+  max-width: 220px;
+  background: var(--roer-bg);
+  color: var(--roer-fg);
+  border: 1px solid var(--roer-border);
+  border-radius: 4px;
+  padding: 2px 6px;
   font-size: 12px;
 }
 
@@ -3049,9 +3183,9 @@ button.gen-wi-source:hover {
   color: var(--ide-text);
 }
 
-/* Pull Request tab --------------------------------------------------------- */
+/* Tab marks ----------------------------------------------------------------- */
 
-/* A review landed while the tab was not on top. */
+/* Something on the tab is waiting for you. */
 .tab-dot {
   display: inline-block;
   width: 6px;
@@ -3078,49 +3212,26 @@ button.gen-wi-source:hover {
   vertical-align: middle;
 }
 
-.pr-view {
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow: auto;
-  padding: 14px 18px 24px;
-  font-size: 13px;
-}
-
-.pr-view code {
+/* The pull request in Changes: the form that opens one, and above its diff
+   the reviews' own words and the merge. */
+.pr-create code,
+.pr-summary code,
+.review-head code {
   font-family: var(--ide-mono);
   font-size: 12px;
 }
 
-.pr-head,
-.pr-threads-head {
+.pr-head {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 10px;
-  margin-bottom: 12px;
 }
 
-.pr-head h2,
-.pr-threads-head h3,
-.pr-reviews h3 {
+.pr-head h2 {
   margin: 0;
   font-size: 14px;
   font-weight: 600;
-}
-
-.pr-spacer {
-  flex: 1;
-}
-
-button.link.pr-title {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--roer-fg);
-  text-align: left;
-}
-
-button.link.pr-title:hover {
-  color: var(--roer-accent);
 }
 
 .pr-state,
@@ -3149,11 +3260,15 @@ button.link.pr-title:hover {
   flex-direction: column;
   gap: 10px;
   max-width: 860px;
+  padding: 14px 18px 24px;
+  font-size: 13px;
+  overflow: auto;
 }
 
 .pr-create input:not([type="checkbox"]),
 .pr-create textarea,
-.pr-head select {
+.pr-create select,
+.pr-merge select {
   font: inherit;
   font-size: 13px;
   color: var(--roer-fg);
@@ -3161,6 +3276,11 @@ button.link.pr-title:hover {
   border: 1px solid var(--roer-border);
   border-radius: 6px;
   padding: 6px 9px;
+}
+
+/* Narrow enough that the base and the draft button share the heading's line. */
+.pr-create .pr-head select {
+  max-width: 200px;
 }
 
 .pr-create textarea {
@@ -3175,28 +3295,34 @@ button.link.pr-title:hover {
   justify-content: space-between;
 }
 
-.pr-reviews {
-  margin-bottom: 18px;
+.pr-summary {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 40%;
+  overflow: auto;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--roer-border);
+  font-size: 12px;
 }
 
-.pr-reviews h3 {
-  margin-bottom: 8px;
+.pr-summary:empty {
+  display: none;
 }
 
-.pr-review,
-.pr-thread {
+.pr-review {
   border: 1px solid var(--roer-border);
   border-radius: 8px;
   background: var(--roer-panel);
-  margin-bottom: 8px;
+  margin-bottom: 6px;
 }
 
-.pr-review summary,
-.pr-thread summary {
+.pr-review summary {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 7px 10px;
+  padding: 6px 10px;
   cursor: pointer;
   min-width: 0;
 }
@@ -3209,110 +3335,15 @@ button.link.pr-title:hover {
   color: var(--roer-warn);
 }
 
-.pr-thread.settled {
-  opacity: 0.7;
-}
-
-.pr-where {
-  font-family: var(--ide-mono);
-  font-size: 12px;
-  white-space: nowrap;
-}
-
-.pr-first {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  min-width: 0;
-}
-
-.pr-file h4 {
-  margin: 14px 0 6px;
-  font-weight: 500;
-}
-
-.pr-hunk {
-  margin: 0;
-  padding: 6px 0;
-  overflow-x: auto;
-  font-family: var(--ide-mono);
-  font-size: 12px;
-  line-height: 1.5;
-  background: var(--ide-editor);
-  color: var(--ide-text);
-  border-top: 1px solid var(--ide-border);
-  border-bottom: 1px solid var(--ide-border);
-}
-
-.pr-hunk > div {
-  padding: 0 10px;
-  white-space: pre;
-}
-
-.pr-hunk .add {
-  background: var(--ide-add);
-}
-
-.pr-hunk .del {
-  background: var(--ide-del);
-}
-
-.pr-hunk .pr-mark {
-  display: inline-block;
-  width: 1.5ch;
-  color: var(--ide-gutter);
-  user-select: none;
-}
-
-.pr-hunk .add .pr-mark {
-  color: var(--ide-add-sign);
-}
-
-.pr-hunk .del .pr-mark {
-  color: var(--ide-del-sign);
-}
-
-.pr-comment {
-  padding: 8px 10px;
-}
-
-.pr-comment + .pr-comment {
-  border-top: 1px solid var(--roer-border);
-}
-
-.pr-comment-head {
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
-  font-size: 12px;
-}
-
-/* The markdown rules come from .file-markdown; a comment is not a page. */
-.file-markdown.pr-md {
+/* The markdown rules come from .file-markdown; a review is not a page. */
+.pr-review .file-markdown.pr-md {
   flex: none;
   overflow: visible;
-  padding: 4px 0 0;
-}
-
-.pr-review .file-markdown.pr-md {
   padding: 0 10px 10px;
 }
 
 .pr-merge {
-  margin-top: 22px;
-  padding-top: 14px;
-  border-top: 1px solid var(--roer-border);
-}
-
-.pr-merge h3 {
-  margin: 0 0 8px;
-  font-size: 14px;
-  font-weight: 600;
-}
-
-.pr-bypass {
-  display: block;
-  margin-bottom: 8px;
+  margin: 0;
 }
 
 .pr-merge-row {
@@ -3320,39 +3351,6 @@ button.link.pr-title:hover {
   flex-wrap: wrap;
   align-items: center;
   gap: 10px;
-}
-
-/* One control, two buttons: the method on the left merges, the arrow on
-   the right picks a different method. */
-.pr-split {
-  display: inline-flex;
-}
-
-.pr-split > button:first-child {
-  border-radius: 6px 0 0 6px;
-}
-
-.pr-split > .pr-split-arrow {
-  display: inline-flex;
-  align-items: center;
-  border-left-width: 0;
-  border-radius: 0 6px 6px 0;
-  padding: 5px 7px;
-}
-
-.pr-merge-menu {
-  max-width: 360px;
-}
-
-.pr-merge-option {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  white-space: normal;
-}
-
-.pr-merge-option .muted {
-  font-size: 11px;
 }
 
 /* Agents --------------------------------------------------------------- */

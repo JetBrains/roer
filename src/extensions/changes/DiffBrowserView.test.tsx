@@ -69,6 +69,7 @@ function commit(subject: string, extra: Partial<Commit> = {}): Commit {
     author: "Roer Test",
     date: 1_700_000_000,
     subject,
+    body: "",
     ...extra,
   };
 }
@@ -422,6 +423,34 @@ describe("DiffBrowserView — commits and the local-changes slot together", () =
     expect(
       await screen.findByText(/feature has no commits main does not already have/),
     ).toBeInTheDocument();
+  });
+
+  it("shows a commit's whole message, and cuts a long body until it is asked for", async () => {
+    vi.mocked(gitBranches).mockResolvedValue(["main", "feature"]);
+    vi.mocked(gitCurrentBranch).mockResolvedValue("main");
+    const body = ["Why.", "Two.", "Three.", "Four.", "Five.", "Six."].join("\n");
+    vi.mocked(gitBranchCommits).mockResolvedValue([
+      commit("A subject an agent wrote that runs on well past what one line of the header could hold", { body }),
+    ]);
+    // Another branch than the one checked out: its commits alone, the first one on screen.
+    render(<DiffBrowserView cwd="/work/roer/src" active branch="feature" />);
+    expect(await screen.findByText(/runs on well past what one line/)).toBeInTheDocument();
+    expect(screen.getByText(/Four\.…$/)).toBeInTheDocument();
+    expect(screen.queryByText(/Six\./)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Show all 6 lines" }));
+    expect(screen.getByText(/Six\.$/)).toBeInTheDocument();
+  });
+
+  it("puts its controls in the bar it is handed, and none of its own", async () => {
+    const bar = document.createElement("div");
+    document.body.append(bar);
+    vi.mocked(gitBranchCommits).mockResolvedValue([commit("only change")]);
+    const { container } = render(<DiffBrowserView cwd="/work/roer/src" active branch="feature" toolbar={bar} />);
+    await waitFor(() => expect(bar.querySelector("select")).not.toBeNull());
+    expect(container.querySelector(".branch-diff-pickers")).toBeNull();
+    // The branch is the bar's to pick, so only the base is offered here.
+    expect(bar.querySelectorAll("select")).toHaveLength(1);
+    bar.remove();
   });
 
   it("diffs a selected commit against its own parent, not against the worktree", async () => {

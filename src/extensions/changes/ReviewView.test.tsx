@@ -183,15 +183,12 @@ describe("ReviewView", () => {
     expect(screen.getByRole("button", { name: "Send 1 to Claude" })).toBeEnabled();
   });
 
-  it("says when the branch has no pull request, and points at where one is opened", async () => {
+  it("opens on the local changes when the branch has no pull request, and offers to open one", async () => {
     vi.mocked(ghPrForBranch).mockResolvedValue(null);
-    const onOpenPullRequest = vi.fn();
-    render(<ReviewView session={session()} active onOpenPullRequest={onOpenPullRequest} />);
-    // Without a pull request the tab opens on the local changes.
+    render(<ReviewView session={session()} active />);
     expect(await screen.findByRole("button", { name: "Local changes", pressed: true })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Pull request" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Open one" }));
-    expect(onOpenPullRequest).toHaveBeenCalled();
+    expect(await screen.findByRole("heading", { name: "Open a pull request" })).toBeInTheDocument();
   });
 
   it("passes on what gh says when it cannot reach GitHub", async () => {
@@ -220,13 +217,20 @@ describe("ReviewView", () => {
     it("reads the branch at once, and again only when its pull request goes elsewhere", async () => {
       await openLocal();
       // origin/main is where the pull request goes already: nothing to read again.
-      expect(vi.mocked(gitBranchDiff).mock.calls).toEqual([["/repo", undefined]]);
+      expect(vi.mocked(gitBranchDiff).mock.calls).toEqual([["/repo", undefined, undefined]]);
+    });
+
+    it("reads another branch from git, with no review to ask for on it", async () => {
+      render(<ReviewView session={session()} active scope="local" branch="spec" />);
+      expect(await screen.findByText("2 commits since origin/main")).toBeInTheDocument();
+      expect(gitBranchDiff).toHaveBeenCalledWith("/repo", undefined, "spec");
+      expect(screen.queryByRole("button", { name: "Review with Claude" })).toBeNull();
     });
 
     it("compares the branch with its pull request's base when that is not the default", async () => {
       vi.mocked(ghPrForBranch).mockResolvedValue({ ...pr, baseRefName: "release" });
       render(<ReviewView session={session()} active />);
-      await waitFor(() => expect(gitBranchDiff).toHaveBeenCalledWith("/repo", "release"));
+      await waitFor(() => expect(gitBranchDiff).toHaveBeenCalledWith("/repo", "release", undefined));
     });
 
     it("sends your comments with the code they sit on, then clears them", async () => {
@@ -346,7 +350,7 @@ describe("ReviewView", () => {
     it("checks Claude's comments against the base the tab compared with", async () => {
       vi.mocked(ghPrForBranch).mockResolvedValue({ ...pr, baseRefName: "release" });
       render(<ReviewView session={session()} active />);
-      await waitFor(() => expect(gitBranchDiff).toHaveBeenCalledWith("/repo", "release"));
+      await waitFor(() => expect(gitBranchDiff).toHaveBeenCalledWith("/repo", "release", undefined));
       await screen.findByText("Off by one.");
       vi.mocked(gitBranchDiff).mockClear();
       await claudeComments([{ path: "src/a.ts", line: 2, text: "Against release." }]);

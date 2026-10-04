@@ -3,7 +3,7 @@
  *
  * Like the git bridge, every call carries the directory it is about: the
  * pull request is always the one for the branch the staged session is on.
- * The prompt builders below are what the Pull Request tab types into that
+ * The prompt builders below are what the Changes tab types into that
  * session when it hands the agent a job.
  */
 import { invoke, listen, type UnlistenFn } from "./backend";
@@ -99,13 +99,15 @@ export interface Upstream {
 
 export const ghStatus = (dir: string): Promise<GhStatus> => invoke("gh_status", { dir });
 
-export const ghPrForBranch = (dir: string): Promise<PrSummary | null> =>
-  invoke("gh_pr_for_branch", { dir });
+/** The pull request from `branch`, or from the branch checked out in `dir`. */
+export const ghPrForBranch = (dir: string, branch?: string): Promise<PrSummary | null> =>
+  invoke("gh_pr_for_branch", { dir, branch: branch ?? null });
 
+/** Pushes `head` (else the branch checked out) and opens a pull request from it. */
 export const ghPrCreate = (
   dir: string,
-  pr: { title: string; body: string; base: string; draft: boolean },
-): Promise<PrSummary> => invoke("gh_pr_create", { dir, ...pr });
+  pr: { title: string; body: string; base: string; draft: boolean; head?: string },
+): Promise<PrSummary> => invoke("gh_pr_create", { dir, ...pr, head: pr.head ?? null });
 
 export const ghRequestCopilotReview = (dir: string, number: number): Promise<void> =>
   invoke("gh_request_copilot_review", { dir, number });
@@ -146,6 +148,8 @@ export const sendToSession = (pane: string, text: string): Promise<void> =>
 
 export interface PrDraftRecord {
   pane: string;
+  /** `"commit"` for a commit message (`roer commit-draft`); absent for a pull request. */
+  kind?: "commit";
   draft: { title: string; body: string };
 }
 
@@ -165,7 +169,13 @@ function isPrDraftRecord(value: unknown): value is PrDraftRecord {
 /** A title and body the agent drafted with `roer pr-draft`. */
 export const onPrDraft = (handler: (record: PrDraftRecord) => void): Promise<UnlistenFn> =>
   listen<PrDraftRecord>("roer://pr-draft", (event) => {
-    if (isPrDraftRecord(event.payload)) handler(event.payload);
+    if (isPrDraftRecord(event.payload) && event.payload.kind !== "commit") handler(event.payload);
+  });
+
+/** A commit message the agent drafted with `roer commit-draft`: the subject as `title`. */
+export const onCommitDraft = (handler: (record: PrDraftRecord) => void): Promise<UnlistenFn> =>
+  listen<PrDraftRecord>("roer://pr-draft", (event) => {
+    if (isPrDraftRecord(event.payload) && event.payload.kind === "commit") handler(event.payload);
   });
 
 /** Copilot's reviewer is a bot, `copilot-pull-request-reviewer`. */
@@ -187,7 +197,7 @@ export const threadLine = (thread: ReviewThread): number | null =>
 export function draftPrPrompt(pane: string, branch: string, base: string): string {
   return [
     `Draft a pull request title and description for the branch \`${branch}\` against \`${base}\`.`,
-    `Base it on \`git log ${base}..HEAD\` and \`git diff ${base}...HEAD\`, and on what we did in this session.`,
+    `Base it on \`git log ${base}..${branch}\` and \`git diff ${base}...${branch}\`, and on what we did in this session.`,
     "Keep the title under 72 characters. The description should say why the change is made, what it changes, and how it was tested, in GitHub markdown.",
     "Do not create the pull request and do not push. When the draft is ready, hand it to Roer by running exactly:",
     "",
