@@ -248,12 +248,32 @@ declare module "roer" {
     headRefOid: string;
     baseRefName: string;
     reviewDecision: string | null;
+    /** `BLOCKED` while the base's rules (a review, a check) are not met. */
+    mergeStateStatus?: string | null;
   }
   export function ghStatus(dir: string): Promise<GhStatus>;
   /** The pull request from `branch`, else from the branch checked out in `dir`, if there is one. */
   export function ghPrForBranch(dir: string, branch?: string): Promise<PrSummary | null>;
   /** The pull request's whole diff as GitHub has it: what its threads' lines count in. */
   export function ghPrDiff(dir: string, number: number): Promise<string>;
+  /** Pushes `head` (else the branch checked out in `dir`) and opens a pull request from it into `base`. */
+  export function ghPrCreate(
+    dir: string,
+    pr: { title: string; body: string; base: string; draft: boolean; head?: string },
+  ): Promise<PrSummary>;
+  /** Asks Copilot to review the pull request. */
+  export function ghRequestCopilotReview(dir: string, number: number): Promise<void>;
+  export type MergeMethod = "merge" | "squash" | "rebase";
+  /** Which methods the repository allows. */
+  export type MergeMethods = Record<MergeMethod, boolean>;
+  /** Every method, in GitHub's order, with the words GitHub uses for it. */
+  export const MERGE_METHODS: readonly { method: MergeMethod; label: string; description: string }[];
+  export function ghMergeMethods(dir: string): Promise<MergeMethods>;
+  /** Whether the person may merge before the base's rules are met. */
+  export function ghPrCanBypass(dir: string, number: number): Promise<boolean>;
+  /** Merges and closes the pull request, only if its head is still `head`; with `bypass`, though the base's
+   * rules are not met yet. */
+  export function ghPrMerge(dir: string, number: number, method: MergeMethod, head: string, bypass?: boolean): Promise<PrSummary>;
 
   export interface ReviewComment {
     author: string;
@@ -287,6 +307,24 @@ declare module "roer" {
   export function ghPrReview(dir: string, number: number): Promise<PrReview>;
   /** `line`, or `originalLine` once the thread has moved. */
   export function threadLine(thread: ReviewThread): number | null;
+  /** Whether `login` is Copilot's reviewer. */
+  export function isCopilot(login: string): boolean;
+  /** Whether Copilot still owes the pull request a review. */
+  export function copilotPending(review: PrReview | null): boolean;
+
+  /** A drafted title and body handed back by an agent: `roer pr-draft`, or `roer commit-draft` with `kind`. */
+  export interface PrDraftRecord {
+    pane: string;
+    kind?: "commit";
+    /** `branch` is the one the draft was asked for, when the agent said. */
+    draft: { title: string; body: string; branch?: string };
+  }
+  /** A pull request's title and body the agent drafted with `roer pr-draft`. */
+  export function onPrDraft(handler: (record: PrDraftRecord) => void): Promise<UnlistenFn>;
+  /** A commit message the agent drafted with `roer commit-draft`: the subject as `title`. */
+  export function onCommitDraft(handler: (record: PrDraftRecord) => void): Promise<UnlistenFn>;
+  /** Asks the agent in `pane` to draft a pull request for `branch` against `base`, handed back with `roer pr-draft`. */
+  export function draftPrPrompt(pane: string, branch: string, base: string): string;
 
   export type ThreadVerdict = { kind: "accept" } | { kind: "decline" } | { kind: "instruct"; text: string };
   /** A prompt for the session's agent: each thread, its conversation fenced as untrusted, and the person's decision on it. */
@@ -402,6 +440,23 @@ declare module "roer" {
    * Register only while `useActive()`, or the key is taken from every other tab. */
   export function useHotkey(match: (event: KeyboardEvent) => boolean, handler: (event: KeyboardEvent) => void): void;
   export function isMac(): boolean;
+  /** Cmd+Left (Alt+Left off macOS): the previous commit. */
+  export function isPrevCommit(event: KeyboardEvent): boolean;
+  /** Cmd+Right (Alt+Right off macOS): the next commit. */
+  export function isNextCommit(event: KeyboardEvent): boolean;
+  /** How Roer's own shortcuts read on this platform, for tooltips and labels. */
+  export const shortcutLabel: {
+    newSession(): string;
+    pickAgent(): string;
+    agents(): string;
+    goToFile(): string;
+    tab(n: number): string;
+    shortcuts(): string;
+    nextWaiting(): string;
+    previousSession(): string;
+    prevCommit(): string;
+    nextCommit(): string;
+  };
 }
 
 // The module an extension's server.ts imports.

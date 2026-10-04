@@ -124,6 +124,17 @@ describe("ChangesView", () => {
     expect(await screen.findByRole("button", { name: "Send 1 to the agent" })).toBeDisabled();
   });
 
+  it("starts each view over for another branch, so the last one's work is never shown under its name", async () => {
+    render(<ChangesView session={session} active />);
+    const picker = await screen.findByRole("combobox", { name: "Branch" });
+    await waitFor(() => expect(picker).toHaveValue("feat"));
+    const before = { commits: screen.getByText(/^by commit/), review: screen.getByText(/^review of/) };
+    fireEvent.change(picker, { target: { value: "spec" } });
+    // New elements, not the old ones relabelled: whatever they held for feat is gone.
+    expect(screen.getByText(/^by commit/)).not.toBe(before.commits);
+    expect(screen.getByText(/^review of/)).not.toBe(before.review);
+  });
+
   it("tells the agent when the comments are on a branch it does not have checked out", async () => {
     storeComments("/repo", "spec", [{ id: "c1", path: "a.ts", line: 2, side: "new", text: "On spec.", code: "x" }]);
     const send = vi.fn().mockResolvedValue(undefined);
