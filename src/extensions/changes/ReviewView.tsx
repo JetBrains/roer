@@ -468,7 +468,8 @@ export function ReviewView({ session, active, branch: other, onSent, onOpenCount
     return (
       <div className="review">
         <header className="review-head">
-          <strong>Local changes</strong>
+          {/* Inside Changes the tab's own switch names this view; only on its own does it need a name. */}
+          {scope ? null : <strong>Local changes</strong>}
           {localReady ? <span className="muted">{since}</span> : null}
           <span className="review-spacer" />
           {modes}
@@ -510,12 +511,6 @@ export function ReviewView({ session, active, branch: other, onSent, onOpenCount
         {local.kind === "error" ? <EmptyState variant="error" text="Could not read the local changes" detail={local.text} /> : null}
         {localReady ? (
           <>
-            {localReady.diff && comments.length === 0 && !sentNote ? (
-              <p className="muted pad">
-                Hover a line and press + to comment on it, or ask {agent} to review and answer its comments. Send
-                hands every comment to {agent} at once.
-              </p>
-            ) : null}
             <DiffView
               patch={localReady.diff}
               title={other ?? session.branch ?? "Local changes"}
