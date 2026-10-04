@@ -1055,22 +1055,29 @@ button.row.active {
   flex-wrap: wrap;
 }
 
-/* By commit's own controls, put in the bar beside the branch. */
-.changes-slot {
-  flex: 1 1 auto;
-  min-width: 0;
-  display: flex;
+/* By commit's own controls, put in the bar beside the branch. Neither box
+   is a box: each control is an item of the bar itself, so "vs main" stays
+   next to the branch and the bar wraps one control at a time. */
+.changes-slot,
+.branch-diff-pickers.inline {
+  display: contents;
 }
 
 .changes-slot[hidden] {
   display: none;
 }
 
-.branch-diff-pickers.inline {
-  flex: 1 1 auto;
-  padding: 0;
-  border: none;
-  background: none;
+.branch-diff-pickers.inline .seg {
+  margin-left: auto;
+}
+
+.branch-diff-pickers.inline select {
+  max-width: 140px;
+}
+
+.icon-refresh {
+  font-size: 14px;
+  line-height: 1;
 }
 
 .branch-diff-pickers.inline label,
@@ -1089,16 +1096,9 @@ button.row.active {
 }
 
 /* The branch every view shows, picked once for all three. */
-.changes-branch {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--roer-muted);
-}
-
-.changes-branch select {
+select.changes-branch {
   min-width: 0;
-  max-width: 220px;
+  max-width: 200px;
   background: var(--roer-bg);
   color: var(--roer-fg);
   border: 1px solid var(--roer-border);

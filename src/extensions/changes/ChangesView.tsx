@@ -120,21 +120,32 @@ export function ChangesView({ session, active, onSent, onOpenCount }: ChangesVie
             </button>
           ))}
         </div>
-        <label className="changes-branch">
-          Branch
-          <select
-            value={branch ?? ""}
-            disabled={!where}
-            onChange={(e) => setPicked(e.target.value === checkedOut ? null : e.target.value)}
-          >
-            {branch && !where?.branches.includes(branch) ? <option value={branch}>{branch}</option> : null}
-            {where?.branches.map((name) => (
-              <option key={name} value={name}>
-                {name === checkedOut ? `${name} (checked out)` : name}
-              </option>
-            ))}
-          </select>
-        </label>
+        <select
+          className="changes-branch"
+          aria-label="Branch"
+          title="The branch every view shows"
+          value={branch ?? ""}
+          disabled={!where}
+          onChange={(e) => setPicked(e.target.value === checkedOut ? null : e.target.value)}
+        >
+          {branch && !where?.branches.includes(branch) ? <option value={branch}>{branch}</option> : null}
+          {/* The checked-out one first, under its own heading: the open list says which it is, the closed picker
+              stays as short as the name. */}
+          {checkedOut && where?.branches.includes(checkedOut) ? (
+            <optgroup label="Checked out here">
+              <option value={checkedOut}>{checkedOut}</option>
+            </optgroup>
+          ) : null}
+          <optgroup label="Branches">
+            {where?.branches
+              .filter((name) => name !== checkedOut)
+              .map((name) => (
+                <option key={name} value={name}>
+                  {name}
+                </option>
+              ))}
+          </optgroup>
+        </select>
         {elsewhere ? (
           <span className="muted changes-said" title="Its commits only: what is not committed belongs to the branch checked out">
             not checked out
