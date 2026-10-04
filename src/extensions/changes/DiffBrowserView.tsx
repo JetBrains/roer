@@ -392,7 +392,7 @@ export function DiffBrowserView({
       )}
       <label>
         vs.
-        <select value={base} onChange={(e) => setBase(e.target.value)}>
+        <select aria-label="Base" value={base} onChange={(e) => setBase(e.target.value)}>
           {!branches.includes(base) ? <option value={base}>{base}</option> : null}
           {branches.map((name) => (
             <option key={name} value={name}>
@@ -403,13 +403,16 @@ export function DiffBrowserView({
       </label>
       <button
         type="button"
-        className="link"
+        className={toolbar === undefined ? "link" : "link icon-refresh"}
+        aria-label="Refresh"
+        title="Read the branch and its commits again"
         onClick={() => {
           setToken((n) => n + 1);
           setLocalToken((n) => n + 1);
         }}
       >
-        Refresh
+        {/* In the tab's bar, where room is short, the arrow alone. */}
+        {toolbar === undefined ? "Refresh" : "↻"}
       </button>
       {count > 0 ? (
         <div className="seg" role="group" aria-label="Commit">
