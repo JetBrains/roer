@@ -97,6 +97,33 @@ describe("ChangesView", () => {
     expect(await screen.findByText("review of the checked-out branch")).toBeInTheDocument();
   });
 
+  it("offers a detached HEAD as itself, and every view follows it", async () => {
+    vi.mocked(gitCurrentBranch).mockResolvedValue("");
+    render(<ChangesView session={{ ...session, branch: null }} active />);
+    const picker = await screen.findByRole("combobox", { name: "Branch" });
+    await waitFor(() => expect(screen.getByRole("option", { name: "HEAD (detached)" })).toBeInTheDocument());
+    expect(picker).toHaveValue("");
+    expect(screen.getByText("by commit active on HEAD")).toBeInTheDocument();
+    expect(screen.getByText("review of the checked-out branch")).toBeInTheDocument();
+  });
+
+  it("looks the repository up again after a cd into another one", async () => {
+    const { rerender } = render(<ChangesView session={session} active />);
+    await waitFor(() => expect(screen.getByRole("option", { name: "spec" })).toBeInTheDocument());
+    vi.mocked(gitRoot).mockResolvedValue("/other");
+    vi.mocked(gitBranches).mockResolvedValue(["feat", "trunk"]);
+    rerender(<ChangesView session={{ ...session, root: "/other" }} active />);
+    expect(await screen.findByRole("option", { name: "trunk" })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "spec" })).toBeNull();
+  });
+
+  it("hands nothing to a plain shell", async () => {
+    storeComments("/repo", "feat", [{ id: "c1", path: "a.ts", line: 2, side: "new", text: "On feat.", code: "x" }]);
+    const send = vi.fn().mockResolvedValue(undefined);
+    render(<ChangesView session={{ ...session, agent: null, send }} active />);
+    expect(await screen.findByRole("button", { name: "Send 1 to the agent" })).toBeDisabled();
+  });
+
   it("tells the agent when the comments are on a branch it does not have checked out", async () => {
     storeComments("/repo", "spec", [{ id: "c1", path: "a.ts", line: 2, side: "new", text: "On spec.", code: "x" }]);
     const send = vi.fn().mockResolvedValue(undefined);

@@ -259,6 +259,47 @@ describe("another branch than the one checked out", () => {
   });
 });
 
+describe("what the form takes from elsewhere", () => {
+  beforeEach(() => {
+    vi.mocked(ghPrForBranch).mockResolvedValue(null);
+  });
+
+  it("asks nothing of a plain shell", async () => {
+    const staged = session({ agent: null });
+    render(<ReviewView session={staged} active scope="pr" />);
+    await branchesRead();
+    expect(screen.getByRole("button", { name: /Draft with/ })).toBeDisabled();
+  });
+
+  it("takes a draft only for the branch it shows", async () => {
+    view();
+    await branchesRead();
+    act(() => draftListener?.({ pane: "%3", draft: { branch: "other", title: "Another branch's", body: "" } }));
+    expect(screen.getByLabelText("Title")).toHaveValue("");
+    act(() => draftListener?.({ pane: "%3", draft: { branch: "feat", title: "This one's", body: "" } }));
+    expect(screen.getByLabelText("Title")).toHaveValue("This one's");
+  });
+
+  it("leaves the view alone when the branch changed while creating", async () => {
+    let created: (pr: PrSummary) => void = () => {};
+    vi.mocked(ghPrCreate).mockImplementation(() => new Promise((done) => (created = done)));
+    const { rerender } = view();
+    await branchesRead();
+    fireEvent.change(screen.getByLabelText("Title"), { target: { value: "T" } });
+    fireEvent.click(screen.getByRole("button", { name: "Push and create pull request" }));
+    await waitFor(() => expect(ghPrCreate).toHaveBeenCalled());
+
+    // The picker moves to spec before GitHub answers; spec's form is up.
+    rerender(<ReviewView session={session()} active scope="pr" branch="spec" />);
+    await waitFor(() => expect(ghPrForBranch).toHaveBeenLastCalledWith("/work/r", "spec"));
+    const looked = vi.mocked(ghPrForBranch).mock.calls.length;
+    await act(async () => created(pr));
+    // feat's creation finishing does not load feat's pull request over spec's view.
+    expect(vi.mocked(ghPrForBranch).mock.calls.length).toBe(looked);
+    expect(screen.getByRole("heading", { name: "Open a pull request" })).toBeInTheDocument();
+  });
+});
+
 describe("Copilot", () => {
   it("is asked from the header, and waited on until its review lands", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
