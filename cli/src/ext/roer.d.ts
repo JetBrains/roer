@@ -81,8 +81,9 @@ declare module "roer" {
     /** The repository it is in now; null outside one, and briefly while it is looked up. */
     root: string | null;
     branch: string | null;
-    /** The agent running in it ("claude", "codex", …), once known. */
-    agent?: string;
+    /** The agent running in it ("claude", "codex", …), once known; null when only a shell runs, which nothing
+     * should type a prompt into. */
+    agent?: string | null;
     /** The agent is working rather than waiting. */
     busy: boolean;
     /** The latest batch of files the worktree watch saw change: re-read on a new one. */

@@ -56,7 +56,7 @@ export const useExtensionId = (): string => useContext(HostContext).extension;
  */
 export function useStageSession(
   staged: { cwd?: string; pane?: string } | null,
-  info: { agent?: string; busy: boolean; changed: FilesChanged | null },
+  info: { agent?: string | null; busy: boolean; changed: FilesChanged | null },
 ): Session | null {
   const cwd = staged?.cwd;
   const pane = staged?.pane;
@@ -96,7 +96,12 @@ export function useStageSession(
             agent: info.agent,
             busy: info.busy,
             changed: info.changed,
-            send: (text: string) => (pane ? sendToSession(pane, text) : Promise.reject(new Error("no pane yet"))),
+            send: (text: string) =>
+              !pane
+                ? Promise.reject(new Error("no pane yet"))
+                : info.agent === null
+                  ? Promise.reject(new Error("only a shell is running in this session: start an agent in it first"))
+                  : sendToSession(pane, text),
           }
         : null,
     [staged, pane, cwd, root, branch, info.agent, info.busy, info.changed],

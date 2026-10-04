@@ -2,6 +2,7 @@ import { renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { gitCurrentBranch, gitRoot } from "../lib/git";
+import { sendToSession } from "../lib/github";
 import { useStageSession } from "./context";
 
 vi.mock("../lib/git", async (importOriginal) => ({
@@ -20,6 +21,17 @@ beforeEach(() => {
 });
 
 describe("useStageSession", () => {
+  it("types nothing into a plain shell, whoever asks", async () => {
+    const staged = { cwd: "/a", pane: "%1" };
+    const shell = renderHook(() => useStageSession(staged, { agent: null, busy: false, changed: null }));
+    await expect(shell.result.current!.send("Review this")).rejects.toThrow(/only a shell/);
+    expect(sendToSession).not.toHaveBeenCalled();
+    // An agent, or one not known yet, is typed into.
+    const agent = renderHook(() => useStageSession(staged, { agent: "claude", busy: false, changed: null }));
+    await agent.result.current!.send("Review this");
+    expect(sendToSession).toHaveBeenCalledWith("%1", "Review this");
+  });
+
   it("sees a checkout on the next batch the watch reports", async () => {
     const staged = { cwd: "/a", pane: "%1" };
     const { result, rerender } = renderHook(({ changed }) => useStageSession(staged, { busy: false, changed }), {

@@ -805,7 +805,8 @@ export function App() {
   const onStage = browser.visibleSessions.find((live) => live.pane === session?.pane);
   // The session as extensions' tabs see it.
   const stageSession = useStageSession(session, {
-    agent: (onStage && runningAgent(onStage)) ?? undefined,
+    // null for a plain shell, which must never be typed prose into; unknown until the session is listed.
+    agent: onStage ? runningAgent(onStage) : undefined,
     busy: onStage?.state === "working",
     changed,
   });

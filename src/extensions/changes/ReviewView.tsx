@@ -27,6 +27,7 @@ import {
   lineText,
   localReviewPrompt,
   newCommentId,
+  canAsk,
   onBranch,
   onCommentsChanged,
   ready as readyToSend,
@@ -478,12 +479,12 @@ export function ReviewView({ session, active, branch: other, onSent, onOpenCount
           </Button>
           {/* The agent's comments are filed under the branch checked out where it runs, so only that one is offered. */}
           {other ? null : (
-            <Button onClick={() => void askForReview()} disabled={!localReady || !localReady.diff || !session.pane}>
+            <Button onClick={() => void askForReview()} disabled={!localReady || !localReady.diff || !canAsk(session)}>
               Review with {agent}
             </Button>
           )}
           {scope ? null : (
-            <Button variant="primary" onClick={() => void sendLocal()} disabled={sending || toSend.length === 0 || !session.pane}>
+            <Button variant="primary" onClick={() => void sendLocal()} disabled={sending || toSend.length === 0 || !canAsk(session)}>
               Send {toSend.length} to {agent}
             </Button>
           )}
@@ -571,7 +572,7 @@ export function ReviewView({ session, active, branch: other, onSent, onOpenCount
           <Button
             variant="primary"
             onClick={() => void send()}
-            disabled={sending || unsent.length === 0 || !session.pane}
+            disabled={sending || unsent.length === 0 || !canAsk(session)}
           >
             Send {unsent.length} to {agent}
           </Button>
