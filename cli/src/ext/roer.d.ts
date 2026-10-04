@@ -290,6 +290,10 @@ declare module "roer" {
   ): string;
   /** A prompt asking the agent to address `threads` as it sees fit. */
   export function fixThreadsPrompt(pr: PrSummary, threads: readonly ReviewThread[]): string;
+  /** A comment's text fenced as data for an agent's prompt: a reviewer's, or another agent's. */
+  export function untrustedComment(author: string, body: string, url?: string): string;
+  /** What to tell the agent about fenced comments when the person's decision follows each one. */
+  export const UNTRUSTED_DECIDED: string;
   /** Opens a URL in the person's browser. */
   export function openUrl(url: string): Promise<void>;
   /** Types `text` into a session's pane. */

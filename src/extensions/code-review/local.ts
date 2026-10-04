@@ -1,4 +1,4 @@
-import { parseDiff, splitPatch, type DiffNote, type NoteAction, type ThreadVerdict } from "roer";
+import { parseDiff, splitPatch, UNTRUSTED_DECIDED, untrustedComment, type DiffNote, type NoteAction, type ThreadVerdict } from "roer";
 
 /** A comment on a line of the branch's own diff: the person's, or one an agent handed over with `add_comments`. */
 export interface LocalComment {
@@ -163,6 +163,7 @@ export function localReviewPrompt(base: string, comments: readonly LocalComment[
       : `I went through the review comments on the changes on this branch ${since} and decided on each.`,
     ...(theirs
       ? [
+          UNTRUSTED_DECIDED,
           "Where a comment is a reviewer's, my decision is under it: make the change where I accepted it, leave the code as it is where I declined it, and do what I say where I gave an instruction.",
         ]
       : []),
@@ -180,7 +181,8 @@ export function localReviewPrompt(base: string, comments: readonly LocalComment[
       parts.push(comment.text);
       return;
     }
-    parts.push(`${comment.author}'s comment:`, comment.text);
+    // Another agent wrote it, through a tool any agent can call: data, like a reviewer's on GitHub.
+    parts.push(untrustedComment(comment.author, comment.text));
     const verdict = comment.verdict;
     parts.push(
       verdict?.kind === "accept"
