@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   isGoToFile,
   isNewSession,
+  isNewWorktree,
   isNextCommit,
   isNextWaiting,
   isPreviousSession,
@@ -44,6 +45,26 @@ describe("shortcuts", () => {
     expect(isNewSession(key({ code: "KeyT", ctrlKey: true }))).toBe(false);
     expect(isNextCommit(key({ code: "ArrowRight", ctrlKey: true }))).toBe(false);
     expect(isNewSession(key({ code: "KeyT", metaKey: true }))).toBe(false);
+  });
+
+  it("open the new session picker on Cmd+Shift+N, and Ctrl+Shift+N off macOS", () => {
+    expect(isNewWorktree(key({ code: "KeyN", metaKey: true, shiftKey: true }))).toBe(true);
+    // Without the shift it is no new place, and the other modifiers are not it.
+    expect(isNewWorktree(key({ code: "KeyN", metaKey: true }))).toBe(false);
+    expect(isNewWorktree(key({ code: "KeyN", metaKey: true, shiftKey: true, altKey: true }))).toBe(false);
+    expect(isNewWorktree(key({ code: "KeyN", metaKey: true, shiftKey: true, ctrlKey: true }))).toBe(false);
+    expect(isNewWorktree(key({ code: "KeyN", ctrlKey: true, shiftKey: true }))).toBe(false);
+    // A layout that reports no code still has the letter.
+    expect(isNewWorktree(key({ key: "N", metaKey: true, shiftKey: true }))).toBe(true);
+    expect(shortcutLabel.newWorktree()).toBe("⌘⇧N");
+
+    onPlatform("Linux x86_64");
+    expect(isNewWorktree(key({ code: "KeyN", ctrlKey: true, shiftKey: true }))).toBe(true);
+    // Ctrl+N alone is the shell's, and Cmd is not this platform's modifier.
+    expect(isNewWorktree(key({ code: "KeyN", ctrlKey: true }))).toBe(false);
+    expect(isNewWorktree(key({ code: "KeyN", metaKey: true, shiftKey: true }))).toBe(false);
+    expect(isNewWorktree(key({ code: "KeyN", ctrlKey: true, shiftKey: true, altKey: true }))).toBe(false);
+    expect(shortcutLabel.newWorktree()).toBe("Ctrl+Shift+N");
   });
 
   it("number the fixed tabs, by the physical digit key", () => {

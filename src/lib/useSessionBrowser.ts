@@ -383,7 +383,12 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
   // Each Project in view's worktrees, by the Project's path, read from git
   // whenever the stage changes and after anything here makes or removes one.
   const [worktrees, setWorktrees] = useState<Record<string, Worktree[]>>({});
+  // Selecting, polling and making or removing a worktree each read the
+  // lists; only the latest read's answer is taken, so an older one landing
+  // last cannot hide a worktree a newer one found.
+  const worktreesRequestRef = useRef(0);
   const refreshWorktrees = useCallback(async () => {
+    const request = ++worktreesRequestRef.current;
     const paths = inViewKey ? inViewKey.split("\n") : [];
     const found = await Promise.all(
       paths.map((path) =>
@@ -392,6 +397,7 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
           .catch((): [string, Worktree[]] => [path, []]),
       ),
     );
+    if (request !== worktreesRequestRef.current) return;
     const next = Object.fromEntries(found);
     setWorktrees((current) => (JSON.stringify(current) === JSON.stringify(next) ? current : next));
   }, [inViewKey]);
@@ -470,7 +476,7 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
             : "";
         const shown = files.slice(0, 5).join(", ");
         const more = files.length > 5 ? ` and ${files.length - 5} more` : "";
-        const lost = files.length > 0 ? ` It has work that is not committed, which is lost: ${shown}${more}.` : "";
+        const lost = files.length > 0 ? ` These files are not in git and are lost with it: ${shown}${more}.` : "";
         const question = `Remove the worktree ${name}? Its folder ${shorten(worktree.path, status?.home)} is deleted.${lost}${ending}`;
         if (!(await confirmAction(question, "Remove worktree"))) return;
         for (const session of inside) await killSession(session.pane);
@@ -494,10 +500,14 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
             "Delete branch",
           );
           // Asked of the main checkout: the worktree's own folder is gone.
-          const main = Object.values(worktrees)
-            .find((list) => list.some((other) => other.path === worktree.path))
-            ?.find((other) => other.main);
-          if (drop && main) await deleteWorktreeBranch(main.path, branch);
+          // Git's list names it; before that list is read, or where it could
+          // not be, the repository the tree drew this checkout from does.
+          const main =
+            Object.values(worktrees)
+              .find((list) => list.some((other) => other.path === worktree.path))
+              ?.find((other) => other.main)?.path ??
+            Object.values(repos).find((repo) => repo.worktrees.includes(worktree.path))?.main;
+          if (drop && main) await deleteWorktreeBranch(main, branch);
         }
       })
       .catch((cause: unknown) => setFailure(String(cause)))

@@ -15,7 +15,12 @@ export type PickerStart = { step: "where" } | { step: "with"; cwd: string };
 export interface NewSessionPickerProps {
   /** Every checkout to offer, the current one first. */
   places: Place[];
+  /** The agents for `agentsCwd`, as the app already has them. */
   agents: AgentList | null;
+  agentsCwd?: string;
+  /** The agents for another folder: a Project's own agents and default go
+   * with its checkout, so Start with asks for the one it starts in. */
+  loadAgents?: (cwd: string) => Promise<AgentList>;
   start: PickerStart;
   onCreateWorktree: (projectPath: string, name: string, base: string) => Promise<CreatedWorktree>;
   /** Starts the session in `cwd`, with `agent` (or the default). */
@@ -39,6 +44,8 @@ interface Row {
   fields?: Array<string | null | undefined>;
   /** `undefined` for a row that is only read, not picked. */
   pick?: () => void;
+  /** A row only read that is no warning, such as one saying it waits. */
+  quiet?: boolean;
 }
 
 const TITLES: Record<Step, string> = {
@@ -60,7 +67,9 @@ const TITLES: Record<Step, string> = {
  */
 export function NewSessionPicker({
   places,
-  agents,
+  agents: known,
+  agentsCwd,
+  loadAgents,
   start,
   onCreateWorktree,
   onStart,
@@ -144,6 +153,29 @@ export function NewSessionPicker({
         setError(String(cause));
       });
   };
+
+  // Where the agents are asked about: the checkout settled on, or, for a
+  // worktree not made yet, its Project's main checkout, which has the same
+  // project agents.
+  const target = where ? (where.kind === "place" ? where.place.cwd : where.project.path) : undefined;
+  const [scoped, setScoped] = useState<{ cwd: string; list: AgentList | null } | null>(null);
+  useEffect(() => {
+    if (!target || target === agentsCwd || !loadAgents) return;
+    let live = true;
+    void loadAgents(target)
+      .then((list) => live && setScoped({ cwd: target, list }))
+      // Unreadable there: the ones the app has, rather than none.
+      .catch(() => live && setScoped({ cwd: target, list: null }));
+    return () => {
+      live = false;
+    };
+  }, [target, agentsCwd, loadAgents]);
+  const agents: AgentList | null | undefined =
+    !target || target === agentsCwd || !loadAgents
+      ? known
+      : scoped?.cwd === target
+        ? (scoped.list ?? known)
+        : undefined;
 
   const projects = useMemo(() => {
     const seen = new Map<string, Project>();
@@ -237,6 +269,9 @@ export function NewSessionPicker({
           ];
     }
     if (step === "with") {
+      // Not yet known for this checkout: nothing to pick, so Enter cannot
+      // start an agent that is not there.
+      if (agents === undefined) return [{ key: "agents:loading", name: "Looking for agents…", quiet: true }];
       return [
         ...byDefault.map((agent) => ({
           key: `agent:${agent.source}-${agent.id}`,
@@ -361,7 +396,7 @@ export function NewSessionPicker({
               role="option"
               aria-selected={index === at}
               aria-disabled={row.pick ? undefined : true}
-              className={index === at ? "hit on" : row.pick ? "hit" : "hit note"}
+              className={index === at && row.pick ? "hit on" : row.pick || row.quiet ? "hit" : "hit note"}
               onMouseDown={(event) => {
                 event.preventDefault();
                 if (!busy) row.pick?.();

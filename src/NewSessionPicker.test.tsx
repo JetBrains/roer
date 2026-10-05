@@ -205,6 +205,39 @@ describe("the new session picker", () => {
     expect(onClose).not.toHaveBeenCalled();
   });
 
+  it("asks for the agents of the checkout it starts in, and waits for them", async () => {
+    let answer: (list: AgentList) => void = () => {};
+    const loadAgents = vi.fn((cwd: string) => {
+      void cwd;
+      return new Promise<AgentList>((resolve) => {
+        answer = resolve;
+      });
+    });
+    const { onStart } = open({ agentsCwd: "/wt/roer/fix-login", loadAgents });
+    type("site");
+    press("Enter");
+    expect(loadAgents).toHaveBeenCalledWith("/work/site");
+    expect(screen.getByText("Looking for agents…")).toBeInTheDocument();
+    // Nothing to start yet, not even the shell.
+    press("Enter");
+    expect(onStart).not.toHaveBeenCalled();
+
+    const reviewer = { ...agent("reviewer", "Site reviewer", "claude"), source: "project" as const };
+    answer({ ...agents, agents: [...agents.agents, reviewer], default: "reviewer" });
+    await waitFor(() => expect(highlighted()).toHaveTextContent("Site reviewer"));
+    press("Enter");
+    expect(onStart).toHaveBeenCalledWith("/work/site", "reviewer");
+  });
+
+  it("takes the agents it has for the checkout they were read for", () => {
+    const loadAgents = vi.fn();
+    const { onStart } = open({ agentsCwd: "/wt/roer/fix-login", loadAgents });
+    press("Enter");
+    press("Enter");
+    expect(loadAgents).not.toHaveBeenCalled();
+    expect(onStart).toHaveBeenCalledWith("/wt/roer/fix-login", "claude");
+  });
+
   it("offers a folder as a new project", () => {
     const onAttachNewProject = vi.fn();
     open({ onAttachNewProject });
