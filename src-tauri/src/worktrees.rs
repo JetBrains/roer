@@ -373,21 +373,30 @@ pub enum Removal {
         /// anyway is [`worktree_delete_branch`], once someone says so.
         unmerged_branch: Option<String>,
     },
-    /// Uncommitted and untracked files, as `git status` lists them.
+    /// Uncommitted, untracked and ignored files, as `git status` lists
+    /// them: what goes with the folder.
     Dirty { files: Vec<String> },
 }
 
-/// What removing the worktree at `path` would lose: its uncommitted and
-/// untracked files, so that one question can say so before anything is
-/// done, its sessions ended included.
+/// What removing the worktree at `path` would lose: its uncommitted,
+/// untracked and ignored files, so that one question can say so before
+/// anything is done, its sessions ended included.
 #[tauri::command(async)]
 pub fn worktree_uncommitted(path: String) -> Result<Vec<String>, String> {
     let repo = git::repo(&path)?;
     uncommitted(&repo.root)
 }
 
+/// Ignored files count: a `.env` copied in by `.worktreeinclude` and edited
+/// since is as lost as any other. A folder with nothing tracked in it is
+/// named once, as `dir/`, not file by file: `traditional` keeps an ignored
+/// `node_modules` to one line, as long as untracked files are not asked for
+/// one by one, which would expand it.
 fn uncommitted(root: &str) -> Result<Vec<String>, String> {
-    let status = git(root, &["status", "--porcelain", "-z", "--untracked-files=all"])?;
+    let status = git(
+        root,
+        &["status", "--porcelain", "-z", "--untracked-files=normal", "--ignored=traditional"],
+    )?;
     let mut files = Vec::new();
     let mut records = status.split('\0').filter(|record| !record.is_empty());
     while let Some(record) = records.next() {
@@ -615,6 +624,22 @@ mod tests {
         let mut files = uncommitted(&created.worktree.path).unwrap();
         files.sort();
         assert_eq!(files, vec!["README.md", "draft.md"]);
+    }
+
+    #[test]
+    fn ignored_files_are_named_as_lost_and_a_big_ignored_folder_once() {
+        let (main, home) = setup("ignored-files-are-named-as-lost-and-a-big-ignored-folder-once");
+        let created = create(&main, &home, "env", None).unwrap();
+        let at = Path::new(&created.worktree.path);
+        write(at, ".env", "SECRET=2\n");
+        write(at, "node_modules/a/index.js", "x\n");
+        write(at, "node_modules/b/index.js", "y\n");
+        let mut files = uncommitted(&created.worktree.path).unwrap();
+        files.sort();
+        assert_eq!(files, vec![".env", "node_modules/"]);
+        // Not removed without force, whatever git itself would allow.
+        assert_eq!(remove(&main, &created.worktree.path, false).unwrap(), Removal::Dirty { files: vec![".env".into(), "node_modules/".into()] });
+        assert!(at.exists());
     }
 
     #[test]
