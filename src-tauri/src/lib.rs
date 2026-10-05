@@ -25,6 +25,7 @@ mod roer;
 pub mod server;
 mod watch;
 mod workspaces;
+mod worktrees;
 
 #[cfg(test)]
 mod testing;
@@ -100,6 +101,11 @@ pub fn run() {
             workspaces::workspace_add_item,
             workspaces::workspace_remove_item,
             workspaces::workspace_assignments,
+            worktrees::worktree_list,
+            worktrees::worktree_create,
+            worktrees::worktree_remove,
+            worktrees::worktree_uncommitted,
+            worktrees::worktree_delete_branch,
             workspaces::workspace_assign,
             workspaces::workspace_unassign,
             plugin_ui::report_plugin_ui_action,

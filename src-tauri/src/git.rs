@@ -292,7 +292,7 @@ pub fn git_repo(cwd: String) -> Option<Repo> {
     repo(&cwd).ok()
 }
 
-fn repo(cwd: &str) -> Result<Repo, String> {
+pub(crate) fn repo(cwd: &str) -> Result<Repo, String> {
     let root = root(cwd)?;
     let dirs = git(&root, &["rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir"])?;
     let mut dirs = dirs.lines().map(str::trim);
@@ -726,7 +726,7 @@ fn base_ref(root: &str, name: &str) -> Option<String> {
 /// The branch a new pull request would go into: what origin calls its
 /// default, else `main` or `master`. Origin's copy wins over a local one,
 /// which is often behind it.
-fn default_base(root: &str) -> Option<String> {
+pub(crate) fn default_base(root: &str) -> Option<String> {
     let head = git(root, &["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"]).ok();
     if let Some(head) = head.map(|h| h.trim().to_string()).filter(|h| !h.is_empty()) {
         return Some(head);

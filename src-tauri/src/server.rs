@@ -334,6 +334,17 @@ fn dispatch(state: &Arc<AppState>, cmd: &str, args: Value, cid: Option<&str>) ->
         "project_rename" => call_res!(args, crate::projects::project_rename, "id": String, "name": String),
         "project_delete" => call_res!(args, crate::projects::project_delete, "id": String),
 
+        // worktrees
+        "worktree_list" => call_res!(args, crate::worktrees::worktree_list, "cwd": String),
+        "worktree_create" => {
+            call_res!(args, crate::worktrees::worktree_create, "cwd": String, "name": String, "base": Option<String>)
+        }
+        "worktree_remove" => call_res!(args, crate::worktrees::worktree_remove, "path": String, "force": bool),
+        "worktree_uncommitted" => call_res!(args, crate::worktrees::worktree_uncommitted, "path": String),
+        "worktree_delete_branch" => {
+            call_res!(args, crate::worktrees::worktree_delete_branch, "cwd": String, "branch": String)
+        }
+
         // GitHub
         "gh_status" => call!(args, crate::gh::gh_status, "dir": String),
         "gh_pr_for_branch" => call_res!(args, crate::gh::gh_pr_for_branch, "dir": String, "branch": Option<String>),
