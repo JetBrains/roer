@@ -54,6 +54,7 @@ const navChord = (event: KeyboardEvent): boolean =>
 export const shortcutLabel = {
   newSession: () => (isMac() ? "⌘T" : "Ctrl+Shift+T"),
   pickAgent: () => (isMac() ? "⌥⌘T" : "Ctrl+Alt+Shift+T"),
+  newWorktree: () => (isMac() ? "⌘⇧N" : "Ctrl+Shift+N"),
   agents: () => (isMac() ? "⌘," : "Ctrl+,"),
   goToFile: () => (isMac() ? "⌘⇧O" : "Ctrl+Shift+O"),
   tab: (n: number) => (isMac() ? `⌘${n}` : `Ctrl+Shift+${n}`),
@@ -65,13 +66,14 @@ export const shortcutLabel = {
 };
 
 /** The strip's tabs before any extension adds its own. */
-const DEFAULT_TABS = ["Sessions", "Terminal", "Changes"];
+const DEFAULT_TABS = ["Workspace", "Terminal", "Changes"];
 
 /** Every shortcut, in the words the shortcut sheet lists them in. `tabs` are
  * the strip's, in order: the first nine have a number. */
 export const allShortcuts = (tabs: readonly string[] = DEFAULT_TABS): Array<[string, string]> => [
   ["New session", shortcutLabel.newSession()],
   ["New session with another agent", shortcutLabel.pickAgent()],
+  ["New session somewhere else, or in a new worktree", shortcutLabel.newWorktree()],
   ["Search sessions and files", shortcutLabel.goToFile()],
   ["Next waiting session", shortcutLabel.nextWaiting()],
   ["Previous session", shortcutLabel.previousSession()],
@@ -112,6 +114,14 @@ export const isPickAgent = (event: KeyboardEvent): boolean =>
     ? event.metaKey && event.altKey && !event.ctrlKey && !event.shiftKey
     : event.ctrlKey && event.altKey && event.shiftKey && !event.metaKey) &&
   (event.code === "KeyT" || (!event.code && event.key.toLowerCase() === "t"));
+
+/**
+ * The New session dialog with a new worktree picked: `Cmd+Shift+N`
+ * (`Ctrl+Shift+N`), new as in a new place to work, not a new tab.
+ */
+export const isNewWorktree = (event: KeyboardEvent): boolean =>
+  appChord(event, true) &&
+  (event.code === "KeyN" || (!event.code && event.key.toLowerCase() === "n"));
 
 /**
  * Manage agents: `Cmd+,`, where every Mac app keeps its settings. The menu

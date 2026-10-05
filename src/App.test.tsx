@@ -4,6 +4,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -534,15 +535,15 @@ describe("App", () => {
     // A session on the stage is what the list was opened to find, so
     // finding one puts the terminal in front of it, not beside it.
     expect(
-      screen.queryByRole("navigation", { name: /sessions/i }),
+      screen.queryByRole("navigation", { name: "Workspace" }),
     ).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("tab", { name: "Sessions" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Workspace" }));
 
     // Covers the terminal rather than replacing it: nothing about the PTY
     // changes just from looking at the list again.
     expect(
-      await screen.findByRole("navigation", { name: /sessions/i }),
+      await screen.findByRole("navigation", { name: "Workspace" }),
     ).toBeInTheDocument();
     expect(screen.getByTestId("terminal")).toBeInTheDocument();
     expect(closePty).not.toHaveBeenCalled();
@@ -569,11 +570,12 @@ describe("App", () => {
     ]);
     render(<App />);
     await teleport();
-    fireEvent.click(await screen.findByRole("tab", { name: "Sessions" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "Workspace" }));
 
-    const rows = await screen.findAllByRole("button", { current: false });
+    const list = within(await screen.findByRole("navigation", { name: "Workspace" }));
+    const rows = await list.findAllByRole("button", { current: false });
     expect(rows.some((row) => row.title.startsWith("other "))).toBe(true);
-    const open = await screen.findByRole("button", { current: true });
+    const open = await list.findByRole("button", { current: true });
     expect(open).toHaveAttribute("title", expect.stringMatching(/^roer /));
     expect(open).toHaveTextContent("open here");
   });
@@ -621,8 +623,9 @@ describe("App", () => {
     ]);
     await emit({ kind: "output", data: "aGk=" });
 
-    fireEvent.click(screen.getByRole("tab", { name: "Sessions" }));
-    const open = await screen.findByRole("button", { current: true });
+    fireEvent.click(screen.getByRole("tab", { name: "Workspace" }));
+    const list = within(await screen.findByRole("navigation", { name: "Workspace" }));
+    const open = await list.findByRole("button", { current: true });
     expect(open).toHaveAttribute("title", expect.stringContaining("test-1a2b"));
     expect(open).toHaveTextContent("open here");
   });
@@ -785,7 +788,7 @@ describe("App", () => {
     expect(closePty).not.toHaveBeenCalled();
   });
 
-  it("switches to Sessions when a Workspace is picked, even mid-diff", async () => {
+  it("leaves the stage alone when a Workspace is picked, its sessions being in the sidebar", async () => {
     vi.mocked(listWorkspaces).mockResolvedValueOnce([
       { id: "w1", name: "Default", projects: [], items: [] },
     ]);
@@ -796,14 +799,11 @@ describe("App", () => {
     fireEvent.click(screen.getByRole("tab", { name: "Changes" }));
     await screen.findByTestId("changes");
 
-    // Picking a Workspace is asking to see what's in it, so it comes to the
-    // front even over a tab nothing about Workspaces points at.
-    fireEvent.click(screen.getByRole("button", { name: /Default/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Switch Workspace or Project" }));
+    fireEvent.click(await screen.findByRole("button", { name: /Default/ }));
 
-    expect(
-      await screen.findByRole("navigation", { name: /sessions/i }),
-    ).toBeInTheDocument();
-    expect(screen.getByTestId("changes")).not.toBeVisible();
+    expect(screen.getByTestId("changes")).toBeVisible();
+    expect(screen.getByRole("region", { name: "Running sessions" })).toBeInTheDocument();
   });
 
   it("keeps the changes view around behind the terminal", async () => {

@@ -7,12 +7,7 @@ describe("the agent picker", () => {
   it("says why it has no agents, instead of looking for them forever", async () => {
     render(
       <NewSessionButton
-        projects={[]}
         openNew={vi.fn()}
-        pickingProjectFor={null}
-        cancelProjectPick={vi.fn()}
-        pickProjectForNewSession={vi.fn()}
-        attachNewProjectForNewSession={vi.fn()}
         agents={null}
         agentsError={"unknown command: agents\nroer — session host for agent terminals"}
         pickerOpen

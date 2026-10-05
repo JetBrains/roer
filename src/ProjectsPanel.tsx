@@ -27,7 +27,7 @@ function folderName(path: string): string {
 /**
  * The Projects tab of the sidebar: every registered git repository,
  * independent of which Workspace (if any) it is attached to. Attaching a
- * Project to a Workspace happens from the Sessions view instead — this is
+ * Project to a Workspace happens from the Workspace tab instead — this is
  * just the global registry: create, rename, delete.
  */
 export function ProjectsPanel({

@@ -29,6 +29,8 @@ import { AgentsDialog, type AgentsDialogStart } from "./AgentsDialog";
 import { ClaudeSetup } from "./ClaudeSetup";
 import { GoToFile, type SessionHit } from "./GoToFile";
 import { NewSessionButton } from "./NewSessionButton";
+import { NewSessionPicker } from "./NewSessionPicker";
+import { SessionTree } from "./SessionTree";
 import {
   SessionBrowser,
   isWorking,
@@ -52,6 +54,7 @@ import {
   isManageAgents,
   isNewSession,
   isPickAgent,
+  isNewWorktree,
   isNextWaiting,
   isPreviousSession,
   isShortcuts,
@@ -63,6 +66,7 @@ import {
 import { useNotificationsOn } from "./lib/notify";
 import { nextChoice, useThemeChoice } from "./lib/theme";
 import { useSessionBrowser } from "./lib/useSessionBrowser";
+import { pickFolder } from "./lib/folderPicker";
 import {
   activate,
   closeTab,
@@ -102,7 +106,7 @@ interface StripTab {
 
 /** The strip's built-in tabs. Extensions' go between and after them by `order`. */
 const CORE_TABS: readonly StripTab[] = [
-  { tabId: "sessions", title: "Sessions", order: 0, needsSession: false },
+  { tabId: "sessions", title: "Workspace", order: 0, needsSession: false },
   { tabId: "terminal", title: "Terminal", order: 10, needsSession: false },
 ];
 
@@ -658,6 +662,10 @@ export function App() {
   // registered once, so it must not close over a stale `openNew`.
   const openNewRef = useRef(browser.openNew);
   openNewRef.current = browser.openNew;
+  const openNewWorktreeRef = useRef(browser.openNewWorktree);
+  openNewWorktreeRef.current = browser.openNewWorktree;
+  const openPickAgentRef = useRef(() => browser.openPickAgent());
+  openPickAgentRef.current = () => browser.openPickAgent();
   useHotkey(
     isNewSession,
     useCallback(() => openNewRef.current(), []),
@@ -719,8 +727,15 @@ export function App() {
     [refreshAgents],
   );
   useHotkey(
+    isNewWorktree,
+    useCallback(() => openNewWorktreeRef.current(), []),
+  );
+  useHotkey(
     isPickAgent,
-    useCallback(() => openAgentPicker(true), [openAgentPicker]),
+    useCallback(() => {
+      void refreshAgents();
+      openPickAgentRef.current();
+    }, [refreshAgents]),
   );
   useHotkey(
     isManageAgents,
@@ -869,26 +884,6 @@ export function App() {
     };
   }, [openAgents]);
 
-  // Picking a Workspace is asking to see what's in it — if the diff or a
-  // file is up instead, that answer is hidden behind a tab nothing else
-  // points at.
-  const selectWorkspace = useCallback(
-    (id: string | null) => {
-      browser.setSelectedWorkspaceId(id);
-      setTabs((current) => activate(current, "sessions"));
-    },
-    [browser.setSelectedWorkspaceId],
-  );
-
-  // Same reasoning as `selectWorkspace`: picking a Project is asking to see
-  // what's running under it.
-  const selectProject = useCallback(
-    (id: string | null) => {
-      browser.setSelectedProjectId(id);
-      setTabs((current) => activate(current, "sessions"));
-    },
-    [browser.setSelectedProjectId],
-  );
 
   return (
     <div className="app-frame">
@@ -991,9 +986,9 @@ export function App() {
           workspaces={browser.workspaces}
           projects={browser.projects}
           selectedWorkspaceId={browser.selectedWorkspaceId}
-          setSelectedWorkspaceId={selectWorkspace}
+          setSelectedWorkspaceId={browser.setSelectedWorkspaceId}
           selectedProjectId={browser.selectedProjectId}
-          setSelectedProjectId={selectProject}
+          setSelectedProjectId={browser.setSelectedProjectId}
           handleCreateWorkspace={browser.handleCreateWorkspace}
           handleRenameWorkspace={browser.handleRenameWorkspace}
           handleDeleteWorkspace={browser.handleDeleteWorkspace}
@@ -1002,7 +997,27 @@ export function App() {
           handleCreateProject={browser.handleCreateProject}
           handleRenameProject={browser.handleRenameProject}
           handleDeleteProject={browser.handleDeleteProject}
-        />
+        >
+          <SessionTree
+            status={browser.status}
+            workspaces={browser.workspaces}
+            assignments={browser.assignments}
+            handleAssign={browser.handleAssign}
+            handleEndSession={browser.handleEndSession}
+            waiting={browser.waiting}
+            repos={browser.repos}
+            stats={browser.stats}
+            visibleSessions={browser.visibleSessions}
+            activePane={browser.activePane}
+            worktrees={browser.worktrees}
+            openNewWorktree={browser.openNewWorktree}
+            openInWorktree={browser.openInWorktree}
+            openPickAgent={browser.openPickAgent}
+            handleRemoveWorktree={browser.handleRemoveWorktree}
+            projects={browser.projectsInView}
+            onOpen={show}
+          />
+        </WorkspaceSidebar>
 
         <section className="stage">
           <div className="tab-bar">
@@ -1021,7 +1036,7 @@ export function App() {
                   setTabs((current) => activate(current, "sessions"))
                 }
               >
-                Sessions
+                Workspace
                 {browser.waiting.size > 0 ? (
                   <>
                     <span className="tab-dot waiting" aria-hidden="true" />
@@ -1106,20 +1121,15 @@ export function App() {
             </div>
 
             <NewSessionButton
-              projects={browser.projects}
               openNew={browser.openNew}
-              pickingProjectFor={browser.pickingProjectFor}
-              cancelProjectPick={browser.cancelProjectPick}
-              pickProjectForNewSession={browser.pickProjectForNewSession}
-              attachNewProjectForNewSession={
-                browser.attachNewProjectForNewSession
-              }
               agents={agents}
               agentsError={agentsError}
               pickerOpen={agentPickerOpen}
               onPickerOpenChange={openAgentPicker}
               onNewAgent={() => openAgents({ mode: "new" }, true)}
               onManageAgents={() => openAgents({ mode: "edit" })}
+              onNewSessionDialog={() => browser.openNewWorktree()}
+              place={browser.newSessionPlace()}
             />
           </div>
 
@@ -1176,6 +1186,8 @@ export function App() {
                 activePane={browser.activePane}
                 openClaudeSession={browser.openClaudeSession}
                 refresh={browser.refresh}
+                projectsInView={browser.projectsInView}
+                worktrees={browser.worktrees}
                 onOpen={show}
               />
             </div>
@@ -1274,6 +1286,23 @@ export function App() {
             onChanged={refreshAgents}
             onStart={(id) => browser.openNew(id)}
             onClose={() => setAgentsDialog(null)}
+          />
+        ) : null}
+
+        {browser.picker ? (
+          <NewSessionPicker
+            places={browser.newSessionPlaces()}
+            agents={agents}
+            start={browser.picker}
+            onCreateWorktree={browser.handleCreateWorktree}
+            onStart={browser.startFromPicker}
+            onAttachNewProject={() => {
+              browser.cancelPicker();
+              void pickFolder().then((picked: string | null) => {
+                if (typeof picked === "string") browser.attachNewProjectForNewSession(picked);
+              });
+            }}
+            onClose={browser.cancelPicker}
           />
         ) : null}
 

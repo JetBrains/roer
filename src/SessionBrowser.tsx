@@ -1,3 +1,4 @@
+import { ChevronDown, ChevronRight } from "lucide-react";
 import type { ReactNode } from "react";
 
 import {
@@ -17,10 +18,13 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import type { Repo } from "./lib/git";
+import type { Worktree } from "./lib/worktrees";
 import type { Project } from "./lib/projects";
 import type { ClaudeSession, SessionInfo } from "./lib/pty";
 import type { DirStats, SessionBrowserState } from "./lib/useSessionBrowser";
 import type { Workspace } from "./lib/workspaces";
+import { buildTree, checkoutName } from "./lib/checkouts";
+import { useFolded } from "./lib/folded";
 
 export interface OpenRequest {
   args: string[];
@@ -126,7 +130,7 @@ export function needsYou(session: SessionInfo): boolean {
 /** Where a live row goes in its group: what is held up on you, what has
  * finished and waits, what is at work, then the rest, each the most
  * recently opened first. */
-function liveRank(session: SessionInfo, waiting: ReadonlySet<string>): number {
+export function liveRank(session: SessionInfo, waiting: ReadonlySet<string>): number {
   if (waiting.has(session.pane)) return needsYou(session) ? 0 : 1;
   return isWorking(session) ? 2 : 3;
 }
@@ -152,7 +156,7 @@ export function runningAgent(session: SessionInfo): string | null {
  * is left. The session's own name (`roer-2`) says only which directory it is
  * in, which the group headings show wherever there is more than one, so it
  * is left to the row's tooltip. */
-function LiveName({ session }: { session: SessionInfo }) {
+export function LiveName({ session }: { session: SessionInfo }) {
   const who = runningAgent(session) ?? session.command;
   const label = paneLabel(session.title, session.command);
   return label && label !== who ? (
@@ -244,31 +248,72 @@ export function relativeAge(updatedAt: number): string {
   return `${days}d ago`;
 }
 
+/** A heading's worth of the list: a Project in view, or a repository (or
+ * plain folder) outside them, and its checkouts with what is in each. */
+interface Section {
+  key: string;
+  /** A Project in view's, rather than a repository's outside them. */
+  project: boolean;
+  heading: string;
+  /** What the heading's tooltip shows. */
+  path: string;
+  checkouts: Array<{
+    key: string;
+    /** `null` outside a Project, where there is one checkout to a folder. */
+    label: string | null;
+    linked: boolean;
+    entries: SessionEntry[];
+  }>;
+}
+
 /**
- * Groups items by their git root (falling back to the directory itself
- * outside a repository), preserving each group's first-seen order. Skipped
- * entirely — one flat group — when everything shares a root, so the common
- * single-project case shows no redundant heading.
+ * The list in the sidebar's shape: by Project, then by checkout, with past
+ * conversations beside the live sessions of the checkout they were had in.
+ * What no Project in view holds is grouped by its repository, as before
+ * there were Projects to go by.
  */
-function groupByRoot<T>(
-  items: T[],
-  cwdOf: (item: T) => string,
+function sessionSections(
+  projects: Project[],
+  worktrees: Record<string, Worktree[]>,
+  repos: Record<string, Repo>,
   roots: Record<string, string>,
-): Array<{ root: string | null; items: T[] }> {
-  const groups = new Map<string, T[]>();
-  for (const item of items) {
-    const root = roots[cwdOf(item)] ?? cwdOf(item);
-    const list = groups.get(root);
-    if (list) {
-      list.push(item);
-    } else {
-      groups.set(root, [item]);
-    }
+  entries: SessionEntry[],
+  waiting: ReadonlySet<string>,
+): Section[] {
+  const tree = buildTree(projects, worktrees, repos, entries, (entry) => entry.session.cwd, (list) => byRank(list, waiting));
+  const sections: Section[] = tree.projects
+    .map((node) => ({
+      key: `project-${node.project.id}`,
+      project: true,
+      heading: node.project.name,
+      path: node.project.path,
+      checkouts: node.checkouts
+        .filter((checkout) => checkout.items.length > 0)
+        .map((checkout) => ({
+          key: checkout.worktree.path,
+          label: checkoutName(checkout.worktree),
+          linked: !checkout.worktree.main,
+          entries: checkout.items,
+        })),
+    }))
+    .filter((section) => section.checkouts.length > 0);
+
+  const loose = new Map<string, SessionEntry[]>();
+  for (const entry of tree.elsewhere) {
+    const root = roots[entry.session.cwd] ?? entry.session.cwd;
+    loose.set(root, [...(loose.get(root) ?? []), entry]);
   }
-  if (groups.size <= 1) {
-    return [{ root: null, items }];
+  const labels = distinctLabels([...loose.keys()]);
+  for (const [root, list] of loose) {
+    sections.push({
+      key: `root-${root}`,
+      project: false,
+      heading: labels.get(root) ?? root,
+      path: root,
+      checkouts: [{ key: root, label: null, linked: false, entries: list }],
+    });
   }
-  return [...groups.entries()].map(([root, items]) => ({ root, items }));
+  return sections;
 }
 
 /** One row in the merged list: a live tmux session or a resumable Claude
@@ -283,7 +328,7 @@ type SessionEntry =
  * take it out), the same interaction the Workspace/Project rows themselves
  * use for rename/delete.
  */
-function AssignMenu({
+export function AssignMenu({
   sessionId,
   workspaces,
   assignedTo,
@@ -360,6 +405,8 @@ export type SessionBrowserProps = Pick<
   | "activePane"
   | "openClaudeSession"
   | "refresh"
+  | "projectsInView"
+  | "worktrees"
 > & {
   onOpen: (request: OpenRequest) => void;
 };
@@ -397,6 +444,8 @@ export function SessionBrowser({
   activePane,
   openClaudeSession,
   refresh,
+  projectsInView,
+  worktrees,
   onOpen,
 }: SessionBrowserProps) {
   const attachableProjects: Project[] = selectedWorkspace
@@ -417,11 +466,44 @@ export function SessionBrowser({
     ...visibleSessions.map((session): SessionEntry => ({ kind: "live", session })),
     ...visibleClaudeSessions.map((session): SessionEntry => ({ kind: "resume", session })),
   ];
-  const groups = groupByRoot(entries, (entry: SessionEntry) => entry.session.cwd, roots);
-  const headings = distinctLabels(groups.flatMap((group) => (group.root ? [group.root] : [])));
+  const sections = sessionSections(projectsInView, worktrees, repos, roots, entries, waiting);
+  // A Project's group is always two levels, Project then checkout, as the
+  // sidebar's tree is. A repository outside the Projects in view needs a
+  // heading only beside others.
+  const headed = (section: Section) => section.project || sections.length > 1;
+  const [folded, toggleFold] = useFolded("roer:folded-groups");
+
+  /** A group's heading, folding what is under it. Folded, it says how much
+   * is hidden and whether any of it waits on you. */
+  const foldHead = (key: string, heading: ReactNode, inside: SessionEntry[], level: 3 | 4, className: string, title: string) => {
+    const open = !folded.has(key);
+    const Tag = level === 3 ? "h3" : "h4";
+    const waits = inside.some((entry) => entry.kind === "live" && waiting.has(entry.session.pane));
+    return (
+      <div className={`fold-head level-${level}`}>
+        <Tag className={className} title={title}>
+          <button type="button" className="fold" aria-expanded={open} onClick={() => toggleFold(key)}>
+            {open ? <ChevronDown size={12} aria-hidden="true" /> : <ChevronRight size={12} aria-hidden="true" />}
+            {heading}
+          </button>
+        </Tag>
+        {open ? null : (
+          <span className="fold-count" title={`${inside.length} hidden`}>
+            {inside.length}
+            {waits ? (
+              <>
+                <span className="fold-dot" aria-hidden="true" />
+                <span className="sr-only">, one waiting</span>
+              </>
+            ) : null}
+          </span>
+        )}
+      </div>
+    );
+  };
 
   return (
-    <nav className="sessions-view" aria-label="Sessions">
+    <nav className="sessions-view" aria-label="Workspace">
       <h2>
         Sessions
         <button type="button" className="link" onClick={() => void refresh()}>
@@ -441,15 +523,35 @@ export function SessionBrowser({
           )}
         </p>
       ) : (
-        groups.map((group) => (
-          <div key={group.root ?? "sessions"}>
-            {group.root ? (
-              <h3 className="group" title={shorten(group.root, status?.home)}>
-                {headings.get(group.root)}
-              </h3>
-            ) : null}
+        sections.map((section) => (
+          <div key={section.key}>
+            {headed(section)
+              ? foldHead(
+                  section.key,
+                  section.heading,
+                  section.checkouts.flatMap((checkout) => checkout.entries),
+                  3,
+                  "group",
+                  shorten(section.path, status?.home),
+                )
+              : null}
+            {headed(section) && folded.has(section.key) ? null : section.checkouts.map((checkout) => {
+            const key = `${section.key}|${checkout.key}`;
+            return (
+            <div key={checkout.key} className={checkout.label ? "checkout-group" : undefined}>
+            {checkout.label
+              ? foldHead(
+                  key,
+                  checkout.label,
+                  checkout.entries,
+                  4,
+                  checkout.linked ? "checkout linked" : "checkout",
+                  shorten(checkout.key, status?.home),
+                )
+              : null}
+            {checkout.label && folded.has(key) ? null : (
             <ul>
-              {byRank(group.items, waiting).map((entry) =>
+              {checkout.entries.map((entry) =>
                 entry.kind === "live" ? (
                   <li key={`live-${entry.session.pane}`}>
                     <AssignMenu
@@ -538,6 +640,10 @@ export function SessionBrowser({
                 ),
               )}
             </ul>
+            )}
+            </div>
+            );
+            })}
           </div>
         ))
       )}
