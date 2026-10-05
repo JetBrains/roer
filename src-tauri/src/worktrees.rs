@@ -469,6 +469,10 @@ mod tests {
         std::fs::create_dir_all(&main).unwrap();
         let main = canonical(&main);
         init(&main);
+        // Files come out of a checkout as they went in, whatever the
+        // machine's git does with line ends: a Windows runner's turns `\n`
+        // into `\r\n`, and a test comparing contents would see that.
+        must(&main, &["config", "core.autocrlf", "false"]);
         write(Path::new(&main), "README.md", "hello\n");
         write(Path::new(&main), ".gitignore", ".env\nnode_modules/\n");
         must(&main, &["add", "."]);
