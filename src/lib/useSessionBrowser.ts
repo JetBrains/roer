@@ -4,6 +4,16 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { logLine } from "./log";
 
 import { gitChanges, gitRepo, type Repo } from "../lib/git";
+import { placesOf, type Place } from "./checkouts";
+import type { PickerStart } from "../NewSessionPicker";
+import {
+  createWorktree,
+  deleteWorktreeBranch,
+  listWorktrees,
+  removeWorktree,
+  uncommittedInWorktree,
+  type Worktree,
+} from "../lib/worktrees";
 import { confirmAction } from "./confirm";
 import { notify } from "./notify";
 import {
@@ -97,9 +107,8 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
   const [selectedProjectId, setSelectedProjectIdRaw] = useState<string | null>(null);
   const [addingItem, setAddingItem] = useState(false);
   const [itemTitle, setItemTitle] = useState("");
-  // A brand new session waits for a project pick when its Workspace has more
-  // than one attached — this is what the picker is showing, if anything.
-  const [pickingProjectFor, setPickingProjectFor] = useState<Workspace | null>(null);
+  // The New session picker, while it is up, and the question it opened on.
+  const [picker, setPicker] = useState<PickerStart | null>(null);
 
   const setSelectedWorkspaceId = useCallback((id: string | null) => {
     setSelectedWorkspaceIdRaw(id);
@@ -365,6 +374,139 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
         .filter((project): project is Project => project != null)
     : [];
 
+  // The Projects in view: the one selected, or the selected Workspace's.
+  // Their worktrees are listed under the sessions, and a new worktree is
+  // made in one of them.
+  const projectsInView = selectedProject ? [selectedProject] : selectedWorkspaceProjects;
+  const inViewKey = projectsInView.map((project) => project.path).join("\n");
+
+  // Each Project in view's worktrees, by the Project's path, read from git
+  // whenever the stage changes and after anything here makes or removes one.
+  const [worktrees, setWorktrees] = useState<Record<string, Worktree[]>>({});
+  const refreshWorktrees = useCallback(async () => {
+    const paths = inViewKey ? inViewKey.split("\n") : [];
+    const found = await Promise.all(
+      paths.map((path) =>
+        listWorktrees(path)
+          .then((list): [string, Worktree[]] => [path, list])
+          .catch((): [string, Worktree[]] => [path, []]),
+      ),
+    );
+    const next = Object.fromEntries(found);
+    setWorktrees((current) => (JSON.stringify(current) === JSON.stringify(next) ? current : next));
+  }, [inViewKey]);
+
+  useEffect(() => {
+    void refreshWorktrees();
+  }, [refreshWorktrees, token, activePane]);
+
+  /** The picker from its first question, where: ⌘⇧N, and the sidebar's
+   * New worktree. */
+  const openNewWorktree = () => setPicker({ step: "where" });
+
+  /** The picker on which agent, the place settled: ⌥⌘T for where a plain
+   * New session would go, or a checkout's own + with Option. */
+  const openPickAgent = (cwd?: string) => {
+    const at = cwd ?? newSessionCwd();
+    if (at) setPicker({ step: "with", cwd: at });
+    else setPicker({ step: "where" });
+  };
+
+  const cancelPicker = () => setPicker(null);
+
+  /** Makes the worktree. Rejects with git's own complaint, for the dialog
+   * to show without closing; what `.worktreeinclude` could not copy comes
+   * back with it, for the dialog to say before the session starts. */
+  const handleCreateWorktree = async (projectPath: string, name: string, base: string) => {
+    const created = await createWorktree(projectPath, name, base);
+    for (const warning of created.warnings) logLine(`worktree: ${warning}`);
+    void refreshWorktrees();
+    return created;
+  };
+
+  /** The picker's last answer: the session, where it settled. */
+  const startFromPicker = (cwd: string, agent?: string) => {
+    setPicker(null);
+    startNewSession(cwd, selectedWorkspace, agent);
+  };
+
+  /** Every checkout the picker offers, the one a plain New session would
+   * start in first. */
+  const newSessionPlaces = (): Place[] =>
+    placesOf(
+      projectsInView.length > 0 ? projectsInView : projects,
+      worktrees,
+      repos,
+      newSessionCwd(),
+      (path) => shorten(path, status?.home),
+    );
+
+  /** Where a plain New session goes, as the button's tooltip says it. */
+  const newSessionPlace = (): string | undefined => {
+    const cwd = newSessionCwd();
+    if (!cwd) return undefined;
+    return newSessionPlaces().find((place) => place.cwd === cwd)?.label ?? shorten(cwd, status?.home);
+  };
+
+  /** A new session in a worktree that is already there. */
+  const openInWorktree = (worktree: Worktree, agent?: string) =>
+    startNewSession(worktree.path, selectedWorkspace, agent);
+
+  /** Remove, from a worktree's row. One question says everything that
+   * would go — its folder, uncommitted files, the sessions running in it —
+   * and nothing is touched before it is answered; a second one comes only
+   * for commits its branch alone has. Its sessions end just before its
+   * folder goes, so no shell is left in a directory that is not there. */
+  const handleRemoveWorktree = (worktree: Worktree) => {
+    const name = worktree.branch ?? worktree.commit;
+    const inside = sessions.filter((session) => within(session.cwd, worktree.path));
+    void uncommittedInWorktree(worktree.path)
+      .then(async (files) => {
+        const ending =
+          inside.length > 0
+            ? inside.length === 1
+              ? " The session running in it ends."
+              : ` The ${inside.length} sessions running in it end.`
+            : "";
+        const shown = files.slice(0, 5).join(", ");
+        const more = files.length > 5 ? ` and ${files.length - 5} more` : "";
+        const lost = files.length > 0 ? ` It has work that is not committed, which is lost: ${shown}${more}.` : "";
+        const question = `Remove the worktree ${name}? Its folder ${shorten(worktree.path, status?.home)} is deleted.${lost}${ending}`;
+        if (!(await confirmAction(question, "Remove worktree"))) return;
+        for (const session of inside) await killSession(session.pane);
+        // Forced once the question has named uncommitted work and been
+        // answered yes. With none named, anything written since is still
+        // refused, and asked about again.
+        let removal = await removeWorktree(worktree.path, files.length > 0);
+        if (removal.kind === "dirty") {
+          const changed = removal.files.slice(0, 5).join(", ");
+          const again = await confirmAction(
+            `${name} has changed since: ${changed}. Remove it anyway? That work is lost.`,
+            "Remove worktree",
+          );
+          if (!again) return;
+          removal = await removeWorktree(worktree.path, true);
+        }
+        if (removal.kind === "removed" && removal.unmergedBranch) {
+          const branch = removal.unmergedBranch;
+          const drop = await confirmAction(
+            `The branch ${branch} has commits no other branch has. Delete it too? Keep it to open it again later.`,
+            "Delete branch",
+          );
+          // Asked of the main checkout: the worktree's own folder is gone.
+          const main = Object.values(worktrees)
+            .find((list) => list.some((other) => other.path === worktree.path))
+            ?.find((other) => other.main);
+          if (drop && main) await deleteWorktreeBranch(main.path, branch);
+        }
+      })
+      .catch((cause: unknown) => setFailure(String(cause)))
+      .finally(() => {
+        void refreshWorktrees();
+        void refresh();
+      });
+  };
+
   const handleCreateWorkspace = (name: string) => {
     void createWorkspace(name)
       .then((workspace) => {
@@ -571,12 +713,17 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
             return;
           }
           takeLive(live);
-          if (ticks % STATS_EVERY === 0) refreshStats(live);
+          if (ticks % STATS_EVERY === 0) {
+            refreshStats(live);
+            // A checkout can switch branch, or a worktree be made or
+            // removed, from a terminal; its heading goes by this list.
+            void refreshWorktrees();
+          }
         })
         .catch(() => {});
     }, POLL_MS);
     return () => window.clearInterval(timer);
-  }, [refresh, refreshStats, takeLive]);
+  }, [refresh, refreshStats, refreshWorktrees, takeLive]);
 
   // Opening a waiting session is seeing it, and so is coming back to the
   // window with it on the stage.
@@ -625,10 +772,6 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
   // terminal mounted.
   const openedRef = useRef(0);
 
-  // The agent the next session starts, kept across the Project picker that
-  // may come up between choosing it and the session starting.
-  const pendingAgentRef = useRef<string | undefined>(undefined);
-
   const startNewSession = (cwd: string | undefined, workspace: Workspace | null, agent?: string) => {
     openedRef.current += 1;
     const known = sessions.map((session) => session.pane);
@@ -637,6 +780,16 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
     // Projects has somewhere better than home to fall back to — not tied to
     // the view filter, which always starts fresh on launch.
     if (cwd) localStorage.setItem("roer:last-new-session-cwd", cwd);
+    // And which of the Workspace's Projects, for the next plain New session
+    // in it when nothing on the stage says where.
+    const project = cwd ? selectedWorkspaceProjects.find((candidate) => underProject(cwd, candidate)) : undefined;
+    if (project) {
+      try {
+        localStorage.setItem(LAST_PROJECT_KEY, project.path);
+      } catch {
+        /* only a convenience */
+      }
+    }
     onOpen({
       args: agent === SHELL ? ["new", "--shell"] : agent ? ["new", "--agent", agent] : ["new"],
       cwd,
@@ -647,62 +800,38 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
   };
 
   // `new` rather than `shell`, because `shell` reuses the session for a
-  // directory. A new session starts in the selected Project's directory when
-  // one is selected directly (the Projects tab), otherwise in the selected
-  // Workspace's attached Project when it has exactly one, otherwise wherever
-  // the last new session was started, otherwise the home directory. A
-  // Workspace with several Projects asks which one, rather than guessing —
-  // `pickingProjectFor` holds the Workspace while that picker is up.
+  // directory. A plain New session never asks; it starts where
+  // `newSessionCwd` says, and the picker is for anywhere else.
   //
   // `agent` is an agent's id, or `SHELL` for just a shell; without one the
   // shim starts the default agent.
-  const openNew = (agent?: string) => {
-    if (selectedProject) {
-      startNewSession(selectedProject.path, selectedWorkspace, agent);
-      return;
-    }
-    if (selectedWorkspace && selectedWorkspaceProjects.length > 1) {
-      pendingAgentRef.current = agent;
-      setPickingProjectFor(selectedWorkspace);
-      return;
-    }
-    startNewSession(
-      selectedWorkspaceProjects[0]?.path ??
-        localStorage.getItem("roer:last-new-session-cwd") ??
-        status?.home,
-      selectedWorkspace,
-      agent,
-    );
-  };
+  const openNew = (agent?: string) => startNewSession(newSessionCwd(), selectedWorkspace, agent);
 
-  /** Where a new session would start, when that is known without asking:
-   * the directory whose project's own agents apply to it. `undefined` while
-   * a Workspace with several Projects has yet to ask which, so that no one
-   * Project's agents are offered for all of them. */
+  /** Where a plain New session starts, without asking: the checkout of the
+   * session on the stage, if that is among what is in view, so a second
+   * agent lands beside the first; else the selected Project; else the
+   * selected Workspace's Project that was started in last, or its first;
+   * else wherever the last new session went; else home. */
   const newSessionCwd = (): string | undefined => {
+    // Asked of the session's own folder, which is what its repository was
+    // looked up by; its checkout's root is where the new one starts.
+    const onStage = sessions.find((session) => session.pane === activePane);
+    const inView = (cwd: string) =>
+      projectsInView.length === 0 || projectsInView.some((project) => underProject(cwd, project));
+    if (onStage?.cwd && inView(onStage.cwd)) return repos[onStage.cwd]?.root ?? onStage.cwd;
     if (selectedProject) return selectedProject.path;
-    if (selectedWorkspace && selectedWorkspaceProjects.length > 1) return undefined;
-    return (
-      selectedWorkspaceProjects[0]?.path ??
-      localStorage.getItem("roer:last-new-session-cwd") ??
-      status?.home
-    );
+    if (selectedWorkspaceProjects.length > 0) {
+      return lastProjectAmong(selectedWorkspaceProjects) ?? selectedWorkspaceProjects[0].path;
+    }
+    return localStorage.getItem("roer:last-new-session-cwd") ?? status?.home;
   };
 
-  const cancelProjectPick = () => setPickingProjectFor(null);
-
-  const pickProjectForNewSession = (path: string) => {
-    const workspace = pickingProjectFor;
-    setPickingProjectFor(null);
-    startNewSession(path, workspace, pendingAgentRef.current);
-  };
-
-  /** The picker's "Attach a new project…" escape hatch: registers and
-   * attaches the Project, then starts the session in it right away. */
-  const attachNewProjectForNewSession = (path: string) => {
-    const workspace = pickingProjectFor;
-    setPickingProjectFor(null);
-    if (!workspace) return;
+  /** The dialog's "Attach a new project…": registers the folder as a
+   * Project, attaches it to the Workspace the dialog was for, and starts the
+   * session in it right away. */
+  const attachNewProjectForNewSession = (path: string, agent?: string) => {
+    const workspace = selectedWorkspace;
+    setPicker(null);
     void createProject(folderName(path), path)
       .then((project) => {
         setProjects((current) =>
@@ -710,7 +839,7 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
             ? current
             : [...current, project],
         );
-        return attachProject(workspace.id, project.id);
+        return workspace ? attachProject(workspace.id, project.id) : null;
       })
       .then((updated) => {
         if (updated) {
@@ -718,7 +847,7 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
             current.map((existing) => (existing.id === updated.id ? updated : existing)),
           );
         }
-        startNewSession(path, workspace, pendingAgentRef.current);
+        startNewSession(path, workspace, agent);
       })
       .catch((cause: unknown) => setFailure(String(cause)));
   };
@@ -838,13 +967,35 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
     activePane,
     openNew,
     newSessionCwd,
-    pickingProjectFor,
-    cancelProjectPick,
-    pickProjectForNewSession,
+    projectsInView,
+    worktrees,
+    picker,
+    openNewWorktree,
+    openPickAgent,
+    cancelPicker,
+    handleCreateWorktree,
+    startFromPicker,
+    newSessionPlaces,
+    newSessionPlace,
+    openInWorktree,
+    handleRemoveWorktree,
     attachNewProjectForNewSession,
     openClaudeSession,
     refresh,
   };
+}
+
+/** The Project a new session last started in, of those a Workspace has. */
+const LAST_PROJECT_KEY = "roer:last-new-session-project";
+
+/** The last Project picked, if it is one of `projects`. */
+function lastProjectAmong(projects: Project[]): string | undefined {
+  try {
+    const last = localStorage.getItem(LAST_PROJECT_KEY);
+    return projects.some((project) => project.path === last) ? (last ?? undefined) : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /** How often the live list is read for agents starting and stopping. */

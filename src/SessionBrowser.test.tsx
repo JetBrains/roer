@@ -13,6 +13,7 @@ import {
 } from "./lib/pty";
 import { useSessionBrowser } from "./lib/useSessionBrowser";
 import { listProjects } from "./lib/projects";
+import { listWorktrees } from "./lib/worktrees";
 import { confirmAction } from "./lib/confirm";
 import {
   assignSession,
@@ -39,6 +40,13 @@ vi.mock("./lib/confirm", () => ({ confirmAction: vi.fn() }));
 vi.mock("./lib/git", () => ({
   gitRepo: vi.fn(),
   gitChanges: vi.fn(),
+}));
+
+vi.mock("./lib/worktrees", () => ({
+  listWorktrees: vi.fn(async () => []),
+  createWorktree: vi.fn(),
+  removeWorktree: vi.fn(),
+  deleteWorktreeBranch: vi.fn(),
 }));
 
 vi.mock("./lib/notify", () => ({ notify: vi.fn(async () => undefined) }));
@@ -72,6 +80,7 @@ beforeEach(() => {
   vi.mocked(listWorkspaces).mockReset().mockResolvedValue([]);
   vi.mocked(listProjects).mockReset().mockResolvedValue([]);
   vi.mocked(gitChanges).mockReset().mockRejectedValue(new Error("not a repository"));
+  vi.mocked(listWorktrees).mockReset().mockResolvedValue([]);
   vi.mocked(notify).mockClear();
   vi.mocked(roerStatus)
     .mockReset()
@@ -105,14 +114,7 @@ function Harness({ onOpen }: { onOpen: (request: OpenRequest) => void }) {
         handleRenameProject={browser.handleRenameProject}
         handleDeleteProject={browser.handleDeleteProject}
       />
-      <NewSessionButton
-        projects={browser.projects}
-        openNew={browser.openNew}
-        pickingProjectFor={browser.pickingProjectFor}
-        cancelProjectPick={browser.cancelProjectPick}
-        pickProjectForNewSession={browser.pickProjectForNewSession}
-        attachNewProjectForNewSession={browser.attachNewProjectForNewSession}
-      />
+      <NewSessionButton openNew={browser.openNew} />
       <SessionBrowser
         status={browser.status}
         workspaces={browser.workspaces}
@@ -140,6 +142,8 @@ function Harness({ onOpen }: { onOpen: (request: OpenRequest) => void }) {
         activePane={browser.activePane}
         openClaudeSession={browser.openClaudeSession}
         refresh={browser.refresh}
+        projectsInView={browser.projectsInView}
+        worktrees={browser.worktrees}
         onOpen={onOpen}
       />
     </>
@@ -151,6 +155,11 @@ const repoAt = (root: string) => ({ root, main: root, worktrees: [root] });
 
 function renderList(onOpen: (request: OpenRequest) => void = vi.fn()) {
   return render(<Harness onOpen={onOpen} />);
+}
+
+/** Unfolds the sidebar's Workspace and Project picker, folded on launch. */
+async function openPicker() {
+  fireEvent.click(await screen.findByRole("button", { name: "Switch Workspace or Project" }));
 }
 
 describe("a resumed conversation", () => {
@@ -186,17 +195,74 @@ describe("worktrees", () => {
     // Covered by Roer's Project, so not left to Default.
     await waitFor(() => expect(listClaudeSessions).toHaveBeenCalled());
     await waitFor(() => expect(screen.queryByTitle(/^roer-ux /)).not.toBeInTheDocument());
+    await openPicker();
     fireEvent.click(await screen.findByRole("button", { name: /^Roer/ }));
 
     const linked = await screen.findByTitle(/^roer-ux /);
     await waitFor(() => expect(linked).toHaveTextContent("roer-ux"));
     expect(screen.getByTitle(/^roer-a /)).not.toHaveTextContent("roer-ux");
-    // One repository, so one group: no headings.
-    expect(screen.queryAllByRole("heading", { level: 3 })).toHaveLength(0);
+    // One repository, so one group: the Project's, by its name.
+    expect(screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent)).toEqual(["roer"]);
     // Conversations are looked for in every worktree.
     await waitFor(() =>
       expect(vi.mocked(listClaudeSessions).mock.calls.at(-1)?.[0]).toEqual(expect.arrayContaining(["/work/roer-ux"])),
     );
+  });
+});
+
+describe("grouping by checkout", () => {
+  it("puts live sessions and past conversations under the checkout they are in", async () => {
+    vi.mocked(listWorkspaces).mockResolvedValue([{ id: "w1", name: "Roer", projects: ["p1"], items: [] }]);
+    vi.mocked(listProjects).mockResolvedValue([{ id: "p1", name: "roer", path: "/work/roer" }]);
+    const worktree = "/Users/test/.roer/worktrees/roer/fix-login";
+    vi.mocked(listWorktrees).mockResolvedValue([
+      { path: "/work/roer", branch: "main", commit: "abc1234", main: true, base: null, locked: false, missing: false },
+      { path: worktree, branch: "fix-login", commit: "def5678", main: false, base: "main", locked: false, missing: false },
+    ]);
+    vi.mocked(listSessions).mockResolvedValue([
+      { id: "1", session: "roer-a", pane: "%0", attached: false, cwd: "/work/roer", command: "zsh" },
+    ]);
+    vi.mocked(listClaudeSessions).mockResolvedValue([
+      { id: "c1", cwd: worktree, title: "earlier login work", updatedAt: Math.floor(Date.now() / 1000) - 60 },
+    ]);
+    renderList();
+
+    const linked = await screen.findByRole("heading", { level: 4, name: "fix-login" });
+    const main = screen.getByRole("heading", { level: 4, name: "main" });
+    // The heading sits in its fold row; the list follows that.
+    expect(linked.parentElement?.nextElementSibling).toHaveTextContent("earlier login work");
+    expect(main.parentElement?.nextElementSibling).toHaveTextContent("zsh");
+    // Always two levels, as in the sidebar, even with one Project.
+    expect(screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent)).toEqual(["roer"]);
+  });
+
+  it("folds a branch, and a Project, saying how much is hidden", async () => {
+    localStorage.removeItem("roer:folded-groups");
+    vi.mocked(listWorkspaces).mockResolvedValue([{ id: "w1", name: "Roer", projects: ["p1"], items: [] }]);
+    vi.mocked(listProjects).mockResolvedValue([{ id: "p1", name: "roer", path: "/work/roer" }]);
+    vi.mocked(listWorktrees).mockResolvedValue([
+      { path: "/work/roer", branch: "main", commit: "abc1234", main: true, base: null, locked: false, missing: false },
+    ]);
+    vi.mocked(listSessions).mockResolvedValue([
+      { id: "1", session: "roer-a", pane: "%0", attached: false, cwd: "/work/roer", command: "zsh" },
+      { id: "2", session: "roer-b", pane: "%1", attached: false, cwd: "/work/roer", command: "zsh" },
+    ]);
+    renderList();
+
+    const branch = await screen.findByRole("button", { name: "main" });
+    await screen.findByTitle(/^roer-a /);
+    fireEvent.click(branch);
+    expect(branch).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByTitle(/^roer-a /)).not.toBeInTheDocument();
+    expect(screen.getByTitle("2 hidden")).toHaveTextContent("2");
+
+    fireEvent.click(branch);
+    const project = screen.getByRole("button", { name: "roer" });
+    fireEvent.click(project);
+    expect(screen.queryByRole("button", { name: "main" })).not.toBeInTheDocument();
+    // Remembered for next time.
+    expect(JSON.parse(localStorage.getItem("roer:folded-groups") ?? "[]")).toEqual(["project-p1"]);
+    localStorage.removeItem("roer:folded-groups");
   });
 });
 
@@ -303,7 +369,7 @@ describe("past Claude conversations", () => {
     ]);
     renderList();
 
-    await screen.findByRole("navigation", { name: /sessions/i });
+    await screen.findByRole("navigation", { name: "Workspace" });
     expect(listClaudeSessions).toHaveBeenCalledWith(["/Users/test/live", "/Users/test/ended"]);
   });
 
@@ -687,6 +753,7 @@ describe("the selected workspace", () => {
     vi.mocked(deleteWorkspace).mockReset().mockResolvedValue(undefined);
     vi.mocked(confirmAction).mockReset().mockResolvedValue(false);
     renderList();
+    await openPicker();
 
     fireEvent.contextMenu(await screen.findByRole("button", { name: /Feature work/ }));
     fireEvent.click(await screen.findByText("Delete"));
@@ -708,6 +775,7 @@ describe("the selected workspace", () => {
       { id: "1", session: "roer-a", pane: "%0", attached: true, cwd: "/Users/test/project", command: "zsh" },
     ]);
     renderList();
+    await openPicker();
 
     expect(await screen.findByRole("button", { name: /Default/ })).toHaveAttribute("aria-pressed", "true");
     expect(screen.queryByRole("button", { name: "All" })).not.toBeInTheDocument();
@@ -722,6 +790,7 @@ describe("the selected workspace", () => {
       { id: "w2", name: "Feature work", projects: [], items: [] },
     ]);
     renderList();
+    await openPicker();
 
     fireEvent.contextMenu(await screen.findByRole("button", { name: /Default/ }));
     expect(await screen.findByText("Rename")).toBeInTheDocument();
@@ -747,10 +816,11 @@ describe("attaching a project from a workspace's menu", () => {
       .mockReset()
       .mockResolvedValue({ id: "w2", name: "Feature work", projects: ["p1", "p2"], items: [] });
     renderList();
+    await openPicker();
 
     expect(await screen.findByRole("button", { name: /Default/ })).toHaveAttribute("aria-pressed", "true");
     fireEvent.contextMenu(screen.getByRole("button", { name: /Feature work/ }));
-    // The Sessions view has an "Attach project" of its own, for the selected one.
+    // The Workspace tab has an "Attach project" of its own, for the selected one.
     fireEvent.click(await screen.findByRole("menuitem", { name: /Attach project/ }));
 
     // Only what the Workspace lacks is offered, then a folder from disk.

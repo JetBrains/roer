@@ -1,4 +1,5 @@
 import { ChevronDown } from "lucide-react";
+import { useRef } from "react";
 
 import {
   DropdownMenu,
@@ -9,20 +10,10 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { agentDetail, canStart, type Agent, type AgentList } from "./lib/agents";
-import { pickFolder } from "./lib/folderPicker";
 import { shortcutLabel } from "./lib/keys";
-import type { Project } from "./lib/projects";
 import { SHELL, type SessionBrowserState } from "./lib/useSessionBrowser";
 
-export type NewSessionButtonProps = Pick<
-  SessionBrowserState,
-  | "projects"
-  | "openNew"
-  | "pickingProjectFor"
-  | "cancelProjectPick"
-  | "pickProjectForNewSession"
-  | "attachNewProjectForNewSession"
-> & {
+export type NewSessionButtonProps = Pick<SessionBrowserState, "openNew"> & {
   /** What the picker offers; null until first read. */
   agents?: AgentList | null;
   /** Why `agents` could not be read, when it could not. */
@@ -33,6 +24,10 @@ export type NewSessionButtonProps = Pick<
   onPickerOpenChange?: (open: boolean) => void;
   onNewAgent?: () => void;
   onManageAgents?: () => void;
+  /** The New session picker from where: any checkout, or a new worktree. */
+  onNewSessionDialog?: () => void;
+  /** Where the button starts a session, as its tooltip says. */
+  place?: string;
 };
 
 /**
@@ -43,78 +38,35 @@ export type NewSessionButtonProps = Pick<
  *
  * Split in two: the button starts the default agent, as it always has, and
  * the chevron beside it picks another one — a saved agent, a CLI as it comes,
- * or just a shell.
+ * or just a shell — or opens the New session dialog for the rest. Where the
+ * button cannot know which Project, it opens that dialog itself.
  */
 export function NewSessionButton({
-  projects,
   openNew,
-  pickingProjectFor,
-  cancelProjectPick,
-  pickProjectForNewSession,
-  attachNewProjectForNewSession,
   agents,
   agentsError,
   pickerOpen,
   onPickerOpenChange,
   onNewAgent,
   onManageAgents,
+  onNewSessionDialog,
+  place,
 }: NewSessionButtonProps) {
-  const pickedProjects = pickingProjectFor
-    ? pickingProjectFor.projects
-        .map((id) => projects.find((project) => project.id === id))
-        .filter((project): project is Project => project != null)
-    : [];
-
-  const attachNewForPicker = async () => {
-    const picked = await pickFolder();
-    if (typeof picked === "string") {
-      attachNewProjectForNewSession(picked);
-    } else {
-      // The dialog was dismissed — nothing was picked, so nothing else in
-      // this flow will close the menu for us.
-      cancelProjectPick();
-    }
-  };
-
   const defaultAgent = agents?.agents.find((agent) => agent.id === agents.default);
+  // Set when an item opens a popup of its own: the menu then leaves the
+  // keyboard with it, rather than handing it back to the chevron.
+  const handedOffRef = useRef(false);
 
   return (
     <span className="split-button new-session">
-      <DropdownMenu
-        open={pickingProjectFor != null}
-        onOpenChange={(next) => {
-          if (!next) cancelProjectPick();
-        }}
+      <button
+        type="button"
+        className="primary"
+        title={`New session${defaultAgent ? ` with ${defaultAgent.name}` : ""}${place ? ` in ${place}` : ""} (${shortcutLabel.newSession()})`}
+        onClick={() => openNew()}
       >
-        <DropdownMenuTrigger asChild>
-          <button
-            type="button"
-            className="primary"
-            title={`New session${defaultAgent ? ` with ${defaultAgent.name}` : ""} (${shortcutLabel.newSession()})`}
-            onClick={() => openNew()}
-          >
-            New session <span className="hotkey">{shortcutLabel.newSession()}</span>
-          </button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end">
-          {pickedProjects.map((project) => (
-            <DropdownMenuItem key={project.id} onSelect={() => pickProjectForNewSession(project.path)}>
-              {project.name}
-            </DropdownMenuItem>
-          ))}
-          <DropdownMenuItem
-            onSelect={(event) => {
-              // The dialog is async and the Workspace it's for only lives in
-              // `pickingProjectFor` — letting Radix's default close through
-              // here would clear it before the dialog resolves.
-              event.preventDefault();
-              void attachNewForPicker();
-            }}
-          >
-            Attach a new project…
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
+        New session <span className="hotkey">{shortcutLabel.newSession()}</span>
+      </button>
 
       <DropdownMenu open={pickerOpen} onOpenChange={onPickerOpenChange}>
         <DropdownMenuTrigger asChild>
@@ -127,9 +79,30 @@ export function NewSessionButton({
             <ChevronDown size={14} aria-hidden="true" />
           </button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="agent-picker">
+        <DropdownMenuContent
+          align="end"
+          className="agent-picker"
+          onCloseAutoFocus={(event) => {
+            if (!handedOffRef.current) return;
+            handedOffRef.current = false;
+            event.preventDefault();
+          }}
+        >
           <AgentPickerItems agents={agents} error={agentsError} openNew={openNew} />
           <DropdownMenuSeparator />
+          {onNewSessionDialog ? (
+            <>
+              <DropdownMenuItem
+                onSelect={() => {
+                  handedOffRef.current = true;
+                  onNewSessionDialog();
+                }}
+              >
+                Somewhere else, or a new worktree… <span className="hotkey">{shortcutLabel.newWorktree()}</span>
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+            </>
+          ) : null}
           <DropdownMenuItem onSelect={() => onNewAgent?.()}>New agent…</DropdownMenuItem>
           <DropdownMenuItem onSelect={() => onManageAgents?.()}>
             Manage agents… <span className="hotkey">{shortcutLabel.agents()}</span>

@@ -106,8 +106,8 @@ test("Changes shows the project's local edits", async () => {
   }
 });
 
-test("Sessions lists both, and picking the other one brings it back", async () => {
-  await app.tab("Sessions");
+test("Workspace lists both, and picking the other one brings it back", async () => {
+  await app.tab("Workspace");
   await app.waitForText("open here", ".sessions-view");
   await app.waitForText("detached", ".sessions-view");
   // Named by what the agent titled its terminal; the plain shell by nothing
@@ -149,10 +149,10 @@ test("an agent out of sight that stops to ask is shown as needing you", async ()
   // there, then hears it ask, then the app shows it.
   await app.untilPane("roer to know the agent", hidden.pane, (row) => Boolean(row?.agent));
   await app.untilPane("roer to hear the agent ask", hidden.pane, (row) => row?.state === "waiting");
-  await app.until("a dot on the Sessions tab", () =>
+  await app.until("a dot on the Workspace tab", () =>
     app.driver.executeScript("return !!document.querySelector('.tab-dot.waiting')"),
   );
-  await app.tab("Sessions");
+  await app.tab("Workspace");
   const asking = await app.until("the row that needs you", () =>
     app.driver.executeScript(
       "return Array.from(document.querySelectorAll('.sessions-view button.row')).find((row) => row.innerText.includes('needs you')) ?? null",
