@@ -125,8 +125,8 @@ describe("sorting sessions into checkouts", () => {
   });
 });
 
-function Harness({ onOpen }: { onOpen: (request: OpenRequest) => void }) {
-  const browser = useSessionBrowser({ token: "none", onOpen });
+function Harness({ onOpen, token = "none" }: { onOpen: (request: OpenRequest) => void; token?: string }) {
+  const browser = useSessionBrowser({ token, onOpen });
   return (
     <SessionTree
       status={browser.status}
@@ -260,6 +260,51 @@ describe("the session tree", () => {
     expect(vi.mocked(confirmAction).mock.calls[1][0]).toMatch(/late\.md/);
     expect(removeWorktree).toHaveBeenCalledTimes(1);
     expect(removeWorktree).toHaveBeenCalledWith(linked.path, false);
+  });
+
+  it("keeps the newest worktree list when an older read answers last", async () => {
+    let stale: (list: Worktree[]) => void = () => {};
+    vi.mocked(listWorktrees)
+      .mockReset()
+      .mockImplementationOnce(() => new Promise<Worktree[]>((resolve) => (stale = resolve)))
+      .mockResolvedValue([main, linked]);
+    const { rerender } = render(<Harness onOpen={vi.fn()} />);
+    await waitFor(() => expect(listWorktrees).toHaveBeenCalledTimes(1));
+    // A newer read, as a stage change makes one, while the first is out.
+    rerender(<Harness onOpen={vi.fn()} token="later" />);
+    const tree = within(await screen.findByRole("region", { name: "Running sessions" }));
+    expect(await tree.findByText("fix-login")).toBeInTheDocument();
+
+    stale([main]);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(tree.getByText("fix-login")).toBeInTheDocument();
+  });
+
+  it("deletes a kept branch from the repository's main checkout before git's list is read", async () => {
+    // Listing fails, so the tree draws the checkouts from the repository
+    // its sessions were found in.
+    vi.mocked(listWorktrees).mockReset().mockRejectedValue("not now");
+    vi.mocked(listSessions).mockResolvedValue([session("%3", `${linked.path}/src`, { command: "claude" })]);
+    const repo = { main: "/work/roer", worktrees: ["/work/roer", linked.path] };
+    vi.mocked(gitRepo).mockImplementation(async (cwd: string) =>
+      cwd.startsWith(linked.path)
+        ? { ...repo, root: linked.path }
+        : cwd.startsWith("/work/roer")
+          ? { ...repo, root: "/work/roer" }
+          : null,
+    );
+    vi.mocked(uncommittedInWorktree).mockReset().mockResolvedValue([]);
+    vi.mocked(confirmAction).mockReset().mockResolvedValue(true);
+    vi.mocked(killSession).mockReset().mockResolvedValue(undefined);
+    vi.mocked(removeWorktree)
+      .mockReset()
+      .mockResolvedValue({ kind: "removed", deletedBranch: null, unmergedBranch: "fix-login" });
+    vi.mocked(deleteWorktreeBranch).mockReset().mockResolvedValue(undefined);
+    render(<Harness onOpen={vi.fn()} />);
+
+    const name = linked.path.split("/").pop();
+    fireEvent.click(await screen.findByRole("button", { name: `Remove the worktree ${name}` }));
+    await waitFor(() => expect(deleteWorktreeBranch).toHaveBeenCalledWith("/work/roer", "fix-login"));
   });
 
   it("removes nothing when the first question is declined", async () => {

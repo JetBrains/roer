@@ -1293,6 +1293,8 @@ export function App() {
           <NewSessionPicker
             places={browser.newSessionPlaces()}
             agents={agents}
+            agentsCwd={agentsCwd}
+            loadAgents={listAgents}
             start={browser.picker}
             onCreateWorktree={browser.handleCreateWorktree}
             onStart={browser.startFromPicker}
