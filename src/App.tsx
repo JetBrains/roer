@@ -2,6 +2,7 @@ import { message } from "@tauri-apps/plugin-dialog";
 import {
   Bell,
   BellOff,
+  Globe,
   Monitor,
   Moon,
   PanelLeftClose,
@@ -136,6 +137,16 @@ function viewOf(handoff: Handoff, record: string): SessionView {
     pane: handoff.args[0] === "attach" ? handoff.args[1] : undefined,
     record,
   };
+}
+
+/** The menu's "Open This Session in a Browser…", also offered in the title bar. */
+function openInBrowser() {
+  void startBrowserServer().catch((cause: unknown) => {
+    void message(String(cause), {
+      title: "Could not start the browser server",
+      kind: "error",
+    });
+  });
 }
 
 export function App() {
@@ -378,14 +389,7 @@ export function App() {
   useEffect(() => {
     let cancelled = false;
     let unlisten: (() => void) | undefined;
-    void onBrowserServerMenu(() => {
-      void startBrowserServer().catch((cause: unknown) => {
-        void message(String(cause), {
-          title: "Could not start the browser server",
-          kind: "error",
-        });
-      });
-    })
+    void onBrowserServerMenu(openInBrowser)
       .then((fn) => {
         if (cancelled) fn();
         else unlisten = fn;
@@ -929,6 +933,16 @@ export function App() {
           onClick={() => setShowingExtensions(true)}
         >
           <Puzzle size={15} />
+        </button>
+
+        <button
+          type="button"
+          className="browser-toggle"
+          aria-label="Open this session in a browser"
+          title="Open this session in a browser"
+          onClick={openInBrowser}
+        >
+          <Globe size={15} />
         </button>
 
         <button
