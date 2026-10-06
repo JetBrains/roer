@@ -563,6 +563,7 @@ export function ReviewView({ session, active, branch: other, onSent, onOpenCount
         <Button onClick={() => void load()} disabled={refreshing}>
           {refreshing ? "Refreshing…" : "Refresh"}
         </Button>
+        {ready ? <Button onClick={() => void openUrl(ready.pr.url)}>Open in browser</Button> : null}
         {ready?.pr.state === "OPEN" ? (
           <Button onClick={() => void requestCopilot()} disabled={asking || copilot.waiting}>
             {copilot.waiting ? "Copilot is reviewing…" : "Request Copilot review"}

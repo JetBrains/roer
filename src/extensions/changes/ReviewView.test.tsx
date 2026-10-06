@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Session } from "../api";
 import { gitBranchDiff, gitCurrentBranch } from "../../lib/git";
-import { ghPrDiff, ghPrForBranch, ghPrReview, ghStatus, type PrReview, type PrSummary } from "../../lib/github";
+import { ghPrDiff, ghPrForBranch, ghPrReview, ghStatus, openUrl, type PrReview, type PrSummary } from "../../lib/github";
 import { storedComments } from "./local";
 import { ReviewView } from "./ReviewView";
 import { addCommentsTool } from "./tool";
@@ -132,6 +132,12 @@ describe("ReviewView", () => {
 
     fireEvent.click(screen.getByLabelText("Show resolved"));
     expect(screen.getByText("Settled already.")).toBeInTheDocument();
+  });
+
+  it("opens the pull request in the browser from its header", async () => {
+    render(<ReviewView session={session()} active />);
+    fireEvent.click(await screen.findByRole("button", { name: "Open in browser" }));
+    expect(openUrl).toHaveBeenCalledWith(pr.url);
   });
 
   it("sends each decision to the agent in one prompt, then marks them sent", async () => {
