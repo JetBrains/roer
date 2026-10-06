@@ -347,6 +347,7 @@ code {
 
 .find-toggle,
 .extensions-toggle,
+.browser-toggle,
 .theme-toggle,
 .notifications-toggle,
 .generative-toggle {
@@ -361,6 +362,7 @@ code {
 
 .find-toggle:hover:not(:disabled),
 .extensions-toggle:hover,
+.browser-toggle:hover,
 .theme-toggle:hover,
 .notifications-toggle:hover,
 .generative-toggle:hover {

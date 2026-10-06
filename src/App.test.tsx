@@ -26,6 +26,7 @@ import type { Handoff, PtyEvent } from "./lib/pty";
 import { claudeSetupStatus } from "./lib/claudeSetup";
 import { listWorkspaces } from "./lib/workspaces";
 import { reportPluginUiReceipt } from "./lib/pluginUi";
+import { startBrowserServer } from "./lib/browserServer";
 
 // Shared between the test body and the hoisted module mock below.
 const mocks = vi.hoisted(() => ({
@@ -85,6 +86,11 @@ vi.mock("@xterm/addon-fit", () => ({
   FitAddon: class {
     fit = vi.fn();
   },
+}));
+
+vi.mock("./lib/browserServer", () => ({
+  startBrowserServer: vi.fn().mockResolvedValue(undefined),
+  onBrowserServerMenu: vi.fn().mockResolvedValue(() => undefined),
 }));
 
 vi.mock("./lib/pty", () => ({
@@ -329,6 +335,12 @@ describe("App", () => {
     fireEvent.click(toggle);
     expect(toggle).toHaveAttribute("aria-pressed", "true");
     expect(localStorage.getItem("roer:notifications")).toBe("on");
+  });
+
+  it("opens the session in a browser from the title bar", async () => {
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Open this session in a browser" }));
+    expect(startBrowserServer).toHaveBeenCalled();
   });
 
   it("opens on the launcher rather than a terminal", async () => {
