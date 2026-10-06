@@ -345,7 +345,9 @@ declare module "roer" {
 
   // ---------------------------------------------------------------- components
 
-  /** Markdown as GitHub writes it; links open in the browser. */
+  /** Markdown as GitHub writes it, with raw HTML cleaned by GitHub's schema; links open in the browser.
+   * It always has the `file-markdown` class, Roer's Markdown styles, which fill a pane with padding and a
+   * scroll of their own; `className` goes beside it. Pass `md-inline` for text in a card, a row or a list item. */
   export function Markdown(props: { children: string; className?: string }): ReactNode;
 
   export interface DiffLine {

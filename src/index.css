@@ -1792,6 +1792,22 @@ button.tree-row.selected {
   flex: 1;
 }
 
+/* Markdown inside a card, a row or a list item rather than filling a pane: no pane padding, no scroll of its own. */
+.file-markdown.md-inline {
+  flex: none;
+  overflow: visible;
+  padding: 0;
+  white-space: normal;
+}
+
+.file-markdown.md-inline > :first-child {
+  margin-top: 0;
+}
+
+.file-markdown.md-inline > :last-child {
+  margin-bottom: 0;
+}
+
 .file-markdown.note-card-md {
   flex: none;
   overflow: visible;

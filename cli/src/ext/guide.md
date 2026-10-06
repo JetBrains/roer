@@ -2,9 +2,9 @@
 
 A Roer extension adds a tab to Roer's stage, next to Terminal and Changes.
 It is a folder with a manifest and a React entry point. Roer
-builds it with Bun, loads it into its own window and reloads it every time a
-file in the folder changes. Roer's own Changes tab is an extension written
-this way.
+builds it with Bun into one bundle, imports that bundle into Roer's own page,
+and imports it again every time a file in the folder changes. Roer's own
+Changes tab is an extension written this way.
 
 Read all of this before writing anything. The type declarations at the end
 are the whole API: anything they don't declare isn't there. `roer` is the
@@ -93,10 +93,12 @@ The rules:
 - **Take keys only while `useActive()` is true.** A `useHotkey` that is
   registered while the tab is hidden takes the key from every other tab.
 - `react` and `roer` are Roer's own. Don't install them. Other npm packages
-  work: add a `package.json` and run `bun install` in the folder (with no
-  `bun` on `PATH`, Roer's own is `~/.roer/bun/1.3.13/bun`). An
-  extension runs in a browser window, so Node's modules aren't available
-  there.
+  work: add a `package.json` and run `bun install --omit peer` in the folder
+  (with no `bun` on `PATH`, Roer's own is `~/.roer/bun/1.3.13/bun`). Without
+  `--omit peer`, Bun installs a package's peer `react`, and the tab then has
+  two Reacts. List the license of every installed package and show the list
+  to the person before you rely on it. The app runs in Roer's page, so Node's
+  modules aren't available there.
 - Whatever the API doesn't offer, `invoke(command, args)` can reach. Roer's
   backend commands are the ones `src-tauri/src/lib.rs` registers. Prefer the
   typed functions.
@@ -133,6 +135,12 @@ const call = useCall(); // for actions: await call("fix", { line })
 
 - `exec` runs a program without a shell. Pass `argv` as a list and never
   build a shell string. A non-zero exit doesn't throw, so check `code`.
+- `exec` starts `argv[0]` directly, so a script without a `#!` line fails
+  with `ENOEXEC`. A terminal hides this, because a shell runs such a file
+  with `sh`. Start one through its shell: `["bash", "<root>/tools/run.cmd",
+  …]`. A `.cmd` file that is a cmd and sh script in one is the usual case.
+- Give a repository's own tools absolute paths, and the repository's root
+  as `cwd`: many of them read other files by paths relative to the root.
 - What a handler returns must be JSON. What it throws reaches `useRpc`'s
   `error`, or rejects `call`.
 - `console.log` in the server goes to the extension's log (`roer ext logs`).
@@ -141,6 +149,52 @@ const call = useCall(); // for actions: await call("fix", { line })
 - Ask before your tab does anything with consequences, as the person would
   expect from you. A button whose action can't be undone needs a confirm
   step.
+
+### Writing to another service
+
+A post to YouTrack or GitHub reaches other people and can't be taken
+back. Ask the person which writes the tab may do, and for each one whether
+they want a confirm step before it. A confirm step costs a click on every
+post, so some people want it only for some writes, or not at all. Do what
+they say, and write it down in `generatedFrom.prompt`.
+
+When they want a confirm step, make the server, not the tab, hold the write
+until they confirm it:
+
+```ts
+// server.ts
+const held = new Map<string, { argv: string[]; expires: number }>();
+
+roer.rpc.handle("prepare", ({ kind, issue, text }) => {
+  const argv = buildWrite(kind, issue, text); // checks every argument, or throws
+  const token = crypto.randomUUID();
+  held.set(token, { argv, expires: Date.now() + 5 * 60_000 });
+  return { token, title: "Comment on " + issue, text, command: argv.join(" ") };
+});
+
+roer.rpc.handle("confirm", async ({ token }) => {
+  const write = held.get(token);
+  held.delete(token); // one use only: a second click finds nothing to run
+  if (!write || write.expires < Date.now()) throw new Error("Expired. Prepare it again.");
+  return run(write.argv);
+});
+```
+
+- The tab shows what `prepare` returned: the target, the whole text and
+  the command. Only its "Post" button calls `confirm`. When the CLI has a
+  `--dry-run`, show its output as the preview.
+- When the person wants the tab read-only, give it no write path at all.
+  Put the read verb first in every `argv` the server builds, such as
+  `["…/youtrack.ts", "read", …]`, so no argument can turn a call into a
+  write.
+- Without a confirm step, the server still checks every argument, and the
+  tab writes only on the person's own click.
+- Register no agent tool that writes unless the person asks for one. An
+  agent's tool call skips the person's click.
+- `session.send(prompt)` makes the agent act. Ask whether the person wants
+  to see the prompt before it goes. Fence text that other people wrote with
+  `untrustedComment`, and tell the agent which writes it must not do. Tell
+  the person that the agent can still write outside the tab.
 
 ### Looking like Roer: build from `roer/ui`
 
@@ -187,10 +241,18 @@ import { Button, Card, Column, Grid, Row, StatTile, StatusCard, Text } from "roe
 - `Surface` draws catalog JSON, the same `components` and data model that
   `show_ui` and `save_ui` take, and hands its buttons' events to
   `onAction`. Use it to turn a saved plugin UI into a tab.
+- `roer/ui` is the A2UI catalog. Its `Text` shows plain text only. For
+  Markdown, such as a ticket's description or a review comment, use
+  `Markdown` from `roer`: GitHub's Markdown, tables and code included, and
+  raw HTML cleaned with GitHub's schema. It always has the `file-markdown`
+  class, which fills a pane with padding and a scroll of its own. Pass
+  `className="md-inline"` for text in a `Card`, a row or a list item.
 
 For anything else:
 
-- Classes: `muted`, `error`.
+- Classes: `muted`, `error`, `notice`, and `file-markdown` with
+  `md-inline` for Markdown you render yourself. An extension runs in Roer's
+  own page, so Roer's classes apply to its markup.
 - Variables: `--roer-bg`, `--roer-fg`, `--roer-panel`, `--roer-border`,
   `--roer-muted`, `--roer-accent`, `--roer-warn`, `--roer-plus`,
   `--roer-minus`, `--roer-row`, `--roer-row-hover`, `--roer-selected`.
@@ -198,6 +260,42 @@ For anything else:
   when it scrolls.
 - Import a `.css` file from `app.tsx` and Roer adds it to the page. Prefix
   every class with the extension's id, because the page is shared.
+- For a view of one review, ticket or diff, copy the Changes tab's layout
+  (`src/extensions/changes/ReviewView.tsx`): a root of `display: flex;
+  flex-direction: column; height: 100%`, a header bar that doesn't scroll,
+  a summary of at most 40% of the height that scrolls, and then the
+  `DiffView` or the body with `flex: 1; min-height: 0`.
+
+### Views inside one tab
+
+Register one tab, and switch views inside it. The Changes tab does this: one
+tab, with a switch between "Pull request" and "Local changes". A list and
+the item opened from it are two views of one tab, not two tabs:
+
+```tsx
+function Issues() {
+  const [opened, setOpened] = useState<string | null>(null);
+  if (opened) return <IssueView id={opened} onBack={() => setOpened(null)} />;
+  return (
+    <Tabs
+      tabs={[
+        { title: "Mine", content: <IssueList query="for: me" onOpen={setOpened} /> },
+        { title: "Search", content: <Search onOpen={setOpened} /> },
+      ]}
+    />
+  );
+}
+```
+
+- Give the item's view a way back to the list, such as a "Back" button in
+  its header bar.
+- `Tabs` from `roer/ui` and `ChoicePicker` with `chips` switch the views of
+  one level. Keep the person's place in the tab's own state.
+- State in the tab lives until the next reload of the extension. Keep what
+  must outlive a reload, such as the person's decisions, in `localStorage`,
+  keyed by the item.
+- `roer.badge.set(tab, count)` puts what still waits on the person on the
+  tab, as the Changes tab does.
 
 ## Tools: agents handing things to the tab
 
@@ -258,7 +356,14 @@ person accepts, declines or instructs each comment.
 3. Every save rebuilds and reloads the tab. `extension_logs` (or `roer ext
    logs <id>`) has the build output, activation errors, and what a tab threw
    while rendering.
-4. Tell the person where the tab is and ask them to look at it.
+4. Tell the person where the tab is and ask them to look at it. Say what
+   you have not seen or tested: you can read the log, but not the rendered
+   tab.
+
+`roer.d.ts` declares only `roer`, `roer/ui` and `roer/server`, so `tsc` in
+the folder fails on `react`. To type-check, copy the folder to a scratch
+directory, install `@types/react` and `@types/bun` there, add a file with
+`declare module "*.css";`, and run `tsc --noEmit`.
 5. When they're happy, run `extension_install` (`roer ext install <dir>`).
    It copies the folder into `~/.roer/extensions/`, which keeps it across
    restarts.
