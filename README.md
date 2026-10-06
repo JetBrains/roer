@@ -87,9 +87,9 @@ Review the diff. Report bugs first, style last.
 
 ## Screenshots
 
-**Generative UI** — a plugin drafts a UI as A2UI v1.0 JSON and shows it live in Roer's panel; save it as a project-local bundle to reload later.
+**Extensions** — ask an agent for a tab ("make me a tab that…") and it writes one, built from Roer's own UI components; Roer reloads it on every save. Here, a tab with GitHub issues and todos.
 
-![Generative UI panel](docs/screenshots/Gen%20UI%20artifacts.png)
+![A Roer extension tab with GitHub issues and todos](docs/screenshots/Extension.png)
 
 **Go to File** (`⌘⇧O`) — blazing fast, fuzzy-matched jump to any changed file straight from the diff view.
 
@@ -108,12 +108,11 @@ Review the diff. Report bugs first, style last.
 ![Markdown preview](docs/screenshots/markdown.png)
 
 ## Features
-
-- **Session teleport (`M-h`)** — hand a running terminal session (`claude`, `vim`, a dev server) off to the Roer app mid-flight, and back again, with the process never restarting.
-- **New session launcher** — one button starts `roer new`; the launcher lists what's already running.
+- **Roer extensions** — ask an agent for a tab ("make me a tab that…") and it writes one, and Roer reloads it on every save. The plugins reuse the Roer UI components
+- **Worktrees support** — start your agent in any worktree
 - **Agents** — New session starts Claude Code, Codex, pi or Junie; the chevron beside it (`⌥⌘T`) picks one, and **Roer › Agents…** (`⌘,`) saves named setups with a model, reasoning effort, permissions and instructions. See [Agents](#agents).
 - **Branch diff view** — pick any branch, checked out or not, browse its commits against its base with each one's whole message, step through them, and view each commit's file diff. On the branch checked out, commit the local changes from there: leave the message empty and Claude writes one for you to read first (`roer commit-draft`).
 - **Pull request, in Changes** — for the session's branch, or any other picked in Changes, through your own `gh` login: let Claude draft the title and description, push and open the PR, request a Copilot review (Roer polls until it lands), accept, decline or instruct on each review thread right on the diff and send the decisions to the session, then merge. Under the hood it uses `roer send` (type a prompt into a session) and `roer pr-draft` (the agent hands a draft back).
 - **tmux-backed sessions** — sessions live in tmux on a private socket, a swappable detail behind the `roer` CLI.
-- **Go-to-file** — jump straight to any changed file from the diff view.
+- **Go-to** — jump straight to any changed file from the diff view or to the session
 - **Keyboard-friendly** — arrow keys and Cmd+arrows step through commits and files without touching the mouse.
