@@ -21,8 +21,28 @@ Changes, and rebuilds and reloads it on every save.
 
    The API is what the guide declares. Don't guess at anything else.
 
-2. Write the folder. `roer ext new <id>` is a starting point.
-3. Load it and read what comes back:
+2. Before you write code, settle where the data comes from:
+
+   - Look for a tool the project already has for the service, such as a
+     skill or a script, and prefer it to one you write.
+   - Run it once, read-only, and keep a real sample of its output. When it
+     can't run, stop and tell the user. Don't write a parser for output you
+     have not seen.
+   - Find its limits now: paging, sorting, filters, the size of one page.
+     A tool that reads only the first page decides what the views can be.
+   - Check each value you rely on against the sample: whether line numbers
+     count from 0 or 1, the form of paths, the query syntax.
+
+3. Ask the user which writes the tab may do, if any, and for each one
+   whether they want a confirm step before it. Read-only is a valid answer,
+   and so is "no confirm step". The guide's "Writing to another service"
+   shows how to build each answer.
+4. Plan one tab. Put a list and the item opened from it in that tab as two
+   views, as the Changes tab does.
+5. Write the folder. `roer ext new <id>` is a starting point. Edit its files
+   with the Read, Edit and Write tools: a shell command on a folder outside
+   the project can ask for approval each time.
+6. Load it and read what comes back:
 
    ```sh
    roer ext dev <dir>
@@ -30,9 +50,10 @@ Changes, and rebuilds and reloads it on every save.
 
    The `extension_dev` tool does the same. Fix every build or activation
    error it reports and run it again. `roer ext logs <id>` has what the tab
-   threw while rendering.
-4. Tell the user the tab is up, then iterate on what they say.
-5. When they're happy, run `roer ext install <dir>` (or `extension_install`)
+   threw while rendering, and what the server threw.
+7. Tell the user the tab is up and what you have not seen or tested, then
+   iterate on what they say.
+8. When they're happy, run `roer ext install <dir>` (or `extension_install`)
    so the extension survives a restart.
 
 Changing an existing extension means editing its folder: `roer ext list`

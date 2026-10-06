@@ -13,6 +13,7 @@
 import { useCallback, useEffect, useId, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 
 import { DiffPane, type DiffPaneProps } from "../DiffPane";
+import { Markdown } from "../Markdown";
 import type { NoteAction, NoteAnswer } from "../DiffNote";
 import { splitPatch, type DiffNote } from "../lib/diff";
 import type { FileChange } from "../lib/git";
@@ -213,7 +214,8 @@ export function SourcesSection({
 }
 
 /** Read-only: nothing here writes back, so there is no `onX` to thread
- * through the way `Requirements`/`Findings`/`Decisions` have one. */
+ * through the way `Requirements`/`Findings`/`Decisions` have one. A comment is
+ * Markdown, as a YouTrack ticket's or a GitHub issue's is. */
 export function CommentsSection({ items }: { items: Comment[] }) {
   return (
     <Section title="Comments">
@@ -224,7 +226,7 @@ export function CommentsSection({ items }: { items: Comment[] }) {
               <span className="gen-wi-comment-author">{c.author}</span>
               {c.at ? <span className="gen-wi-comment-at">{c.at}</span> : null}
             </div>
-            <p className="gen-wi-comment-text">{c.text}</p>
+            <Markdown className="gen-wi-comment-text md-inline">{c.text}</Markdown>
           </li>
         ))}
       </ul>
@@ -462,7 +464,7 @@ export function WorkItemDetail({
 
   return (
     <div className="gen-wi-detail">
-      {goal ? <p className="gen-wi-goal">{goal}</p> : null}
+      {goal ? <Markdown className="gen-wi-goal md-inline">{goal}</Markdown> : null}
 
       {decisions.length + findings.length > 0 ? (
         <Section title="Needs you" aside={waiting > 0 ? String(waiting) : "nothing open"}>
