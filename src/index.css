@@ -2019,7 +2019,7 @@ button.tree-row.selected {
   overflow-y: auto;
 }
 
-/* The Claude Code setup: a popup that is read, not typed into, so it has
+/* Agent integrations: a popup that is read, not typed into, so it has
    room for its explanations instead of a list. */
 .popup.setup {
   width: min(520px, 90vw);

@@ -36,7 +36,7 @@ const mocks = vi.hoisted(() => ({
   // The onEvent callback the component handed to spawnPty, so a test can
   // push PTY output through it.
   emit: { current: undefined as undefined | ((event: unknown) => void) },
-  // What the menu's "Claude Code Integration…" is heard with.
+  // What the menu's "Agent Integrations…" is heard with.
   setupMenu: { current: undefined as undefined | (() => void) },
   // The last terminal made, so a test can see what it was told to look like.
   terminal: {
@@ -136,6 +136,7 @@ vi.mock("./lib/claudeSetup", () => ({
   claudeSetupStatus: vi.fn(async () => ({
     claudeCode: true,
     skills: false,
+    sharedSkills: false,
     mcp: false,
     shouldPrompt: false,
   })),
@@ -258,35 +259,38 @@ beforeEach(() => {
 });
 
 describe("App", () => {
-  it("asks about Claude Code on a launch with nothing decided, and only then", async () => {
+  it("asks about agent integrations on a launch with nothing decided, and only then", async () => {
     vi.mocked(claudeSetupStatus).mockResolvedValueOnce({
       claudeCode: true,
       skills: false,
+      sharedSkills: false,
       mcp: false,
       shouldPrompt: true,
     });
     const { unmount } = render(<App />);
-    expect(await screen.findByRole("dialog", { name: /Claude Code/ })).toBeInTheDocument();
+    expect(await screen.findByRole("dialog", { name: /Agent Integrations/ })).toBeInTheDocument();
     unmount();
 
     render(<App />);
     await waitFor(() => expect(claudeSetupStatus).toHaveBeenCalledTimes(2));
-    expect(screen.queryByRole("dialog", { name: /Claude Code/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: /Agent Integrations/ })).not.toBeInTheDocument();
   });
 
-  it("opens the Claude Code setup from the menu, showing what is set up", async () => {
+  it("opens agent integrations from the menu, showing what is set up", async () => {
     render(<App />);
     await waitFor(() => expect(mocks.setupMenu.current).toBeDefined());
     vi.mocked(claudeSetupStatus).mockResolvedValueOnce({
       claudeCode: true,
       skills: true,
+      sharedSkills: true,
       mcp: false,
       shouldPrompt: false,
     });
 
     act(() => mocks.setupMenu.current?.());
 
-    expect(await screen.findByRole("checkbox", { name: /roer-handoff/ })).toBeChecked();
+    expect(await screen.findByRole("checkbox", { name: /Claude Code skills/ })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: /Roer authoring guidance for Codex/ })).toBeChecked();
     expect(screen.getByRole("checkbox", { name: /MCP server/ })).not.toBeChecked();
     expect(screen.getByRole("button", { name: "Cancel" })).toBeInTheDocument();
   });
