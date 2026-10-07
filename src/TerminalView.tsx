@@ -36,14 +36,21 @@ export interface TerminalViewProps {
   onPane?: (pane: string) => void;
   /** The PTY ended. After a handoff this is a terminal taking the session back. */
   onExit?: (code: number | null) => void;
+  /** Whether the terminal is on top of the stage. It takes the keyboard
+   * whenever it comes to the front, so a session just opened can be typed
+   * into without clicking it first. */
+  active?: boolean;
 }
 
 /**
  * Hosts the xterm.js instance and binds it to a PTY in the Rust backend.
  * The terminal owns its DOM node, so React only supplies the container.
  */
-export function TerminalView({ args, cwd, onAttached, onPane, onExit }: TerminalViewProps) {
+export function TerminalView({ args, cwd, onAttached, onPane, onExit, active = true }: TerminalViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const terminalRef = useRef<Terminal | null>(null);
+  const activeRef = useRef(active);
+  activeRef.current = active;
 
   // Args and callbacks are read through refs so a parent re-render can never
   // tear down a live session; only a genuinely different target should.
@@ -85,6 +92,8 @@ export function TerminalView({ args, cwd, onAttached, onPane, onExit }: Terminal
     terminal.loadAddon(fitAddon);
     terminal.open(container);
     fitAddon.fit();
+    terminalRef.current = terminal;
+    if (activeRef.current) terminal.focus();
 
     let ptyId: string | null = null;
     let disposed = false;
@@ -208,9 +217,14 @@ export function TerminalView({ args, cwd, onAttached, onPane, onExit }: Terminal
       // Ends Roer's client only. The session behind it keeps running with no
       // client, which is what makes it reattachable from a terminal.
       if (ptyId) void closePty(ptyId);
+      if (terminalRef.current === terminal) terminalRef.current = null;
       terminal.dispose();
     };
   }, [target, cwd]);
+
+  useEffect(() => {
+    if (active) terminalRef.current?.focus();
+  }, [active]);
 
   return <div ref={containerRef} data-testid="terminal" style={{ height: "100%" }} />;
 }

@@ -1156,6 +1156,7 @@ export function App() {
                 onAttached={handleAttached}
                 onPane={handlePane}
                 onExit={handleExit}
+                active={tabs.active === "terminal"}
               />
             ) : (
               <div className="empty">
