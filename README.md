@@ -2,7 +2,12 @@
 
 # roer
 
-Session host for agent terminals — a session moves freely between a terminal and the Roer app without restarting.
+Roer is a workspace for terminal coding agents.
+
+- Run any agent CLI.
+- Review its changes, from diff to merged PR.
+- Let it draw the UI you need, beside the session.
+
 Latest build: [v0.8.3](https://github.com/JetBrains/roer/releases/tag/v0.8.3).
 
 ## Install
