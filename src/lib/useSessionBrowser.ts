@@ -81,7 +81,7 @@ function folderName(path: string): string {
 export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrowserArgs) {
   const [status, setStatus] = useState<RoerStatus | null>(null);
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
-  const [claudeSessions, setClaudeSessions] = useState<ClaudeSession[]>([]);
+  const [pastSessions, setPastSessions] = useState<ClaudeSession[]>([]);
   const [roots, setRoots] = useState<Record<string, string>>({});
   // Each known directory's repository, which is what says a session in a
   // linked worktree is still the same project.
@@ -327,7 +327,7 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
       )) {
         found.set(cwd, repo);
       }
-      setClaudeSessions(claude);
+      setPastSessions(claude);
       // Grouped by repository, not by checkout: a worktree's sessions sit
       // with the rest of its project, and their rows say which worktree.
       setRoots(Object.fromEntries([...found].map(([cwd, repo]) => [cwd, repo?.main ?? cwd])));
@@ -929,6 +929,24 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
   // Search looks past the selected Workspace: finding a session is the
   // point when you don't know where it is.
   const allSessions = sessions.filter((session) => !isResumeScaffold(session));
+
+  // Codex keeps no record of which conversations are still running, as
+  // Claude Code does, so one open in a live session would be listed twice:
+  // live, and again as a past one to resume. Its pane carries the thread's
+  // name, which is how the live one is recognised — cut short as a past
+  // one's title is, at 80 characters.
+  const clipped = (title: string) => {
+    const chars = [...title.trim()];
+    return chars.length <= 80 ? chars.join("") : `${chars.slice(0, 80).join("")}…`;
+  };
+  const liveThreads = new Set(
+    sessions
+      .filter((session) => runningAgent(session) === "codex")
+      .map((session) => `${session.cwd}\0${clipped(paneLabel(session.title, session.command))}`),
+  );
+  const claudeSessions = pastSessions.filter(
+    (past) => past.agent !== "codex" || !liveThreads.has(`${past.cwd}\0${past.title}`),
+  );
 
   const visibleClaudeSessions = selectedProject
     ? claudeSessions.filter((session) => underProject(session.cwd, selectedProject))
