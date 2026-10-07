@@ -142,7 +142,24 @@ export const closePty = (id: string): Promise<void> => {
   return invoke("pty_close", { id });
 };
 
-export const listSessions = (): Promise<SessionInfo[]> => invoke("roer_sessions");
+/**
+ * A pane title without the folder Codex appends to it: Codex titles its
+ * terminal `<thread> | <project>`, and the project is already the heading
+ * the row sits under. Only a trailing part that names one of the session's
+ * own folders goes, so a title that merely has a `|` in it keeps it.
+ */
+export function withoutFolder(title: string | undefined, cwd: string): string | undefined {
+  const at = title?.lastIndexOf(" | ") ?? -1;
+  if (!title || at < 0) return title;
+  const folder = title.slice(at + 3).trim();
+  return folder && cwd.split(/[\\/]/).includes(folder) ? title.slice(0, at) : title;
+}
+
+export const listSessions = async (): Promise<SessionInfo[]> =>
+  (await invoke<SessionInfo[]>("roer_sessions")).map((session) => ({
+    ...session,
+    title: withoutFolder(session.title, session.cwd),
+  }));
 
 /** Ends the session `pane` is in, and everything running in it. */
 export const killSession = (pane: string): Promise<void> => invoke("roer_kill", { pane });

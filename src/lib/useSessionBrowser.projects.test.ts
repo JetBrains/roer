@@ -288,3 +288,23 @@ describe("filtering by project", () => {
     );
   });
 });
+
+describe("live Codex conversations", () => {
+  it("lists a conversation open in a live Codex session once, as the live one", async () => {
+    vi.mocked(listSessions).mockResolvedValue([
+      { id: "1", session: "w-1", pane: "%0", attached: true, cwd: "/tmp/w", command: "codex", title: "Weather tab" },
+      // The same name in another folder is another conversation.
+      { id: "2", session: "x-1", pane: "%1", attached: true, cwd: "/tmp/x", command: "codex", title: "Fix it" },
+    ]);
+    vi.mocked(listClaudeSessions).mockResolvedValue([
+      { id: "a", cwd: "/tmp/w", agent: "codex", title: "Weather tab", updatedAt: 2 },
+      { id: "b", cwd: "/tmp/w", agent: "codex", title: "Fix it", updatedAt: 1 },
+      // Claude Code says which of its own are live; the list has none of them.
+      { id: "c", cwd: "/tmp/w", title: "Weather tab", updatedAt: 1 },
+    ]);
+    const { result } = setUp([]);
+
+    await waitFor(() => expect(result.current.claudeSessions).toHaveLength(2));
+    expect(result.current.claudeSessions.map((past) => past.id)).toEqual(["b", "c"]);
+  });
+});
