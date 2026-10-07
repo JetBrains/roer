@@ -68,7 +68,7 @@ export function ClaudeSetup({ status, firstRun, onClose }: ClaudeSetupProps) {
                 </>
               ) : (
                 <>
-                  Once it is installed, <code>roer skills install</code> and{" "}
+                  Once it is installed, <code>roer skills install --agent claude</code> and{" "}
                   <code>roer mcp install</code> set it up.
                 </>
               )}
@@ -92,7 +92,7 @@ export function ClaudeSetup({ status, firstRun, onClose }: ClaudeSetupProps) {
               ) : (
                 <>
                   {" "}
-                  with <code>roer skills uninstall</code> and <code>roer mcp uninstall</code>.
+                  with <code>roer skills uninstall --agent claude</code> and <code>roer mcp uninstall</code>.
                 </>
               )}
             </p>

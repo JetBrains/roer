@@ -53,7 +53,7 @@ reaches for when the catalog can express the feature (§9).
 | Contribution points | Stage tab, replacing a built-in tab, side panel, sidebar section, badge, status and toast, commands and chords, context actions, session events |
 | Scope | User (`~/.roer/extensions/<id>/`) and session (a development folder, gone on restart). No project scope |
 | Agent loop | Errors and logs, a screenshot of the rendered tab, and comments the person pins in Comment mode |
-| Agents | An agent-neutral MCP resource and tools in `roer mcp`, and a thin skill for Claude Code |
+| Agents | An agent-neutral MCP resource and tools in `roer mcp`, plus an authoring skill for Claude Code, Codex, Pi and Junie |
 | Forking | Built-ins import only from the `roer` SDK, so `roer ext fork changes` copies a small, buildable folder |
 | Breakage | Best effort: error cards with "Send to agent", fallback to the built-in, safe mode, and a re-check after every Roer update |
 | Name | "Extensions". `roer ext`, `~/.roer/extensions` |
@@ -331,7 +331,8 @@ release workflow fetches a pinned version and checks its checksum.
 | Session | any folder, registered with `roer ext dev` | until the folder is removed or Roer restarts |
 
 ```
-roer ext new <id> [dir]                      scaffold <dir>/<id>, with roer.d.ts and a tsconfig
+roer ext new <id> [dir]                      scaffold in ~/.roer/extension-drafts/<id> by default;
+                                            explicit <dir> creates <dir>/<id>
 roer ext guide                               the agent's guide and the API's types
 roer ext dev <dir>                           session scope: build, load, watch, stream logs
 roer ext install <dir>                       copy into user scope (replaces the same id)
@@ -371,11 +372,12 @@ write the same file; the dialog is the only way so far.
 | `extension_comments` / `resolve_extension_comment` | Comment mode pins (§8) |
 | `list_extensions` | What's installed, its status and its unresolved comments |
 
-**A skill, for Claude Code.** `roer-extension-authoring` is installed the
-same way as `roer-handoff`. It is short: it triggers on "make me a tab /
-panel / extension for Roer" and says to read `roer:extensions/1` before
-writing anything. The real content lives in one place, the MCP resource, so
-every agent gets the same guide.
+**A skill, for coding agents.** `roer-extension-authoring` is installed by
+`roer skills install`: into Claude Code's skills directory, and into the
+shared `~/.agents/skills` directory that Codex, Pi and Junie read. It triggers
+on "make me a tab / panel / extension for Roer" and says to read
+`roer:extensions/1` when MCP is available, or run `roer ext guide` otherwise.
+The real guide lives in the CLI, so every agent gets the same API.
 
 **The loop the guide teaches.**
 

@@ -40,7 +40,7 @@ curl -fsSL https://github.com/JetBrains/roer/releases/download/__TAG__/roer-cli-
   | tar -xzf - -C ~/.roer/bin
 ln -sf ~/.roer/bin/roer ~/.local/bin/roer
 roer help
-roer skills install   # optional: Roer's skills for Claude Code
+roer skills install   # optional: Roer's skills for Claude Code, Codex, Pi and Junie
 roer mcp install      # optional: Roer's MCP server for Claude Code
 ```
 

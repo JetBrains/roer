@@ -348,8 +348,12 @@ person accepts, declines or instructs each comment.
 
 ## The loop
 
-1. Write the folder somewhere in the current project, or in a scratch
-   directory. `roer ext new <id>` writes a starting point.
+1. Keep extension source outside the project by default. `roer ext new <id>`
+   writes a starting point in `~/.roer/extension-drafts/<id>/` (or the
+   configured Roer home). Read project files as needed, but do not put the
+   extension in the project's source tree unless the person explicitly asks
+   to track and share its source there. Pass a parent directory to
+   `roer ext new <id> <dir>` when they do.
 2. Run `extension_dev` with the folder (or `roer ext dev <dir>`). Roer builds
    it, loads it as a session extension, and reports the build errors and
    activation errors. Fix them and run it again until it reports none.
@@ -366,7 +370,8 @@ directory, install `@types/react` and `@types/bun` there, add a file with
 `declare module "*.css";`, and run `tsc --noEmit`.
 5. When they're happy, run `extension_install` (`roer ext install <dir>`).
    It copies the folder into `~/.roer/extensions/`, which keeps it across
-   restarts.
+   restarts. The installed copy is active; later changes to the draft need
+   another install.
 
 A session extension is gone once Roer restarts, or once its folder is
 deleted. `roer ext list` shows what is loaded, and `roer ext remove <id>`

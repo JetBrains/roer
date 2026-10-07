@@ -132,13 +132,14 @@ usage:
                         read {\"title\": <subject>, \"body\": ...} JSON from
                         stdin and fill it into the commit box over the
                         local changes in the app's Changes tab
-  roer skills [list]    the skills that drive roer, and whether each is
-                        installed for Claude Code (~/.claude/skills)
-  roer skills install   link them there, so sessions in any project have
-                        them; the app does this itself on launch
+  roer skills [list]    the skills that drive roer, and whether they are
+                        installed for Claude Code and Codex/Pi/Junie
+  roer skills install   link them into ~/.claude/skills and the shared
+                        ~/.agents/skills; sessions in any project see them
   roer skills uninstall remove the ones roer installed, and keep the app
                         from installing them again
-                        (each takes --agent <name>; claude is the only one yet)
+                        (each takes --agent claude|codex|pi|junie|all;
+                        codex, pi and junie select the same shared install)
   roer mcp              serve Roer's MCP tools on stdio: showing a UI in a
                         session's Generative UI panel and reading its clicks
   roer mcp status       whether roer is registered with Claude Code

@@ -36,7 +36,7 @@ fn asked_record() -> std::path::PathBuf {
 #[tauri::command(async)]
 pub fn claude_setup_status() -> Result<SetupStatus, String> {
     let mcp = roer(&["mcp", "status"])?;
-    let skills = roer(&["skills", "list"])?;
+    let skills = roer(&["skills", "list", "--agent", "claude"])?;
     Ok(status(&mcp, &skills, asked_record().exists()))
 }
 
@@ -44,7 +44,7 @@ pub fn claude_setup_status() -> Result<SetupStatus, String> {
 /// an untick is `uninstall`, which also keeps the launch from redoing it.
 #[tauri::command(async)]
 pub fn claude_setup_apply(skills: bool, mcp: bool) -> Result<SetupStatus, String> {
-    roer(&["skills", if skills { "install" } else { "uninstall" }])?;
+    roer(&["skills", if skills { "install" } else { "uninstall" }, "--agent", "claude"])?;
     roer(&["mcp", if mcp { "install" } else { "uninstall" }])?;
     mark_asked()?;
     claude_setup_status()

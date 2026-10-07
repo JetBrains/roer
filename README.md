@@ -31,6 +31,8 @@ The first time the app finds Claude Code, it asks whether to set this and the sk
 
 Roer's Claude Code skill `roer-handoff` (in `.claude/skills`) ships with `roer`. Set up from the app, as above, it is linked into `~/.claude/skills`, so a session in any project can hand itself over. The link points into the app, so updating Roer updates it; the app never installs anything you have not said yes to.
 
+`roer skills install` installs both Roer skills for Claude Code and the portable `roer-extension-authoring` skill for Codex, Pi and Junie. The latter three read it from the shared `~/.agents/skills` directory. `--agent claude|codex|pi|junie` selects one target; Codex, Pi and Junie select the same shared installation, so removing it for one removes it for all three. The authoring skill tells agents to create extension drafts outside the project's source tree. The `roer ext` CLI works without an MCP connection.
+
 - `roer skills` lists them and whether each is installed.
 - `roer skills install` installs them yourself: from the Linux or Windows CLI, or after an uninstall.
 - `roer skills uninstall` removes them. Deleting one link by hand also sticks: the app never reinstalls a skill you removed.
@@ -46,7 +48,7 @@ A skill of the same name that you made yourself is never replaced or removed, an
 The Linux app is not published to releases yet (the `roer` command is); the `roer-linux` artifact of a [Nightly bundles](../../actions/workflows/nightly-bundles.yml) run has a `.deb`, `.rpm` and `.AppImage`.
 
 1. Install the `.deb` or `.rpm` (it pulls in `tmux`), or install `tmux` yourself and use the `.AppImage`.
-2. Unpack `roer-cli-<version>-linux-x86_64.tar.gz` and symlink `roer` onto your `PATH`. Keep `roer`, `roer-tmux.conf` and `skills/` together in the directory you unpack them into: `roer` finds them beside itself. `roer skills install` then links the skills for Claude Code, and `roer mcp install` registers the MCP server with it.
+2. Unpack `roer-cli-<version>-linux-x86_64.tar.gz` and symlink `roer` onto your `PATH`. Keep `roer`, `roer-tmux.conf` and `skills/` together in the directory you unpack them into: `roer` finds them beside itself. `roer skills install` then links the skills for Claude Code, Codex, Pi and Junie, and `roer mcp install` registers the MCP server with Claude Code.
 3. Using the AppImage: `export ROER_APP=/path/to/Roer.AppImage`, so `roer handoff` can start the app. The packages install it as `roer-app`, which `roer` finds on its own.
 
 Shortcuts use `Ctrl+Shift` instead of `⌘` (`Ctrl+Shift+T` new session, `Ctrl+Shift+O` Go to File) and `Alt+←`/`Alt+→` to step through commits, leaving plain `Ctrl` keys to the terminal.

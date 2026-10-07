@@ -1,6 +1,6 @@
 ---
 name: roer-extension-authoring
-description: Make a Roer extension, a tab of its own in the Roer app's stage written in React, and load and install it. Use when the user asks for a tab, panel or view in Roer that they will keep coming back to ("make me a tab that…"), or to change, fix or remove one they have.
+description: Make a Roer extension, a tab of its own in the Roer app's stage written in React, and load and install it. Use when the user asks for a tab, panel or view in Roer (including a likely typo such as "ruer") that they will keep coming back to, or to change, fix or remove one they have.
 ---
 
 # Make a Roer extension
@@ -39,9 +39,12 @@ Changes, and rebuilds and reloads it on every save.
    shows how to build each answer.
 4. Plan one tab. Put a list and the item opened from it in that tab as two
    views, as the Changes tab does.
-5. Write the folder. `roer ext new <id>` is a starting point. Edit its files
-   with the Read, Edit and Write tools: a shell command on a folder outside
-   the project can ask for approval each time.
+5. Write the folder outside the project's source tree. `roer ext new <id>`
+   creates `~/.roer/extension-drafts/<id>/` (or the configured Roer home).
+   Read the project's files as needed, but do not add extension source to the
+   project unless the user explicitly asks to track and share it there.
+   Edit the draft with the agent's file tools: a shell command on a folder
+   outside the project can ask for approval each time.
 6. Load it and read what comes back:
 
    ```sh
@@ -54,7 +57,8 @@ Changes, and rebuilds and reloads it on every save.
 7. Tell the user the tab is up and what you have not seen or tested, then
    iterate on what they say.
 8. When they're happy, run `roer ext install <dir>` (or `extension_install`)
-   so the extension survives a restart.
+   so the extension survives a restart. The installed copy is active; changes
+   to the draft need another install.
 
 Changing an existing extension means editing its folder: `roer ext list`
 shows where each one lives. Removing one is `roer ext remove <id>`.
