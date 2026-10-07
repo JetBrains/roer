@@ -24,6 +24,15 @@ struct Env {
     terminals: Cell<usize>,
 }
 
+#[test]
+fn extension_scaffold_defaults_outside_the_project() {
+    let env = Env::new("ext-draft");
+    let output = env.run(&["ext", "new", "hello"]);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert!(env.home.join("extension-drafts/hello/extension.json").is_file());
+    assert!(!env.dir.join("hello").exists());
+}
+
 impl Env {
     fn new(name: &str) -> Env {
         let root = std::env::temp_dir().join(format!("roer-cli-{name}-{}", std::process::id()));
@@ -887,9 +896,42 @@ fn m_h_hands_over_from_a_path_with_shell_characters_in_it() {
 fn skills(env: &Env, args: &[&str]) -> Output {
     let mut all = vec!["skills"];
     all.extend_from_slice(args);
+    all.extend_from_slice(&["--agent", "claude"]);
     let out = env.roer(&all).env("CLAUDE_CONFIG_DIR", claude_dir(env)).stdin(Stdio::null()).output().unwrap();
     assert!(out.status.success(), "roer {all:?}: {}", String::from_utf8_lossy(&out.stderr));
     out
+}
+
+#[test]
+fn skills_install_reaches_claude_codex_pi_and_junie() {
+    let env = Env::new("skills-all");
+    let user_home = env.dir.join("user");
+    let run = |args: &[&str]| {
+        let out = env.roer(args)
+            .env("HOME", &user_home)
+            .env("CLAUDE_CONFIG_DIR", claude_dir(&env))
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        out
+    };
+
+    run(&["skills", "install"]);
+    assert!(linked(&env, "roer-handoff"));
+    let shared = user_home.join(".agents/skills/roer-extension-authoring/SKILL.md");
+    assert!(shared.is_file(), "Codex, Pi and Junie all discover this location");
+    assert!(!user_home.join(".agents/skills/roer-handoff").exists());
+
+    let pi = String::from_utf8_lossy(&run(&["skills", "list", "--agent", "pi"]).stdout).into_owned();
+    assert!(pi.contains("roer-extension-authoring\tinstalled\t"), "{pi}");
+    run(&["skills", "uninstall", "--agent", "junie"]);
+    assert!(!shared.exists(), "the shared install is removed for Codex and Pi too");
+    assert!(linked(&env, "roer-handoff"), "the Claude install is independent");
+
+    run(&["skills", "install", "--agent", "pi"]);
+    assert!(shared.is_file(), "Pi can restore the shared install");
+    run(&["skills", "uninstall", "--agent", "codex"]);
+    assert!(!shared.exists(), "Codex selects the same shared install");
 }
 
 fn claude_dir(env: &Env) -> PathBuf {

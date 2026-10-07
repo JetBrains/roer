@@ -20,7 +20,8 @@ use crate::Fail;
 
 pub const USAGE: &str = "\
 usage:
-  roer ext new <id> [dir]     write a new extension's folder, <dir>/<id> (default: here)
+  roer ext new <id> [dir]     write a new extension's folder, <dir>/<id>
+                              (default: ~/.roer/extension-drafts/<id>)
   roer ext dev <dir>          load the folder as a session extension: built, loaded and
                               rebuilt on every save until Roer restarts; reports the
                               build's errors
@@ -49,7 +50,7 @@ const LOAD_WAIT: Duration = Duration::from_secs(10);
 
 pub fn run(cwd: &str, args: &[&str]) -> Result<(), Fail> {
     let out = match args {
-        ["new", id] => new(id, Path::new(cwd))?,
+        ["new", id] => new(id, &home().join("extension-drafts"))?,
         ["new", id, dir] => new(id, &absolute(cwd, dir))?,
         ["dev", dir] => dev(&absolute(cwd, dir))?,
         ["install", dir] => install(&absolute(cwd, dir))?,

@@ -1,6 +1,7 @@
 //! `roer skills`: puts the skills that drive roer where an agent looks for
 //! them, so a session in any project, not only this repository, knows how to
-//! hand itself over or show a plugin UI.
+//! hand itself over or make an extension. Claude Code gets both skills;
+//! Codex, Pi and Junie share extension authoring through `~/.agents/skills`.
 //!
 //! The skills ship beside the config: in the CLI archives next to roer, in
 //! Roer.app's Resources, and in a checkout under `.claude/skills`. Each is
@@ -27,7 +28,7 @@ const MARKER: &str = ".roer-installed";
 
 pub fn run(conf: &Path, args: &[&str]) -> Outcome {
     let (sub, rest) = args.split_first().map_or(("list", &[][..]), |(sub, rest)| (*sub, rest));
-    let mut agent = "claude";
+    let mut agent = "all";
     let mut auto = false;
     let mut rest = rest.iter();
     while let Some(arg) = rest.next() {
@@ -37,15 +38,27 @@ pub fn run(conf: &Path, args: &[&str]) -> Outcome {
             other => return Err(Fail::new(64, format!("unexpected argument: {other}"))),
         }
     }
-    let target = Target::new(agent)?;
-    let sources = sources(conf)?;
-    match sub {
-        "install" if auto => target.auto(&sources),
-        "install" => target.install(&sources),
-        "uninstall" => target.uninstall(),
-        "list" | "ls" => target.list(&sources),
-        other => Err(Fail::new(64, format!("unknown skills command: {other}"))),
+    let targets: Vec<Target> = match agent {
+        "all" => vec![Target::new("claude")?, Target::new("shared")?],
+        other => vec![Target::new(other)?],
+    };
+    let all_sources = sources(conf)?;
+    for target in targets {
+        let mut selected = all_sources.clone();
+        // roer-handoff's fallback resumes a Claude Code transcript. The
+        // other agents get the portable authoring skill only.
+        if target.agent == "shared" {
+            selected.retain(|(name, _)| name == "roer-extension-authoring");
+        }
+        match sub {
+            "install" if auto => target.auto(&selected)?,
+            "install" => target.install(&selected)?,
+            "uninstall" => target.uninstall()?,
+            "list" | "ls" => target.list(&selected)?,
+            other => return Err(Fail::new(64, format!("unknown skills command: {other}"))),
+        }
     }
+    Ok(())
 }
 
 /// The skills this roer carries, by name: the directories holding a SKILL.md
@@ -93,10 +106,12 @@ impl Target {
                 .filter(|v| !v.is_empty())
                 .map(PathBuf::from)
                 .unwrap_or_else(|| records::user_home().join(".claude")),
-            other => return Err(Fail::new(64, format!("unknown agent: {other} (known: claude)"))),
+            "codex" | "pi" | "junie" | "shared" => records::user_home().join(".agents"),
+            other => return Err(Fail::new(64, format!("unknown agent: {other} (known: claude, codex, pi, junie, all)"))),
         };
+        let state_agent = if agent == "claude" { "claude" } else { "shared" };
         Ok(Target {
-            agent: agent.to_owned(),
+            agent: state_agent.to_owned(),
             dir: root.join("skills"),
             root,
             state: records::home().join("skills"),
