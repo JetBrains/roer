@@ -39,7 +39,9 @@ const mocks = vi.hoisted(() => ({
   // What the menu's "Claude Code Integration…" is heard with.
   setupMenu: { current: undefined as undefined | (() => void) },
   // The last terminal made, so a test can see what it was told to look like.
-  terminal: { current: undefined as undefined | { options: { theme?: { background?: string } } } },
+  terminal: {
+    current: undefined as undefined | { options: { theme?: { background?: string } }; focus: () => void },
+  },
   // What the plugin-UI watcher delivers records to.
   pluginUi: { current: undefined as undefined | ((record: unknown) => void) },
   // The terminal's OSC handlers by number, so a test can play `roer` saying
@@ -69,6 +71,7 @@ vi.mock("@xterm/xterm", () => ({
     }
     loadAddon = vi.fn();
     open = vi.fn();
+    focus = vi.fn();
     write = vi.fn();
     writeln = vi.fn();
     dispose = vi.fn();
@@ -369,6 +372,14 @@ describe("App", () => {
     // The app's own working directory is an accident of how it was launched,
     // so a new session starts at home rather than there.
     expect(cwd).toBe("/Users/test");
+  });
+
+  it("puts the keyboard in a session as soon as it opens", async () => {
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /new session/i }));
+
+    await waitFor(() => expect(mocks.terminal.current?.focus).toHaveBeenCalled());
   });
 
   it("gives each new session its own terminal", async () => {
