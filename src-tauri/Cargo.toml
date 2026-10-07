@@ -1,6 +1,6 @@
 [package]
 name = "roer"
-version = "0.8.2"
+version = "0.8.3"
 description = "Session host for agent terminals"
 edition = "2021"
 rust-version = "1.77.2"
