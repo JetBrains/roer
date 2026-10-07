@@ -145,7 +145,7 @@ pub fn run() {
         .expect("error while running roer");
 }
 
-/// The app's own entry in the standard macOS menu: "Claude Code Integration…"
+/// The app's own entry in the standard macOS menu: "Agent Integrations…"
 /// under About, where an app keeps its settings, opening the same choice the
 /// first launch offers. Only on macOS, which has an app menu whether an app
 /// sets one or not; elsewhere setting one would add a menu bar to the window.
@@ -157,7 +157,7 @@ fn menu(app: &mut tauri::App) -> tauri::Result<()> {
 
         let handle = app.handle();
         let menu = Menu::default(handle)?;
-        let setup = MenuItem::with_id(handle, "claude-setup", "Claude Code Integration…", true, None::<&str>)?;
+        let setup = MenuItem::with_id(handle, "claude-setup", "Agent Integrations…", true, None::<&str>)?;
         let browser = MenuItem::with_id(handle, "browser-server", "Open This Session in a Browser…", true, None::<&str>)?;
         // Where a Mac app keeps its settings, and on the key every Mac app
         // opens them with.

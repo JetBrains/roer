@@ -297,10 +297,10 @@ fn dispatch(state: &Arc<AppState>, cmd: &str, args: Value, cid: Option<&str>) ->
         "agent_command" => call_res!(args, crate::agents::agent_command, "agent": Value),
         "agent_models" => call!(args, crate::agents::agent_models, "cli": String),
 
-        // claude code setup
+        // agent integrations
         "claude_setup_status" => call_res!(args, crate::claude_setup::claude_setup_status,),
         "claude_setup_apply" => {
-            call_res!(args, crate::claude_setup::claude_setup_apply, "skills": bool, "mcp": bool)
+            call_res!(args, crate::claude_setup::claude_setup_apply, "skills": bool, "sharedSkills": bool, "mcp": bool)
         }
         "claude_setup_dismiss" => call_res!(args, crate::claude_setup::claude_setup_dismiss,),
 

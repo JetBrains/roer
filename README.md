@@ -21,7 +21,7 @@ The quarantine step is required — the app is killed on first launch without it
 - **Any other MCP client** it is added to by hand: `show_ui` and `read_ui_actions` only, each naming the session to act on.
 - **Claude Code in a plain terminal**: nothing. The server connects but offers no tools and no instructions, so that session carries none of Roer in its context.
 
-The first time the app finds Claude Code, it asks whether to set this and the skill below up, explaining each; **Roer › Claude Code Integration…** asks again later, and unticking one there removes it. Set up, it is registered with Claude Code as `roer` (`claude mcp add-json --scope user`). It leaves the Claude app alone; `roer mcp install --client claude-desktop` adds it there (restart the Claude app to pick it up).
+The first time the app finds Claude Code, it offers agent integrations. **Roer › Agent Integrations…** opens the same controls later: shared extension authoring for Codex, Pi and Junie, plus Claude Code skills and MCP. Set up, the MCP server is registered with Claude Code as `roer` (`claude mcp add-json --scope user`). It leaves the Claude app alone; `roer mcp install --client claude-desktop` adds it there (restart the Claude app to pick it up).
 
 - `roer mcp status` says where it is registered.
 - `roer mcp install` registers it yourself, or after an uninstall.

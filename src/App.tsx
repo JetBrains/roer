@@ -156,7 +156,7 @@ export function App() {
   const [finding, setFinding] = useState(false);
   const [showingShortcuts, setShowingShortcuts] = useState(false);
   const [showingExtensions, setShowingExtensions] = useState(false);
-  // The Claude Code setup on screen, if it is: put there by the app on the
+  // The agent integrations dialog on screen, if it is: put there by the app on the
   // first launch that finds Claude Code, or asked for from the menu.
   const [setup, setSetup] = useState<{ status: SetupStatus; firstRun: boolean } | null>(null);
   // The agents New session offers, read for the directory it would start in,
@@ -366,7 +366,7 @@ export function App() {
           // just means not asking this time.
           if (!firstRun) {
             void message(String(cause), {
-              title: "Could not read the Claude Code setup",
+              title: "Could not read agent integrations",
               kind: "error",
             });
           }
