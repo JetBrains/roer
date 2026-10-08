@@ -50,7 +50,7 @@ A skill of the same name that you made yourself is never replaced or removed, an
 
 ### Linux
 
-1. Install the package from the release: `sudo apt install ./Roer_<version>_amd64.deb`, or `sudo dnf install ./Roer-<version>-1.x86_64.rpm`. It installs the app and the `roer` command together (`roer` in `/usr/lib/Roer/roer`, linked as `/usr/bin/roer`) and pulls in tmux.
+1. Install the package from the release: `sudo apt install ./Roer_<version>_amd64.deb`, or `sudo dnf install ./Roer-<version>-1.x86_64.rpm`. It installs the app and the `roer` command together (`roer` in `/usr/lib/Roer/cli`, linked as `/usr/bin/roer`) and pulls in tmux, which has to be 3.3 or later: Ubuntu 24.04 or Debian 12 and newer, or a current Fedora.
 2. In a new terminal: `roer shell`, then `M-h` to hand the session to the app.
 
 `Roer_<version>_amd64.AppImage` is the same app for any other distribution. Install tmux yourself, make the AppImage executable and open it once: it copies `roer` out of the image to `~/.roer/appimage-cli`, and links it as `~/.local/bin/roer` and the AppImage as `~/.local/bin/roer-app`, which `roer` starts the app by.
