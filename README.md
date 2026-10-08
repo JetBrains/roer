@@ -50,11 +50,12 @@ A skill of the same name that you made yourself is never replaced or removed, an
 
 ### Linux
 
-The Linux app is not published to releases yet (the `roer` command is); the `roer-linux` artifact of a [Nightly bundles](../../actions/workflows/nightly-bundles.yml) run has a `.deb`, `.rpm` and `.AppImage`.
+1. Install the package from the release: `sudo apt install ./Roer_<version>_amd64.deb`, or `sudo dnf install ./Roer-<version>-1.x86_64.rpm`. It installs the app and the `roer` command together (`roer` in `/usr/lib/Roer/roer`, linked as `/usr/bin/roer`) and pulls in tmux.
+2. In a new terminal: `roer shell`, then `M-h` to hand the session to the app.
 
-1. Install the `.deb` or `.rpm` (it pulls in `tmux`), or install `tmux` yourself and use the `.AppImage`.
-2. Unpack `roer-cli-<version>-linux-x86_64.tar.gz` and symlink `roer` onto your `PATH`. Keep `roer`, `roer-tmux.conf` and `skills/` together in the directory you unpack them into: `roer` finds them beside itself. `roer skills install` then links the skills for Claude Code, Codex, Pi and Junie, and `roer mcp install` registers the MCP server with Claude Code.
-3. Using the AppImage: `export ROER_APP=/path/to/Roer.AppImage`, so `roer handoff` can start the app. The packages install it as `roer-app`, which `roer` finds on its own.
+`Roer_<version>_amd64.AppImage` is the same app for any other distribution. Install tmux yourself, make the AppImage executable and open it once: it copies `roer` out of the image to `~/.roer/appimage-cli`, and links it as `~/.local/bin/roer` and the AppImage as `~/.local/bin/roer-app`, which `roer` starts the app by.
+
+`roer-cli-<version>-linux-x86_64.tar.gz` is the command alone, for use without the app. Unpack it and symlink `roer` onto your `PATH`, keeping `roer`, `roer-tmux.conf` and `skills/` together: `roer` finds them beside itself. `roer skills install` then links the skills for Claude Code, Codex, Pi and Junie, and `roer mcp install` registers the MCP server with Claude Code. Between releases, the `roer-linux` artifact of a [Nightly bundles](../../actions/workflows/nightly-bundles.yml) run has the packages.
 
 Shortcuts use `Ctrl+Shift` instead of `⌘` (`Ctrl+Shift+T` new session, `Ctrl+Shift+O` Go to File) and `Alt+←`/`Alt+→` to step through commits, leaving plain `Ctrl` keys to the terminal.
 

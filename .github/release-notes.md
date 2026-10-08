@@ -23,7 +23,19 @@ changes the answer later, including taking either one back.
 
 ## Linux
 
-The `roer` command alone, with tmux 3.3 or later installed yourself:
+The app and the `roer` command together, with tmux pulled in:
+
+```sh
+sudo apt install ./Roer___VERSION___amd64.deb       # Debian, Ubuntu
+sudo dnf install ./Roer-__VERSION__-1.x86_64.rpm    # Fedora, RHEL
+roer shell
+```
+
+`Roer___VERSION___amd64.AppImage` is the same app for any other distribution,
+with tmux 3.3 or later installed yourself. Open it once: it links `roer` into
+`~/.local/bin`.
+
+Or the `roer` command alone, with tmux 3.3 or later installed yourself:
 
 ```sh
 mkdir -p ~/.roer/bin ~/.local/bin

@@ -179,10 +179,10 @@
 
       <div class="os-pane" role="tabpanel" id="pane-linux" aria-labelledby="os-linux" hidden>
         <ol class="steps">
-          <li><p>Get the <code>.deb</code>, <code>.rpm</code> or <code>.AppImage</code> and the Linux CLI tarball.</p>
+          <li><p>Get the <code>.deb</code>, <code>.rpm</code> or <code>.AppImage</code>.</p>
             <div class="dl-row"><a class="btn btn-primary btn-sm" href="{{dl.linux.href}}">{{dl.linux.label}}</a></div></li>
-          <li><p>Install the <code>.deb</code> or <code>.rpm</code>. It pulls in tmux for you. Using the AppImage? Install tmux yourself.</p></li>
-          <li><p>Unpack the CLI, put <code>roer</code> on your <code>PATH</code>, and start a session.</p>
+          <li><p>Install the <code>.deb</code> or <code>.rpm</code>. It installs the app and <code>roer</code> together and pulls in tmux. Using the AppImage? Install tmux yourself and open the app once; it puts <code>roer</code> on your <code>PATH</code>.</p></li>
+          <li><p>Open a new terminal and start a session.</p>
             <pre class="cmd"><code>roer shell</code><button type="button" class="copy">Copy</button></pre></li>
         </ol>
         <p class="note">Shortcuts use <kbd>Ctrl</kbd><kbd>Shift</kbd> in place of <kbd>⌘</kbd>, leaving plain <kbd>Ctrl</kbd> keys to the terminal.</p>
