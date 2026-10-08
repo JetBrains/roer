@@ -69,13 +69,13 @@ fn link() -> std::io::Result<()> {
     if cfg!(target_os = "linux") && appimage.is_none() {
         // A package: /usr/bin/roer is its own.
         if std::fs::symlink_metadata(&user_link).is_ok_and(|meta| meta.file_type().is_symlink()) {
-            link_user(&cli, &user_link)?;
+            link_user(&cli, &user_link, is_roer_cli)?;
         }
     } else {
-        link_user(&cli, &user_link)?;
+        link_user(&cli, &user_link, is_roer_cli)?;
     }
     if let Some(appimage) = appimage {
-        link_user(Path::new(&appimage), &home.join(".local/bin/roer-app"))?;
+        link_user(Path::new(&appimage), &home.join(".local/bin/roer-app"), is_roer_appimage)?;
     }
     install_auto(&cli, "skills");
     install_auto(&cli, "mcp");
@@ -145,13 +145,14 @@ fn install_auto(cli: &Path, what: &str) {
     }
 }
 
-/// `link` pointing at `cli`, replacing a link that points elsewhere: an older
-/// app's, or the one the CLI tarball's install instructions made. A real
-/// file there is someone's own install and is left alone.
-fn link_user(cli: &Path, link: &Path) -> std::io::Result<()> {
+/// `link` pointing at `cli`, replacing a link that points at another of
+/// Roer's (an older app's, or the one the CLI tarball's install instructions
+/// made: `ours` says which) or at nothing. A real file there, or a link to
+/// another tool of the same name, is someone else's and is left alone.
+fn link_user(cli: &Path, link: &Path, ours: fn(&Path) -> bool) -> std::io::Result<()> {
     match std::fs::symlink_metadata(link) {
         Ok(meta) if meta.file_type().is_symlink() => {
-            if points_at(link, cli) {
+            if points_at(link, cli) || !replaceable(link, ours) {
                 return Ok(());
             }
             std::fs::remove_file(link)?;
@@ -175,12 +176,40 @@ fn symlink(_target: &Path, _link: &Path) -> std::io::Result<()> {
 }
 
 /// Whether `link` needs nothing from us: it already points at `cli`, or it
-/// is a real file, someone's own install that `ln -sf` would destroy.
+/// is a real file or another tool's link, someone's own install that
+/// `ln -sf` would destroy.
 fn taken(link: &Path, cli: &Path) -> bool {
     match std::fs::symlink_metadata(link) {
-        Ok(meta) => !meta.file_type().is_symlink() || points_at(link, cli),
+        Ok(meta) => !meta.file_type().is_symlink() || points_at(link, cli) || !replaceable(link, is_roer_cli),
         Err(_) => false,
     }
+}
+
+/// Whether the link at `link` may be pointed elsewhere: it leads to nothing,
+/// or to something `ours` recognises as Roer's.
+fn replaceable(link: &Path, ours: fn(&Path) -> bool) -> bool {
+    match std::fs::canonicalize(link) {
+        Ok(real) => ours(&real),
+        Err(_) => true,
+    }
+}
+
+/// A `roer` that is Roer's: every install of it keeps `roer-tmux.conf`
+/// beside it, or in `Contents/Resources` for the one inside Roer.app. Another
+/// program called `roer` has no reason to.
+fn is_roer_cli(real: &Path) -> bool {
+    real.with_file_name("roer-tmux.conf").is_file()
+        || real
+            .parent()
+            .filter(|dir| dir.ends_with("Contents/MacOS"))
+            .and_then(Path::parent)
+            .is_some_and(|contents| contents.join("Resources/roer-tmux.conf").is_file())
+}
+
+/// A `roer-app` that is Roer's, as far as a link to it can tell: an AppImage,
+/// which only this app links there.
+fn is_roer_appimage(real: &Path) -> bool {
+    real.extension().is_some_and(|ext| ext == "AppImage")
 }
 
 fn points_at(link: &Path, target: &Path) -> bool {
@@ -243,7 +272,7 @@ fn link_system(cli: &Path) -> bool {
 
 #[cfg(all(test, unix))]
 mod tests {
-    use super::{copy_dir, link_user, points_at, taken};
+    use super::{copy_dir, is_roer_cli, link_user, points_at, taken};
 
     fn dir(name: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!("roer-cli-link-{name}-{}", std::process::id()));
@@ -256,17 +285,51 @@ mod tests {
     fn links_where_nothing_was() {
         let dir = dir("new");
         let link = dir.join(".local/bin/roer");
-        link_user(&dir.join("Roer.app/Contents/MacOS/roer"), &link).unwrap();
+        link_user(&dir.join("Roer.app/Contents/MacOS/roer"), &link, is_roer_cli).unwrap();
         assert!(points_at(&link, &dir.join("Roer.app/Contents/MacOS/roer")));
     }
 
     #[test]
-    fn replaces_a_link_to_another_roer() {
+    fn replaces_a_link_to_another_roer_or_to_nothing() {
         let dir = dir("moved");
+        let tarball = dir.join(".roer/bin");
+        std::fs::create_dir_all(&tarball).unwrap();
+        std::fs::write(tarball.join("roer"), "#!/bin/sh\n").unwrap();
+        std::fs::write(tarball.join("roer-tmux.conf"), "").unwrap();
         let link = dir.join("roer");
-        std::os::unix::fs::symlink(dir.join(".roer/bin/roer"), &link).unwrap();
-        link_user(&dir.join("Roer.app/Contents/MacOS/roer"), &link).unwrap();
+        std::os::unix::fs::symlink(tarball.join("roer"), &link).unwrap();
+        link_user(&dir.join("Roer.app/Contents/MacOS/roer"), &link, is_roer_cli).unwrap();
         assert!(points_at(&link, &dir.join("Roer.app/Contents/MacOS/roer")));
+
+        let stale = dir.join("stale");
+        std::os::unix::fs::symlink(dir.join("gone/roer"), &stale).unwrap();
+        link_user(&dir.join("Roer.app/Contents/MacOS/roer"), &stale, is_roer_cli).unwrap();
+        assert!(points_at(&stale, &dir.join("Roer.app/Contents/MacOS/roer")));
+    }
+
+    #[test]
+    fn leaves_a_link_to_another_tool_called_roer_alone() {
+        let dir = dir("other");
+        let other = dir.join("opt/other/roer");
+        std::fs::create_dir_all(other.parent().unwrap()).unwrap();
+        std::fs::write(&other, "#!/bin/sh\n").unwrap();
+        let link = dir.join("roer");
+        std::os::unix::fs::symlink(&other, &link).unwrap();
+        link_user(&dir.join("Roer.app/Contents/MacOS/roer"), &link, is_roer_cli).unwrap();
+        assert!(points_at(&link, &other));
+        assert!(taken(&link, &dir.join("Roer.app/Contents/MacOS/roer")));
+    }
+
+    #[test]
+    fn knows_the_roer_inside_roer_app() {
+        let dir = dir("bundle");
+        let contents = dir.join("Roer.app/Contents");
+        std::fs::create_dir_all(contents.join("MacOS")).unwrap();
+        std::fs::create_dir_all(contents.join("Resources")).unwrap();
+        std::fs::write(contents.join("MacOS/roer"), "").unwrap();
+        std::fs::write(contents.join("Resources/roer-tmux.conf"), "").unwrap();
+        assert!(is_roer_cli(&contents.join("MacOS/roer")));
+        assert!(!is_roer_cli(&dir.join("elsewhere/roer")));
     }
 
     #[test]
@@ -307,7 +370,7 @@ mod tests {
         let dir = dir("own");
         let link = dir.join("roer");
         std::fs::write(&link, "#!/bin/sh\n").unwrap();
-        link_user(&dir.join("Roer.app/Contents/MacOS/roer"), &link).unwrap();
+        link_user(&dir.join("Roer.app/Contents/MacOS/roer"), &link, is_roer_cli).unwrap();
         assert_eq!(std::fs::read_to_string(&link).unwrap(), "#!/bin/sh\n");
     }
 }
