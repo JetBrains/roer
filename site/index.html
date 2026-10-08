@@ -157,7 +157,7 @@
     <div class="wrap">
       <p class="eyebrow">Install</p>
       <h2>Up and running in minutes.</h2>
-      <p class="body">Roer {{release.version}} · released {{release.date}}. The builds are unsigned while Roer is in preview.</p>
+      <p class="body">Roer {{release.version}} · released {{release.date}}. The macOS app is signed and notarized, and the Windows builds are signed by JetBrains.</p>
 
       <div class="os-tabs" role="tablist" aria-label="Operating system">
         <button type="button" role="tab" id="os-mac" aria-controls="pane-mac" aria-selected="true">macOS</button>
@@ -171,8 +171,7 @@
             <div class="dl-row">
               <a class="btn btn-primary btn-sm" href="{{dl.mac.app}}">{{dl.mac.appName}}</a>
             </div></li>
-          <li><p>Drag Roer to Applications, then clear the quarantine flag. Without it, macOS stops the app on first launch.</p>
-            <pre class="cmd"><code>xattr -dr com.apple.quarantine /Applications/Roer.app</code><button type="button" class="copy">Copy</button></pre></li>
+          <li><p>Drag Roer to Applications.</p></li>
           <li><p>Open Roer once. It puts <code>roer</code> on your <code>PATH</code>, so a new terminal can start a session.</p>
             <pre class="cmd"><code>roer shell</code><button type="button" class="copy">Copy</button></pre></li>
         </ol>
@@ -191,7 +190,7 @@
 
       <div class="os-pane" role="tabpanel" id="pane-win" aria-labelledby="os-win" hidden>
         <ol class="steps">
-          <li><p>Run <code>Roer_&lt;version&gt;_x64-setup.exe</code>. It installs the app and <code>roer</code> together and adds it to your <code>PATH</code>. SmartScreen will warn, because preview builds are unsigned.</p>
+          <li><p>Run <code>Roer_&lt;version&gt;_x64-setup.exe</code>. It installs the app and <code>roer</code> together and adds it to your <code>PATH</code>.</p>
             <div class="dl-row"><a class="btn btn-primary btn-sm" href="{{dl.win.href}}">{{dl.win.label}}</a></div></li>
           <li><p>Open a new PowerShell window and start a session. No WSL needed.</p>
             <pre class="cmd"><code>roer shell</code><button type="button" class="copy">Copy</button></pre></li>

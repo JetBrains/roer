@@ -7,16 +7,9 @@ for Apple silicon and Intel.
 ## Install
 
 1. Open `Roer___VERSION___universal.dmg` and drag **Roer** to Applications.
-2. Clear the quarantine flag:
-
-   ```sh
-   xattr -dr com.apple.quarantine /Applications/Roer.app
-   ```
-
-   This build is **unsigned**. Until notarization is in place, macOS quarantines the app on
-   first launch and it is killed instead of opening. The command above is the
-   fix; it is not optional.
-3. Open Roer once. It puts the `roer` command on your `PATH`; in a new
+   The app is signed by JetBrains and notarized by Apple, so it opens
+   straight from the download.
+2. Open Roer once. It puts the `roer` command on your `PATH`; in a new
    terminal, `roer help`.
 
 The app carries `roer` and the tmux it drives, so there is nothing else to
@@ -50,8 +43,8 @@ be split up — `roer help` succeeding is what proves the config was found.
 ## Windows (preview)
 
 Native, in PowerShell: sessions run on [psmux](https://github.com/psmux/psmux),
-a tmux reimplementation on ConPTY. The downloads are **unsigned**, so
-SmartScreen warns before installing.
+a tmux reimplementation on ConPTY. The installers, `roer-app.exe` and
+`roer.exe` are signed by JetBrains.
 
 1. Run `Roer___VERSION___x64-setup.exe`. It installs the app and the `roer`
    command together, and adds the command's folder to your user `PATH`.
