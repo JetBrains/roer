@@ -2,10 +2,10 @@
   "$schema": "https://schema.tauri.app/config/2",
   "bundle": {
     "resources": {
-      "linux-cli/roer": "roer/roer",
-      "linux-cli/roer-tmux.conf": "roer/roer-tmux.conf",
-      "linux-cli/skills/roer-handoff/SKILL.md": "roer/skills/roer-handoff/SKILL.md",
-      "linux-cli/skills/roer-extension-authoring/SKILL.md": "roer/skills/roer-extension-authoring/SKILL.md"
+      "linux-cli/roer": "cli/roer",
+      "linux-cli/roer-tmux.conf": "cli/roer-tmux.conf",
+      "linux-cli/skills/roer-handoff/SKILL.md": "cli/skills/roer-handoff/SKILL.md",
+      "linux-cli/skills/roer-extension-authoring/SKILL.md": "cli/skills/roer-extension-authoring/SKILL.md"
     },
     "linux": {
       "deb": {

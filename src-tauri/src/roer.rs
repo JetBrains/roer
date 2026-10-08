@@ -26,7 +26,7 @@ pub fn bin() -> String {
 /// The `roer` installed with the app, with the engine it drives: the Windows
 /// installer puts it beside the app in `roer\`, Roer.app carries it in
 /// `Contents/MacOS` with its tmux, and the Linux packages in
-/// `/usr/lib/Roer/roer`. Preferred over `PATH` so the app always talks to the
+/// `/usr/lib/Roer/cli`. Preferred over `PATH` so the app always talks to the
 /// version it shipped with.
 ///
 /// From an AppImage, the copy `cli_link` makes of it once there is one: the
@@ -64,7 +64,7 @@ fn bundled_beside(exe: &std::path::Path) -> Option<PathBuf> {
     } else if cfg!(target_os = "macos") && dir.ends_with("Contents/MacOS") {
         Some(dir.join("roer"))
     } else if cfg!(target_os = "linux") && dir.ends_with("usr/bin") {
-        Some(dir.parent()?.join("lib/Roer/roer/roer"))
+        Some(dir.parent()?.join("lib/Roer/cli/roer"))
     } else {
         None
     }
@@ -389,11 +389,11 @@ mod tests {
         use std::path::Path;
         assert_eq!(
             bundled_beside(Path::new("/usr/bin/roer-app")),
-            Some(PathBuf::from("/usr/lib/Roer/roer/roer"))
+            Some(PathBuf::from("/usr/lib/Roer/cli/roer"))
         );
         assert_eq!(
             bundled_beside(Path::new("/tmp/.mount_RoerAb12/usr/bin/roer-app")),
-            Some(PathBuf::from("/tmp/.mount_RoerAb12/usr/lib/Roer/roer/roer"))
+            Some(PathBuf::from("/tmp/.mount_RoerAb12/usr/lib/Roer/cli/roer"))
         );
         assert_eq!(bundled_beside(Path::new("/checkout/src-tauri/target/debug/roer")), None);
     }

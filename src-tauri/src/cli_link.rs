@@ -289,7 +289,7 @@ mod tests {
     fn copies_a_cli_directory_whole_and_keeps_roer_executable() {
         use std::os::unix::fs::PermissionsExt;
         let dir = dir("copy");
-        let from = dir.join("usr/lib/Roer/roer");
+        let from = dir.join("usr/lib/Roer/cli");
         std::fs::create_dir_all(from.join("skills/roer-handoff")).unwrap();
         std::fs::write(from.join("roer"), "#!/bin/sh\n").unwrap();
         std::fs::set_permissions(from.join("roer"), std::fs::Permissions::from_mode(0o755)).unwrap();

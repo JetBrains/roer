@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Stages what the Linux packages carry besides the app where
 # tauri.linux-cli.conf.json expects it: the roer command, its config and the
-# skills. The .deb and .rpm install them in /usr/lib/Roer/roer and link roer
+# skills. The .deb and .rpm install them in /usr/lib/Roer/cli and link roer
 # as /usr/bin/roer (src-tauri/linux/post-install.sh), so installing the
 # package is the whole install; the AppImage carries the same files and the
 # app puts them on PATH itself (src-tauri/src/cli_link.rs). tmux is the
