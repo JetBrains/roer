@@ -8,6 +8,6 @@ case "$1" in
     remove | purge | 0) ;;
     *) exit 0 ;;
 esac
-if [ "$(readlink /usr/bin/roer 2>/dev/null)" = /usr/lib/Roer/roer/roer ]; then
+if [ "$(readlink /usr/bin/roer 2>/dev/null)" = /usr/lib/Roer/cli/roer ]; then
     rm -f /usr/bin/roer
 fi
