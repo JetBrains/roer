@@ -41,8 +41,7 @@ be split up — `roer help` succeeding is what proves the config was found.
 ## Windows (preview)
 
 Native, in PowerShell: sessions run on [psmux](https://github.com/psmux/psmux),
-a tmux reimplementation on ConPTY. The installers, `roer-app.exe` and
-`roer.exe` are signed by JetBrains.
+a tmux reimplementation on ConPTY.
 
 1. Run `Roer___VERSION___x64-setup.exe`. It installs the app and the `roer`
    command together, and adds the command's folder to your user `PATH`.
