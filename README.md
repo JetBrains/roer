@@ -16,7 +16,7 @@ Latest build: [v0.8.4](https://github.com/JetBrains/roer/releases/tag/v0.8.4).
 2. Drag `Roer.app` to Applications.
 3. Open Roer once. It puts the `roer` command on your `PATH`, and a new terminal can run `roer shell`.
 
-The app is signed by JetBrains and notarized by Apple, so it opens straight from the download. Nothing else to install: the app carries `roer` and the tmux it drives. On launch it links `roer` into `~/.local/bin`, where Claude Code's installer puts `claude`. If your shell cannot find it there, the app asks once for your password and links it into `/usr/local/bin` instead. A `roer` you installed yourself as a regular file is left alone.
+Nothing else to install: the app carries `roer` and the tmux it drives. On launch it links `roer` into `~/.local/bin`, where Claude Code's installer puts `claude`. If your shell cannot find it there, the app asks once for your password and links it into `/usr/local/bin` instead. A `roer` you installed yourself as a regular file is left alone.
 
 ### MCP server
 
