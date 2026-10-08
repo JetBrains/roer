@@ -8,11 +8,11 @@ Roer is a workspace for terminal coding agents.
 - Review its changes, from diff to merged PR.
 - Let it draw the UI you need, beside the session.
 
-Latest build: [v0.8.3](https://github.com/JetBrains/roer/releases/tag/v0.8.3).
+Latest build: [v0.8.4](https://github.com/JetBrains/roer/releases/tag/v0.8.4).
 
 ## Install
 
-1. Download `Roer_<version>_universal.dmg` from the [release](https://github.com/JetBrains/roer/releases/tag/v0.8.3) (one build, Apple silicon + Intel, macOS 15+).
+1. Download `Roer_<version>_universal.dmg` from the [release](https://github.com/JetBrains/roer/releases/tag/v0.8.4) (one build, Apple silicon + Intel, macOS 15+).
 2. Drag `Roer.app` to Applications.
 3. Open Roer once. It puts the `roer` command on your `PATH`, and a new terminal can run `roer shell`.
 
