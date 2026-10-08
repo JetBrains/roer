@@ -23,7 +23,8 @@ changes the answer later, including taking either one back.
 
 ## Linux
 
-The app and the `roer` command together, with tmux pulled in:
+The app and the `roer` command together, with tmux 3.3 or later pulled in
+(Ubuntu 24.04, Debian 12, current Fedora):
 
 ```sh
 sudo apt install ./Roer___VERSION___amd64.deb       # Debian, Ubuntu

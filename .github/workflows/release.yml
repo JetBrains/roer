@@ -130,12 +130,15 @@ jobs:
       - name: Install and remove the .deb
         run: |
           set -euo pipefail
+          # roer needs tmux 3.3 or later, so on an older one the install has to
+          # refuse rather than leave a Roer that cannot start a session.
+          dpkg-deb -f "linux/Roer_${VERSION}_amd64.deb" Depends | tee /dev/stderr | grep -qF 'tmux (>= 3.3)'
           sudo apt-get update
           sudo apt-get install -y "./linux/Roer_${VERSION}_amd64.deb"
-          ls -l /usr/bin/roer /usr/bin/roer-app /usr/lib/Roer/roer
-          [ "$(readlink /usr/bin/roer)" = /usr/lib/Roer/roer/roer ]
-          test -x /usr/lib/Roer/roer/roer
-          test -f /usr/lib/Roer/roer/skills/roer-handoff/SKILL.md
+          ls -l /usr/bin/roer /usr/bin/roer-app /usr/lib/Roer/cli
+          [ "$(readlink /usr/bin/roer)" = /usr/lib/Roer/cli/roer ]
+          test -x /usr/lib/Roer/cli/roer
+          test -f /usr/lib/Roer/cli/skills/roer-handoff/SKILL.md
           command -v tmux
           # From /usr/bin, as a new terminal finds it: through the link to its
           # config, with no checkout to fall back on.
@@ -152,20 +155,21 @@ jobs:
           sudo apt-get install -y rpm
           rpm=$(rpm -qlp "linux/Roer-${VERSION}-1.x86_64.rpm")
           printf '%s\n' "$rpm"
-          for f in /usr/bin/roer-app /usr/lib/Roer/roer/roer /usr/lib/Roer/roer/roer-tmux.conf \
-                   /usr/lib/Roer/roer/skills/roer-handoff/SKILL.md; do
+          for f in /usr/bin/roer-app /usr/lib/Roer/cli/roer /usr/lib/Roer/cli/roer-tmux.conf \
+                   /usr/lib/Roer/cli/skills/roer-handoff/SKILL.md; do
             grep -qx "$f" <<< "$rpm" || { echo "The .rpm has no $f" >&2; exit 1; }
           done
           # post-install.sh and post-remove.sh, which link and unlink /usr/bin/roer.
+          rpm -qpR "linux/Roer-${VERSION}-1.x86_64.rpm" | tee /dev/stderr | grep -qx 'tmux >= 3.3'
           scripts=$(rpm -qp --scripts "linux/Roer-${VERSION}-1.x86_64.rpm")
           printf '%s\n' "$scripts"
-          grep -q 'cli=/usr/lib/Roer/roer/roer' <<< "$scripts"
+          grep -q 'cli=/usr/lib/Roer/cli/roer' <<< "$scripts"
           grep -q 'readlink /usr/bin/roer' <<< "$scripts"
           appimage="linux/Roer_${VERSION}_amd64.AppImage"
           chmod +x "$appimage"
           (cd linux && "./$(basename "$appimage")" --appimage-extract > /dev/null)
-          test -x linux/squashfs-root/usr/lib/Roer/roer/roer
-          (cd / && "$GITHUB_WORKSPACE/linux/squashfs-root/usr/lib/Roer/roer/roer" help > /dev/null)
+          test -x linux/squashfs-root/usr/lib/Roer/cli/roer
+          (cd / && "$GITHUB_WORKSPACE/linux/squashfs-root/usr/lib/Roer/cli/roer" help > /dev/null)
 
   # The roer command on Linux, for anyone who wants it without the app. It is
   # a small crate with no Tauri in it, so this is a minute of cargo rather

@@ -12,10 +12,10 @@
     ],
     "linux": {
       "deb": {
-        "depends": ["tmux"]
+        "depends": ["tmux (>= 3.3)"]
       },
       "rpm": {
-        "depends": ["tmux"]
+        "depends": ["tmux >= 3.3"]
       }
     }
   }
