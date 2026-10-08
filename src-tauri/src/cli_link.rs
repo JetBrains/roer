@@ -13,6 +13,15 @@
 //! the setting up itself is the person's choice, asked for in the app (see
 //! `claude_setup.rs`). `roer skills` and `roer mcp` own what that means,
 //! including staying out once the person removes them.
+//!
+//! On Linux the .deb and .rpm put `roer` on `PATH` themselves, as
+//! `/usr/bin/roer` (`src-tauri/linux/post-install.sh`), so the app only
+//! re-points a `~/.local/bin/roer` link the CLI tarball's instructions left,
+//! which would otherwise shadow it with an older roer. An AppImage cannot
+//! install anything, so the app does it as on macOS: it copies the `roer` it
+//! carries out of the image, which is unmounted when the app quits, and links
+//! the copy as `~/.local/bin/roer` and the image as `~/.local/bin/roer-app`,
+//! the name `roer` starts the app by. No password is asked for on Linux.
 
 use std::io::ErrorKind;
 use std::path::Path;
@@ -26,8 +35,13 @@ const SYSTEM_LINK: &str = "/usr/local/bin/roer";
 /// Links the bundled `roer` onto `PATH`, off the main thread: asking a login
 /// shell can take a while, and the password prompt waits on the person.
 pub fn install() {
-    if !cfg!(target_os = "macos") {
+    if cfg!(windows) {
         return;
+    }
+    // Before anything asks `roer::bin()`, so the app runs the copy, not the
+    // `roer` in a mount that goes away when it quits.
+    if let Err(err) = copy_appimage_cli() {
+        eprintln!("roer: could not copy roer out of the AppImage: {err}");
     }
     std::thread::spawn(|| {
         if let Err(err) = link() {
@@ -50,10 +64,25 @@ fn link() -> std::io::Result<()> {
     let Some(home) = crate::roer::home() else {
         return Ok(());
     };
-    link_user(&cli, &home.join(".local/bin/roer"))?;
+    let user_link = home.join(".local/bin/roer");
+    let appimage = std::env::var_os("APPIMAGE").filter(|v| !v.is_empty());
+    if cfg!(target_os = "linux") && appimage.is_none() {
+        // A package: /usr/bin/roer is its own.
+        if std::fs::symlink_metadata(&user_link).is_ok_and(|meta| meta.file_type().is_symlink()) {
+            link_user(&cli, &user_link)?;
+        }
+    } else {
+        link_user(&cli, &user_link)?;
+    }
+    if let Some(appimage) = appimage {
+        link_user(Path::new(&appimage), &home.join(".local/bin/roer-app"))?;
+    }
     install_auto(&cli, "skills");
     install_auto(&cli, "mcp");
 
+    if !cfg!(target_os = "macos") {
+        return Ok(());
+    }
     if shell_finds_roer() != Some(false) || taken(Path::new(SYSTEM_LINK), &cli) {
         return Ok(());
     }
@@ -65,6 +94,42 @@ fn link() -> std::io::Result<()> {
         // Cancelled: asked once, not at every launch.
         std::fs::create_dir_all(declined.parent().unwrap_or(Path::new(".")))?;
         std::fs::write(&declined, "")?;
+    }
+    Ok(())
+}
+
+/// From an AppImage, copies the `roer` it carries, with the config and skills
+/// beside it, to `roer::appimage_cli()`, unless the copy there already is
+/// this one. Into a fresh directory that then replaces the old one, so a
+/// `roer` started meanwhile finds either copy whole.
+fn copy_appimage_cli() -> std::io::Result<()> {
+    let (Some(copy), Some(shipped)) = (crate::roer::appimage_cli(), crate::roer::shipped()) else {
+        return Ok(());
+    };
+    let (Some(from), Some(to)) = (shipped.parent(), copy.parent()) else {
+        return Ok(());
+    };
+    if std::fs::read(&copy).ok() == Some(std::fs::read(&shipped)?) {
+        return Ok(());
+    }
+    let fresh = to.with_extension("new");
+    let _ = std::fs::remove_dir_all(&fresh);
+    copy_dir(from, &fresh)?;
+    let _ = std::fs::remove_dir_all(to);
+    std::fs::rename(&fresh, to)
+}
+
+/// `from` into `to`, recursively, permissions included.
+fn copy_dir(from: &Path, to: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(to)?;
+    for entry in std::fs::read_dir(from)? {
+        let entry = entry?;
+        let dest = to.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            copy_dir(&entry.path(), &dest)?;
+        } else {
+            std::fs::copy(entry.path(), dest)?;
+        }
     }
     Ok(())
 }
@@ -178,7 +243,7 @@ fn link_system(cli: &Path) -> bool {
 
 #[cfg(all(test, unix))]
 mod tests {
-    use super::{link_user, points_at, taken};
+    use super::{copy_dir, link_user, points_at, taken};
 
     fn dir(name: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!("roer-cli-link-{name}-{}", std::process::id()));
@@ -218,6 +283,23 @@ mod tests {
         std::os::unix::fs::symlink(dir.join("gone/roer"), &stale).unwrap();
         assert!(!taken(&stale, &cli));
         assert!(!taken(&dir.join("missing"), &cli));
+    }
+
+    #[test]
+    fn copies_a_cli_directory_whole_and_keeps_roer_executable() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = dir("copy");
+        let from = dir.join("usr/lib/Roer/roer");
+        std::fs::create_dir_all(from.join("skills/roer-handoff")).unwrap();
+        std::fs::write(from.join("roer"), "#!/bin/sh\n").unwrap();
+        std::fs::set_permissions(from.join("roer"), std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::fs::write(from.join("roer-tmux.conf"), "set -g mouse on\n").unwrap();
+        std::fs::write(from.join("skills/roer-handoff/SKILL.md"), "# handoff\n").unwrap();
+        let to = dir.join("appimage-cli");
+        copy_dir(&from, &to).unwrap();
+        assert_eq!(std::fs::metadata(to.join("roer")).unwrap().permissions().mode() & 0o777, 0o755);
+        assert_eq!(std::fs::read_to_string(to.join("roer-tmux.conf")).unwrap(), "set -g mouse on\n");
+        assert_eq!(std::fs::read_to_string(to.join("skills/roer-handoff/SKILL.md")).unwrap(), "# handoff\n");
     }
 
     #[test]
