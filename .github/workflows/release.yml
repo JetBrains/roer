@@ -132,7 +132,9 @@ jobs:
           set -euo pipefail
           # roer needs tmux 3.3 or later, so on an older one the install has to
           # refuse rather than leave a Roer that cannot start a session.
-          dpkg-deb -f "linux/Roer_${VERSION}_amd64.deb" Depends | tee /dev/stderr | grep -qF 'tmux (>= 3.3)'
+          depends=$(dpkg-deb -f "linux/Roer_${VERSION}_amd64.deb" Depends)
+          echo "Depends: $depends"
+          grep -qF 'tmux (>= 3.3)' <<< "$depends"
           sudo apt-get update
           sudo apt-get install -y "./linux/Roer_${VERSION}_amd64.deb"
           ls -l /usr/bin/roer /usr/bin/roer-app /usr/lib/Roer/cli
@@ -172,7 +174,9 @@ jobs:
             grep -qx "$f" <<< "$rpm" || { echo "The .rpm has no $f" >&2; exit 1; }
           done
           # post-install.sh and post-remove.sh, which link and unlink /usr/bin/roer.
-          rpm -qpR "linux/Roer-${VERSION}-1.x86_64.rpm" | tee /dev/stderr | grep -qx 'tmux >= 3.3'
+          requires=$(rpm -qpR "linux/Roer-${VERSION}-1.x86_64.rpm")
+          printf '%s\n' "$requires"
+          grep -qx 'tmux >= 3.3' <<< "$requires"
           scripts=$(rpm -qp --scripts "linux/Roer-${VERSION}-1.x86_64.rpm")
           printf '%s\n' "$scripts"
           grep -q 'cli=/usr/lib/Roer/cli/roer' <<< "$scripts"

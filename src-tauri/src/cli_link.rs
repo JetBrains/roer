@@ -65,7 +65,12 @@ fn link() -> std::io::Result<()> {
         return Ok(());
     };
     let user_link = home.join(".local/bin/roer");
-    let appimage = std::env::var_os("APPIMAGE").filter(|v| !v.is_empty());
+    let appimage = crate::roer::appimage();
+    // Without its copy, an AppImage's roer is the one in the mount, which
+    // nothing may be linked to: it is gone when the app quits.
+    if appimage.is_some() && crate::roer::appimage_cli().as_ref() != Some(&cli) {
+        return Ok(());
+    }
     if cfg!(target_os = "linux") && appimage.is_none() {
         // A package: /usr/bin/roer is its own.
         if std::fs::symlink_metadata(&user_link).is_ok_and(|meta| meta.file_type().is_symlink()) {
@@ -75,7 +80,7 @@ fn link() -> std::io::Result<()> {
         link_user(&cli, &user_link, is_roer_cli)?;
     }
     if let Some(appimage) = appimage {
-        link_user(Path::new(&appimage), &home.join(".local/bin/roer-app"), is_roer_appimage)?;
+        link_user(&appimage, &home.join(".local/bin/roer-app"), is_roer_appimage)?;
     }
     install_auto(&cli, "skills");
     install_auto(&cli, "mcp");
@@ -100,8 +105,7 @@ fn link() -> std::io::Result<()> {
 
 /// From an AppImage, copies the `roer` it carries, with the config and skills
 /// beside it, to `roer::appimage_cli()`, unless the copy there already is
-/// this one. Into a fresh directory that then replaces the old one, so a
-/// `roer` started meanwhile finds either copy whole.
+/// this one.
 fn copy_appimage_cli() -> std::io::Result<()> {
     let (Some(copy), Some(shipped)) = (crate::roer::appimage_cli(), crate::roer::shipped()) else {
         return Ok(());
@@ -109,14 +113,63 @@ fn copy_appimage_cli() -> std::io::Result<()> {
     let (Some(from), Some(to)) = (shipped.parent(), copy.parent()) else {
         return Ok(());
     };
-    if std::fs::read(&copy).ok() == Some(std::fs::read(&shipped)?) {
+    refresh_copy(from, to)
+}
+
+/// The stamp a copy keeps of what it was copied from.
+const STAMP: &str = ".copied-from";
+
+/// `to` made a copy of `from`, unless its stamp says it already is one.
+/// Copied whole into a fresh directory first, then swapped in by two renames,
+/// the old copy kept until the new one is in place: a `roer` started
+/// meanwhile can miss the copy only for the instant between them, and finds a
+/// whole one otherwise.
+fn refresh_copy(from: &Path, to: &Path) -> std::io::Result<()> {
+    let stamp = stamp(from)?;
+    if std::fs::read_to_string(to.join(STAMP)).is_ok_and(|have| have == stamp) {
         return Ok(());
     }
     let fresh = to.with_extension("new");
+    let old = to.with_extension("old");
     let _ = std::fs::remove_dir_all(&fresh);
     copy_dir(from, &fresh)?;
-    let _ = std::fs::remove_dir_all(to);
-    std::fs::rename(&fresh, to)
+    std::fs::write(fresh.join(STAMP), &stamp)?;
+    let _ = std::fs::remove_dir_all(&old);
+    let had = to.exists();
+    if had {
+        std::fs::rename(to, &old)?;
+    }
+    if let Err(err) = std::fs::rename(&fresh, to) {
+        if had {
+            let _ = std::fs::rename(&old, to);
+        }
+        return Err(err);
+    }
+    let _ = std::fs::remove_dir_all(&old);
+    Ok(())
+}
+
+/// Every file under `dir`, with its size and modification time: cheap to
+/// take, and different for any image whose `roer`, config or skills differ,
+/// without reading a byte of them.
+fn stamp(dir: &Path) -> std::io::Result<String> {
+    let mut lines = Vec::new();
+    let mut dirs = vec![dir.to_path_buf()];
+    while let Some(next) = dirs.pop() {
+        for entry in std::fs::read_dir(&next)? {
+            let entry = entry?;
+            let meta = entry.metadata()?;
+            if meta.is_dir() {
+                dirs.push(entry.path());
+                continue;
+            }
+            let modified = meta.modified()?.duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
+            let rel = entry.path().strip_prefix(dir).unwrap_or(&entry.path()).to_string_lossy().into_owned();
+            lines.push(format!("{rel} {} {}", meta.len(), modified.as_nanos()));
+        }
+    }
+    lines.sort();
+    Ok(lines.join("\n"))
 }
 
 /// `from` into `to`, recursively, permissions included.
@@ -209,7 +262,7 @@ fn is_roer_cli(real: &Path) -> bool {
 /// A `roer-app` that is Roer's, as far as a link to it can tell: an AppImage,
 /// which only this app links there.
 fn is_roer_appimage(real: &Path) -> bool {
-    real.extension().is_some_and(|ext| ext == "AppImage")
+    real.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("AppImage"))
 }
 
 fn points_at(link: &Path, target: &Path) -> bool {
@@ -272,7 +325,7 @@ fn link_system(cli: &Path) -> bool {
 
 #[cfg(all(test, unix))]
 mod tests {
-    use super::{copy_dir, is_roer_cli, link_user, points_at, taken};
+    use super::{copy_dir, is_roer_appimage, is_roer_cli, link_user, points_at, refresh_copy, taken};
 
     fn dir(name: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!("roer-cli-link-{name}-{}", std::process::id()));
@@ -363,6 +416,37 @@ mod tests {
         assert_eq!(std::fs::metadata(to.join("roer")).unwrap().permissions().mode() & 0o777, 0o755);
         assert_eq!(std::fs::read_to_string(to.join("roer-tmux.conf")).unwrap(), "set -g mouse on\n");
         assert_eq!(std::fs::read_to_string(to.join("skills/roer-handoff/SKILL.md")).unwrap(), "# handoff\n");
+    }
+
+    #[test]
+    fn refreshes_a_copy_only_when_what_it_came_from_changed() {
+        let dir = dir("refresh");
+        let from = dir.join("cli");
+        std::fs::create_dir_all(from.join("skills/roer-handoff")).unwrap();
+        std::fs::write(from.join("roer"), "v1").unwrap();
+        std::fs::write(from.join("skills/roer-handoff/SKILL.md"), "old").unwrap();
+        let to = dir.join("appimage-cli");
+        refresh_copy(&from, &to).unwrap();
+        assert_eq!(std::fs::read_to_string(to.join("skills/roer-handoff/SKILL.md")).unwrap(), "old");
+
+        // Unchanged: left as it is, even if someone edited the copy.
+        std::fs::write(to.join("roer"), "edited").unwrap();
+        refresh_copy(&from, &to).unwrap();
+        assert_eq!(std::fs::read_to_string(to.join("roer")).unwrap(), "edited");
+
+        // A skill changed, the binary did not: copied again, whole.
+        std::fs::write(from.join("skills/roer-handoff/SKILL.md"), "new, and longer").unwrap();
+        refresh_copy(&from, &to).unwrap();
+        assert_eq!(std::fs::read_to_string(to.join("skills/roer-handoff/SKILL.md")).unwrap(), "new, and longer");
+        assert_eq!(std::fs::read_to_string(to.join("roer")).unwrap(), "v1");
+        assert!(!dir.join("appimage-cli.new").exists() && !dir.join("appimage-cli.old").exists());
+    }
+
+    #[test]
+    fn knows_an_appimage_whatever_the_case_of_its_extension() {
+        assert!(is_roer_appimage(std::path::Path::new("/home/me/Roer_0.8.5_amd64.AppImage")));
+        assert!(is_roer_appimage(std::path::Path::new("/home/me/roer.appimage")));
+        assert!(!is_roer_appimage(std::path::Path::new("/usr/bin/other-app")));
     }
 
     #[test]
