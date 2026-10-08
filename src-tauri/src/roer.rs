@@ -24,23 +24,47 @@ pub fn bin() -> String {
 }
 
 /// The `roer` installed with the app, with the engine it drives: the Windows
-/// installer puts it beside the app in `roer\`, and Roer.app carries it in
-/// `Contents/MacOS` with its tmux. Preferred over `PATH` so the app always
-/// talks to the version it shipped with. Linux installs the CLI separately.
+/// installer puts it beside the app in `roer\`, Roer.app carries it in
+/// `Contents/MacOS` with its tmux, and the Linux packages in
+/// `/usr/lib/Roer/roer`. Preferred over `PATH` so the app always talks to the
+/// version it shipped with.
+///
+/// From an AppImage, the copy `cli_link` makes of it once there is one: the
+/// image is mounted afresh at every start and unmounted at exit, and a tmux
+/// binding or a link on `PATH` to the `roer` inside it would die with it.
 pub(crate) fn bundled() -> Option<PathBuf> {
+    let shipped = shipped()?;
+    Some(appimage_cli().filter(|copy| copy.is_file()).unwrap_or(shipped))
+}
+
+/// The `roer` the app shipped with, where it shipped it.
+pub(crate) fn shipped() -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
     bundled_beside(&exe).filter(|path| path.is_file())
 }
 
+/// Where `cli_link` copies an AppImage's `roer` to, with its config and
+/// skills beside it: a path that outlives the image's mount. None when this
+/// is not an AppImage.
+pub(crate) fn appimage_cli() -> Option<PathBuf> {
+    std::env::var_os("APPIMAGE").filter(|v| !v.is_empty())?;
+    Some(history::roer_home().join("appimage-cli").join("roer"))
+}
+
 /// Where the installed `roer` is, for an app running from `exe`. On macOS
 /// only from inside a bundle: `tauri dev` runs the app from
-/// `target/debug/roer`, where a `roer` beside it would be the app itself.
+/// `target/debug/roer`, where a `roer` beside it would be the app itself. On
+/// Linux from `usr/bin`, which is both `/usr/bin` for the packages and
+/// `$APPDIR/usr/bin` inside an AppImage; Tauri keeps resources in
+/// `../lib/<productName>` from there.
 fn bundled_beside(exe: &std::path::Path) -> Option<PathBuf> {
     let dir = exe.parent()?;
     if cfg!(windows) {
         Some(dir.join("roer").join("roer.exe"))
     } else if cfg!(target_os = "macos") && dir.ends_with("Contents/MacOS") {
         Some(dir.join("roer"))
+    } else if cfg!(target_os = "linux") && dir.ends_with("usr/bin") {
+        Some(dir.parent()?.join("lib/Roer/roer/roer"))
     } else {
         None
     }
@@ -354,6 +378,22 @@ mod tests {
         assert_eq!(
             bundled_beside(Path::new("/Applications/Roer.app/Contents/MacOS/roer-app")),
             Some(PathBuf::from("/Applications/Roer.app/Contents/MacOS/roer"))
+        );
+        assert_eq!(bundled_beside(Path::new("/checkout/src-tauri/target/debug/roer")), None);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn the_packages_and_the_appimage_carry_roer_but_a_dev_build_does_not() {
+        use super::bundled_beside;
+        use std::path::Path;
+        assert_eq!(
+            bundled_beside(Path::new("/usr/bin/roer-app")),
+            Some(PathBuf::from("/usr/lib/Roer/roer/roer"))
+        );
+        assert_eq!(
+            bundled_beside(Path::new("/tmp/.mount_RoerAb12/usr/bin/roer-app")),
+            Some(PathBuf::from("/tmp/.mount_RoerAb12/usr/lib/Roer/roer/roer"))
         );
         assert_eq!(bundled_beside(Path::new("/checkout/src-tauri/target/debug/roer")), None);
     }

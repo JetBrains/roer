@@ -30,5 +30,8 @@ src-tauri/windows-cli/
 # The macOS CLI and tmux staged for the app bundle (.github/macos/prepare-bundle.sh).
 src-tauri/macos-cli/
 
+# The Linux CLI staged for the packages (.github/linux/prepare-bundle.sh).
+src-tauri/linux-cli/
+
 # The landing page as built by site/build.mjs.
 _site/
