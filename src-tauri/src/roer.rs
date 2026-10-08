@@ -47,8 +47,23 @@ pub(crate) fn shipped() -> Option<PathBuf> {
 /// skills beside it: a path that outlives the image's mount. None when this
 /// is not an AppImage.
 pub(crate) fn appimage_cli() -> Option<PathBuf> {
-    std::env::var_os("APPIMAGE").filter(|v| !v.is_empty())?;
+    appimage()?;
     Some(history::roer_home().join("appimage-cli").join("roer"))
+}
+
+/// The AppImage this app runs from, if it runs from one. `$APPIMAGE` and
+/// `$APPDIR` alone do not say so: everything the app starts inherits them,
+/// sessions and their shells included, so a packaged app started from such a
+/// shell would take itself for the AppImage. Only an app inside `$APPDIR` is.
+pub(crate) fn appimage() -> Option<PathBuf> {
+    let image = std::env::var_os("APPIMAGE").filter(|v| !v.is_empty())?;
+    let dir = std::env::var_os("APPDIR").filter(|v| !v.is_empty())?;
+    let exe = std::env::current_exe().ok()?;
+    appimage_of(PathBuf::from(image), std::path::Path::new(&dir), &exe)
+}
+
+fn appimage_of(image: PathBuf, dir: &std::path::Path, exe: &std::path::Path) -> Option<PathBuf> {
+    exe.starts_with(dir).then_some(image)
 }
 
 /// Where the installed `roer` is, for an app running from `exe`. On macOS
@@ -380,6 +395,20 @@ mod tests {
             Some(PathBuf::from("/Applications/Roer.app/Contents/MacOS/roer"))
         );
         assert_eq!(bundled_beside(Path::new("/checkout/src-tauri/target/debug/roer")), None);
+    }
+
+    #[test]
+    fn an_appimage_only_from_inside_its_mount() {
+        use super::appimage_of;
+        use std::path::Path;
+        let image = PathBuf::from("/home/me/Apps/Roer_0.8.5_amd64.AppImage");
+        assert_eq!(
+            appimage_of(image.clone(), Path::new("/tmp/.mount_RoerAb12"), Path::new("/tmp/.mount_RoerAb12/usr/bin/roer-app")),
+            Some(image.clone())
+        );
+        // A packaged app started from a shell that a session of the AppImage's
+        // left these variables in.
+        assert_eq!(appimage_of(image, Path::new("/tmp/.mount_RoerAb12"), Path::new("/usr/bin/roer-app")), None);
     }
 
     #[cfg(target_os = "linux")]
