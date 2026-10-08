@@ -7,8 +7,6 @@ for Apple silicon and Intel.
 ## Install
 
 1. Open `Roer___VERSION___universal.dmg` and drag **Roer** to Applications.
-   The app is signed by JetBrains and notarized by Apple, so it opens
-   straight from the download.
 2. Open Roer once. It puts the `roer` command on your `PATH`; in a new
    terminal, `roer help`.
 
