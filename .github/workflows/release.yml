@@ -2,7 +2,9 @@ name: Release
 
 #   validate-version  ubuntu-latest   tag agrees with the version records
 #   bundle-macos      macos-26        universal Roer.app.tar.gz, roer and tmux inside
-#   cli-linux         ubuntu-latest   the roer command for Linux
+#   bundle-linux      ubuntu-22.04    .deb, .rpm and AppImage, roer inside
+#   verify-linux      ubuntu-latest   install the .deb, roer on PATH, remove it
+#   cli-linux         ubuntu-latest   the roer command for Linux, alone
 #   bundle-windows    windows-latest  unsigned nsis and msi installers
 #   cli-windows       windows-latest  roer.exe with the psmux it drives
 #   package           macos-26        verify, hdiutil .dmg, plugin zip, checksums
@@ -88,9 +90,87 @@ jobs:
       # gating it on `release` would only stop it running from a branch. Only
       # `publish` touches credentials.
 
-  # The roer command on Linux. It is a small crate with no Tauri in it, so this
-  # is a minute of cargo rather than a bundle; the macOS one ships inside
-  # Roer.app, built by bundle-macos's prepare script.
+  # The packages carry roer beside the app, and the .deb and .rpm link it as
+  # /usr/bin/roer, so installing one is the whole install: see
+  # tauri.linux-cli.conf.json. Built on the oldest supported Ubuntu, so the
+  # binaries ask for no newer glibc than it has, and run on newer ones.
+  bundle-linux:
+    name: Bundle (Linux)
+    needs: validate-version
+    uses: ./.github/workflows/tauri-bundle.yml
+    with:
+      runner: ubuntu-22.04
+      rust_targets: x86_64-unknown-linux-gnu
+      prepare_script: .github/linux/prepare-bundle.sh
+      tauri_args: --bundles deb,rpm,appimage --config src-tauri/tauri.linux-cli.conf.json
+      bundle_dir: src-tauri/target/release/bundle
+      artifact_name: linux-packages
+      cache_key: linux
+      artifact_paths: |
+        src-tauri/target/release/bundle/deb/*.deb
+        src-tauri/target/release/bundle/rpm/*.rpm
+        src-tauri/target/release/bundle/appimage/*.AppImage
+
+  # As a person would: the .deb installed with its dependencies, roer on PATH
+  # finding its config, and both gone again with the package. The .rpm and the
+  # AppImage are checked for the same files, since this runner can neither
+  # install the one nor mount the other.
+  verify-linux:
+    name: Verify (Linux)
+    needs: [validate-version, bundle-linux]
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.validate-version.outputs.version }}
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: linux-packages
+          path: linux
+
+      - name: Install and remove the .deb
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y "./linux/Roer_${VERSION}_amd64.deb"
+          ls -l /usr/bin/roer /usr/bin/roer-app /usr/lib/Roer/roer
+          [ "$(readlink /usr/bin/roer)" = /usr/lib/Roer/roer/roer ]
+          test -x /usr/lib/Roer/roer/roer
+          test -f /usr/lib/Roer/roer/skills/roer-handoff/SKILL.md
+          command -v tmux
+          # From /usr/bin, as a new terminal finds it: through the link to its
+          # config, with no checkout to fall back on.
+          (cd / && roer help > /dev/null)
+          sudo apt-get remove -y roer
+          if [ -e /usr/bin/roer ] || [ -L /usr/bin/roer ]; then
+            echo "/usr/bin/roer is left behind after removing the package" >&2
+            exit 1
+          fi
+
+      - name: The .rpm and the AppImage carry roer
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y rpm
+          rpm=$(rpm -qlp "linux/Roer-${VERSION}-1.x86_64.rpm")
+          printf '%s\n' "$rpm"
+          for f in /usr/bin/roer-app /usr/lib/Roer/roer/roer /usr/lib/Roer/roer/roer-tmux.conf \
+                   /usr/lib/Roer/roer/skills/roer-handoff/SKILL.md; do
+            grep -qx "$f" <<< "$rpm" || { echo "The .rpm has no $f" >&2; exit 1; }
+          done
+          # post-install.sh and post-remove.sh, which link and unlink /usr/bin/roer.
+          scripts=$(rpm -qp --scripts "linux/Roer-${VERSION}-1.x86_64.rpm")
+          printf '%s\n' "$scripts"
+          grep -q 'cli=/usr/lib/Roer/roer/roer' <<< "$scripts"
+          grep -q 'readlink /usr/bin/roer' <<< "$scripts"
+          appimage="linux/Roer_${VERSION}_amd64.AppImage"
+          chmod +x "$appimage"
+          (cd linux && "./$(basename "$appimage")" --appimage-extract > /dev/null)
+          test -x linux/squashfs-root/usr/lib/Roer/roer/roer
+          (cd / && "$GITHUB_WORKSPACE/linux/squashfs-root/usr/lib/Roer/roer/roer" help > /dev/null)
+
+  # The roer command on Linux, for anyone who wants it without the app. It is
+  # a small crate with no Tauri in it, so this is a minute of cargo rather
+  # than a bundle; the packages carry the same, built by bundle-linux's
+  # prepare script.
   cli-linux:
     name: CLI (Linux)
     needs: validate-version
@@ -192,7 +272,7 @@ jobs:
 
   package:
     name: Package
-    needs: [validate-version, bundle-macos, cli-linux, bundle-windows, cli-windows]
+    needs: [validate-version, bundle-macos, bundle-linux, verify-linux, cli-linux, bundle-windows, cli-windows]
     runs-on: macos-26
     env:
       VERSION: ${{ needs.validate-version.outputs.version }}
@@ -257,6 +337,11 @@ jobs:
 
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
+          name: linux-packages
+          path: dist
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
           name: cli-linux
           path: dist
 
@@ -270,12 +355,15 @@ jobs:
           name: cli-windows
           path: dist
 
-      # Tauri names the installers itself; the release lists them by name, so
-      # a rename upstream fails here rather than as a missing asset.
-      - name: Check the Windows installers
+      # Tauri names the installers and packages itself; the release lists
+      # them by name, so a rename upstream fails here rather than as a missing
+      # asset.
+      - name: Check the installers and packages
         run: |
           set -euo pipefail
-          ls -l "dist/Roer_${VERSION}_x64-setup.exe" "dist/Roer_${VERSION}_x64_en-US.msi"
+          ls -l "dist/Roer_${VERSION}_x64-setup.exe" "dist/Roer_${VERSION}_x64_en-US.msi" \
+                "dist/Roer_${VERSION}_amd64.deb" "dist/Roer-${VERSION}-1.x86_64.rpm" \
+                "dist/Roer_${VERSION}_amd64.AppImage"
 
       # The roer-ui Claude Code plugin, as its folder: the person unzips it
       # and points `claude --plugin-dir` at it. git archive takes the tracked
@@ -292,7 +380,7 @@ jobs:
         working-directory: dist
         run: |
           set -euo pipefail
-          shasum -a 256 -- *.dmg *.tar.gz *.exe *.msi *.zip > SHA256SUMS.txt
+          shasum -a 256 -- *.dmg *.deb *.rpm *.AppImage *.tar.gz *.exe *.msi *.zip > SHA256SUMS.txt
           cat SHA256SUMS.txt
 
       - name: Release notes
@@ -374,6 +462,9 @@ jobs:
             --title "Roer $VERSION" \
             --notes-file notes.md \
             "Roer_${VERSION}_universal.dmg" \
+            "Roer_${VERSION}_amd64.deb" \
+            "Roer-${VERSION}-1.x86_64.rpm" \
+            "Roer_${VERSION}_amd64.AppImage" \
             "roer-cli-${VERSION}-linux-x86_64.tar.gz" \
             "Roer_${VERSION}_x64-setup.exe" \
             "Roer_${VERSION}_x64_en-US.msi" \
