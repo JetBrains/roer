@@ -23,7 +23,8 @@ permissions:
 jobs:
   linux-bundle:
     name: Linux bundles
-    runs-on: ubuntu-latest
+    # As the release builds them: see release.yml's bundle-linux.
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -51,9 +52,12 @@ jobs:
 
       # Debug, like `npm run assemble`: this proves tauri.linux.conf.json
       # packages, and gives a build to try, without a release-profile compile
-      # on every pull request.
+      # on every pull request. With roer inside, as a release has it.
       - name: Bundle
-        run: npx tauri build --debug --bundles deb,rpm,appimage
+        run: |
+          set -euo pipefail
+          bash .github/linux/prepare-bundle.sh
+          npx tauri build --debug --bundles deb,rpm,appimage --config src-tauri/tauri.linux-cli.conf.json
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
