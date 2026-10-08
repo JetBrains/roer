@@ -149,6 +149,18 @@ jobs:
             exit 1
           fi
 
+          # Another program called roer, linked as /usr/bin/roer, is not Roer's
+          # to replace on install or to remove with the package.
+          sudo mkdir -p /opt/other
+          printf '#!/bin/sh\necho other\n' | sudo tee /opt/other/roer > /dev/null
+          sudo chmod 755 /opt/other/roer
+          sudo ln -s /opt/other/roer /usr/bin/roer
+          sudo apt-get install -y "./linux/Roer_${VERSION}_amd64.deb"
+          [ "$(readlink /usr/bin/roer)" = /opt/other/roer ]
+          sudo apt-get remove -y roer
+          [ "$(readlink /usr/bin/roer)" = /opt/other/roer ]
+          sudo rm /usr/bin/roer
+
       - name: The .rpm and the AppImage carry roer
         run: |
           set -euo pipefail
