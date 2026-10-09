@@ -17,6 +17,7 @@ import {
   readChanges,
   readComments,
   readDecisions,
+  readDiagramThreads,
   readFindings,
   readNotes,
   readRequirements,
@@ -663,6 +664,27 @@ export const register: Register = on => {
               {patch.trim() === ''
                 ? <Text dimColor>{c.emptyText === undefined ? 'No changes.' : str('emptyText')}</Text>
                 : diffWithNotes(surfaceId, at, patch, readNotes(value(c.notes)))}
+            </Box>
+          )
+        }
+        case 'Mermaid': {
+          // A terminal cannot lay a graph out: the pane shows the source,
+          // which is what the diagram is anyway, and the open threads under it.
+          const source = str('source')
+          const title = str('title')
+          const open = readDiagramThreads(value(c.notes)).filter(t => t.state === 'open')
+          return (
+            <Box flexDirection="column">
+              {title !== '' && <Text bold>{title}</Text>}
+              {source.trim() === ''
+                ? <Text dimColor>No diagram.</Text>
+                : <Code source={source.slice(0, CODE_LIMIT)} />}
+              {open.map(t => (
+                <Box flexDirection="column">
+                  <Text>{`💬 ${t.node} · ${t.author || 'Agent'}: ${t.text}`}</Text>
+                  {t.replies.map(reply => <Text dimColor>{`   ${reply.author}: ${reply.text}`}</Text>)}
+                </Box>
+              ))}
             </Box>
           )
         }

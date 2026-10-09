@@ -1280,6 +1280,7 @@ export function App() {
                 setGenerativeUi({ state: applyAll(messages), surfaceId, log: messages, live: true })
               }
               onOpenFile={openInTab}
+              agentState={onStage && runningAgent(onStage) ? onStage.state : undefined}
             />
           </aside>
         ) : null}

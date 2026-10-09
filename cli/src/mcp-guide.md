@@ -96,6 +96,7 @@ screen readers only) and `weight` (flex-grow inside a `Row`/`Column`).
 | `DateTimeInput` | `value`, `enableDate?`, `enableTime?`, `min?`, `max?`, `label?` | Both flags default off; set the ones you want. |
 | **Roer's own** | | |
 | `Arrow` | `direction?`, `label?` | A connector line with an arrowhead, `horizontal` (default) or `vertical`. It flows inline like `Divider`, so place it between the things it connects inside a `Row`/`Column`. |
+| `Mermaid` | `source`, `title?`, `notes?`, `files?`, `comments?`, `commentEvent?` | A diagram written in [Mermaid](https://mermaid.js.org): flowchart, sequence, class, state, ER, gantt and the rest, drawn in Roer's colours. `source` is the diagram's text, best bound to the data model. `notes` are threads pinned to nodes, `{ id, node, author?, text, replies?: { author, text }[], state? }[]`, `node` being the node's id in the source (`A` in `A[Start] --> B`), `text` markdown and `state` `open` (default) or `resolved`; a node with open threads carries their count. `files` is `{ node, path }[]`, the project-relative files a node is made of, listed in its panel and opened in Roer's file viewer: give them for a diagram of code, so the person can go from a box to its source. The person clicks a node to read its threads, reply, resolve, reopen, or start one; see *Diagrams* below. `comments: false` draws the diagram and its threads without any of that. A source Mermaid can't parse shows its error and the source. |
 | `Expandable` | `title`, `child: id`, `defaultExpanded?` | A collapsible section. Nest these for a tree. |
 | `Badge` | `text`, `tone?` | A short label in a pill: a status letter, a count, a state. `tone`: `neutral` (default), `accent`, `success`, `warning`, `danger`; bind it to colour each item of a template. |
 | `EmptyState` | `text`, `detail?`, `variant?`, `footer?: id` | What shows in place of content: `empty` (default, nothing to show), `loading` (with a spinner), `error`. It fills the room it is given and centres itself. `footer` holds a control, e.g. a Retry `Button`. Send it as the content while you fetch, then replace it with an `updateComponents`. |
@@ -103,6 +104,44 @@ screen readers only) and `weight` (flex-grow inside a `Row`/`Column`).
 | `DiffView` | `diff`, `title?`, `layout?`, `emptyText?`, `notes?`, `noteActions?`, `noteEvent?` | The Changes tab's diff viewer: a file tree beside the selected file's diff, with highlighting and arrow-key stepping. `diff` is the whole output of `git diff` (any range, any number of files), best bound to the data model. `layout` is `unified` (default) or `split`. `notes` is a list of `{ path, line?, side?, text, tone? }`, each drawn under its line: `line` counts in the new file, or in the old one with `side: "old"` (for a removed line); without `line` the note heads the file. A note with an `author` is a comment: its `text` is markdown, and it may carry `replies: { author, text }[]`, a `tag` ("outdated") and an https `url`. Give notes an `id` and the view `noteActions: { label, value, input?, primary?, done? }[]` and each such note gets a button per action; one with `input` (its placeholder) asks for words first. An answer is reported as the event `noteEvent` (default `diffNote`) with context `{ id, path, line, side, action, text? }`, `action` being the `value`, or `""` when the user takes their answer back. Keep it by setting the note's `state` to that value (and `answer` to the words): an answered note shows `done` in place of its buttons. A note's own `actions` replace `noteActions` for that note, so one diff can offer "Delete" on some notes and "Accept"/"Decline" on others. It needs room: use it as `root` or in a `Column`, not inside a `Card` or a `List`. |
 | `WorkItem` | `title`, `source?`, `key?`, `status?`, `url?`, `assignee?`, `labels?`, `meta?`, `footer?: id` | One task from any tracker, drawn the same way whatever it came from. `source` is `github`, `youtrack`, `notion`, `jira` or `personal` (any other name is shown as sent); `key` is the tracker's id (`#21`, `RO-12`, `T-3`); an `https` `url` makes the title open it. The status is coloured by meaning, so `closed`, `Fixed` and `done` all read as finished, and `failed` or `error` as failed. `footer` holds controls, usually a `Row` of `Button`s. With `variant: "detail"` it opens the item up: see *One work item in detail* below. |
 | `Requirements` / `Findings` / `Decisions` / `Sources` / `Comments` | `items` | One section of a detailed work item on its own, `items` shaped as there. |
+
+## Diagrams
+
+For a flow, an architecture, a state machine, a sequence or a schema, use
+`Mermaid`, not boxes and `Arrow`s built from `Row`s and `Card`s: those
+can't branch or merge, and Mermaid lays the graph out for you. Keep `Arrow`
+for a short, straight line of steps between components that do something.
+
+```json
+{ "id": "root", "component": "Mermaid", "title": "Checkout", "source": { "path": "/diagram" } }
+```
+
+with `"dataModel": { "diagram": "flowchart LR\n  cart[Cart] --> pay{Paid?}\n  pay -->|yes| ship[Ship]\n  pay -->|no| cart" }`.
+
+Whatever the person does on a diagram arrives as the event `commentEvent`
+(default `diagramComment`), context `{ action, node, label, thread?, text? }`:
+
+- `comment` starts a thread on `node`: `{ "action": "comment", "node": "pay", "label": "Paid?", "text": "what if it times out?" }`.
+  For an edge's label, `node` is Mermaid's id for the edge (`L_pay_ship_0`).
+- `reply` adds `text` to the thread `thread`.
+- `resolve` and `reopen` change the thread's `state`.
+
+The panel shows what they did straight away, marked as sending, until the
+`notes` you hold change; it does not write them for you. Keep the threads
+in your data model and send them back with an `updateDataModel`: add the
+person's comment as a thread of your own id (`author: "You"`), with your
+reply under it if you have one, and change the source as well when the
+comment asks for it. Resending the old threads leaves what they did on
+screen.
+
+```json
+{ "version": "v1.0", "updateDataModel": { "surfaceId": "checkout", "path": "/threads", "value": [
+  { "id": "t1", "node": "pay", "author": "You", "text": "what if it times out?",
+    "replies": [{ "author": "Agent", "text": "Added a retry: see `retry`." }] }
+] } }
+```
+
+with the component's `"notes": { "path": "/threads" }`.
 
 ## Boards of work items
 

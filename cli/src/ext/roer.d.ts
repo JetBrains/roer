@@ -525,6 +525,49 @@ declare module "roer/ui" {
   export function Modal(props: WithChildren & { trigger: ReactNode }): ReactNode;
   export function Expandable(props: WithChildren & { title: string; defaultExpanded?: boolean }): ReactNode;
   export function Arrow(props: Common & { direction?: "horizontal" | "vertical"; label?: string }): ReactNode;
+  /** A conversation pinned to one node of a `Mermaid` diagram. */
+  export interface DiagramThread {
+    id: string;
+    /** The node's id in the source (`A` in `A[Start] --> B`). */
+    node: string;
+    /** Shown as "Agent" when empty. */
+    author: string;
+    /** Markdown, as are the replies. */
+    text: string;
+    replies: { author: string; text: string }[];
+    state: "open" | "resolved";
+  }
+  /** A project file one node of a `Mermaid` diagram is made of. */
+  export interface DiagramFile {
+    node: string;
+    /** Project-relative. */
+    path: string;
+  }
+  /** What the person did on a `Mermaid` diagram: started a thread on a node, replied in one, or resolved or
+   * reopened one. */
+  export interface DiagramComment {
+    action: "comment" | "reply" | "resolve" | "reopen";
+    /** The node's id in the source, or for an edge's label Mermaid's id for the edge (`L_A_B_0`). */
+    node: string;
+    /** Its text on screen. */
+    label: string;
+    /** The thread a reply, resolve or reopen is about. */
+    thread?: string;
+    text?: string;
+  }
+  /** A diagram written in Mermaid, drawn in Roer's colours, with `notes` badged on their nodes. With `onComment`, a
+   * click on a node (or Enter on it) opens its threads under the diagram. What the person does is shown at once and
+   * comes to `onComment`; it stays shown until `notes` changes, which is taken as the answer. */
+  export function Mermaid(props: Common & {
+    source: string;
+    title?: string;
+    notes?: DiagramThread[];
+    onComment?: (comment: DiagramComment) => void;
+    /** The project files each node is made of, listed in its panel. */
+    files?: DiagramFile[];
+    /** Opens one of `files`; without it they are only named. Pair it with `useOpenFile`. */
+    onOpenFile?: (path: string) => void;
+  }): ReactNode;
 
   // display
   export type TextVariant = "h1" | "h2" | "h3" | "h4" | "h5" | "caption" | "body";

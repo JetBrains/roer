@@ -21,6 +21,7 @@ export {
   Icon,
   Image,
   List,
+  Mermaid,
   Modal,
   Row,
   Slider,
@@ -34,7 +35,7 @@ export {
   WorkItem,
   statusTone,
 } from "../generative-ui/components";
-export type { Common, TableColumn, TextVariant, Tone } from "../generative-ui/components";
+export type { Common, DiagramComment, DiagramFile, DiagramThread, TableColumn, TextVariant, Tone } from "../generative-ui/components";
 export type { NoteAction, NoteAnswer } from "../DiffNote";
 export type { NewNote } from "../DiffPane";
 export { Surface } from "../generative-ui/Surface";
