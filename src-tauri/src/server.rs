@@ -53,9 +53,10 @@ struct AppState {
     pty: crate::pty::PtyState,
     files: FileIndex,
     bus: Bus,
-    /// Minted fresh each run; only ever handed to a browser that already
-    /// proved it knows it, over `/api/session`.
-    token: String,
+    /// The SHA-256 of the token a browser must prove it knows, never the
+    /// token itself: with `ROER_SERVER_TOKEN_SHA256` the server is never told
+    /// the token at all, and nothing it holds logs anyone in.
+    token_digest: Digest,
     /// One entry per open WebSocket, by the connection id the frontend mints
     /// for its socket and sends on every `/api/invoke` call. `Channel`
     /// messages are unicast through here instead of the broadcast `bus`, so
@@ -84,11 +85,89 @@ fn generate_token() -> String {
     base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
 }
 
-fn carries_token(headers: &HeaderMap, expected: &str) -> bool {
+type Digest = [u8; 32];
+
+fn digest(token: &str) -> Digest {
+    use sha2::Digest as _;
+    sha2::Sha256::digest(token.as_bytes()).into()
+}
+
+/// What a browser's token is checked against.
+enum Auth {
+    /// The token itself, which the server can print a link with: a fresh
+    /// one per start, or `ROER_SERVER_TOKEN`.
+    Token(String),
+    /// Only its SHA-256, from `ROER_SERVER_TOKEN_SHA256`.
+    Digest(Digest),
+}
+
+impl Auth {
+    fn digest(&self) -> Digest {
+        match self {
+            Auth::Token(token) => digest(token),
+            Auth::Digest(d) => *d,
+        }
+    }
+}
+
+/// Drops into a query string and a cookie unescaped.
+fn is_url_safe(token: &str) -> bool {
+    token.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+}
+
+/// `ROER_SERVER_TOKEN` or `ROER_SERVER_TOKEN_SHA256`, if one is set, in
+/// place of a fresh token per start: a server that restarts (a container, a
+/// systemd unit) then keeps the browsers it already authorized. A token must
+/// be at least as hard to guess as a generated one —
+/// `openssl rand -base64 32 | tr '+/' '-_' | tr -d '='` makes one. Given
+/// only its hash (`shasum -a 256`'s hex), the server never learns it.
+fn configured_auth(token: Option<String>, token_sha256: Option<String>) -> Result<Option<Auth>, String> {
+    let token = token.filter(|t| !t.is_empty());
+    let token_sha256 = token_sha256.filter(|t| !t.is_empty());
+    match (token, token_sha256) {
+        (None, None) => Ok(None),
+        (Some(_), Some(_)) => Err("set ROER_SERVER_TOKEN or ROER_SERVER_TOKEN_SHA256, not both".into()),
+        (Some(token), None) => {
+            if token.len() < 32 {
+                return Err("ROER_SERVER_TOKEN is too short: use at least 32 characters".into());
+            }
+            if !is_url_safe(&token) {
+                return Err("ROER_SERVER_TOKEN may only hold letters, digits, '-' and '_'".into());
+            }
+            Ok(Some(Auth::Token(token)))
+        }
+        (None, Some(hex)) => parse_digest(&hex)
+            .map(|d| Some(Auth::Digest(d)))
+            .ok_or_else(|| "ROER_SERVER_TOKEN_SHA256 must be 64 hex digits, as `shasum -a 256` prints".into()),
+    }
+}
+
+fn parse_digest(hex: &str) -> Option<Digest> {
+    if hex.len() != 64 || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    let mut out = [0u8; 32];
+    for (i, byte) in out.iter_mut().enumerate() {
+        *byte = u8::from_str_radix(&hex[2 * i..2 * i + 2], 16).ok()?;
+    }
+    Some(out)
+}
+
+fn carries_token(headers: &HeaderMap, expected: &Digest) -> bool {
     let Some(cookie) = headers.get(header::COOKIE).and_then(|v| v.to_str().ok()) else {
         return false;
     };
-    cookie.split(';').map(str::trim).any(|kv| kv.strip_prefix(TOKEN_COOKIE).and_then(|v| v.strip_prefix('=')) == Some(expected))
+    cookie
+        .split(';')
+        .map(str::trim)
+        .filter_map(|kv| kv.strip_prefix(TOKEN_COOKIE).and_then(|v| v.strip_prefix('=')))
+        .any(|v| digests_match(&digest(v), expected))
+}
+
+/// Compares every byte whatever the first difference, so how long a wrong
+/// guess takes says nothing about how much of it was right.
+fn digests_match(given: &Digest, expected: &Digest) -> bool {
+    given.iter().zip(expected).fold(0u8, |acc, (a, b)| acc | (a ^ b)) == 0
 }
 
 /// Browsers send the cookie to every port on a host, so a page served from
@@ -110,7 +189,7 @@ async fn require_token(State(state): State<Arc<AppState>>, req: Request<axum::bo
     if !same_origin(req.headers()) {
         return (StatusCode::FORBIDDEN, "cross-origin request refused").into_response();
     }
-    if carries_token(req.headers(), &state.token) {
+    if carries_token(req.headers(), &state.token_digest) {
         next.run(req).await
     } else {
         (StatusCode::UNAUTHORIZED, "missing or invalid roer_token cookie — open /api/session?token=... first")
@@ -130,7 +209,9 @@ struct SessionQuery {
 /// redirects to `/` — this is what a browser actually lands on when it
 /// opens the bootstrap link, not a page meant to be read.
 async fn session(State(state): State<Arc<AppState>>, headers: HeaderMap, Query(q): Query<SessionQuery>) -> Response {
-    if q.token != state.token {
+    // Checked as well-formed too: with only a hash configured, nothing else
+    // vouches that the token is fit to be the cookie's value.
+    if !is_url_safe(&q.token) || !digests_match(&digest(&q.token), &state.token_digest) {
         return (StatusCode::FORBIDDEN, "bad token").into_response();
     }
     let mut res = axum::response::Redirect::to("/").into_response();
@@ -138,7 +219,7 @@ async fn session(State(state): State<Arc<AppState>>, headers: HeaderMap, Query(q
     // proxy in front, and then the cookie must never go out in the clear.
     let https = headers.get("x-forwarded-proto").and_then(|v| v.to_str().ok()) == Some("https");
     let secure = if https { "; Secure" } else { "" };
-    let cookie = format!("{TOKEN_COOKIE}={}; Path=/; HttpOnly; SameSite=Strict{secure}", state.token);
+    let cookie = format!("{TOKEN_COOKIE}={}; Path=/; HttpOnly; SameSite=Strict{secure}", q.token);
     if let Ok(value) = HeaderValue::from_str(&cookie) {
         res.headers_mut().insert(header::SET_COOKIE, value);
     }
@@ -608,7 +689,8 @@ async fn reap_abandoned_ptys(state: Arc<AppState>, cid: String) {
 /// A server bound and already accepting connections in the background.
 pub struct Started {
     pub addr: SocketAddr,
-    pub token: String,
+    /// `None` when the server was given only the token's hash.
+    token: Option<String>,
     bus: Bus,
 }
 
@@ -616,9 +698,14 @@ impl Started {
     /// The one-time URL a browser opens to trade the token for the
     /// `roer_token` cookie, against this server's own address — it now
     /// serves the frontend itself, so nothing else needs to be running.
+    /// Given only a hash, the server cannot fill the token in.
     pub fn bootstrap_url(&self) -> String {
         let public = std::env::var("ROER_SERVER_PUBLIC_URL").ok();
-        format!("{}/api/session?token={}", public_base(self.addr, public.as_deref()), self.token)
+        format!("{}/api/session?token={}", public_base(self.addr, public.as_deref()), self.token_or_placeholder())
+    }
+
+    fn token_or_placeholder(&self) -> &str {
+        self.token.as_deref().unwrap_or("<your token>")
     }
 }
 
@@ -638,7 +725,7 @@ fn public_base(addr: SocketAddr, public_url: Option<&str>) -> String {
 /// as soon as it's listening rather than blocking for the server's whole
 /// lifetime — so a caller (the desktop app, starting this in-process) gets
 /// the bootstrap URL back right away.
-async fn start(addr: SocketAddr, own_watchers: bool) -> std::io::Result<Started> {
+async fn start(addr: SocketAddr, own_watchers: bool, auth: Auth) -> std::io::Result<Started> {
     // Bind first: if the port is already taken (e.g. a retried start after a
     // failed one), bail out before arming anything that would otherwise be
     // left running with nothing to shut it down.
@@ -654,12 +741,11 @@ async fn start(addr: SocketAddr, own_watchers: bool) -> std::io::Result<Started>
         );
     }
 
-    let token = generate_token();
     let state = Arc::new(AppState {
         pty: crate::pty::PtyState::default(),
         files: FileIndex::default(),
         bus: Bus::new(),
-        token: token.clone(),
+        token_digest: auth.digest(),
         connections: SyncMutex::new(HashMap::new()),
         next_generation: AtomicU64::new(0),
         pty_owners: SyncMutex::new(HashMap::new()),
@@ -705,13 +791,26 @@ async fn start(addr: SocketAddr, own_watchers: bool) -> std::io::Result<Started>
             eprintln!("roer-server: error: {e}");
         }
     });
+    let token = match auth {
+        Auth::Token(token) => Some(token),
+        Auth::Digest(_) => None,
+    };
     Ok(Started { addr: bound, token, bus })
 }
 
 /// Boots the HTTP + WebSocket server and blocks until the process is
-/// killed — there is no window to close it from.
-pub async fn serve(addr: SocketAddr) {
-    let started = start(addr, true).await.expect("could not bind the server's address");
+/// killed — there is no window to close it from. `token` and
+/// `token_sha256` are `ROER_SERVER_TOKEN` and `ROER_SERVER_TOKEN_SHA256`,
+/// which the caller has already taken out of the environment.
+pub async fn serve(addr: SocketAddr, token: Option<String>, token_sha256: Option<String>) {
+    let auth = match configured_auth(token, token_sha256) {
+        Ok(auth) => auth.unwrap_or_else(|| Auth::Token(generate_token())),
+        Err(e) => {
+            eprintln!("roer-server: {e}");
+            std::process::exit(2);
+        }
+    };
+    let started = start(addr, true, auth).await.expect("could not bind the server's address");
     println!("roer-server: listening on http://{}", started.addr);
     println!("roer-server: open {} once per browser to authorize it", started.bootstrap_url());
     if started.addr.ip().is_unspecified() && std::env::var_os("ROER_SERVER_PUBLIC_URL").is_none() {
@@ -724,7 +823,7 @@ pub async fn serve(addr: SocketAddr) {
     // origin's /api/session — same path and token, different host:port.
     println!(
         "roer-server: (or, via a frontend dev server proxying /api here: http://localhost:1420/api/session?token={} )",
-        started.token
+        started.token_or_placeholder()
     );
     std::future::pending::<()>().await;
 }
@@ -776,7 +875,7 @@ pub async fn start_browser_server() -> Result<(), String> {
     let url = if let Some(started) = &*guard {
         started.bootstrap_url()
     } else {
-        let started = start(default_addr(), false).await.map_err(|e| e.to_string())?;
+        let started = start(default_addr(), false, Auth::Token(generate_token())).await.map_err(|e| e.to_string())?;
         let _ = IN_PROCESS_BUS.set(started.bus.clone());
         let url = started.bootstrap_url();
         *guard = Some(started);
@@ -789,24 +888,51 @@ pub async fn start_browser_server() -> Result<(), String> {
 mod tests {
     use super::*;
 
+    fn configured_digest(token: Option<&str>, token_sha256: Option<&str>) -> Result<Option<Digest>, String> {
+        configured_auth(token.map(String::from), token_sha256.map(String::from)).map(|a| a.map(|a| a.digest()))
+    }
+
+    #[test]
+    fn takes_a_configured_token_only_if_it_is_long_and_url_safe() {
+        assert_eq!(configured_digest(None, None), Ok(None));
+        assert_eq!(configured_digest(Some(""), Some("")), Ok(None), "an empty variable is no token");
+        let good = "a".repeat(31) + "-_Z9";
+        assert_eq!(configured_digest(Some(&good), None), Ok(Some(digest(&good))));
+        assert!(configured_digest(Some("short"), None).is_err());
+        assert!(configured_digest(Some(&("a".repeat(40) + "+/=")), None).is_err(), "base64's +/= need escaping");
+        assert!(configured_digest(Some(&("a".repeat(40) + ";")), None).is_err(), "would end the cookie early");
+    }
+
+    #[test]
+    fn takes_a_token_hash_as_shasum_prints_it() {
+        // `printf %s secret | shasum -a 256`
+        let hex = "2bb80d537b1da3e38bd30361aa855686bde0eacd7162fef6a25fe97bf527a25b";
+        assert_eq!(configured_digest(None, Some(hex)), Ok(Some(digest("secret"))));
+        assert_eq!(configured_digest(None, Some(&hex.to_uppercase())), Ok(Some(digest("secret"))));
+        assert!(configured_digest(None, Some(&hex[1..])).is_err(), "too short");
+        assert!(configured_digest(None, Some(&format!("+{}", &hex[1..]))).is_err(), "a sign is not a hex digit");
+        assert!(configured_digest(Some(&"a".repeat(40)), Some(hex)).is_err(), "both at once is ambiguous");
+    }
+
     #[test]
     fn accepts_only_a_cookie_with_the_right_value() {
         let mut headers = HeaderMap::new();
-        assert!(!carries_token(&headers, "secret"), "no cookie header at all");
+        let secret = digest("secret");
+        assert!(!carries_token(&headers, &secret), "no cookie header at all");
 
         headers.insert(header::COOKIE, HeaderValue::from_static("roer_token=wrong"));
-        assert!(!carries_token(&headers, "secret"));
+        assert!(!carries_token(&headers, &secret));
 
         headers.insert(header::COOKIE, HeaderValue::from_static("roer_token=secret"));
-        assert!(carries_token(&headers, "secret"));
+        assert!(carries_token(&headers, &secret));
 
         // Alongside other cookies, in either order, with the usual spacing.
         headers.insert(header::COOKIE, HeaderValue::from_static("theme=dark; roer_token=secret"));
-        assert!(carries_token(&headers, "secret"));
+        assert!(carries_token(&headers, &secret));
 
         // A cookie whose name merely starts with "roer_token" is not a match.
         headers.insert(header::COOKIE, HeaderValue::from_static("roer_token_extra=secret"));
-        assert!(!carries_token(&headers, "secret"));
+        assert!(!carries_token(&headers, &secret));
     }
 
     #[test]
