@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { openUrl } from "../lib/github";
@@ -108,6 +108,36 @@ describe("GenerativeSurface", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "Go" }));
     expect(onAction).toHaveBeenCalledWith({ name: "go", userMessage: undefined, context: { who: "ada", n: 3 } }, "root");
+  });
+
+  it("computes text from the data model, and says what is missing instead of NaN", () => {
+    const share = {
+      call: "formatString",
+      args: {
+        value: "${amount} each",
+        amount: { call: "formatNumber", args: { value: { call: "divide", args: { a: { path: "/total" }, b: { path: "/people" } } }, decimals: 0 } },
+      },
+    };
+    const components: Component[] = [
+      { id: "root", component: "Column", children: ["share"] },
+      {
+        id: "share",
+        component: "Text",
+        text: {
+          call: "if",
+          args: {
+            condition: { call: "gt", args: { a: { path: "/people" }, b: 0 } },
+            then: share,
+            else: "Enter how many people",
+          },
+        },
+      },
+    ];
+    draw(components, { total: 90, people: 3 });
+    expect(screen.getByText("30 each")).toBeInTheDocument();
+    cleanup();
+    draw(components, { total: 90, people: "" });
+    expect(screen.getByText("Enter how many people")).toBeInTheDocument();
   });
 
   it("draws heading variants as headings", () => {
