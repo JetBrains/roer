@@ -81,6 +81,9 @@ interface ComponentCommon {
   metadata?: { extensions?: Record<string, unknown> };
   /** flex-grow inside a Row or Column. */
   weight?: number;
+  /** Roer's own: drawn only while this is `true`. Unlike
+   * `accessibility.hidden`, it removes the component from the screen. */
+  visible?: DynamicBoolean;
 }
 
 export type Justify =
@@ -192,6 +195,27 @@ export type Component =
         /** The row field whose value, read as a status, colours the row. */
         toneKey?: string;
         emptyText?: DynamicString;
+        /** Where the rows come from, or that they are a sample. */
+        source?: DynamicString;
+      }
+    >
+  /** Roer's own: rows plotted as columns, stacked columns or lines, one
+   * value axis, with a table of the same rows a click away. */
+  | Variant<
+      "Chart",
+      {
+        variant?: "bar" | "stackedBar" | "line";
+        title?: DynamicString;
+        rows: DynamicList;
+        /** The row field that names each point along the bottom. */
+        x: string;
+        /** At most eight; each plots the row field `key`. */
+        series: { key: string; title?: DynamicString }[];
+        /** Where the numbers come from, or that they are a sample. */
+        source?: DynamicString;
+        /** In px. @default 200 */
+        height?: number;
+        emptyText?: DynamicString;
       }
     >
   /** Roer's own diff viewer, fed a whole `git diff` as text. */
@@ -240,6 +264,8 @@ export type Component =
         value: DynamicString | DynamicNumber;
         trend?: { delta: DynamicString | DynamicNumber; direction: "up" | "down" | "flat" };
         icon?: DynamicString | { svgPath: DynamicString };
+        /** Where the number comes from, or that it is a sample. */
+        source?: DynamicString;
       }
     >
   /** A generic SDLC entity tile — a ticket, a CI run, a deployment, a running

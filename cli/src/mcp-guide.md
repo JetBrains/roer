@@ -53,6 +53,8 @@ code change. Then choose by the task:
 
 - **Rows with the same fields** (jobs, issues, a comparison of exact
   values): a `Table`, with the numbers aligned `end`.
+- **How numbers compare or change** (per week, per branch, before and
+  after): a `Chart`. Exact values a reader will copy belong in a `Table`.
 - **How something works or connects** (a flow, an architecture, states):
   a `Mermaid` diagram.
 - **Work to track or decide on**: `WorkItem`s, a board, or the sections of
@@ -69,7 +71,7 @@ it is on screen, do not describe it back in the terminal; say only what
 the surface cannot.
 
 Say where every number comes from. Label sample or assumed values as such
-where they are shown (a `caption` under the table will do), and never
+where they are shown (`Table` and `Chart` take a `source` caption), and never
 present invented figures as live data. If you lack an input the answer
 depends on, ask for it, or make it a field with a stated default.
 
@@ -138,7 +140,9 @@ nothing reaches you until a `Button` is pressed.
 This is the whole catalog — there is no escape hatch to arbitrary markup, by
 design. Every component also takes `accessibility`
 (`{ label?, description?, live?, hidden? }`, where `hidden` hides it from
-screen readers only) and `weight` (flex-grow inside a `Row`/`Column`).
+screen readers only), `weight` (flex-grow inside a `Row`/`Column`) and
+`visible` (drawn only while it is `true`; bind it, or compute it, to show a
+hint or a result only when it applies).
 
 | Component | Fields | Notes |
 | --- | --- | --- |
@@ -169,7 +173,8 @@ screen readers only) and `weight` (flex-grow inside a `Row`/`Column`).
 | `Expandable` | `title`, `child: id`, `defaultExpanded?` | A collapsible section. Nest these for a tree. |
 | `Badge` | `text`, `tone?` | A short label in a pill: a status letter, a count, a state. `tone`: `neutral` (default), `accent`, `success`, `warning`, `danger`; bind it to colour each item of a template. |
 | `EmptyState` | `text`, `detail?`, `variant?`, `footer?: id` | What shows in place of content: `empty` (default, nothing to show), `loading` (with a spinner), `error`. It fills the room it is given and centres itself. `footer` holds a control, e.g. a Retry `Button`. Send it as the content while you fetch, then replace it with an `updateComponents`. |
-| `Table` | `columns: [{key, title, align?, width?, mono?}]`, `rows`, `toneKey?`, `emptyText?` | Rows of records under column headings: a log, a list of jobs, anything with the same fields per row. Each cell is the row's field `key`, shown as text. `align: "end"` for numbers, `width` in px (the rest share what is left), `mono` for times, ids, paths and codes. `rows` is a list, best bound to the data model. With `toneKey`, a row whose field of that name reads as failed (`failed`, `error`…) is drawn red, and as blocked (`waiting`, `on hold`) amber. Use it instead of a `List` of `Row`s whenever the columns should line up. |
+| `Table` | `columns: [{key, title, align?, width?, mono?}]`, `rows`, `toneKey?`, `emptyText?`, `source?` | Rows of records under column headings: a log, a list of jobs, anything with the same fields per row. Each cell is the row's field `key`, shown as text. `align: "end"` for numbers, `width` in px (the rest share what is left), `mono` for times, ids, paths and codes. `rows` is a list, best bound to the data model. With `toneKey`, a row whose field of that name reads as failed (`failed`, `error`…) is drawn red, and as blocked (`waiting`, `on hold`) amber. Use it instead of a `List` of `Row`s whenever the columns should line up. `source` is a caption under it: where the rows come from, or that they are a sample. |
+| `Chart` | `rows`, `x`, `series: [{key, title?}]`, `variant?`, `title?`, `source?`, `height?`, `emptyText?` | Numbers from rows, on one value axis: `bar` (default) for comparing, `stackedBar` for parts of a whole (never a pie), `line` for change along a sequence such as days. `x` is the row field named along the bottom; each series plots the row field `key`, up to eight, coloured in a fixed order, with a legend from two. A value that is not a number is a gap, not a zero. The panel gives hover and keyboard readouts and a button that shows the same rows as a table, so you need not draw the table too. Two measures on different scales are two charts. |
 | `DiffView` | `diff`, `title?`, `layout?`, `emptyText?`, `notes?`, `noteActions?`, `noteEvent?` | The Changes tab's diff viewer: a file tree beside the selected file's diff, with highlighting and arrow-key stepping. `diff` is the whole output of `git diff` (any range, any number of files), best bound to the data model. `layout` is `unified` (default) or `split`. `notes` is a list of `{ path, line?, side?, text, tone? }`, each drawn under its line: `line` counts in the new file, or in the old one with `side: "old"` (for a removed line); without `line` the note heads the file. A note with an `author` is a comment: its `text` is markdown, and it may carry `replies: { author, text }[]`, a `tag` ("outdated") and an https `url`. Give notes an `id` and the view `noteActions: { label, value, input?, primary?, done? }[]` and each such note gets a button per action; one with `input` (its placeholder) asks for words first. An answer is reported as the event `noteEvent` (default `diffNote`) with context `{ id, path, line, side, action, text? }`, `action` being the `value`, or `""` when the user takes their answer back. Keep it by setting the note's `state` to that value (and `answer` to the words): an answered note shows `done` in place of its buttons. A note's own `actions` replace `noteActions` for that note, so one diff can offer "Delete" on some notes and "Accept"/"Decline" on others. It needs room: use it as `root` or in a `Column`, not inside a `Card` or a `List`. |
 | `WorkItem` | `title`, `source?`, `key?`, `status?`, `url?`, `assignee?`, `labels?`, `meta?`, `footer?: id` | One task from any tracker, drawn the same way whatever it came from. `source` is `github`, `youtrack`, `notion`, `jira` or `personal` (any other name is shown as sent); `key` is the tracker's id (`#21`, `RO-12`, `T-3`); an `https` `url` makes the title open it. The status is coloured by meaning, so `closed`, `Fixed` and `done` all read as finished, and `failed` or `error` as failed. `footer` holds controls, usually a `Row` of `Button`s. With `variant: "detail"` it opens the item up: see *One work item in detail* below. |
 | `Requirements` / `Findings` / `Decisions` / `Sources` / `Comments` | `items` | One section of a detailed work item on its own, `items` shaped as there. |

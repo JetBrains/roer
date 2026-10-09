@@ -15,6 +15,7 @@ import type { Align, Justify } from "./schema";
 
 export { PatchPane as DiffView } from "./WorkItemDetail";
 export { Mermaid, type DiagramComment, type DiagramFile, type DiagramThread } from "./Mermaid";
+export { Chart, type ChartSeries, type ChartVariant } from "./Chart";
 
 /** What every component passes to its root element. */
 export interface Common {
@@ -322,8 +323,9 @@ export function Table({
   rows,
   toneKey,
   emptyText = "Nothing to show.",
+  source,
   ...common
-}: Common & { columns: TableColumn[]; rows: Record<string, ReactNode>[]; toneKey?: string; emptyText?: string }) {
+}: Common & { columns: TableColumn[]; rows: Record<string, ReactNode>[]; toneKey?: string; emptyText?: string; source?: string }) {
   return (
     <div {...common} className="gen-table-wrap">
       <table className="gen-table">
@@ -364,6 +366,7 @@ export function Table({
           )}
         </tbody>
       </table>
+      {source ? <p className="gen-source">{source}</p> : null}
     </div>
   );
 }
@@ -400,12 +403,14 @@ export function StatTile({
   value,
   trend,
   icon,
+  source,
   ...common
 }: Common & {
   label: string;
   value: string | number;
   trend?: { delta: string | number; direction: "up" | "down" | "flat" };
   icon?: ReactNode;
+  source?: string;
 }) {
   return (
     <div {...common} className="gen-stat-tile">
@@ -413,6 +418,7 @@ export function StatTile({
       <div className="gen-stat-tile-body">
         <span className="gen-stat-tile-value">{value}</span>
         <span className="gen-stat-tile-label">{label}</span>
+        {source ? <span className="gen-source">{source}</span> : null}
       </div>
       {trend ? (
         <span className={`gen-stat-tile-trend ${trend.direction}`}>

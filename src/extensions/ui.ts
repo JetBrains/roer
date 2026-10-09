@@ -9,6 +9,7 @@ export {
   Badge,
   Button,
   Card,
+  Chart,
   CheckBox,
   ChoicePicker,
   Column,
@@ -35,7 +36,7 @@ export {
   WorkItem,
   statusTone,
 } from "../generative-ui/components";
-export type { Common, DiagramComment, DiagramFile, DiagramThread, TableColumn, TextVariant, Tone } from "../generative-ui/components";
+export type { ChartSeries, ChartVariant, Common, DiagramComment, DiagramFile, DiagramThread, TableColumn, TextVariant, Tone } from "../generative-ui/components";
 export type { NoteAction, NoteAnswer } from "../DiffNote";
 export type { NewNote } from "../DiffPane";
 export { Surface } from "../generative-ui/Surface";
