@@ -603,6 +603,33 @@ declare module "roer/ui" {
     toneKey?: string;
     /** @default "Nothing to show." */
     emptyText?: string;
+    /** Where the rows come from, or that they are a sample; shown under the table. */
+    source?: string;
+  }): ReactNode;
+  export type ChartVariant = "bar" | "stackedBar" | "line";
+  export interface ChartSeries {
+    /** The field of each row this series plots. */
+    key: string;
+    title: string;
+  }
+  /** Rows plotted on one value axis: grouped columns (`bar`), stacked columns for part-to-whole (`stackedBar`),
+   * or lines for change along a sequence (`line`). At most eight series, coloured in a fixed order, with a
+   * legend from two, a hover and keyboard readout, and a button that shows the same rows as a table. A value
+   * that is not a number is a gap. */
+  export function Chart(props: Common & {
+    /** @default "bar" */
+    variant?: ChartVariant;
+    title?: string;
+    rows: Record<string, unknown>[];
+    /** The field of each row that names it along the bottom. */
+    x: string;
+    series: ChartSeries[];
+    /** Where the numbers come from, or that they are a sample. */
+    source?: string;
+    /** In px. @default 200 */
+    height?: number;
+    /** @default "Nothing to chart." */
+    emptyText?: string;
   }): ReactNode;
   export function Image(props: Common & {
     url: string;
@@ -620,6 +647,8 @@ declare module "roer/ui" {
     value: string | number;
     trend?: { delta: string | number; direction: "up" | "down" | "flat" };
     icon?: ReactNode;
+    /** Where the number comes from, or that it is a sample. */
+    source?: string;
   }): ReactNode;
   /** A ticket, a CI run, a deployment, a running job, a service: dense enough to mix kinds on one dashboard. */
   export function StatusCard(props: Common & {

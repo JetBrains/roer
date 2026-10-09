@@ -39,6 +39,7 @@ import {
   WorkItem,
   type Tone,
 } from "./components";
+import { Chart } from "./Chart";
 import { asString, boundPointer, evaluate, type Scope } from "./evaluate";
 import {
   readPointer,
@@ -122,6 +123,7 @@ function renderNode(
   if (ancestors.has(visit)) {
     return <p key={key} className="gen-text muted">[cyclic component: {id}]</p>;
   }
+  if (node.visible !== undefined && evaluate(node.visible, ctx.dataModel, scope) !== true) return null;
   const seen = new Set(ancestors).add(visit);
   return <Fragment key={key}>{renderBody(node, ctx, scope, seen)}</Fragment>;
 }
@@ -282,6 +284,26 @@ function renderBody(node: Component, ctx: Ctx, scope: Scope, seen: ReadonlySet<s
           rows={Array.isArray(rows) ? rows.filter(isRecord).map((row) => mapValues(row, asString)) : []}
           toneKey={node.toneKey}
           emptyText={node.emptyText === undefined ? undefined : text(node.emptyText)}
+          source={node.source === undefined ? undefined : text(node.source)}
+        />
+      );
+    }
+    case "Chart": {
+      const rows = value(node.rows);
+      return (
+        <Chart
+          {...common}
+          variant={node.variant}
+          title={node.title === undefined ? undefined : text(node.title)}
+          rows={Array.isArray(rows) ? rows.filter(isRecord) : []}
+          x={node.x}
+          series={(Array.isArray(node.series) ? node.series : []).map((s) => ({
+            key: s.key,
+            title: s.title === undefined ? s.key : text(s.title),
+          }))}
+          source={node.source === undefined ? undefined : text(node.source)}
+          height={typeof node.height === "number" && node.height >= 80 ? Math.min(node.height, 600) : undefined}
+          emptyText={node.emptyText === undefined ? undefined : text(node.emptyText)}
         />
       );
     }
@@ -331,6 +353,7 @@ function renderBody(node: Component, ctx: Ctx, scope: Scope, seen: ReadonlySet<s
           value={text(node.value)}
           trend={node.trend ? { delta: text(node.trend.delta), direction: node.trend.direction } : undefined}
           icon={node.icon === undefined ? undefined : <Icon name={iconName(node.icon, text)} />}
+          source={node.source === undefined ? undefined : text(node.source)}
         />
       );
     case "StatusCard":

@@ -348,6 +348,12 @@ describe('the rules shared with Roer', () => {
     expect(resolve({ call: 'noSuchFunction' }, {}, '/rows/2')).toBeUndefined()
   })
 
+  test('visible resolves like any other value', () => {
+    const hint = { call: 'not', args: { value: { call: 'isNumber', args: { value: { path: '/n' } } } } }
+    expect(resolve(hint, { n: '' }, '')).toBe(true)
+    expect(resolve(hint, { n: '3' }, '')).toBe(false)
+  })
+
   test('the catalog functions compute from the data model, relative paths included', () => {
     const model = { total: 120, people: '4', rows: [{ name: 'a' }] }
     const share = { call: 'divide', args: { a: { path: '/total' }, b: { path: '/people' } } }

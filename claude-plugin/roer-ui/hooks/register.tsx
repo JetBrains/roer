@@ -354,6 +354,8 @@ export const register: Register = on => {
       const c = own(surface.components, id)
       if (c === undefined) return <Text dimColor>{`(missing ${id})`}</Text>
       const model = surface.dataModel
+      // Roer's `visible`: drawn only while it resolves to true.
+      if (c.visible !== undefined && resolve(c.visible, model, scope) !== true) return null
       const key = `${surfaceId}.${id}${scope}`
       const at = `${id}${scope}`
       const view = (name: string) => own(surface.view ?? {}, `${name}:${at}`)

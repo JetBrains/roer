@@ -222,7 +222,8 @@ import { Button, Card, Column, Grid, Row, StatTile, StatusCard, Text } from "roe
   `Expandable`, `Modal`, `Divider`.
 - Display: `Text` (`variant` `h2` for the tab's title, `h3` for a
   section's, `caption` for secondary text), `Badge`, `Table` (columns that
-  line up: a log, a list of jobs), `StatTile`, `StatusCard` (its `status`
+  line up: a log, a list of jobs), `Chart` (columns, stacked columns or
+  lines over rows), `StatTile`, `StatusCard` (its `status`
   is coloured by meaning: `statusTone`), `WorkItem`, `DiffView`, `Icon`,
   `Image`.
 - `EmptyState` is what the tab shows in place of its content: `variant`

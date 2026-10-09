@@ -140,6 +140,40 @@ describe("GenerativeSurface", () => {
     expect(screen.getByText("Enter how many people")).toBeInTheDocument();
   });
 
+  it("draws a component only while its visible is true", () => {
+    const components: Component[] = [
+      { id: "root", component: "Column", children: ["note", "always"] },
+      { id: "note", component: "Text", text: "Enter a number", visible: { call: "not", args: { value: { call: "isNumber", args: { value: { path: "/n" } } } } } },
+      { id: "always", component: "Text", text: "Total" },
+    ];
+    draw(components, { n: "" });
+    expect(screen.getByText("Enter a number")).toBeInTheDocument();
+    cleanup();
+    draw(components, { n: "3" });
+    expect(screen.queryByText("Enter a number")).toBeNull();
+    expect(screen.getByText("Total")).toBeInTheDocument();
+  });
+
+  it("charts bound rows, with their source under them", () => {
+    draw(
+      [
+        {
+          id: "root",
+          component: "Chart",
+          title: "Builds",
+          rows: { path: "/runs" },
+          x: "day",
+          series: [{ key: "passed", title: "Passed" }, { key: "failed" }],
+          source: "Sample figures",
+        },
+      ],
+      { runs: [{ day: "Mon", passed: 9, failed: 1 }, { day: "Tue", passed: 7, failed: 3 }] },
+    );
+    expect(screen.getByRole("img", { name: /Builds: column chart of 2 points/ })).toBeInTheDocument();
+    expect(screen.getByRole("list")).toHaveTextContent("Passedfailed");
+    expect(screen.getByText("Sample figures")).toBeInTheDocument();
+  });
+
   it("draws heading variants as headings", () => {
     draw([
       { id: "root", component: "Column", children: ["title", "note"] },
