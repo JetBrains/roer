@@ -1,0 +1,17 @@
+**/node_modules
+**/target
+dist
+_site
+site
+e2e
+docs
+.git
+.github
+.idea
+.vscode
+.claude
+!.claude/skills
+.roer
+src-tauri/gen
+src-tauri/macos-cli
+src-tauri/windows-cli
