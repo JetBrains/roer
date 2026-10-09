@@ -187,3 +187,42 @@ export const readDecisions = (v: unknown): Decision[] =>
     const answer = str(w.answer);
     return { id, question, options, ...(answer ? { answer } : {}) };
   });
+
+/** A conversation pinned to one node of a `Mermaid` diagram. */
+export interface DiagramThread {
+  id: string;
+  /** The node's id in the diagram's source. */
+  node: string;
+  author: string;
+  text: string;
+  replies: { author: string; text: string }[];
+  state: "open" | "resolved";
+}
+
+export const readDiagramThreads = (v: unknown): DiagramThread[] =>
+  each(v, (w) => {
+    const id = str(w.id);
+    const node = str(w.node);
+    const text = str(w.text);
+    if (!id || !node || !text) return undefined;
+    const replies = each(w.replies, (r) => {
+      const author = str(r.author);
+      const said = str(r.text);
+      return author !== undefined && said !== undefined ? { author, text: said } : undefined;
+    });
+    return { id, node, author: str(w.author) ?? "", text, replies, state: w.state === "resolved" ? "resolved" : "open" };
+  });
+
+/** A project file one node of a `Mermaid` diagram is made of. */
+export interface DiagramFile {
+  node: string;
+  /** Project-relative; opened in Roer's own file viewer. */
+  path: string;
+}
+
+export const readDiagramFiles = (v: unknown): DiagramFile[] =>
+  each(v, (w) => {
+    const node = str(w.node);
+    const path = str(w.path);
+    return node && path ? { node, path } : undefined;
+  });

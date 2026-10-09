@@ -133,6 +133,18 @@ export function spawnPty(
 export const writePty = (id: string, data: string): Promise<void> =>
   invoke("pty_write", { id, data });
 
+/** When the person last typed or pasted into each pane's terminal. An agent
+ * at its prompt may be holding a draft of theirs, which a prompt submitted
+ * for them would be typed onto. */
+const typedAt = new Map<string, number>();
+
+export const noteTyped = (pane: string, at = Date.now()): void => {
+  typedAt.set(pane, at);
+};
+
+/** Whether the person typed into `pane` after `time`. */
+export const typedSince = (pane: string, time: number): boolean => (typedAt.get(pane) ?? -Infinity) > time;
+
 export const resizePty = (id: string, cols: number, rows: number): Promise<void> =>
   invoke("pty_resize", { id, cols, rows });
 

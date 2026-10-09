@@ -21,6 +21,8 @@ terminal cannot do drawn another way:
 - Icon's `svgPath` draws as a mark; a named icon draws as its name.
 - Modal opens beneath its trigger, in a frame, rather than over the pane.
 - DiffView draws each file's diff with its notes under it, unified only.
+- Mermaid shows the diagram's source, not the diagram, with its open threads
+  under it, and takes no comments.
 - An obscured TextField never shows its value, only its length. The field
   itself cannot mask what is being typed.
 - A long TextField is one line.

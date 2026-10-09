@@ -13,6 +13,9 @@ export default defineConfig({
       // too, so their source builds unchanged as somebody's fork.
       { find: /^roer$/, replacement: path.resolve(import.meta.dirname, "./src/extensions/sdk.ts") },
       { find: /^roer\/ui$/, replacement: path.resolve(import.meta.dirname, "./src/extensions/ui.ts") },
+      // Mermaid's ELK layout, which the app does not ship: elkjs is 1.5 MB and
+      // EPL-2.0. Mermaid.tsx pins diagrams to dagre, so this is never called.
+      { find: /^elkjs\/lib\/elk\.bundled\.js$/, replacement: path.resolve(import.meta.dirname, "./src/generative-ui/noElk.ts") },
     ],
   },
   // Tauri expects a fixed port and serves the built assets from dist/.

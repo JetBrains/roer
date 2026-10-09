@@ -76,6 +76,7 @@ vi.mock("@xterm/xterm", () => ({
     writeln = vi.fn();
     dispose = vi.fn();
     onData = vi.fn(() => ({ dispose: vi.fn() }));
+    onKey = vi.fn(() => ({ dispose: vi.fn() }));
     onResize = vi.fn(() => ({ dispose: vi.fn() }));
     parser = {
       registerOscHandler: vi.fn((ident: number, handler: (data: string) => boolean) => {

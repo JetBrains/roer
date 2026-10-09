@@ -16,6 +16,7 @@ export type Finding = {
   at?: { changeId: string; path: string; line: number; side?: 'old' }
   state: FindingState
 }
+export type DiagramThread = { id: string; node: string; author: string; text: string; replies: { author: string; text: string }[]; state: 'open' | 'resolved' }
 export type Comment = { id: string; author: string; text: string; at?: string }
 export type Decision = { id: string; question: string; options: { label: string; value: string }[]; answer?: string }
 
@@ -53,6 +54,20 @@ export const readComments = (v: unknown): Comment[] =>
     if (!id || !author || !text) return undefined
     const at = str(w.at)
     return { id, author, text, ...(at ? { at } : {}) }
+  })
+
+export const readDiagramThreads = (v: unknown): DiagramThread[] =>
+  each(v, w => {
+    const id = str(w.id)
+    const node = str(w.node)
+    const text = str(w.text)
+    if (!id || !node || !text) return undefined
+    const replies = each(w.replies, r => {
+      const author = str(r.author)
+      const said = str(r.text)
+      return author !== undefined && said !== undefined ? { author, text: said } : undefined
+    })
+    return { id, node, author: str(w.author) ?? '', text, replies, state: w.state === 'resolved' ? 'resolved' : 'open' }
   })
 
 export const readNotes = (v: unknown): Note[] =>

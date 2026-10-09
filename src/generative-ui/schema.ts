@@ -212,6 +212,26 @@ export type Component =
         noteEvent?: string;
       }
     >
+  /** A diagram written in Mermaid. The source stays the truth: a comment on
+   * a node is reported back for whoever wrote it to act on. */
+  | Variant<
+      "Mermaid",
+      {
+        source: DynamicString;
+        title?: DynamicString;
+        /** `{ id, node, author?, text, replies?, state? }[]`: threads pinned
+         * to nodes, `state` `open` (default) or `resolved`. */
+        notes?: DynamicList;
+        /** `{ node, path }[]`: the project files each node is made of,
+         * listed in its panel and opened in Roer's file viewer. */
+        files?: DynamicList;
+        /** Whether a click on a node opens its threads. @default true */
+        comments?: boolean;
+        /** The event the person's comments are reported as, with context
+         * `{ action, node, label, thread?, text? }`. @default "diagramComment" */
+        commentEvent?: string;
+      }
+    >
   /** A KPI number for a dashboard, e.g. "12 running jobs". */
   | Variant<
       "StatTile",

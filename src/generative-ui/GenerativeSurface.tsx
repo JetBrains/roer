@@ -25,6 +25,7 @@ import {
   Icon,
   Image,
   List,
+  Mermaid,
   Modal,
   Row,
   Slider,
@@ -54,6 +55,8 @@ import {
   readChanges,
   readComments,
   readDecisions,
+  readDiagramFiles,
+  readDiagramThreads,
   readFindings,
   readNoteActions,
   readNotes,
@@ -301,6 +304,22 @@ function renderBody(node: Component, ctx: Ctx, scope: Scope, seen: ReadonlySet<s
               action,
               ...(words === undefined ? {} : { text: words }),
             })
+          }
+        />
+      );
+    case "Mermaid":
+      return (
+        <Mermaid
+          {...common}
+          source={text(node.source)}
+          title={node.title === undefined ? undefined : text(node.title)}
+          notes={readDiagramThreads(value(node.notes))}
+          files={readDiagramFiles(value(node.files))}
+          onOpenFile={ctx.onOpenFile}
+          onComment={
+            node.comments === false
+              ? undefined
+              : (comment) => report(node.commentEvent ?? "diagramComment", { ...comment })
           }
         />
       );

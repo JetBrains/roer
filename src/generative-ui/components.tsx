@@ -14,6 +14,7 @@ import { openUrl } from "../lib/github";
 import type { Align, Justify } from "./schema";
 
 export { PatchPane as DiffView } from "./WorkItemDetail";
+export { Mermaid, type DiagramComment, type DiagramFile, type DiagramThread } from "./Mermaid";
 
 /** What every component passes to its root element. */
 export interface Common {

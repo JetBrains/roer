@@ -25,7 +25,7 @@ const PATCH = `diff --git a/app.ts b/app.ts
 
 /** Every component in roer:catalog/1, at least once. */
 const EVERYTHING = [
-  { id: 'root', component: 'Column', children: ['grid', 'row', 'list', 'card', 'tabs', 'modal', 'exp', 'div', 'vdiv', 'arrow', 'varrow', 'txt', 'icon', 'img', 'vid', 'aud', 'btn', 'field', 'check', 'pick', 'slider', 'when', 'diff', 'tile', 'status', 'item', 'reqs', 'finds', 'decs', 'srcs', 'talk'] },
+  { id: 'root', component: 'Column', children: ['grid', 'row', 'list', 'card', 'tabs', 'modal', 'exp', 'div', 'vdiv', 'arrow', 'varrow', 'txt', 'icon', 'img', 'vid', 'aud', 'btn', 'field', 'check', 'pick', 'slider', 'when', 'diff', 'chart', 'tile', 'status', 'item', 'reqs', 'finds', 'decs', 'srcs', 'talk'] },
   { id: 'grid', component: 'Grid', columns: 2, children: ['g1', 'g2', 'g3'] },
   { id: 'g1', component: 'Text', text: 'grid one' },
   { id: 'g2', component: 'Text', text: 'grid two' },
@@ -60,6 +60,7 @@ const EVERYTHING = [
   { id: 'slider', component: 'Slider', max: 10, value: { path: '/level' } },
   { id: 'when', component: 'DateTimeInput', enableDate: true, value: { path: '/day' }, label: 'Day' },
   { id: 'diff', component: 'DiffView', diff: PATCH, title: 'The change' },
+  { id: 'chart', component: 'Mermaid', title: 'The flow', source: 'flowchart LR\n  a --> b', notes: [{ id: 't', node: 'a', text: 'why a?' }] },
   { id: 'tile', component: 'StatTile', label: 'running jobs', value: 12, trend: { delta: 3, direction: 'up' } },
   { id: 'status', component: 'StatusCard', title: 'Deploy', status: 'running', progress: 40 },
   { id: 'item', component: 'WorkItem', title: 'Fix it', source: 'github', key: '#21', status: 'open' },
@@ -78,7 +79,7 @@ describe('the whole catalog', () => {
     for (const surface of ['terminal', 'desktop', 'vscode', 'mobile'] as const) {
       const ui = await $.ui.mount({ plugin: 'roer-ui', surface, ...PANE })
       expect(await ui.find({ type: 'Text', text: /not in roer:catalog|not drawn|missing|cycle/ })).toBeUndefined()
-      for (const seen of ['grid three', 'in a row', 'bo', 'in a card', 'tab body', 'modal trigger', 'caption text', 'star', 'looks good', 'running jobs', 'Deploy', 'Fix it', 'The change', 'Which?', 'slow']) {
+      for (const seen of ['grid three', 'in a row', 'bo', 'in a card', 'tab body', 'modal trigger', 'caption text', 'star', 'looks good', 'running jobs', 'Deploy', 'Fix it', 'The change', 'The flow', '💬 a · Agent: why a?', 'Which?', 'slow']) {
         expect(await ui.find({ text: seen })).toBeDefined()
       }
       await ui.unmount()

@@ -3,7 +3,7 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 
-import { closePty, decodeOutput, resizePty, spawnPty, writePty } from "./lib/pty";
+import { closePty, decodeOutput, noteTyped, resizePty, spawnPty, writePty } from "./lib/pty";
 import { logLine } from "./lib/log";
 import { currentTheme, hostColors, onThemeChange, terminalTheme } from "./lib/theme";
 
@@ -79,13 +79,19 @@ export function TerminalView({ args, cwd, onAttached, onPane, onExit, active = t
     const unfollowTheme = onThemeChange((theme) => {
       terminal.options.theme = terminalTheme(theme);
     });
+    // Which pane the keys go to, for `noteTyped`: known up front when
+    // attaching, and from roer's report when it starts a session.
+    let pane = argsRef.current[0] === "attach" ? argsRef.current[1] : undefined;
     // Handled, so never drawn, whatever it says; only a pane id is passed on.
     const paneSub = terminal.parser.registerOscHandler(PANE_OSC, (data) => {
       // The session part as roer's is_pane_id holds it: no `:`, quotes or
       // control characters.
-      const pane = /^pane=((?:=[^:'"`\x00-\x1f]+:\.)?%\d+)$/.exec(data)?.[1];
-      logLine(`terminal ${target}: roer reported ${pane ?? `an unreadable pane (${data})`}`);
-      if (pane) onPaneRef.current?.(pane);
+      const reported = /^pane=((?:=[^:'"`\x00-\x1f]+:\.)?%\d+)$/.exec(data)?.[1];
+      logLine(`terminal ${target}: roer reported ${reported ?? `an unreadable pane (${data})`}`);
+      if (reported) {
+        pane = reported;
+        onPaneRef.current?.(reported);
+      }
       return true;
     });
     const fitAddon = new FitAddon();
@@ -125,7 +131,13 @@ export function TerminalView({ args, cwd, onAttached, onPane, onExit, active = t
       next();
     };
 
+    // Keys and pastes only: onData also carries what the terminal answers
+    // on its own, such as focus and cursor reports.
+    const keySub = terminal.onKey(() => {
+      if (pane) noteTyped(pane);
+    });
     const dataSub = terminal.onData((data) => {
+      if (pane && data.startsWith("\x1b[200~")) noteTyped(pane);
       if (ptyId) {
         write(ptyId, data);
       } else {
@@ -211,6 +223,7 @@ export function TerminalView({ args, cwd, onAttached, onPane, onExit, active = t
       if (attaching !== null) clearTimeout(attaching);
       observer.disconnect();
       unfollowTheme();
+      keySub.dispose();
       dataSub.dispose();
       resizeSub.dispose();
       paneSub.dispose();

@@ -8,7 +8,7 @@
  * This component owns only the one piece of state nothing outside it cares
  * about — the line saying a click reached the agent.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { applyMessage } from "./apply";
 import { GenerativeSurface, type ResolvedEvent } from "./GenerativeSurface";
@@ -21,6 +21,8 @@ import {
   type PluginUiBundleSummary,
 } from "../lib/pluginUi";
 import { gitRoot } from "../lib/git";
+import { sendToSession } from "../lib/github";
+import { typedSince } from "../lib/pty";
 import { resolveDir } from "../lib/session";
 import { A2UI_VERSION, type A2uiMessage, type ComponentId, type JsonPointer, type RenderState } from "./schema";
 
@@ -48,7 +50,14 @@ interface Props {
   onLoadBundle: (surfaceId: string, messages: A2uiMessage[]) => void;
   /** Opens a file of the session's repository in a tab of its own. */
   onOpenFile?: (root: string, path: string) => void;
+  /** What the session's agent last said it is doing, from its own hooks;
+   * undefined when no agent with hooks runs there. */
+  agentState?: "working" | "waiting" | "done" | "";
 }
+
+/** Submitted for the agent when a click finds it idle at its prompt. Its
+ * prompt hook hands it the click itself; this only starts the turn. */
+export const NUDGE = "I left something for you in the Generative UI panel.";
 
 export function GenerativeUITab({
   state,
@@ -60,20 +69,35 @@ export function GenerativeUITab({
   cwd,
   onLoadBundle,
   onOpenFile,
+  agentState,
 }: Props) {
   const [result, setResult] = useState<string | null>(null);
   const [bundles, setBundles] = useState<PluginUiBundleSummary[]>([]);
   const [saveName, setSaveName] = useState("");
   const [savePrompt, setSavePrompt] = useState("");
   const [bundleStatus, setBundleStatus] = useState<string | null>(null);
-  // Which of the two link-triggered panels is open, if either — never both,
-  // so picking one always replaces whatever the other was showing.
-  const [bundlePanel, setBundlePanel] = useState<"save" | "open" | null>(null);
+  // Which of the links' dialogs is open, if any. They open over the window
+  // rather than in the panel, so the surface keeps the panel to itself.
+  const [dialog, setDialog] = useState<"save" | "open" | "wire" | null>(null);
   // The terminal's own `cd` moves it to a new project without a remount, so
   // `cwd` (the session's *opening* directory) is only a fallback — the same
   // resolution `DiffBrowserView`/`GoToFile` use, so bundles always come from
   // the project the pane is actually sitting in.
   const [dir, setDir] = useState<string | undefined>(cwd);
+  // An agent's hooks hand it the panel's clicks only at its own steps, so a
+  // click made while it sits at its prompt would wait for the person's next
+  // message. One nudge starts its turn; more before it does would queue
+  // prompts, so this holds until its state moves off "done".
+  const nudged = useRef(false);
+  // When the agent's current turn started. Typing since then may be a draft
+  // still sitting in its prompt, which a nudge would be typed onto and
+  // submit; answering a permission prompt starts the turn again, so it
+  // does not count.
+  const turnStarted = useRef(0);
+  useEffect(() => {
+    if (agentState !== "done") nudged.current = false;
+    if (agentState === "working") turnStarted.current = Date.now();
+  }, [agentState]);
 
   useEffect(() => {
     let cancelled = false;
@@ -105,10 +129,29 @@ export function GenerativeUITab({
 
   const handleAction = (event: ResolvedEvent, sourceComponentId: ComponentId) => {
     // What the click means is the agent's to say; all this can tell is that
-    // it went where the agent reads.
-    setResult(pane ? `Sent “${event.name}” to the agent.` : null);
+    // it went where the agent reads, and when the agent will get to it.
+    const idle = agentState === "done";
+    const drafting = idle && !!pane && typedSince(pane, turnStarted.current);
+    const later = `Sent “${event.name}”. The agent sees it with your next message.`;
+    setResult(
+      !pane
+        ? null
+        : drafting
+          ? later
+          : idle
+            ? `Sent “${event.name}”. Asked the agent to look.`
+            : agentState === "working"
+              ? `Sent “${event.name}”. The agent sees it at its next step.`
+              : agentState === "waiting"
+                ? `Sent “${event.name}”. The agent is waiting for you in the terminal and sees it after.`
+                : `Sent “${event.name}” to the agent.`,
+    );
 
     if (pane) {
+      const nudge = idle && !drafting && !nudged.current;
+      // Taken now, so a second click while this one is on its way does not
+      // nudge too; given back if this one never reaches the agent.
+      if (nudge) nudged.current = true;
       reportPluginUiAction({
         pane,
         message: {
@@ -123,7 +166,23 @@ export function GenerativeUITab({
           },
         },
         ...(surface?.sendDataModel ? { dataModel } : {}),
-      }).catch((e: unknown) => console.error("roer: could not report a plugin-ui action", e));
+      })
+        // The click is on file before the prompt goes, so the hook finds it.
+        .then(
+          () =>
+            nudge
+              ? sendToSession(pane, NUDGE).catch((e: unknown) => {
+                  nudged.current = false;
+                  setResult(later);
+                  console.error("roer: could not ask the agent to look at a plugin-ui action", e);
+                })
+              : undefined,
+          (e: unknown) => {
+            if (nudge) nudged.current = false;
+            setResult(`Could not send “${event.name}” to the agent.`);
+            console.error("roer: could not report a plugin-ui action", e);
+          },
+        );
     }
   };
 
@@ -160,7 +219,7 @@ export function GenerativeUITab({
         setBundleStatus(`Saved as "${name}".`);
         setSaveName("");
         setSavePrompt("");
-        setBundlePanel(null);
+        setDialog(null);
         return listPluginUiBundles(dir).then(setBundles);
       })
       .catch((e: unknown) => {
@@ -184,7 +243,7 @@ export function GenerativeUITab({
         onLoadBundle(surface.createSurface.surfaceId, [surface]);
         setResult(null);
         setBundleStatus(`Loaded "${name}".`);
-        setBundlePanel(null);
+        setDialog(null);
       })
       .catch((e: unknown) => {
         console.error("roer: could not load a plugin-ui bundle", e);
@@ -211,73 +270,123 @@ export function GenerativeUITab({
 
       {result ? <p className="gen-result">{result}</p> : null}
 
-      {dir ? (
-        <div className="gen-bundles">
-          <div className="gen-bundles-links">
-            {surface?.components.root ? (
-              <button
-                type="button"
-                className="link"
-                onClick={() => setBundlePanel((current) => (current === "save" ? null : "save"))}
-              >
-                {bundlePanel === "save" ? "Cancel" : "Save"}
-              </button>
-            ) : null}
-            <button
-              type="button"
-              className="link"
-              onClick={() => setBundlePanel((current) => (current === "open" ? null : "open"))}
-            >
-              {bundlePanel === "open" ? "Cancel" : "Open"}
-            </button>
-          </div>
+      <div className="gen-panel-links">
+        {dir && surface?.components.root ? (
+          <button type="button" className="link" onClick={() => setDialog("save")}>
+            Save…
+          </button>
+        ) : null}
+        {dir ? (
+          <button type="button" className="link" onClick={() => setDialog("open")}>
+            Open…
+          </button>
+        ) : null}
+        <button type="button" className="link" onClick={() => setDialog("wire")}>
+          Messages
+        </button>
+        {bundleStatus ? <span className="muted">{bundleStatus}</span> : null}
+      </div>
 
-          {bundlePanel === "save" ? (
-            <div className="gen-bundles-save">
-              <input
-                className="gen-bundles-input"
-                placeholder="save as…"
-                autoFocus
-                value={saveName}
-                onChange={(e) => setSaveName(e.target.value)}
-              />
-              <input
-                className="gen-bundles-input"
-                placeholder="prompt that built this (optional)"
-                value={savePrompt}
-                onChange={(e) => setSavePrompt(e.target.value)}
-              />
-              <button className="gen-button" disabled={!saveName.trim()} onClick={handleSave}>
+      {dialog === "save" ? (
+        <PanelDialog title="Save this UI" onClose={() => setDialog(null)}>
+          <form
+            className="gen-bundles-save"
+            onSubmit={(e) => {
+              e.preventDefault();
+              handleSave();
+            }}
+          >
+            <input
+              className="gen-bundles-input"
+              placeholder="save as…"
+              autoFocus
+              value={saveName}
+              onChange={(e) => setSaveName(e.target.value)}
+            />
+            <input
+              className="gen-bundles-input"
+              placeholder="prompt that built this (optional)"
+              value={savePrompt}
+              onChange={(e) => setSavePrompt(e.target.value)}
+            />
+            <div className="gen-row">
+              <button type="submit" className="gen-button primary" disabled={!saveName.trim()}>
                 Save
               </button>
+              <button type="button" className="gen-button borderless" onClick={() => setDialog(null)}>
+                Cancel
+              </button>
             </div>
-          ) : null}
-
-          {bundlePanel === "open" ? (
-            bundles.length > 0 ? (
-              <ul className="gen-bundles-list">
-                {bundles.map((bundle) => (
-                  <li key={bundle.name}>
-                    <button className="gen-button" onClick={() => handleLoad(bundle.name)}>
-                      {bundle.name}
-                    </button>
-                    {bundle.prompt ? <span className="gen-text muted"> — {bundle.prompt}</span> : null}
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <p className="gen-text muted">No saved generative UIs in this project yet.</p>
-            )
-          ) : null}
-
-          {bundleStatus ? <p className="gen-text muted">{bundleStatus}</p> : null}
-        </div>
+          </form>
+        </PanelDialog>
       ) : null}
 
-      <details className="gen-wire">
-        <summary>Raw A2UI v1.0 messages behind this surface</summary>
-        <pre>{JSON.stringify(log, null, 2)}</pre>
-      </details>
+      {dialog === "open" ? (
+        <PanelDialog title="Open a saved UI" onClose={() => setDialog(null)}>
+          {bundles.length > 0 ? (
+            <ul className="gen-bundles-list">
+              {bundles.map((bundle) => (
+                <li key={bundle.name}>
+                  <button className="gen-button" onClick={() => handleLoad(bundle.name)}>
+                    {bundle.name}
+                  </button>
+                  {bundle.prompt ? <span className="gen-text muted"> — {bundle.prompt}</span> : null}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="gen-text muted">No saved generative UIs in this project yet.</p>
+          )}
+        </PanelDialog>
+      ) : null}
+
+      {dialog === "wire" ? (
+        <PanelDialog title="Raw A2UI v1.0 messages behind this surface" onClose={() => setDialog(null)} wide>
+          <pre className="gen-wire">{JSON.stringify(log, null, 2)}</pre>
+        </PanelDialog>
+      ) : null}
+    </div>
+  );
+}
+
+/** A dialog over the whole window, the way Roer's others are: Escape or a
+ * click outside closes it, and focus goes back where it was. */
+function PanelDialog({
+  title,
+  onClose,
+  wide,
+  children,
+}: {
+  title: string;
+  onClose: () => void;
+  wide?: boolean;
+  children: ReactNode;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const back = document.activeElement;
+    if (!ref.current?.contains(document.activeElement)) ref.current?.focus();
+    return () => {
+      if (back instanceof HTMLElement) back.focus();
+    };
+  }, []);
+
+  return (
+    <div className="popup-scrim" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+      <div
+        ref={ref}
+        className={wide ? "popup gen-dialog wide" : "popup gen-dialog"}
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        tabIndex={-1}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") onClose();
+        }}
+      >
+        <h2>{title}</h2>
+        {children}
+      </div>
     </div>
   );
 }
