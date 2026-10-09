@@ -363,13 +363,26 @@ a function or a derived query field.
 
 | Function | Args | Returns | Source |
 | --- | --- | --- | --- |
-| `formatString` | `value` with `${/path}` interpolation | string | A2UI basic |
-| `pluralize` | `count`, `one`, `other` | string | A2UI basic |
+| `formatString` | `value` with `${/path}` interpolation, and `${name}` from an arg of that name (Roer) | string | A2UI basic |
+| `pluralize` | `count`, `one`, `other`, `zero?` | string | A2UI basic |
+| `formatNumber` | `value`, `decimals?`, `grouping?` | string, in the reader's locale | A2UI basic |
 | `and` / `or` | `values: DynamicBoolean[]` | boolean | A2UI basic |
 | `not` | `value` | boolean | A2UI basic |
 | `eq` | `a`, `b` (scalars) | boolean | Roer |
+| `gt` / `lt` | `a`, `b` (numbers) | boolean | Roer |
+| `if` | `condition`, `then`, `else` | either value | Roer |
 | `length` | `value` (array or string) | number | Roer |
 | `isSet` | `value` | boolean: not undefined, null, or "" | Roer |
+| `isNumber` | `value` | boolean: a finite number, or text holding one | Roer |
+| `add` / `multiply` / `min` / `max` | `values: DynamicNumber[]` | number | Roer |
+| `subtract` / `divide` | `a`, `b` | number | Roer |
+| `round` | `value`, `decimals?` | number | Roer |
+
+The arithmetic never yields `NaN` or an infinity: blank or non-numeric
+input, a zero divisor, or a non-finite result resolves to nothing, so a
+surface built as a small calculator shows its own "enter a value" text
+instead of a wrong number. These are implemented in
+`src/generative-ui/functions.ts`, shared verbatim with the roer-ui plugin.
 
 The template index is v1.0's system function `{ "call": "@index" }` (with an
 optional `offset`), and it's valid only inside a template. `eq`, `length`,

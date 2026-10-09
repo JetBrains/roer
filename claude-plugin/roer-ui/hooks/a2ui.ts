@@ -3,6 +3,7 @@
 // every function takes the surfaces and gives back new ones.
 
 import type { RoerUiComponent, RoerUiSurface, RoerUiSurfaces } from '../types'
+import { callFunction } from './functions'
 
 export const EMPTY: RoerUiSurfaces = { order: [], bySurface: {} }
 
@@ -153,13 +154,19 @@ function writeAt(at: unknown, [head, ...rest]: string[], value: unknown): unknow
 }
 
 /** A dynamic value: a literal, `{ path }` read from the data model, or a
- * `{ call }`. `@index` is the only function, as in Roer's evaluate.ts: the
- * template item's 0-based position, plus `args.offset`. Any other call, and
- * `@index` outside a template, resolves to nothing. */
+ * `{ call }`, as in Roer's evaluate.ts. `@index` is the template item's
+ * 0-based position, plus `args.offset`, and nothing outside a template; any
+ * other call is one of the catalog's functions (functions.ts, Roer's own
+ * copy), and a name it does not have resolves to nothing. */
 export function resolve(value: unknown, model: unknown, scope: string): unknown {
   if (isRecord(value) && typeof value.path === 'string') return getAt(model, absolute(scope, value.path))
   if (isRecord(value) && typeof value.call === 'string') {
-    if (value.call !== '@index') return undefined
+    if (value.call !== '@index') {
+      return callFunction(value.call, value.args, {
+        value: arg => resolve(arg, model, scope),
+        read: pointer => getAt(model, absolute(scope, pointer)),
+      })
+    }
     const index = indexIn(scope)
     if (index === undefined) return undefined
     const args = isRecord(value.args) ? value.args : {}

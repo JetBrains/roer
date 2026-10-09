@@ -45,6 +45,34 @@ is required; `null` deletes the key.
 **`deleteSurface`** — removes it. Sending `createSurface` again for a
 surface that is on screen replaces it.
 
+## When to draw, and what
+
+Draw when seeing or touching the answer helps more than reading it, and
+answer in text when it does not: a short fact, a yes or no, a command, a
+code change. Then choose by the task:
+
+- **Rows with the same fields** (jobs, issues, a comparison of exact
+  values): a `Table`, with the numbers aligned `end`.
+- **How something works or connects** (a flow, an architecture, states):
+  a `Mermaid` diagram.
+- **Work to track or decide on**: `WorkItem`s, a board, or the sections of
+  one work item.
+- **A change to review**: `DiffView`.
+- **A tool for the moment** (a calculator, an estimate, a what-if): inputs
+  bound to the data model and `Text` computed from them with functions (see
+  Computed values), so it answers as the person types, without a turn of
+  yours. Add a `Button` only for what needs you: "explain this", "apply it".
+
+Keep to one surface per question and change it in place with
+`updateComponents` and `updateDataModel` instead of drawing it again. Once
+it is on screen, do not describe it back in the terminal; say only what
+the surface cannot.
+
+Say where every number comes from. Label sample or assumed values as such
+where they are shown (a `caption` under the table will do), and never
+present invented figures as live data. If you lack an input the answer
+depends on, ask for it, or make it a field with a stated default.
+
 ## Values, paths and lists
 
 Most text, number and boolean props take a literal, a `{ "path": … }`
@@ -60,9 +88,50 @@ to that element, and `{ "call": "@index" }` is its 0-based position
 Inputs write back through their binding: a `CheckBox` whose `value` is
 `{ "path": "done" }` flips that element's `done`.
 
-`@index` is the only function so far. The rest of A2UI's basic catalog
-(`formatString`, `and`/`or`/`not`, checks) is not wired up yet, and any
-other `call` resolves to nothing.
+## Computed values
+
+A `{ "call": name, "args": { … } }` works wherever a binding does, and its
+args are themselves literals, bindings or calls. The set is closed and pure;
+any other name resolves to nothing.
+
+| Function | Args | Gives |
+| --- | --- | --- |
+| `add`, `multiply`, `min`, `max` | `values: [...]` | a number |
+| `subtract`, `divide` | `a`, `b` | `a - b`, `a / b` |
+| `round` | `value`, `decimals?` (default 0) | a number |
+| `gt`, `lt` | `a`, `b` | `a > b`, `a < b` |
+| `eq` | `a`, `b` | equal strings, numbers or booleans |
+| `and`, `or` | `values: [...]` | all / any of them `true` |
+| `not` | `value` | not `true` |
+| `if` | `condition`, `then`, `else` | `then` when `condition` is `true` |
+| `isSet` | `value` | neither missing, `null` nor `""` |
+| `isNumber` | `value` | a finite number, or text holding one |
+| `length` | `value` | a list's or a string's length |
+| `formatNumber` | `value`, `decimals?`, `grouping?` (default true) | the number in the reader's locale |
+| `formatString` | `value`, plus any args of your own | `value` with each `${/path}` or `${path}` from the data model and each `${name}` from the arg of that name |
+| `pluralize` | `count`, `one`, `other`, `zero?` | the word for `count` |
+
+Numbers can be text that holds one, as a `TextField` writes it. A
+calculation over something blank or not a number, a division by zero, or a
+result too large to be finite gives nothing at all rather than `NaN`, so
+guard what you show with `if` and say what is missing:
+
+```json
+{ "id": "share", "component": "Text", "variant": "h3", "text": { "call": "if", "args": {
+  "condition": { "call": "and", "args": { "values": [
+    { "call": "isNumber", "args": { "value": { "path": "/total" } } },
+    { "call": "gt", "args": { "a": { "path": "/people" }, "b": 0 } } ] } },
+  "then": { "call": "formatString", "args": { "value": "${each} each",
+    "each": { "call": "formatNumber", "args": { "decimals": 2, "value": { "call": "divide", "args": {
+      "a": { "call": "multiply", "args": { "values": [{ "path": "/total" },
+        { "call": "add", "args": { "values": [1, { "call": "divide", "args": { "a": { "path": "/tipPercent" }, "b": 100 } }] } }] } },
+      "b": { "path": "/people" } } } } } } },
+  "else": "Enter the total and how many people" } } }
+```
+
+beside a `TextField` (`variant: "number"`) bound to `/total`, and `Slider`s
+bound to `/tipPercent` and `/people`. Everything recomputes as they change;
+nothing reaches you until a `Button` is pressed.
 
 ## The component catalog
 

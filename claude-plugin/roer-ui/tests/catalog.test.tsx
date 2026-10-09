@@ -345,7 +345,15 @@ describe('the rules shared with Roer', () => {
     expect(resolve({ call: '@index' }, {}, '/rows/2')).toBe(2)
     expect(resolve({ call: '@index', args: { offset: 1 } }, {}, '/rows/2')).toBe(3)
     expect(resolve({ call: '@index' }, {}, '')).toBeUndefined()
-    expect(resolve({ call: 'formatString' }, {}, '/rows/2')).toBeUndefined()
+    expect(resolve({ call: 'noSuchFunction' }, {}, '/rows/2')).toBeUndefined()
+  })
+
+  test('the catalog functions compute from the data model, relative paths included', () => {
+    const model = { total: 120, people: '4', rows: [{ name: 'a' }] }
+    const share = { call: 'divide', args: { a: { path: '/total' }, b: { path: '/people' } } }
+    expect(resolve(share, model, '')).toBe(30)
+    expect(resolve({ call: 'divide', args: { a: 1, b: 0 } }, model, '')).toBeUndefined()
+    expect(resolve({ call: 'formatString', args: { value: '${name} of ${/people}' } }, model, '/rows/0')).toBe('a of 4')
   })
 
   test('statuses read by meaning, progress only from numbers', () => {

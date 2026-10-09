@@ -2,10 +2,11 @@
  * Resolving a `Dynamic` value — a literal, a `{path}` into the data model, or
  * a `{call}` — against the data model and the template item it sits in.
  *
- * Only `@index` is a function so far: the catalog's other functions
- * (`formatString`, `and`/`or`/`not`, the checks) arrive with phase 1, and
- * until then any other call resolves to `undefined` rather than guessing.
+ * `@index` is resolved here, since it needs the template item; every other
+ * call is one of the catalog's functions (functions.ts), and a name the
+ * catalog does not have resolves to `undefined` rather than guessing.
  */
+import { callFunction } from "./functions";
 import { readPointer, resolvePointer, type DataModel, type JsonPointer } from "./schema";
 
 /** Where a component is being evaluated: the pointer to its template item,
@@ -34,7 +35,10 @@ export function evaluate(value: unknown, model: DataModel, scope: Scope): unknow
       const offset = Number(evaluate(value.args?.offset, model, scope) ?? 0);
       return scope.index + (Number.isFinite(offset) ? offset : 0);
     }
-    return undefined;
+    return callFunction(value.call, value.args, {
+      value: (arg) => evaluate(arg, model, scope),
+      read: (pointer) => readPointer(model, resolvePointer(pointer, scope.item)),
+    });
   }
   return value;
 }
