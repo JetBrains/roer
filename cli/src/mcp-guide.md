@@ -5,8 +5,10 @@ to `show_ui`; Roer shows the panel itself when the first message arrives.
 
 Roer speaks **A2UI v1.0**: every message is an envelope with
 `"version": "v1.0"` and exactly one message body. Every body names the
-`surfaceId` it belongs to — pick one short id per plugin (e.g.
-`"github-issues"`) and reuse it across all of that plugin's messages.
+`surfaceId` it belongs to — pick one short id per view (e.g.
+`"github-issues"`) and reuse it across all of that view's messages. What you
+draw on a surface is, to the person, a **view**: Roer calls it that in its
+own screens, and so should you.
 
 **`createSurface`** — starts a surface. It can carry the whole UI inline:
 `components` (a flat list, addressed by `id`) and the initial `dataModel`.
@@ -69,6 +71,31 @@ Keep to one surface per question and change it in place with
 `updateComponents` and `updateDataModel` instead of drawing it again. Once
 it is on screen, do not describe it back in the terminal; say only what
 the surface cannot.
+
+### Quicker views
+
+The person waits while you write every message, so:
+
+- **Look before drawing.** `list_ui` lists the views saved in this project,
+  with the shape of each one's data. When one fits, `load_ui` with
+  `dataModel` shows it with new data: you send the data alone.
+- **Keep it short.** Put the data in the data model and repeat a row with a
+  templated `children`, not one component per row. Use the highest-level
+  component that fits (`Table`, `Chart`, a board of `WorkItem`s) rather than
+  rows of `Text`s.
+- **Show a big view early.** For one that takes many components, send a
+  first `createSurface` with its title and an `EmptyState` (`loading`),
+  then the rest with `updateComponents` and `updateDataModel`, so the panel
+  is not blank meanwhile. A small view goes in one message.
+
+### A view or a tab
+
+A view shows what you send it, and is for now: an answer, a form, a
+review. Something the person will come back to, that should fetch its own
+data or stay live, is an extension tab instead (`roer:extensions/1`). When
+it is unclear which they want, show a view, and offer to make it a tab; the
+panel's "Keep as tab…" asks you to. When they are happy with a view, offer
+to keep it with `save_ui`, and say in `prompt` what its data model holds.
 
 Say where every number comes from. Label sample or assumed values as such
 where they are shown (`Table` and `Chart` take a `source` caption), and never

@@ -2966,6 +2966,14 @@ button.gen-button .gen-text {
   border-radius: 6px;
 }
 
+/* "Saved views" and "Tabs" in the one list of views. */
+.gen-dialog-section {
+  margin: 12px 0 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--roer-muted);
+}
+
 .gen-bundles-list {
   display: flex;
   flex-direction: column;

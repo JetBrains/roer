@@ -24,6 +24,7 @@ import { gitRoot } from "../lib/git";
 import { sendToSession } from "../lib/github";
 import { typedSince } from "../lib/pty";
 import { resolveDir } from "../lib/session";
+import { useStageTabs } from "../extensions/registry";
 import { A2UI_VERSION, type A2uiMessage, type ComponentId, type JsonPointer, type RenderState } from "./schema";
 
 interface Props {
@@ -53,6 +54,8 @@ interface Props {
   /** What the session's agent last said it is doing, from its own hooks;
    * undefined when no agent with hooks runs there. */
   agentState?: "working" | "waiting" | "done" | "";
+  /** Brings an extension's tab to the top, from the list of views. */
+  onOpenTab?: (tabId: string) => void;
 }
 
 /** Submitted for the agent when a click finds it idle at its prompt. Its
@@ -70,6 +73,7 @@ export function GenerativeUITab({
   onLoadBundle,
   onOpenFile,
   agentState,
+  onOpenTab,
 }: Props) {
   const [result, setResult] = useState<string | null>(null);
   const [bundles, setBundles] = useState<PluginUiBundleSummary[]>([]);
@@ -78,7 +82,10 @@ export function GenerativeUITab({
   const [bundleStatus, setBundleStatus] = useState<string | null>(null);
   // Which of the links' dialogs is open, if any. They open over the window
   // rather than in the panel, so the surface keeps the panel to itself.
-  const [dialog, setDialog] = useState<"save" | "open" | "wire" | null>(null);
+  const [dialog, setDialog] = useState<"save" | "open" | "keep" | "wire" | null>(null);
+  // Extensions' own tabs, beside the saved views: both are views the person
+  // keeps, and they should find either in one place.
+  const tabs = useStageTabs().filter((tab) => tab.tabId.startsWith("ext:"));
   // The terminal's own `cd` moves it to a new project without a remount, so
   // `cwd` (the session's *opening* directory) is only a fallback — the same
   // resolution `DiffBrowserView`/`GoToFile` use, so bundles always come from
@@ -196,10 +203,9 @@ export function GenerativeUITab({
             .catch((e: unknown) => console.error("roer: could not open a file from a plugin UI", e))
       : undefined;
 
-  const handleSave = () => {
-    if (!dir || !surface?.components.root) return;
-    const name = saveName.trim();
-    if (!name) return;
+  /** Saves the view as it stands, edits included, as `name`. */
+  const saveView = (name: string, prompt: string): Promise<void> => {
+    if (!dir || !surface?.components.root) return Promise.reject(new Error("nothing to save"));
 
     // One `createSurface` with everything inline is the whole UI as it
     // stands, edits included — v1.0 made that a single message.
@@ -214,17 +220,45 @@ export function GenerativeUITab({
       },
     };
 
-    writePluginUiBundle(dir, name, { prompt: savePrompt.trim(), surface: createSurface })
+    return writePluginUiBundle(dir, name, { prompt, surface: createSurface }).then(() =>
+      listPluginUiBundles(dir).then(setBundles),
+    );
+  };
+
+  const handleSave = () => {
+    const name = saveName.trim();
+    if (!name) return;
+    saveView(name, savePrompt.trim())
       .then(() => {
         setBundleStatus(`Saved as "${name}".`);
         setSaveName("");
         setSavePrompt("");
         setDialog(null);
-        return listPluginUiBundles(dir).then(setBundles);
       })
       .catch((e: unknown) => {
-        console.error("roer: could not save a plugin-ui bundle", e);
+        console.error("roer: could not save a view", e);
         setBundleStatus(`Could not save "${name}".`);
+      });
+  };
+
+  // "Keep as tab": the view is saved, then the agent is asked to make it an
+  // extension. Only while it waits at its prompt, which is the one moment
+  // typing a request into the pane cannot land in the middle of its work or
+  // on a draft of the person's.
+  const canAsk = !!pane && agentState === "done" && !typedSince(pane, turnStarted.current);
+  const keepName = (saveName.trim() || surfaceId).replace(/[^A-Za-z0-9_-]/g, "-");
+  const keepPrompt = keepTabPrompt(keepName, savePrompt.trim());
+  const handleKeep = () => {
+    if (!pane || !canAsk) return;
+    saveView(keepName, savePrompt.trim())
+      .then(() => sendToSession(pane, keepPrompt))
+      .then(() => {
+        setBundleStatus(`Saved as "${keepName}" and asked the agent to make it a tab.`);
+        setDialog(null);
+      })
+      .catch((e: unknown) => {
+        console.error("roer: could not hand a view over to become a tab", e);
+        setBundleStatus("Could not ask the agent to make this a tab.");
       });
   };
 
@@ -246,7 +280,7 @@ export function GenerativeUITab({
         setDialog(null);
       })
       .catch((e: unknown) => {
-        console.error("roer: could not load a plugin-ui bundle", e);
+        console.error("roer: could not load a view", e);
         setBundleStatus(`Could not load "${name}".`);
       });
   };
@@ -263,8 +297,8 @@ export function GenerativeUITab({
         />
       ) : (
         <p className="gen-text muted">
-          Nothing here yet. When an agent shows you something to look at or answer, such as a
-          plan to approve or a dashboard, it appears here.
+          Nothing here yet. When an agent shows you a view to look at or answer, such as a plan to
+          approve or a dashboard, it appears here.
         </p>
       )}
 
@@ -274,6 +308,11 @@ export function GenerativeUITab({
         {dir && surface?.components.root ? (
           <button type="button" className="link" onClick={() => setDialog("save")}>
             Save…
+          </button>
+        ) : null}
+        {dir && surface?.components.root && pane ? (
+          <button type="button" className="link" onClick={() => setDialog("keep")}>
+            Keep as tab…
           </button>
         ) : null}
         {dir ? (
@@ -288,7 +327,7 @@ export function GenerativeUITab({
       </div>
 
       {dialog === "save" ? (
-        <PanelDialog title="Save this UI" onClose={() => setDialog(null)}>
+        <PanelDialog title="Save this view" onClose={() => setDialog(null)}>
           <form
             className="gen-bundles-save"
             onSubmit={(e) => {
@@ -305,7 +344,7 @@ export function GenerativeUITab({
             />
             <input
               className="gen-bundles-input"
-              placeholder="prompt that built this (optional)"
+              placeholder="what it shows (optional)"
               value={savePrompt}
               onChange={(e) => setSavePrompt(e.target.value)}
             />
@@ -321,8 +360,57 @@ export function GenerativeUITab({
         </PanelDialog>
       ) : null}
 
+      {dialog === "keep" ? (
+        <PanelDialog title="Keep this view as a tab" onClose={() => setDialog(null)}>
+          <p className="gen-text">
+            A tab stays in Roer's strip and fetches its own data, where a view shows what the agent
+            sends it. The agent writes it as an extension: code that runs in Roer with your
+            permissions, which it loads for you to try and installs only when you say so.
+          </p>
+          <form
+            className="gen-bundles-save"
+            onSubmit={(e) => {
+              e.preventDefault();
+              handleKeep();
+            }}
+          >
+            <input
+              className="gen-bundles-input"
+              placeholder={`save as… (${surfaceId})`}
+              autoFocus
+              value={saveName}
+              onChange={(e) => setSaveName(e.target.value)}
+            />
+            <input
+              className="gen-bundles-input"
+              placeholder="what it shows (optional)"
+              value={savePrompt}
+              onChange={(e) => setSavePrompt(e.target.value)}
+            />
+            <p className="gen-text muted">Saved as “{keepName}”, then this goes to the agent:</p>
+            <pre className="gen-wire">{keepPrompt}</pre>
+            {!canAsk ? (
+              <p className="gen-text muted">
+                {agentState === "done"
+                  ? "Your prompt has text in it: send that first, or clear it."
+                  : "The agent is not waiting for you right now. Try again when it is."}
+              </p>
+            ) : null}
+            <div className="gen-row">
+              <button type="submit" className="gen-button primary" disabled={!canAsk}>
+                Save and ask the agent
+              </button>
+              <button type="button" className="gen-button borderless" onClick={() => setDialog(null)}>
+                Cancel
+              </button>
+            </div>
+          </form>
+        </PanelDialog>
+      ) : null}
+
       {dialog === "open" ? (
-        <PanelDialog title="Open a saved UI" onClose={() => setDialog(null)}>
+        <PanelDialog title="Views" onClose={() => setDialog(null)}>
+          <h3 className="gen-dialog-section">Saved views</h3>
           {bundles.length > 0 ? (
             <ul className="gen-bundles-list">
               {bundles.map((bundle) => (
@@ -335,7 +423,29 @@ export function GenerativeUITab({
               ))}
             </ul>
           ) : (
-            <p className="gen-text muted">No saved generative UIs in this project yet.</p>
+            <p className="gen-text muted">No saved views in this project yet. Save… keeps the one on screen.</p>
+          )}
+          <h3 className="gen-dialog-section">Tabs</h3>
+          {tabs.length > 0 ? (
+            <ul className="gen-bundles-list">
+              {tabs.map((tab) => (
+                <li key={tab.tabId}>
+                  <button
+                    className="gen-button"
+                    disabled={!onOpenTab}
+                    onClick={() => {
+                      onOpenTab?.(tab.tabId);
+                      setDialog(null);
+                    }}
+                  >
+                    {tab.title}
+                  </button>
+                  <span className="gen-text muted"> — an extension: runs code, fetches its own data</span>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="gen-text muted">No tabs of your own yet. Keep as tab… makes one from a view.</p>
           )}
         </PanelDialog>
       ) : null}
@@ -389,4 +499,13 @@ function PanelDialog({
       </div>
     </div>
   );
+}
+
+/** What "Keep as tab" asks the agent, about the view saved as `name`. */
+export function keepTabPrompt(name: string, about: string): string {
+  return [
+    `Make the saved view "${name}" (.roer/plugin-ui/bundles/${name}/surface.json${about ? `, which shows ${about}` : ""}) into a Roer extension tab I can keep.`,
+    "Use the roer-extension-authoring skill. Draw it with `Surface` from roer/ui and its saved components, and have the tab fetch its own data rather than keep the data model saved with it.",
+    "Ask me where that data comes from if it is not clear. Load it with extension_dev for me to try, and ask me before you install it.",
+  ].join(" ");
 }

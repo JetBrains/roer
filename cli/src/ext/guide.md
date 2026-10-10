@@ -241,7 +241,10 @@ import { Button, Card, Column, Grid, Row, StatTile, StatusCard, Text } from "roe
   this way: GitHub's review threads, accepted, declined or instructed.
 - `Surface` draws catalog JSON, the same `components` and data model that
   `show_ui` and `save_ui` take, and hands its buttons' events to
-  `onAction`. Use it to turn a saved plugin UI into a tab.
+  `onAction`. Use it to turn a saved view into a tab: when asked to (the
+  panel's "Keep as tab…" does), read its components from
+  `.roer/plugin-ui/bundles/<name>/surface.json` and have the tab fill the
+  data model from its own source, rather than keep the data saved with it.
 - `roer/ui` is the A2UI catalog. Its `Text` shows plain text only. For
   Markdown, such as a ticket's description or a review comment, use
   `Markdown` from `roer`: GitHub's Markdown, tables and code included, and
