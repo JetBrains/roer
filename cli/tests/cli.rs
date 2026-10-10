@@ -1061,6 +1061,7 @@ fn mcp_offers_the_session_tools_only_inside_a_roer_session() {
             "read_ui_actions",
             "save_ui",
             "load_ui",
+            "list_ui",
             "add_task",
             "update_task",
             "list_tasks",
@@ -1282,6 +1283,54 @@ fn mcp_saves_loads_and_reads_clicks_back() {
     assert!(replies[2]["result"]["content"][0]["text"].as_str().unwrap().contains("refresh"));
     assert_eq!(replies[3]["result"]["content"][0]["text"], "", "a click is read once");
     assert!(actions.join("2.json").exists(), "another pane's click is left for it");
+}
+
+#[test]
+fn mcp_refills_a_saved_view_and_lists_its_shape() {
+    let env = Env::new("mcp-template");
+    let here = pane(&env, "work", "sh");
+    let vars = in_pane(&env, &here);
+    let vars: Vec<(&str, &str)> = vars.iter().map(|(k, v)| (*k, v.as_str())).collect();
+    let rows: Vec<serde_json::Value> = (1..=5).map(|n| serde_json::json!({ "title": format!("#{n}"), "done": false })).collect();
+
+    let replies = mcp(&env, &vars, &[
+        call("save_ui", serde_json::json!({
+            "name": "board",
+            "surface": { "version": "v1.0", "createSurface": {
+                "surfaceId": "board",
+                "components": [{ "id": "root", "component": "Text", "text": { "path": "/title" } }],
+                "dataModel": { "title": "Mine", "rows": rows, "about": "x".repeat(100) },
+            } },
+            "prompt": "my board",
+        })),
+        call("list_ui", serde_json::json!({})),
+        call("load_ui", serde_json::json!({ "name": "board", "dataModel": { "title": "Today", "rows": [] } })),
+        call("load_ui", serde_json::json!({ "name": "board", "dataModel": [1, 2] })),
+    ]);
+    assert!(replies[..3].iter().all(|r| r["result"]["isError"] == false), "{replies:?}");
+
+    let listed: serde_json::Value =
+        serde_json::from_str(replies[1]["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(listed[0]["name"], "board");
+    assert_eq!(listed[0]["prompt"], "my board");
+    assert_eq!(listed[0]["components"], 1);
+    let model = &listed[0]["dataModel"];
+    assert_eq!(model["rows"].as_array().unwrap().len(), 3, "two rows and how many there were: {model}");
+    assert_eq!(model["rows"][2], "… 5 items in all");
+    assert!(model["about"].as_str().unwrap().ends_with('…'));
+
+    let records = env.records("plugin-ui");
+    let shown = &records[1]["message"]["createSurface"];
+    assert_eq!(shown["dataModel"], serde_json::json!({ "title": "Today", "rows": [] }));
+    assert_eq!(shown["components"][0]["id"], "root", "the saved components, reused");
+    let saved: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(env.dir.join(".roer/plugin-ui/bundles/board/surface.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(saved["createSurface"]["dataModel"]["title"], "Mine", "refilling leaves the saved view as it was");
+
+    assert_eq!(replies[3]["result"]["isError"], true);
+    assert!(replies[3]["result"]["content"][0]["text"].as_str().unwrap().contains("an object"));
 }
 
 /// `roer mcp` registration with a stand-in `claude` on `PATH` that keeps its

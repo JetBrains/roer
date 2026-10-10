@@ -2,7 +2,9 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { applyAll } from "./apply";
-import { GenerativeUITab, NUDGE } from "./GenerativeUITab";
+import { GenerativeUITab, NUDGE, keepTabPrompt } from "./GenerativeUITab";
+import { defineExtension } from "../extensions/api";
+import { registry } from "../extensions/registry";
 import { sendToSession } from "../lib/github";
 import { noteTyped } from "../lib/pty";
 import { A2UI_VERSION, type A2uiMessage } from "./schema";
@@ -88,7 +90,7 @@ describe("GenerativeUITab saved bundles", () => {
     fireEvent.change(screen.getByPlaceholderText("save as…"), {
       target: { value: "test-runner" },
     });
-    fireEvent.change(screen.getByPlaceholderText(/prompt that built this/), {
+    fireEvent.change(screen.getAllByPlaceholderText(/what it shows/)[0], {
       target: { value: "Add a test runner" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
@@ -118,12 +120,53 @@ describe("GenerativeUITab saved bundles", () => {
   it("opens Save in a dialog that Escape closes, and shows the raw messages in another", () => {
     renderTab();
     fireEvent.click(screen.getByRole("button", { name: "Save…" }));
-    const dialog = screen.getByRole("dialog", { name: "Save this UI" });
+    const dialog = screen.getByRole("dialog", { name: "Save this view" });
     fireEvent.keyDown(dialog, { key: "Escape" });
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Messages" }));
     expect(screen.getByRole("dialog", { name: /Raw A2UI v1.0 messages/ })).toBeInTheDocument();
+  });
+
+  it("lists extensions' tabs beside the saved views, and opens one", async () => {
+    vi.mocked(listPluginUiBundles).mockResolvedValue([{ name: "board", prompt: "my issues" }]);
+    registry.load("trip", defineExtension((roer) => void roer.stage.registerTab({ id: "main", title: "Trip", component: () => null })));
+    registry.load("changes", defineExtension((roer) => void roer.stage.registerTab({ id: "changes", title: "Changes", component: () => null })), { bundled: true });
+    const onOpenTab = vi.fn();
+    try {
+      renderTab({ onOpenTab });
+      fireEvent.click(screen.getByRole("button", { name: "Open…" }));
+      expect(await screen.findByRole("button", { name: "board" })).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Changes" })).toBeNull();
+      fireEvent.click(screen.getByRole("button", { name: "Trip" }));
+      expect(onOpenTab).toHaveBeenCalledWith("ext:trip/main");
+      expect(screen.queryByRole("dialog")).toBeNull();
+    } finally {
+      registry.unload("trip");
+      registry.unload("changes");
+    }
+  });
+
+  it("keeps a view as a tab only while the agent waits, saving it before asking", async () => {
+    vi.mocked(writePluginUiBundle).mockResolvedValue(undefined);
+    const { rerender } = render(
+      <GenerativeUITab state={applyAll(messages)} surfaceId="demo" onChange={vi.fn()} log={messages} live cwd="/work/roer" pane="%7" onLoadBundle={vi.fn()} agentState="working" />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Keep as tab…" }));
+    expect(screen.getByRole("button", { name: "Save and ask the agent" })).toBeDisabled();
+    expect(screen.getByText(/not waiting for you/)).toBeInTheDocument();
+
+    rerender(
+      <GenerativeUITab state={applyAll(messages)} surfaceId="demo" onChange={vi.fn()} log={messages} live cwd="/work/roer" pane="%7" onLoadBundle={vi.fn()} agentState="done" />,
+    );
+    fireEvent.change(screen.getAllByPlaceholderText(/what it shows/)[0]!, { target: { value: "open issues" } });
+    expect(screen.getByText(/Saved as “demo”/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Save and ask the agent" }));
+
+    await waitFor(() => expect(sendToSession).toHaveBeenCalledWith("%7", keepTabPrompt("demo", "open issues")));
+    expect(writePluginUiBundle).toHaveBeenCalledWith("/work/roer", "demo", expect.objectContaining({ prompt: "open issues" }));
+    expect(vi.mocked(writePluginUiBundle).mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(sendToSession).mock.invocationCallOrder[0]!);
+    expect(keepTabPrompt("demo", "open issues")).toContain(".roer/plugin-ui/bundles/demo/surface.json, which shows open issues");
   });
 
   it("loads a saved bundle as its one createSurface", async () => {

@@ -158,7 +158,7 @@ impl Server<'_> {
     fn instructions(&self) -> String {
         let scope = if self.here.is_some() {
             "This agent is running in a Roer session: `show_ui` and `read_ui_actions` act on it unless given \
-             another `session`, `save_ui`/`load_ui` keep plugin UIs with this project, and `add_task`, \
+             another `session`, `save_ui`, `load_ui` and `list_ui` keep views with this project and refill them with new data, and `add_task`, \
              `update_task`, `list_tasks` and `delete_task` keep the user's personal tasks with it."
         } else {
             "This agent is not running in a Roer session, so each tool needs the `session` to act on: \
@@ -232,7 +232,7 @@ impl Server<'_> {
         let mut tools = vec![
             json!({
                 "name": "show_ui",
-                "description": format!("Show or update a UI in a Roer session's Generative UI panel. `messages` is \
+                "description": format!("Show or update a view in a Roer session's Generative UI panel. `messages` is \
                     the sequence of A2UI v1.0 messages to send: usually one createSurface with the components and \
                     data model inline, later updateComponents / updateDataModel for the same surfaceId. The \
                     messages and the whole component catalog are in this server's instructions, and also as a \
@@ -262,9 +262,11 @@ impl Server<'_> {
             let name = json!({ "type": "string", "description": "Letters, digits, - and _ only." });
             tools.push(json!({
                 "name": "save_ui",
-                "description": "Save a plugin UI under this project's .roer/plugin-ui/bundles/<name>/, to show \
-                    again later with load_ui or from Roer's own list. Save once the user is satisfied with it. \
-                    Before drafting a new UI, read .roer/plugin-ui/style-guide.md if the project has one.",
+                "description": "Save the view on screen as a saved view of this project, under \
+                    .roer/plugin-ui/bundles/<name>/, to show again later with load_ui or from Roer's own list. A \
+                    saved view is a template too: load_ui can show it again with new data. Save once the user \
+                    is satisfied with it, and say in `prompt` what it shows and what its data model holds. Before \
+                    drafting a new view, read .roer/plugin-ui/style-guide.md if the project has one.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -280,12 +282,27 @@ impl Server<'_> {
             }));
             tools.push(json!({
                 "name": "load_ui",
-                "description": "Show a plugin UI saved in this project with save_ui.",
+                "description": "Show a view saved in this project with save_ui. With `dataModel`, show it with \
+                    that data in place of what it was saved with: the components are reused as they are, so \
+                    send only the data, in the shape list_ui shows. Far quicker than drawing the view again.",
                 "inputSchema": {
                     "type": "object",
-                    "properties": { "name": name },
+                    "properties": {
+                        "name": name,
+                        "dataModel": {
+                            "type": "object",
+                            "description": "The whole data model to show it with; omit to show it as saved.",
+                        },
+                    },
                     "required": ["name"],
                 },
+            }));
+            tools.push(json!({
+                "name": "list_ui",
+                "description": "List the views saved in this project: each one's name, what it was made for, \
+                    and its data model abridged (lists cut to two items), which is the shape load_ui wants new \
+                    data in. Look here before drawing a view from scratch: one that fits can be refilled.",
+                "inputSchema": { "type": "object", "properties": {} },
             }));
             let id = json!({ "type": "string", "description": "The task's id, like T-3." });
             let status = json!({ "type": "string", "enum": crate::tasks::STATUSES });
@@ -428,14 +445,15 @@ impl Server<'_> {
                 if let Some(prompt) = args.get("prompt").and_then(Value::as_str).filter(|p| !p.is_empty()) {
                     self.roer.save_piece(name, "prompt", prompt)?;
                 }
-                Ok(format!("Saved {name} under .roer/plugin-ui/bundles/{name}/."))
+                Ok(format!("Saved the view as {name}, under .roer/plugin-ui/bundles/{name}/. Refill it later with load_ui and a dataModel."))
             }
             "load_ui" if self.here.is_some() => {
                 let name = text(args, "name");
                 let pane = self.pane(args)?;
-                let ids = self.roer.load_bundle(&pane, name)?;
+                let ids = self.roer.load_bundle(&pane, name, args.get("dataModel"))?;
                 delivered(&pane, &ids, name)
             }
+            "list_ui" if self.here.is_some() => Ok(self.roer.list_bundles()?.to_string()),
             "add_task" if self.here.is_some() => Ok(self.roer.tasks().add(args)?.to_string()),
             "update_task" if self.here.is_some() => {
                 let mut fields = args.clone();

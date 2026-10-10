@@ -823,11 +823,14 @@ impl Roer {
             ["--pane", pane, rest @ ..] => (resolve_pane(&self.tmux, &["--pane", pane])?, rest.first().copied()),
             _ => (resolve_pane(&self.tmux, &[])?, args.first().copied()),
         };
-        self.load_bundle(&pane, name.unwrap_or_default()).map(drop)
+        self.load_bundle(&pane, name.unwrap_or_default(), None).map(drop)
     }
 
-    /// Shows saved bundle `name` in `pane`; the ids of the records sent.
-    fn load_bundle(&self, pane: &str, name: &str) -> Result<Vec<String>, Fail> {
+    /// Shows saved bundle `name` in `pane`, with `data` in place of the data
+    /// model it was saved with when given: a saved view is a template, and
+    /// refilling one costs an agent the data alone. The ids of the records
+    /// sent.
+    fn load_bundle(&self, pane: &str, name: &str, data: Option<&Value>) -> Result<Vec<String>, Fail> {
         check_bundle_name(name)?;
         let dir = self.bundle_dir(name);
         let surface = dir.join("surface.json");
@@ -843,19 +846,59 @@ impl Roer {
             return Err(Fail::new(
                 3,
                 format!(
-                    "no saved plugin UI named '{name}' in {}/.roer/plugin-ui/bundles",
+                    "no saved view named '{name}' in {}/.roer/plugin-ui/bundles",
                     self.project_root()
                 ),
             ));
         }
-        let message = read_json_file(&surface)?;
+        let mut message = read_json_file(&surface)?;
         let id = surface_id(&message)?.to_string();
+        if let Some(data) = data {
+            if !data.is_object() {
+                return Err(Fail::new(2, "`dataModel` is the whole data model: an object"));
+            }
+            message["createSurface"]["dataModel"] = data.clone();
+        }
         // A surface may already be on screen under this id; v1.0 wants it
         // deleted before it is created again.
         Ok(vec![
             emit_plugin_ui(pane, json!({ "version": "v1.0", "deleteSurface": { "surfaceId": id } }), 1)?,
             emit_plugin_ui(pane, message, 2)?,
         ])
+    }
+
+    /// The views saved in this project, by name: the request each was made
+    /// for and an abridged copy of the data model it was saved with, which
+    /// is the shape `load_ui` wants new data in.
+    fn list_bundles(&self) -> Result<Value, Fail> {
+        let dir = PathBuf::from(self.project_root()).join(".roer/plugin-ui/bundles");
+        let Ok(entries) = std::fs::read_dir(&dir) else { return Ok(json!([])) };
+        let mut views: Vec<Value> = entries
+            .flatten()
+            .filter_map(|entry| {
+                let name = entry.file_name().to_str()?.to_string();
+                if !is_bundle_name(&name) {
+                    return None;
+                }
+                let surface = entry.path().join("surface.json");
+                let prompt = std::fs::read_to_string(entry.path().join("prompt.md")).unwrap_or_default();
+                let mut view = json!({ "name": name, "prompt": prompt.trim() });
+                match read_json_file(&surface) {
+                    Ok(message) => {
+                        let body = &message["createSurface"];
+                        view["components"] = json!(body["components"].as_array().map_or(0, Vec::len));
+                        view["dataModel"] = abridged(&body["dataModel"], 0);
+                    }
+                    Err(_) if entry.path().join("surface-update.json").is_file() => {
+                        view["note"] = json!("saved before A2UI v1.0: open it once from Roer's panel to upgrade it");
+                    }
+                    Err(_) => return None,
+                }
+                Some(view)
+            })
+            .collect();
+        views.sort_by(|a, b| a["name"].as_str().cmp(&b["name"].as_str()));
+        Ok(Value::Array(views))
     }
 
     /// Prints the pending component actions for a pane, oldest first, one JSON
@@ -1049,7 +1092,32 @@ fn check_bundle_name(name: &str) -> Outcome {
     if is_bundle_name(name) {
         Ok(())
     } else {
-        Err(Fail::new(2, format!("invalid plugin-ui bundle name: {name} (use letters, digits, - and _ only)")))
+        Err(Fail::new(2, format!("invalid view name: {name} (use letters, digits, - and _ only)")))
+    }
+}
+
+/// A data model cut down to its shape, for an agent to read: lists keep
+/// their first two items and say how long they were, long strings are cut,
+/// and nesting stops a few levels down.
+fn abridged(value: &Value, depth: usize) -> Value {
+    if depth > 4 {
+        return json!("…");
+    }
+    match value {
+        Value::Array(items) => {
+            let mut kept: Vec<Value> = items.iter().take(2).map(|item| abridged(item, depth + 1)).collect();
+            if items.len() > 2 {
+                kept.push(json!(format!("… {} items in all", items.len())));
+            }
+            Value::Array(kept)
+        }
+        Value::Object(fields) => {
+            Value::Object(fields.iter().map(|(key, field)| (key.clone(), abridged(field, depth + 1))).collect())
+        }
+        Value::String(text) if text.chars().count() > 80 => {
+            json!(format!("{}…", text.chars().take(80).collect::<String>()))
+        }
+        other => other.clone(),
     }
 }
 

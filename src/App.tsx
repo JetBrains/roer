@@ -1281,6 +1281,7 @@ export function App() {
               }
               onOpenFile={openInTab}
               agentState={onStage && runningAgent(onStage) ? onStage.state : undefined}
+              onOpenTab={activateTab}
             />
           </aside>
         ) : null}
