@@ -362,9 +362,10 @@ const OPENER: (&str, &[&str]) = ("rundll32", &["url.dll,FileProtocolHandler"]);
 #[cfg(not(any(target_os = "macos", windows)))]
 const OPENER: (&str, &[&str]) = ("xdg-open", &[]);
 
-/// Opens a GitHub page in the person's browser. Only web links: this is
-/// handed URLs that came back from GitHub, and nothing else should reach
-/// the opener, which would just as happily launch a file or an app.
+/// Opens a web page in the person's browser: a GitHub page, or a link
+/// Cmd+clicked in the terminal. Only web links: these URLs come from GitHub
+/// or from a program's output, and nothing else should reach the opener,
+/// which would just as happily launch a file or an app.
 #[tauri::command(async)]
 pub fn open_url(url: String) -> Result<(), String> {
     if !is_web_link(&url) {
@@ -375,9 +376,8 @@ pub fn open_url(url: String) -> Result<(), String> {
 
 /// The unchecked half of [`open_url`]: shells out to the OS opener with no
 /// scheme validation. Only for a URL this process built itself (never data
-/// that came back from GitHub or anywhere else outside), where `is_web_link`'s
-/// `https://`-only rule would wrongly reject a legitimate `http://127.0.0.1`
-/// address — `roer-server`'s own bootstrap link, for one.
+/// that came back from GitHub or anywhere else outside), where `is_web_link`
+/// has nothing to protect — `roer-server`'s own bootstrap link, for one.
 pub(crate) fn open_in_system_browser(url: &str) -> Result<(), String> {
     let (opener, before) = OPENER;
     let status = crate::process::command(opener)
@@ -392,8 +392,10 @@ pub(crate) fn open_in_system_browser(url: &str) -> Result<(), String> {
     }
 }
 
+/// `https://`, or `http://` for a dev server's `http://localhost:3000`, with
+/// nothing the opener could read as an option or a second argument.
 fn is_web_link(url: &str) -> bool {
-    url.starts_with("https://") && !url.chars().any(char::is_whitespace)
+    (url.starts_with("https://") || url.starts_with("http://")) && !url.chars().any(char::is_whitespace)
 }
 
 /// Everything the tab shows about a pull request's review: who is still
@@ -677,6 +679,9 @@ mod tests {
         assert!(!is_web_link("file:///etc/passwd"));
         assert!(!is_web_link("/Applications/Calculator.app"));
         assert!(!is_web_link("https://x -a Calculator"));
+        assert!(is_web_link("http://localhost:3000/"));
+        assert!(!is_web_link("javascript:alert(1)"));
+        assert!(!is_web_link("httpx://example.com"));
     }
 
     #[test]

@@ -90,6 +90,8 @@ import {
   type SessionInfo,
 } from "./lib/pty";
 import { logLine } from "./lib/log";
+import { gitRoot } from "./lib/git";
+import { insideRoot } from "./lib/terminalLinks";
 import { onPluginUi, reportPluginUiReceipt, type PluginUiOutcome } from "./lib/pluginUi";
 
 // Before anything renders: extensions read the host's React and SDK from
@@ -555,6 +557,23 @@ export function App() {
     // Projects, so the tabs from this one stay open beside it.
     setTabs((current) => openFile(current, { kind: "file", root, path, line }));
   }, []);
+
+  /** A path the terminal linked (Claude Code's OSC 8), opened in Roer's file
+   * view under the repository it belongs to, or its own folder outside one. */
+  const openLinkedFile = useCallback(
+    (path: string, line?: number) => {
+      const dir = path.replace(/[\\/][^\\/]*$/, "") || "/";
+      void gitRoot(dir)
+        .catch(() => null)
+        .then((root) => {
+          const base = root ?? dir;
+          const rel = insideRoot(base, path);
+          if (rel) openInTab(base, rel, line);
+          else logLine(`roer: a terminal link to ${path} names no file Roer can open`);
+        });
+    },
+    [openInTab],
+  );
 
   /**
    * Records the pane tmux made for a session started from the launcher, once,
@@ -1156,6 +1175,7 @@ export function App() {
                 onAttached={handleAttached}
                 onPane={handlePane}
                 onExit={handleExit}
+                onOpenFile={openLinkedFile}
                 active={tabs.active === "terminal"}
               />
             ) : (
