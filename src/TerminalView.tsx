@@ -5,6 +5,7 @@ import "@xterm/xterm/css/xterm.css";
 
 import { closePty, decodeOutput, noteTyped, resizePty, spawnPty, writePty } from "./lib/pty";
 import { logLine } from "./lib/log";
+import { measureWithUnicode11 } from "./lib/unicodeWidth";
 import { currentTheme, hostColors, onThemeChange, terminalTheme } from "./lib/theme";
 
 /**
@@ -75,7 +76,10 @@ export function TerminalView({ args, cwd, onAttached, onPane, onExit, active = t
       fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
       fontSize: 13,
       theme: terminalTheme(currentTheme()),
+      // For `terminal.unicode`, which xterm still marks as proposed.
+      allowProposedApi: true,
     });
+    measureWithUnicode11(terminal);
     const unfollowTheme = onThemeChange((theme) => {
       terminal.options.theme = terminalTheme(theme);
     });
