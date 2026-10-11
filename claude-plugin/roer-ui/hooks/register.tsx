@@ -56,7 +56,7 @@ Input:
 Roer's own:
 - Table { columns: [{ key, title, align?: "start" | "end", width?, mono? }], rows, toneKey?, emptyText?, source? }: rows
   of records, each cell the row's field key; with toneKey a row whose field reads as failed or blocked is coloured
-- Chart { rows, x, series: [{ key, title? }], variant?: "bar" | "stackedBar" | "line", title?, source?, emptyText? }:
+- Chart { rows, x, series: [{ key, title? }], variant?: "bar" | "stackedBar" | "line", orientation?, title?, source?, emptyText? }:
   numbers from rows on one axis, at most 8 series; x is the row field naming each point. A non-number is a gap
 - Badge { text, tone?: "neutral" | "accent" | "success" | "warning" | "danger" }; EmptyState { text, detail?,
   variant?: "empty" | "loading" | "error", footer? }

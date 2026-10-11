@@ -69,6 +69,53 @@ describe("Chart", () => {
   });
 });
 
+describe("horizontal bars", () => {
+  const buckets = [
+    { b: "< 50 ms", n: 420 },
+    { b: "50–100 ms", n: 860 },
+    { b: "a bucket with a very long name indeed that cannot fit", n: 12 },
+    { b: "missing", n: "" },
+  ];
+
+  it("names rows on the left, writes one series' values at the tips, and leaves a gap for a blank", () => {
+    const { container } = render(<Chart orientation="horizontal" rows={buckets} x="b" series={[{ key: "n", title: "Requests" }]} />);
+    expect(screen.getByRole("img", { name: /horizontal bar chart of 4 rows/ })).toBeInTheDocument();
+    expect(container.querySelectorAll("svg path")).toHaveLength(3);
+    expect(screen.getByText("< 50 ms")).toBeInTheDocument();
+    expect(screen.getByText("860")).toBeInTheDocument();
+    expect(screen.getByText(/^a bucket with.*…$/)).toBeInTheDocument();
+    // A bar's data end is rounded on the right, its baseline end square.
+    expect(container.querySelector("svg path")!.getAttribute("d")).toMatch(/^M\S+H\S+Q/);
+  });
+
+  it("reads each row out with the up and down keys", () => {
+    render(<Chart orientation="horizontal" rows={buckets} x="b" series={series.slice(0, 1).map(() => ({ key: "n", title: "Requests" }))} />);
+    const plot = screen.getByRole("img");
+    fireEvent.keyDown(plot, { key: "ArrowDown" });
+    fireEvent.keyDown(plot, { key: "ArrowDown" });
+    expect(screen.getByRole("status")).toHaveTextContent("50–100 ms860");
+    fireEvent.keyDown(plot, { key: "ArrowUp" });
+    expect(screen.getByRole("status")).toHaveTextContent("< 50 ms420");
+  });
+
+  it("groups several series per row with a legend, and stacks with the total at the tip", () => {
+    const rows = [{ b: "web", ok: 5, ko: 2 }, { b: "api", ok: 9, ko: 4 }];
+    const two = [{ key: "ok", title: "Passed" }, { key: "ko", title: "Failed" }];
+    const { container, rerender } = render(<Chart orientation="horizontal" rows={rows} x="b" series={two} />);
+    expect(container.querySelectorAll("svg path")).toHaveLength(4);
+    expect(screen.getByRole("list")).toHaveTextContent("PassedFailed");
+    rerender(<Chart orientation="horizontal" variant="stackedBar" rows={rows} x="b" series={two} />);
+    expect(screen.getByRole("img", { name: /stacked horizontal bar chart/ })).toBeInTheDocument();
+    expect(screen.getByText("7")).toBeInTheDocument();
+    expect(screen.getByText("13")).toBeInTheDocument();
+  });
+
+  it("keeps lines vertical", () => {
+    render(<Chart orientation="horizontal" variant="line" rows={rows} x="week" series={series} />);
+    expect(screen.getByRole("img", { name: /line chart/ })).toBeInTheDocument();
+  });
+});
+
 describe("niceTicks", () => {
   it("steps by 1, 2 or 5 and always crosses zero", () => {
     expect(niceTicks(0, 9)).toEqual([0, 5, 10]);

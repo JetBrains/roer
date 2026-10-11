@@ -16,6 +16,9 @@ import { toNumber } from "./functions";
 import { Table, type Common } from "./components";
 
 export type ChartVariant = "bar" | "stackedBar" | "line";
+/** Columns stand up from the bottom; horizontal bars run right from labels
+ * on the left, for long labels or a ranking. Lines are always vertical. */
+export type ChartOrientation = "vertical" | "horizontal";
 
 export interface ChartSeries {
   /** The field of each row this series plots. */
@@ -50,6 +53,23 @@ export function niceTicks(low: number, high: number, count = 4): number[] {
   for (let t = Math.floor(lo / step) * step; t < hi + step / 2; t += step) ticks.push(Number(t.toPrecision(12)));
   if (ticks[ticks.length - 1]! < hi) ticks.push(Number((ticks[ticks.length - 1]! + step).toPrecision(12)));
   return ticks;
+}
+
+/** A horizontal bar from `base` to `end` along x, `top` to `top + thickness`
+ * down, with its data end rounded and its baseline end square. */
+function barPath(top: number, thickness: number, base: number, end: number, rounded: boolean): string {
+  const right = end >= base;
+  const r = rounded ? Math.min(RADIUS, thickness / 2, Math.abs(end - base)) : 0;
+  const s = right ? 1 : -1;
+  return [
+    `M${base},${top}`,
+    `H${end - s * r}`,
+    r ? `Q${end},${top} ${end},${top + r}` : "",
+    `V${top + thickness - r}`,
+    r ? `Q${end},${top + thickness} ${end - s * r},${top + thickness}` : "",
+    `H${base}`,
+    "Z",
+  ].join("");
 }
 
 /** A column from `base` to `top` with its data end rounded and its baseline
@@ -90,6 +110,7 @@ function useWidth() {
 
 export function Chart({
   variant = "bar",
+  orientation = "vertical",
   title,
   rows,
   x,
@@ -100,9 +121,11 @@ export function Chart({
   ...common
 }: Common & {
   variant?: ChartVariant;
+  orientation?: ChartOrientation;
   title?: string;
   rows: Record<string, unknown>[];
-  /** The field of each row that names it along the bottom. */
+  /** The field of each row that names it: along the bottom, or on the left
+   * of horizontal bars. */
   x: string;
   series: ChartSeries[];
   source?: string;
@@ -176,6 +199,131 @@ export function Chart({
   const ticks = stacked ? niceTicks(0, Math.max(...totals)) : niceTicks(Math.min(...flat), Math.max(...flat));
   const lo = ticks[0]!;
   const hi = ticks[ticks.length - 1]!;
+  const horizontal = orientation === "horizontal" && variant !== "line";
+  const move = (step: number) =>
+    setActive((a) => Math.min(rows.length - 1, Math.max(0, (a ?? (step > 0 ? -1 : rows.length)) + step)));
+  const legend =
+    shown.length > 1 ? (
+      <ul className="gen-chart-legend">
+        {shown.map((s, j) => (
+          <li key={s.key}>
+            <span className={`gen-chart-key ${variant === "line" ? "line" : ""}`} style={{ background: seriesColor(j) }} />
+            {s.title}
+          </li>
+        ))}
+      </ul>
+    ) : null;
+  const readout = (i: number, left: number, top: number) => (
+    <div id={tipId} role="status" className="gen-chart-tip" style={{ left: Math.min(Math.max(left, 70), width - 70), top }}>
+      <span className="gen-chart-tip-label">{label(rows[i]!)}</span>
+      {shown.map((s, j) => (
+        <span key={s.key} className="gen-chart-tip-row">
+          <span className="gen-chart-key line" style={{ background: seriesColor(j) }} />
+          <strong>{values[i]![j] === undefined ? "–" : valueFormat.format(values[i]![j]!)}</strong>
+          {shown.length > 1 ? <span className="gen-chart-tip-series">{s.title}</span> : null}
+        </span>
+      ))}
+    </div>
+  );
+
+  if (horizontal) {
+    // Labels take what they need, up to two fifths of the width; the bars
+    // keep the rest, and one series writes its value at each bar's tip.
+    const longest = Math.max(...rows.map((row) => label(row).length));
+    const labelW = Math.min(Math.max(48, longest * 6.6 + 14), width * 0.4);
+    const maxChars = Math.max(4, Math.floor((labelW - 14) / 6.6));
+    const pad = { top: 4, right: shown.length === 1 ? 44 : 14, bottom: 22, left: labelW };
+    const thickness = stacked || shown.length === 1 ? 18 : 14;
+    const groupH = stacked ? thickness : thickness * shown.length + GAP * (shown.length - 1);
+    const rowH = groupH + 12;
+    const plotW = Math.max(40, width - pad.left - pad.right);
+    const plotH = rowH * rows.length;
+    const svgH = pad.top + plotH + pad.bottom;
+    const xAt = (v: number) => pad.left + ((v - lo) / (hi - lo)) * plotW;
+    const rowTop = (i: number) => pad.top + rowH * i;
+    const bars: ReactNode[] = [];
+    values.forEach((vs, i) => {
+      const top = rowTop(i) + (rowH - groupH) / 2;
+      const dim = active === undefined || active === i ? 1 : 0.55;
+      if (stacked) {
+        let stack = 0;
+        const last = vs.map((v, j) => ((v ?? 0) > 0 ? j : -1)).filter((j) => j >= 0).pop();
+        vs.forEach((v, j) => {
+          if (v === undefined || v <= 0) return;
+          const base = xAt(stack);
+          stack += v;
+          // The gap between segments is taken from the left one's end.
+          const end = xAt(stack) - (j === last ? 0 : GAP);
+          if (end - base <= 0) return;
+          bars.push(<path key={`${i}-${j}`} d={barPath(top, thickness, base, end, j === last)} fill={seriesColor(j)} opacity={dim} />);
+        });
+      } else {
+        vs.forEach((v, j) => {
+          if (v === undefined) return;
+          bars.push(
+            <path key={`${i}-${j}`} d={barPath(top + j * (thickness + GAP), thickness, xAt(0), xAt(v), true)} fill={seriesColor(j)} opacity={dim} />,
+          );
+        });
+      }
+    });
+    const tipValue = (i: number) => (stacked ? totals[i]! : values[i]![0]);
+    return (
+      <div {...common} className="gen-chart">
+        {head}
+        <div className="gen-chart-plot" ref={ref} onPointerLeave={() => setActive(undefined)}>
+          <svg
+            width={width}
+            height={svgH}
+            role="img"
+            tabIndex={0}
+            aria-label={`${title ? `${title}: ` : ""}${stacked ? "stacked " : ""}horizontal bar chart of ${rows.length} ${rows.length === 1 ? "row" : "rows"}. Arrow keys read each one.`}
+            aria-describedby={active === undefined ? undefined : tipId}
+            onKeyDown={(e) => {
+              if (["ArrowDown", "ArrowRight", "ArrowUp", "ArrowLeft"].includes(e.key)) {
+                e.preventDefault();
+                move(e.key === "ArrowDown" || e.key === "ArrowRight" ? 1 : -1);
+              } else if (e.key === "Escape") setActive(undefined);
+            }}
+            onBlur={() => setActive(undefined)}
+          >
+            {ticks.map((t) => (
+              <g key={t}>
+                <line x1={xAt(t)} x2={xAt(t)} y1={pad.top} y2={pad.top + plotH} className={t === 0 ? "gen-chart-baseline" : "gen-chart-grid"} />
+                <text x={xAt(t)} y={svgH - 6} className="gen-chart-tick" textAnchor="middle">
+                  {tickFormat.format(t)}
+                </text>
+              </g>
+            ))}
+            {rows.map((row, i) => {
+              const text = label(row);
+              return (
+                <text key={i} x={labelW - 8} y={rowTop(i) + rowH / 2} className="gen-chart-tick" textAnchor="end" dominantBaseline="middle">
+                  {text.length > maxChars ? `${text.slice(0, maxChars - 1)}…` : text}
+                </text>
+              );
+            })}
+            {bars}
+            {shown.length === 1 || stacked
+              ? rows.map((_, i) => {
+                  const v = tipValue(i);
+                  return v === undefined ? null : (
+                    <text key={`v${i}`} x={xAt(Math.max(0, v)) + 6} y={rowTop(i) + rowH / 2} className="gen-chart-tick" dominantBaseline="middle">
+                      {tickFormat.format(v)}
+                    </text>
+                  );
+                })
+              : null}
+            {rows.map((_, i) => (
+              <rect key={`h${i}`} x={0} y={rowTop(i)} width={width} height={rowH} fill="transparent" onPointerEnter={() => setActive(i)} />
+            ))}
+          </svg>
+          {active === undefined ? null : readout(active, pad.left + plotW / 2, rowTop(active) + rowH)}
+        </div>
+        {legend}
+        {foot}
+      </div>
+    );
+  }
   const plotW = Math.max(40, width - PAD.left - PAD.right);
   const plotH = Math.max(40, height - PAD.top - PAD.bottom);
   const y = (v: number) => PAD.top + plotH - ((v - lo) / (hi - lo)) * plotH;
@@ -259,32 +407,11 @@ export function Chart({
   const onKey = (e: KeyboardEvent) => {
     if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
       e.preventDefault();
-      const step = e.key === "ArrowRight" ? 1 : -1;
-      setActive((a) => Math.min(rows.length - 1, Math.max(0, (a ?? (step > 0 ? -1 : rows.length)) + step)));
+      move(e.key === "ArrowRight" ? 1 : -1);
     } else if (e.key === "Escape") setActive(undefined);
   };
 
-  const tip =
-    active === undefined ? null : (
-      <div
-        id={tipId}
-        role="status"
-        className="gen-chart-tip"
-        style={{
-          left: Math.min(Math.max(centre(active), 70), width - 70),
-          top: PAD.top,
-        }}
-      >
-        <span className="gen-chart-tip-label">{label(rows[active]!)}</span>
-        {shown.map((s, j) => (
-          <span key={s.key} className="gen-chart-tip-row">
-            <span className="gen-chart-key line" style={{ background: seriesColor(j) }} />
-            <strong>{values[active]![j] === undefined ? "–" : valueFormat.format(values[active]![j]!)}</strong>
-            {shown.length > 1 ? <span className="gen-chart-tip-series">{s.title}</span> : null}
-          </span>
-        ))}
-      </div>
-    );
+  const tip = active === undefined ? null : readout(active, centre(active), PAD.top);
 
   return (
     <div {...common} className="gen-chart">
@@ -339,16 +466,7 @@ export function Chart({
         </svg>
         {tip}
       </div>
-      {shown.length > 1 ? (
-        <ul className="gen-chart-legend">
-          {shown.map((s, j) => (
-            <li key={s.key}>
-              <span className={`gen-chart-key ${variant === "line" ? "line" : ""}`} style={{ background: seriesColor(j) }} />
-              {s.title}
-            </li>
-          ))}
-        </ul>
-      ) : null}
+      {legend}
       {foot}
     </div>
   );
