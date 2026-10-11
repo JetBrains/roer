@@ -27,6 +27,8 @@ import { claudeSetupStatus } from "./lib/claudeSetup";
 import { listWorkspaces } from "./lib/workspaces";
 import { reportPluginUiReceipt } from "./lib/pluginUi";
 import { startBrowserServer } from "./lib/browserServer";
+import { gitRoot } from "./lib/git";
+import { openUrl } from "./lib/github";
 
 // Shared between the test body and the hoisted module mock below.
 const mocks = vi.hoisted(() => ({
@@ -36,6 +38,8 @@ const mocks = vi.hoisted(() => ({
   // The onEvent callback the component handed to spawnPty, so a test can
   // push PTY output through it.
   emit: { current: undefined as undefined | ((event: unknown) => void) },
+  // The handler the web-links addon was given, for plain URLs in the output.
+  webLinks: { current: undefined as undefined | ((event: MouseEvent, uri: string) => void) },
   // What the menu's "Agent Integrations…" is heard with.
   setupMenu: { current: undefined as undefined | (() => void) },
   // The last terminal made, so a test can see what it was told to look like.
@@ -86,6 +90,17 @@ vi.mock("@xterm/xterm", () => ({
       }),
     };
   },
+}));
+vi.mock("@xterm/addon-web-links", () => ({
+  WebLinksAddon: class {
+    constructor(handler: (event: MouseEvent, uri: string) => void) {
+      mocks.webLinks.current = handler;
+    }
+  },
+}));
+vi.mock("./lib/github", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./lib/github")>()),
+  openUrl: vi.fn(async () => undefined),
 }));
 vi.mock("@xterm/addon-unicode11", () => ({
   Unicode11Addon: class {},
@@ -381,6 +396,32 @@ describe("App", () => {
     // The app's own working directory is an accident of how it was launched,
     // so a new session starts at home rather than there.
     expect(cwd).toBe("/Users/test");
+  });
+
+  it("opens a Cmd+clicked link: a web page in the browser, a file in Roer", async () => {
+    vi.mocked(gitRoot).mockImplementation(async (dir) => (dir.startsWith("/Users/test/project") ? "/Users/test/project" : null));
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /new session/i }));
+    await waitFor(() => expect(mocks.terminal.current).toBeDefined());
+    const osc8 = (mocks.terminal.current as unknown as { options: { linkHandler: { activate: (e: MouseEvent, uri: string) => void } } })
+      .options.linkHandler;
+    const cmd = new MouseEvent("click", { metaKey: true });
+    const plain = new MouseEvent("click");
+
+    osc8.activate(plain, "https://github.com/JetBrains/roer");
+    mocks.webLinks.current?.(plain, "https://example.com");
+    osc8.activate(cmd, "javascript:alert(1)");
+    expect(openUrl).not.toHaveBeenCalled();
+
+    osc8.activate(cmd, "https://github.com/JetBrains/roer");
+    mocks.webLinks.current?.(cmd, "http://localhost:3000");
+    expect(openUrl).toHaveBeenCalledWith("https://github.com/JetBrains/roer");
+    expect(openUrl).toHaveBeenCalledWith("http://localhost:3000/");
+
+    act(() => osc8.activate(cmd, "file:///Users/test/project/src/main.ts#L7"));
+    expect(await screen.findByTitle("src/main.ts")).toBeInTheDocument();
+    vi.mocked(gitRoot).mockReset();
+    vi.mocked(gitRoot).mockResolvedValue(null);
   });
 
   it("puts the keyboard in a session as soon as it opens", async () => {

@@ -1,10 +1,13 @@
 import { useEffect, useRef } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
+import { WebLinksAddon } from "@xterm/addon-web-links";
 import "@xterm/xterm/css/xterm.css";
 
 import { closePty, decodeOutput, noteTyped, resizePty, spawnPty, writePty } from "./lib/pty";
+import { openUrl } from "./lib/github";
 import { logLine } from "./lib/log";
+import { isOpenGesture, linkTarget } from "./lib/terminalLinks";
 import { measureWithUnicode11 } from "./lib/unicodeWidth";
 import { currentTheme, hostColors, onThemeChange, terminalTheme } from "./lib/theme";
 
@@ -37,6 +40,9 @@ export interface TerminalViewProps {
   onPane?: (pane: string) => void;
   /** The PTY ended. After a handoff this is a terminal taking the session back. */
   onExit?: (code: number | null) => void;
+  /** A `file:` link was Cmd+clicked (Ctrl+click elsewhere): the absolute
+   * path it names, and the line when it gives one. */
+  onOpenFile?: (path: string, line?: number) => void;
   /** Whether the terminal is on top of the stage. It takes the keyboard
    * whenever it comes to the front, so a session just opened can be typed
    * into without clicking it first. */
@@ -47,7 +53,7 @@ export interface TerminalViewProps {
  * Hosts the xterm.js instance and binds it to a PTY in the Rust backend.
  * The terminal owns its DOM node, so React only supplies the container.
  */
-export function TerminalView({ args, cwd, onAttached, onPane, onExit, active = true }: TerminalViewProps) {
+export function TerminalView({ args, cwd, onAttached, onPane, onExit, onOpenFile, active = true }: TerminalViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
   const activeRef = useRef(active);
@@ -63,6 +69,8 @@ export function TerminalView({ args, cwd, onAttached, onPane, onExit, active = t
   onExitRef.current = onExit;
   const onPaneRef = useRef(onPane);
   onPaneRef.current = onPane;
+  const onOpenFileRef = useRef(onOpenFile);
+  onOpenFileRef.current = onOpenFile;
 
   const target = args.join(" ");
 
@@ -78,7 +86,31 @@ export function TerminalView({ args, cwd, onAttached, onPane, onExit, active = t
       theme: terminalTheme(currentTheme()),
       // For `terminal.unicode`, which xterm still marks as proposed.
       allowProposedApi: true,
+      // OSC 8 links, which Claude Code writes around the URLs and paths it
+      // prints. Without a handler xterm asks with confirm() and calls
+      // window.open, and neither does anything in Roer's window.
+      linkHandler: {
+        allowNonHttpProtocols: true,
+        activate: (event, uri) => {
+          if (isOpenGesture(event)) openLink(uri);
+        },
+      },
     });
+    /** Opens what a link names: a web page in the browser, a file in Roer. */
+    const openLink = (uri: string) => {
+      const target = linkTarget(uri);
+      if (target?.kind === "web") {
+        openUrl(target.url).catch((e: unknown) => logLine(`roer: could not open ${target.url}: ${String(e)}`));
+      } else if (target?.kind === "file") {
+        onOpenFileRef.current?.(target.path, target.line);
+      }
+    };
+    // Plain URLs in the output, which nothing marked as links.
+    terminal.loadAddon(
+      new WebLinksAddon((event, uri) => {
+        if (isOpenGesture(event)) openLink(uri);
+      }),
+    );
     measureWithUnicode11(terminal);
     const unfollowTheme = onThemeChange((theme) => {
       terminal.options.theme = terminalTheme(theme);

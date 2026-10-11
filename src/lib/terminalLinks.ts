@@ -1,0 +1,48 @@
+import { isMac } from "./keys";
+
+/**
+ * What a link in the terminal points at. Web links go to the person's
+ * browser; a `file:` link, which Claude Code writes around the paths it
+ * prints (OSC 8), names a file to open in Roer. Anything else (`javascript:`,
+ * `mailto:`, an app's own scheme) is not opened at all: the system opener
+ * would launch whatever it names.
+ */
+export type LinkTarget = { kind: "web"; url: string } | { kind: "file"; path: string; line?: number };
+
+/** Cmd+click on macOS, Ctrl+click elsewhere, as in every terminal: a plain
+ * click stays a click, for selecting text. */
+export const isOpenGesture = (event: Pick<MouseEvent, "metaKey" | "ctrlKey">): boolean =>
+  isMac() ? event.metaKey : event.ctrlKey;
+
+export function linkTarget(uri: string): LinkTarget | null {
+  let url: URL;
+  try {
+    url = new URL(uri);
+  } catch {
+    return null;
+  }
+  if (url.protocol === "http:" || url.protocol === "https:") return { kind: "web", url: url.href };
+  if (url.protocol !== "file:") return null;
+  let path: string;
+  try {
+    path = decodeURIComponent(url.pathname);
+  } catch {
+    return null;
+  }
+  // `file:///C:/x` on Windows.
+  if (/^\/[A-Za-z]:\//.test(path)) path = path.slice(1);
+  // An editor-style `#L12`, or `#12`, names the line.
+  const line = /^#L?(\d+)/.exec(url.hash)?.[1];
+  return line ? { kind: "file", path, line: Number(line) } : { kind: "file", path };
+}
+
+/** `path` relative to `root` when it lies inside it, with `/` separators;
+ * null for a file elsewhere, which Roer's file view does not show. */
+export function insideRoot(root: string, path: string): string | null {
+  const norm = (p: string) => p.replace(/\\/g, "/").replace(/\/+$/, "");
+  const base = norm(root);
+  const full = norm(path);
+  if (!full.startsWith(`${base}/`)) return null;
+  const rel = full.slice(base.length + 1);
+  return rel.split("/").some((part) => part === ".." || part === "") ? null : rel;
+}

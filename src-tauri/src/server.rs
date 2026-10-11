@@ -865,9 +865,9 @@ pub fn default_addr() -> SocketAddr {
 /// Starts the server in-process (spawned as a background task on the
 /// caller's tokio runtime) so the desktop app can offer "open this session
 /// in a browser tab" without a separate `roer-server` process, and opens the
-/// bootstrap URL itself — `open_url`'s `https://`-only check exists for URLs
-/// that came back from GitHub, not this `http://127.0.0.1` link the server
-/// just minted for itself.
+/// bootstrap URL itself — `open_url`'s web-link check exists for URLs that
+/// came from GitHub or a program's output, not this link the server just
+/// minted for itself.
 #[tauri::command(async)]
 pub async fn start_browser_server() -> Result<(), String> {
     let cell = RUNNING.get_or_init(|| Mutex::new(None));
