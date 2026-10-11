@@ -5,6 +5,8 @@ import { WebLinksAddon } from "@xterm/addon-web-links";
 import "@xterm/xterm/css/xterm.css";
 
 import { closePty, decodeOutput, noteTyped, resizePty, spawnPty, writePty } from "./lib/pty";
+import { onFileDrag } from "./lib/backend";
+import { isOver, pathsAsTyped } from "./lib/fileDrop";
 import { openUrl } from "./lib/github";
 import { logLine } from "./lib/log";
 import { isOpenGesture, linkTarget } from "./lib/terminalLinks";
@@ -253,8 +255,27 @@ export function TerminalView({ args, cwd, onAttached, onPane, onExit, onOpenFile
         });
     }, 0);
 
+    // Files dropped from the desktop type their paths, as in a native
+    // terminal; Claude Code attaches an image it finds that way. Only the
+    // terminal on top takes them, and only a drop over it.
+    const showDropTarget = (on: boolean) => container.classList.toggle("terminal-drop-target", on);
+    const stopFileDrag = onFileDrag((drag) => {
+      if (drag.type === "leave") return showDropTarget(false);
+      const over = activeRef.current && isOver(container, drag.x, drag.y);
+      if (drag.type === "over") return showDropTarget(over);
+      showDropTarget(false);
+      if (!over || drag.paths.length === 0) return;
+      // Pasted, so a program that asked for bracketed paste gets it as one.
+      terminal.paste(pathsAsTyped(drag.paths));
+      terminal.focus();
+    }).catch((error: unknown) => {
+      logLine(`terminal ${target}: cannot take dropped files: ${String(error)}`);
+      return () => {};
+    });
+
     return () => {
       disposed = true;
+      void stopFileDrag.then((stop) => stop());
       clearTimeout(starting);
       if (attaching !== null) clearTimeout(attaching);
       observer.disconnect();

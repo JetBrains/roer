@@ -10,6 +10,7 @@
  */
 import { invoke as tauriInvoke, Channel as TauriChannel } from "@tauri-apps/api/core";
 import { listen as tauriListen, type UnlistenFn } from "@tauri-apps/api/event";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 
 export type { UnlistenFn };
 
@@ -189,4 +190,28 @@ export async function listen<T>(
   return () => {
     eventListeners.get(event)?.delete(fn);
   };
+}
+
+/** Files dragged onto the window, at a point in CSS pixels. */
+export type FileDrag =
+  | { type: "over"; x: number; y: number }
+  | { type: "drop"; x: number; y: number; paths: string[] }
+  | { type: "leave" };
+
+/**
+ * Files dragged from the desktop onto the window. Tauri takes a drop itself,
+ * before the page sees it, and reports it with the files' paths, which a
+ * page's own drop event never has. A browser tab gives a page no paths at
+ * all, so there this never fires.
+ */
+export async function onFileDrag(handler: (drag: FileDrag) => void): Promise<UnlistenFn> {
+  if (!inTauri()) return () => {};
+  return getCurrentWebview().onDragDropEvent(({ payload }) => {
+    if (payload.type === "leave") return handler({ type: "leave" });
+    // Tauri reports device pixels; the page measures in CSS ones.
+    const ratio = window.devicePixelRatio || 1;
+    const at = { x: payload.position.x / ratio, y: payload.position.y / ratio };
+    if (payload.type === "drop") handler({ type: "drop", ...at, paths: payload.paths });
+    else handler({ type: "over", ...at });
+  });
 }

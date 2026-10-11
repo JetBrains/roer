@@ -4673,3 +4673,10 @@ button.danger:hover {
 .review > .error {
   margin: 8px 10px;
 }
+
+/* Files dragged over the terminal: where they will land. */
+.terminal-drop-target {
+  outline: 2px dashed var(--roer-accent);
+  outline-offset: -4px;
+  border-radius: 4px;
+}
