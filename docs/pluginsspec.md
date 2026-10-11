@@ -432,7 +432,7 @@ the data model like `WorkItem` is today.
 | `Grid` | `children`, `columns?`, `minItemWidth?` | The one layout primitive that wraps; `Row`/`Column` stay strictly linear. |
 | `StatTile` | `label`, `value`, `trend?: { delta, direction }`, `icon?` | A KPI number, e.g. "12 running jobs". |
 | `StatusCard` | `title`, `subtitle?`, `meta?`, `icon?`, `status?`, `progress?: 0-100`, `url?`, `footer?: id` | A generic SDLC entity tile — ticket, CI run, deployment, job. Same status→tone coloring as `WorkItem`, but no `source`/`key`/`assignee`/`labels` ontology and no `detail` variant: it stays a dense, uniform tile across mixed entity types on one dashboard, where `WorkItem` is for ticket-tracker items specifically. |
-| `Chart` | `rows`, `x`, `series: [{ key, title? }]`, `variant?: bar \| stackedBar \| line`, `title?`, `source?`, `height?`, `emptyText?` | Implemented, and in `mcp-guide.md`. One value axis, at most eight series in a fixed, colour-blind-checked order (`--roer-series-N` per theme), a legend from two, hover and keyboard readouts, and the same rows as a table a click away. No pie: part-to-whole is `stackedBar`. |
+| `Chart` | `rows`, `x`, `series: [{ key, title? }]`, `variant?: bar \| stackedBar \| line`, `orientation?: vertical \| horizontal`, `title?`, `source?`, `height?`, `emptyText?` | Implemented, and in `mcp-guide.md`. One value axis, at most eight series in a fixed, colour-blind-checked order (`--roer-series-N` per theme), a legend from two, hover and keyboard readouts, and the same rows as a table a click away. No pie: part-to-whole is `stackedBar`. |
 
 `Table`, `StatTile` and `Chart` also take `source?`, a caption saying where
 the figures come from or that they are a sample.

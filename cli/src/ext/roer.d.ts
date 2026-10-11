@@ -607,6 +607,8 @@ declare module "roer/ui" {
     source?: string;
   }): ReactNode;
   export type ChartVariant = "bar" | "stackedBar" | "line";
+  /** Horizontal bars run right from labels on the left: for long labels or a ranking. Lines stay vertical. */
+  export type ChartOrientation = "vertical" | "horizontal";
   export interface ChartSeries {
     /** The field of each row this series plots. */
     key: string;
@@ -619,6 +621,8 @@ declare module "roer/ui" {
   export function Chart(props: Common & {
     /** @default "bar" */
     variant?: ChartVariant;
+    /** @default "vertical" */
+    orientation?: ChartOrientation;
     title?: string;
     rows: Record<string, unknown>[];
     /** The field of each row that names it along the bottom. */

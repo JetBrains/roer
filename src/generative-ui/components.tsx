@@ -26,7 +26,7 @@ import type { Align, Justify } from "./schema";
 
 export { PatchPane as DiffView } from "./WorkItemDetail";
 export { Mermaid, type DiagramComment, type DiagramFile, type DiagramThread } from "./Mermaid";
-export { Chart, type ChartSeries, type ChartVariant } from "./Chart";
+export { Chart, type ChartOrientation, type ChartSeries, type ChartVariant } from "./Chart";
 
 /** What every component passes to its root element. */
 export interface Common {

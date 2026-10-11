@@ -294,6 +294,7 @@ function renderBody(node: Component, ctx: Ctx, scope: Scope, seen: ReadonlySet<s
         <Chart
           {...common}
           variant={node.variant}
+          orientation={node.orientation === "horizontal" ? "horizontal" : "vertical"}
           title={node.title === undefined ? undefined : text(node.title)}
           rows={Array.isArray(rows) ? rows.filter(isRecord) : []}
           x={node.x}

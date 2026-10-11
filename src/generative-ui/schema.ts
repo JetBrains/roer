@@ -205,6 +205,8 @@ export type Component =
       "Chart",
       {
         variant?: "bar" | "stackedBar" | "line";
+        /** Horizontal bars, labels on the left, for `bar` and `stackedBar`. */
+        orientation?: "vertical" | "horizontal";
         title?: DynamicString;
         rows: DynamicList;
         /** The row field that names each point along the bottom. */

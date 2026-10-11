@@ -36,7 +36,7 @@ export {
   WorkItem,
   statusTone,
 } from "../generative-ui/components";
-export type { ChartSeries, ChartVariant, Common, DiagramComment, DiagramFile, DiagramThread, TableColumn, TextVariant, Tone } from "../generative-ui/components";
+export type { ChartOrientation, ChartSeries, ChartVariant, Common, DiagramComment, DiagramFile, DiagramThread, TableColumn, TextVariant, Tone } from "../generative-ui/components";
 export type { NoteAction, NoteAnswer } from "../DiffNote";
 export type { NewNote } from "../DiffPane";
 // Beyond the catalog, the overlays and controls a tab most often needs, with
