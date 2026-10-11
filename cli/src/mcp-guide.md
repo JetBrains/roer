@@ -178,6 +178,7 @@ hint or a result only when it applies).
 | `Column` | `children`, `justify?`, `align?` | Same values as `Row`. |
 | `List` | `children`, `direction?`, `align?` | Scrolls when it overflows. `direction` is `vertical` (default) or `horizontal`. |
 | `Card` | `child: id` | One child; wrap several in a `Column`. |
+| `Grid` | `children`, `columns?`, `minItemWidth?` | The one layout that wraps, for tiles and cards whose count varies. `columns` fixes how many per row; otherwise each item is at least `minItemWidth` px wide and as many fit as will. `Row`/`Column` never wrap. |
 | `Tabs` | `tabs: [{title, child: id}]` | Which tab is active is client-only state. |
 | `Modal` | `trigger: id`, `content: id` | Clicking the trigger opens it; client-only state. |
 | `Divider` | `axis?` | `horizontal` (default) or `vertical`. |
@@ -204,6 +205,8 @@ hint or a result only when it applies).
 | `Chart` | `rows`, `x`, `series: [{key, title?}]`, `variant?`, `title?`, `source?`, `height?`, `emptyText?` | Numbers from rows, on one value axis: `bar` (default) for comparing, `stackedBar` for parts of a whole (never a pie), `line` for change along a sequence such as days. `x` is the row field named along the bottom; each series plots the row field `key`, up to eight, coloured in a fixed order, with a legend from two. A value that is not a number is a gap, not a zero. The panel gives hover and keyboard readouts and a button that shows the same rows as a table, so you need not draw the table too. Two measures on different scales are two charts. |
 | `DiffView` | `diff`, `title?`, `layout?`, `emptyText?`, `notes?`, `noteActions?`, `noteEvent?` | The Changes tab's diff viewer: a file tree beside the selected file's diff, with highlighting and arrow-key stepping. `diff` is the whole output of `git diff` (any range, any number of files), best bound to the data model. `layout` is `unified` (default) or `split`. `notes` is a list of `{ path, line?, side?, text, tone? }`, each drawn under its line: `line` counts in the new file, or in the old one with `side: "old"` (for a removed line); without `line` the note heads the file. A note with an `author` is a comment: its `text` is markdown, and it may carry `replies: { author, text }[]`, a `tag` ("outdated") and an https `url`. Give notes an `id` and the view `noteActions: { label, value, input?, primary?, done? }[]` and each such note gets a button per action; one with `input` (its placeholder) asks for words first. An answer is reported as the event `noteEvent` (default `diffNote`) with context `{ id, path, line, side, action, text? }`, `action` being the `value`, or `""` when the user takes their answer back. Keep it by setting the note's `state` to that value (and `answer` to the words): an answered note shows `done` in place of its buttons. A note's own `actions` replace `noteActions` for that note, so one diff can offer "Delete" on some notes and "Accept"/"Decline" on others. It needs room: use it as `root` or in a `Column`, not inside a `Card` or a `List`. |
 | `WorkItem` | `title`, `source?`, `key?`, `status?`, `url?`, `assignee?`, `labels?`, `meta?`, `footer?: id` | One task from any tracker, drawn the same way whatever it came from. `source` is `github`, `youtrack`, `notion`, `jira` or `personal` (any other name is shown as sent); `key` is the tracker's id (`#21`, `RO-12`, `T-3`); an `https` `url` makes the title open it. The status is coloured by meaning, so `closed`, `Fixed` and `done` all read as finished, and `failed` or `error` as failed. `footer` holds controls, usually a `Row` of `Button`s. With `variant: "detail"` it opens the item up: see *One work item in detail* below. |
+| `StatTile` | `label`, `value`, `trend?: {delta, direction}`, `icon?`, `source?` | One number that matters, large, with what it counts under it: "12 running jobs". `direction` is `up`, `down` or `flat`. Several go in a `Grid` (`minItemWidth` ~160) above the detail they sum up. |
+| `StatusCard` | `title`, `subtitle?`, `meta?`, `icon?`, `status?`, `progress?`, `url?`, `footer?: id` | One thing with a state, of any kind: a CI run, a deployment, a job, a service. `status` is coloured by meaning (`done`, `running`, `blocked`, `failed`… however the source spells them), `progress` 0–100 draws a slim bar, `url` (https) makes the title a link, `footer` holds its buttons. Use `WorkItem` for tickets from a tracker; `StatusCard` where the items are not tickets or are of mixed kinds. |
 | `Requirements` / `Findings` / `Decisions` / `Sources` / `Comments` | `items` | One section of a detailed work item on its own, `items` shaped as there. |
 
 ## Diagrams
@@ -243,6 +246,22 @@ screen.
 ```
 
 with the component's `"notes": { "path": "/threads" }`.
+
+## Dashboards
+
+A dashboard is a pattern, not a component: a `Grid` of `StatTile`s for the
+totals, then a `Grid` or `List` of `StatusCard`s templated over the items
+in the data model.
+
+```json
+{ "id": "root", "component": "Column", "children": ["totals", "jobs"] },
+{ "id": "totals", "component": "Grid", "minItemWidth": 160, "children": ["running", "failed"] },
+{ "id": "running", "component": "StatTile", "label": "running", "value": { "call": "length", "args": { "value": { "path": "/running" } } } },
+{ "id": "failed", "component": "StatTile", "label": "failed today", "value": { "path": "/failedToday" } },
+{ "id": "jobs", "component": "Grid", "minItemWidth": 240, "children": { "path": "/jobs", "componentId": "job" } },
+{ "id": "job", "component": "StatusCard", "title": { "path": "name" }, "status": { "path": "state" },
+  "meta": { "path": "started" }, "progress": { "path": "percent" }, "url": { "path": "url" } }
+```
 
 ## Boards of work items
 

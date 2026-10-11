@@ -25,7 +25,7 @@ const PATCH = `diff --git a/app.ts b/app.ts
 
 /** Every component in roer:catalog/1, at least once. */
 const EVERYTHING = [
-  { id: 'root', component: 'Column', children: ['grid', 'row', 'list', 'card', 'tabs', 'modal', 'exp', 'div', 'vdiv', 'arrow', 'varrow', 'txt', 'icon', 'img', 'vid', 'aud', 'btn', 'field', 'check', 'pick', 'slider', 'when', 'diff', 'chart', 'tile', 'status', 'item', 'reqs', 'finds', 'decs', 'srcs', 'talk'] },
+  { id: 'root', component: 'Column', children: ['grid', 'row', 'list', 'card', 'tabs', 'modal', 'exp', 'div', 'vdiv', 'arrow', 'varrow', 'txt', 'icon', 'img', 'vid', 'aud', 'btn', 'field', 'check', 'pick', 'slider', 'when', 'diff', 'chart', 'tile', 'status', 'item', 'reqs', 'finds', 'decs', 'srcs', 'talk', 'table', 'badge', 'empty', 'bars', 'stack', 'lines', 'hidden'] },
   { id: 'grid', component: 'Grid', columns: 2, children: ['g1', 'g2', 'g3'] },
   { id: 'g1', component: 'Text', text: 'grid one' },
   { id: 'g2', component: 'Text', text: 'grid two' },
@@ -69,19 +69,29 @@ const EVERYTHING = [
   { id: 'decs', component: 'Decisions', items: [{ id: 'd', question: 'Which?', options: [{ label: 'This', value: 'this' }] }] },
   { id: 'srcs', component: 'Sources', items: [{ kind: 'doc', label: 'spec', url: 'https://example.com/spec' }] },
   { id: 'talk', component: 'Comments', items: [{ id: 'k', author: 'ana', text: 'looks good', at: '2h ago' }] },
+  { id: 'table', component: 'Table', columns: [{ key: 'job', title: 'Job' }, { key: 'state', title: 'State', align: 'end' }],
+    rows: [{ job: 'lint', state: 'failed' }], toneKey: 'state', source: 'from ci' },
+  { id: 'badge', component: 'Badge', text: 'beta', tone: 'accent' },
+  { id: 'empty', component: 'EmptyState', text: 'no runs yet', variant: 'loading' },
+  { id: 'bars', component: 'Chart', title: 'per day', rows: { path: '/days' }, x: 'd', series: [{ key: 'ok', title: 'passed' }, { key: 'ko', title: 'failed' }], source: 'sample' },
+  { id: 'stack', component: 'Chart', variant: 'stackedBar', title: 'stacked', rows: { path: '/days' }, x: 'd', series: [{ key: 'ok' }, { key: 'ko' }] },
+  { id: 'lines', component: 'Chart', variant: 'line', title: 'trend', rows: { path: '/days' }, x: 'd', series: [{ key: 'ok' }] },
+  { id: 'hidden', component: 'Text', text: 'never drawn', visible: { call: 'gt', args: { a: { path: '/level' }, b: 5 } } },
 ]
 
 describe('the whole catalog', () => {
   test('every component draws on every surface, none as a placeholder', async ($, on) => {
     on('ui.open', () => ({ value: { isPlaced: true } }))
-    const shown = await $.tool.call({ tool: TOOL, messages: [create(EVERYTHING, { names: [{ name: 'ana' }, { name: 'bo' }], level: 4 })] })
+    const shown = await $.tool.call({ tool: TOOL, messages: [create(EVERYTHING, { names: [{ name: 'ana' }, { name: 'bo' }], level: 4, days: [{ d: 'Mon', ok: 4, ko: 1 }, { d: 'Tue', ok: 6, ko: '' }] })] })
     expect(shown.deny).toBeUndefined()
     for (const surface of ['terminal', 'desktop', 'vscode', 'mobile'] as const) {
       const ui = await $.ui.mount({ plugin: 'roer-ui', surface, ...PANE })
       expect(await ui.find({ type: 'Text', text: /not in roer:catalog|not drawn|missing|cycle/ })).toBeUndefined()
-      for (const seen of ['grid three', 'in a row', 'bo', 'in a card', 'tab body', 'modal trigger', 'caption text', 'star', 'looks good', 'running jobs', 'Deploy', 'Fix it', 'The change', 'The flow', '💬 a · Agent: why a?', 'Which?', 'slow']) {
+      for (const seen of ['grid three', 'in a row', 'bo', 'in a card', 'tab body', 'modal trigger', 'caption text', 'star', 'looks good', 'running jobs', 'Deploy', 'Fix it', 'The change', 'The flow', '💬 a · Agent: why a?', 'Which?', 'slow', 'beta', 'no runs yet', 'from ci', 'per day', 'stacked', 'trend', 'sample']) {
         expect(await ui.find({ text: seen })).toBeDefined()
       }
+      expect(await ui.find({ text: /lint +failed/ })).toBeDefined()
+      expect(await ui.find({ text: 'never drawn' })).toBeUndefined()
       await ui.unmount()
     }
   })
