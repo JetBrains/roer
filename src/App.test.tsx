@@ -40,6 +40,8 @@ const mocks = vi.hoisted(() => ({
   emit: { current: undefined as undefined | ((event: unknown) => void) },
   // The handler the web-links addon was given, for plain URLs in the output.
   webLinks: { current: undefined as undefined | ((event: MouseEvent, uri: string) => void) },
+  // What Tauri's file drag-and-drop is reported to.
+  fileDrag: { current: undefined as undefined | ((drag: unknown) => void) },
   // What the menu's "Agent Integrations…" is heard with.
   setupMenu: { current: undefined as undefined | (() => void) },
   // The last terminal made, so a test can see what it was told to look like.
@@ -74,6 +76,7 @@ vi.mock("@xterm/xterm", () => ({
       mocks.terminal.current = this as never;
     }
     loadAddon = vi.fn();
+    paste = vi.fn();
     unicode = { activeVersion: "6" };
     open = vi.fn();
     focus = vi.fn();
@@ -90,6 +93,13 @@ vi.mock("@xterm/xterm", () => ({
       }),
     };
   },
+}));
+vi.mock("./lib/backend", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./lib/backend")>()),
+  onFileDrag: vi.fn(async (handler: (drag: unknown) => void) => {
+    mocks.fileDrag.current = handler;
+    return () => undefined;
+  }),
 }));
 vi.mock("@xterm/addon-web-links", () => ({
   WebLinksAddon: class {
@@ -422,6 +432,26 @@ describe("App", () => {
     expect(await screen.findByTitle("src/main.ts")).toBeInTheDocument();
     vi.mocked(gitRoot).mockReset();
     vi.mocked(gitRoot).mockResolvedValue(null);
+  });
+
+  it("types the paths of files dropped on the terminal, and shows where they will land", async () => {
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /new session/i }));
+    await waitFor(() => expect(mocks.fileDrag.current).toBeDefined());
+    const terminal = mocks.terminal.current as unknown as { paste: ReturnType<typeof vi.fn> };
+    const box = screen.getByTestId("terminal");
+
+    // jsdom lays nothing out, so the terminal's box is the point 0,0.
+    act(() => mocks.fileDrag.current?.({ type: "over", x: 0, y: 0 }));
+    expect(box).toHaveClass("terminal-drop-target");
+    act(() => mocks.fileDrag.current?.({ type: "leave" }));
+    expect(box).not.toHaveClass("terminal-drop-target");
+
+    act(() => mocks.fileDrag.current?.({ type: "drop", x: 300, y: 300, paths: ["/elsewhere.png"] }));
+    expect(terminal.paste).not.toHaveBeenCalled();
+    act(() => mocks.fileDrag.current?.({ type: "drop", x: 0, y: 0, paths: ["/Users/test/My Shot.png"] }));
+    expect(terminal.paste).toHaveBeenCalledWith("/Users/test/My\\ Shot.png ");
+    expect(box).not.toHaveClass("terminal-drop-target");
   });
 
   it("puts the keyboard in a session as soon as it opens", async () => {
