@@ -8,6 +8,17 @@
  * renderer's business, not these components'.
  */
 import { useState, type CSSProperties, type ReactNode } from "react";
+import { CheckIcon } from "lucide-react";
+import {
+  Checkbox as CheckboxPrimitive,
+  Collapsible as CollapsiblePrimitive,
+  Dialog as DialogPrimitive,
+  RadioGroup as RadioGroupPrimitive,
+  Slider as SliderPrimitive,
+  Tabs as TabsPrimitive,
+  ToggleGroup as ToggleGroupPrimitive,
+  VisuallyHidden,
+} from "radix-ui";
 
 import { openUrl } from "../lib/github";
 
@@ -123,47 +134,56 @@ export function Divider({ axis, ...common }: Common & { axis?: "horizontal" | "v
   return <hr {...common} className={axis === "vertical" ? "gen-divider vertical" : "gen-divider"} />;
 }
 
-/** Client-only state: which tab is active is never part of a data model. */
+/** Client-only state: which tab is active is never part of a data model.
+ * Radix gives it the tab pattern: arrow keys between tabs, each tab tied to
+ * its panel. */
 export function Tabs({ tabs, ...common }: Common & { tabs: { title: string; content: ReactNode }[] }) {
-  const [active, setActive] = useState(0);
+  const [active, setActive] = useState("0");
+  const shown = tabs[Number(active)];
   return (
-    <div {...common} className="gen-tabs">
-      <div className="gen-tabs-bar" role="tablist">
+    <TabsPrimitive.Root {...common} className="gen-tabs" value={active} onValueChange={setActive}>
+      <TabsPrimitive.List className="gen-tabs-bar">
         {tabs.map((tab, i) => (
-          <button
+          <TabsPrimitive.Trigger
             key={`${i}:${tab.title}`}
-            type="button"
-            role="tab"
-            aria-selected={active === i}
-            className={active === i ? "gen-tabs-btn on" : "gen-tabs-btn"}
-            onClick={() => setActive(i)}
+            value={String(i)}
+            className={active === String(i) ? "gen-tabs-btn on" : "gen-tabs-btn"}
           >
             {tab.title}
-          </button>
+          </TabsPrimitive.Trigger>
         ))}
-      </div>
-      <div className="gen-tabs-panel">{tabs[active]?.content ?? null}</div>
-    </div>
+      </TabsPrimitive.List>
+      {shown ? (
+        <TabsPrimitive.Content value={active} className="gen-tabs-panel">
+          {shown.content}
+        </TabsPrimitive.Content>
+      ) : null}
+    </TabsPrimitive.Root>
   );
 }
 
 /** Client-only state: whether the modal is open is not part of the
- * protocol, so the trigger and the open flag both live here. */
+ * protocol, so the trigger and the open flag both live here. A Radix dialog:
+ * focus moves into it and stays there, Escape or a click outside closes it,
+ * and focus goes back to the trigger. */
 export function Modal({ trigger, children, ...common }: WithChildren & { trigger: ReactNode }) {
   const [open, setOpen] = useState(false);
   return (
-    <>
+    <DialogPrimitive.Root open={open} onOpenChange={setOpen}>
       <span {...common} className="gen-modal-trigger" onClick={() => setOpen(true)}>
         {trigger}
       </span>
-      {open ? (
-        <div className="gen-modal-backdrop" onClick={() => setOpen(false)}>
-          <div className="gen-modal" onClick={(e) => e.stopPropagation()}>
-            {children}
-          </div>
-        </div>
-      ) : null}
-    </>
+      <DialogPrimitive.Portal>
+        <DialogPrimitive.Overlay className="gen-modal-backdrop" />
+        <DialogPrimitive.Content className="gen-modal" aria-describedby={undefined}>
+          {/* A dialog needs a name; a catalog Modal has no title of its own. */}
+          <VisuallyHidden.Root asChild>
+            <DialogPrimitive.Title>Details</DialogPrimitive.Title>
+          </VisuallyHidden.Root>
+          {children}
+        </DialogPrimitive.Content>
+      </DialogPrimitive.Portal>
+    </DialogPrimitive.Root>
   );
 }
 
@@ -176,13 +196,13 @@ export function Expandable({
 }: WithChildren & { title: string; defaultExpanded?: boolean }) {
   const [open, setOpen] = useState(defaultExpanded ?? false);
   return (
-    <div {...common} className="gen-expandable">
-      <button type="button" className="gen-expandable-header" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+    <CollapsiblePrimitive.Root {...common} className="gen-expandable" open={open} onOpenChange={setOpen}>
+      <CollapsiblePrimitive.Trigger className="gen-expandable-header">
         <span className={open ? "gen-expandable-chevron open" : "gen-expandable-chevron"}>▶</span>
         {title}
-      </button>
-      {open ? <div className="gen-expandable-body">{children}</div> : null}
-    </div>
+      </CollapsiblePrimitive.Trigger>
+      <CollapsiblePrimitive.Content className="gen-expandable-body">{children}</CollapsiblePrimitive.Content>
+    </CollapsiblePrimitive.Root>
   );
 }
 
@@ -613,15 +633,32 @@ export function TextField({
   );
 }
 
+/** A Radix checkbox: a real `role="checkbox"`, drawn in Roer's colours. */
+function Box({ checked, onChange, label }: { checked: boolean; onChange: (checked: boolean) => void; label?: string }) {
+  return (
+    <CheckboxPrimitive.Root
+      className="gen-check"
+      checked={checked}
+      aria-label={label}
+      onCheckedChange={(next) => onChange(next === true)}
+    >
+      <CheckboxPrimitive.Indicator className="gen-check-mark">
+        <CheckIcon size={11} strokeWidth={3} />
+      </CheckboxPrimitive.Indicator>
+    </CheckboxPrimitive.Root>
+  );
+}
+
 export function CheckBox({ label, checked, onChange, ...common }: Common & { label: string; checked: boolean; onChange: (checked: boolean) => void }) {
   return (
     <label {...common} className="gen-checkbox">
-      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} />
+      <Box checked={checked} onChange={onChange} />
       {label}
     </label>
   );
 }
 
+/** A value in steps from `min` to `max`, by keyboard as well as by mouse. */
 export function Slider({
   label,
   min = 0,
@@ -631,19 +668,27 @@ export function Slider({
   onChange,
   ...common
 }: Common & { label?: string; min?: number; max: number; steps?: number; value: number; onChange: (value: number) => void }) {
+  const { "aria-label": ariaLabel, ...rest } = common;
+  // A float step leaves 0.30000000000000004 behind; round it away.
+  const tidy = (v: number) => Number(v.toPrecision(12));
   return (
-    <label {...common} className="gen-slider">
+    <div {...rest} className="gen-slider">
       {label ? <span className="gen-field-label">{label}</span> : null}
-      <input
-        type="range"
+      <SliderPrimitive.Root
+        className="gen-slider-root"
         min={min}
         max={max}
-        step={steps ? (max - min) / steps : "any"}
-        value={value}
-        onChange={(e) => onChange(Number(e.target.value))}
-      />
+        step={tidy((max - min) / (steps && steps > 0 ? steps : 100))}
+        value={[Math.min(max, Math.max(min, value))]}
+        onValueChange={([next]) => next !== undefined && onChange(tidy(next))}
+      >
+        <SliderPrimitive.Track className="gen-slider-track">
+          <SliderPrimitive.Range className="gen-slider-range" />
+        </SliderPrimitive.Track>
+        <SliderPrimitive.Thumb className="gen-slider-thumb" aria-label={label || ariaLabel || "Value"} />
+      </SliderPrimitive.Root>
       <span className="gen-slider-value">{value}</span>
-    </label>
+    </div>
   );
 }
 
@@ -712,30 +757,77 @@ export function ChoicePicker({
     onChange(Array.from(next));
   };
   const shown = filter ? options.filter((option) => option.label.toLowerCase().includes(filter.toLowerCase())) : options;
-  return (
-    <div {...common} className={chips ? "gen-choice-picker chips" : "gen-choice-picker"}>
-      {label ? <span className="gen-field-label">{label}</span> : null}
-      {filterable ? (
-        <input className="gen-bundles-input" placeholder="Filter…" value={filter} onChange={(e) => setFilter(e.target.value)} />
-      ) : null}
-      {shown.map((option) =>
-        chips ? (
-          <button
-            key={option.value}
-            type="button"
-            aria-pressed={picked.has(option.value)}
-            className={picked.has(option.value) ? "gen-chip on" : "gen-chip"}
-            onClick={() => toggle(option.value)}
-          >
-            {option.label}
-          </button>
+  const filterBox = filterable ? (
+    <input className="gen-bundles-input" placeholder="Filter…" value={filter} onChange={(e) => setFilter(e.target.value)} />
+  ) : null;
+  const heading = label ? <span className="gen-field-label">{label}</span> : null;
+  // Chips are a Radix toggle group, a single choice a radio group: either way
+  // arrow keys move between the options and Tab leaves them.
+  if (chips) {
+    const items = shown.map((option) => (
+      <ToggleGroupPrimitive.Item
+        key={option.value}
+        value={option.value}
+        className={picked.has(option.value) ? "gen-chip on" : "gen-chip"}
+      >
+        {option.label}
+      </ToggleGroupPrimitive.Item>
+    ));
+    return (
+      <div {...common} className="gen-choice-picker chips">
+        {heading}
+        {filterBox}
+        {multiple ? (
+          <ToggleGroupPrimitive.Root type="multiple" className="gen-choice-group" aria-label={label} value={value} onValueChange={onChange}>
+            {items}
+          </ToggleGroupPrimitive.Root>
         ) : (
-          <label key={option.value} className="gen-choice-option">
-            <input type={multiple ? "checkbox" : "radio"} checked={picked.has(option.value)} onChange={() => toggle(option.value)} />
-            {option.label}
-          </label>
-        ),
-      )}
+          <ToggleGroupPrimitive.Root
+            type="single"
+            className="gen-choice-group"
+            aria-label={label}
+            value={value[0] ?? ""}
+            onValueChange={(next) => onChange(next ? [next] : [])}
+          >
+            {items}
+          </ToggleGroupPrimitive.Root>
+        )}
+      </div>
+    );
+  }
+  if (!multiple) {
+    return (
+      <div {...common} className="gen-choice-picker">
+        {heading}
+        {filterBox}
+        <RadioGroupPrimitive.Root
+          className="gen-choice-group column"
+          aria-label={label}
+          value={value[0] ?? ""}
+          onValueChange={(next) => onChange([next])}
+        >
+          {shown.map((option) => (
+            <label key={option.value} className="gen-choice-option">
+              <RadioGroupPrimitive.Item value={option.value} className="gen-radio">
+                <RadioGroupPrimitive.Indicator className="gen-radio-dot" />
+              </RadioGroupPrimitive.Item>
+              {option.label}
+            </label>
+          ))}
+        </RadioGroupPrimitive.Root>
+      </div>
+    );
+  }
+  return (
+    <div {...common} className="gen-choice-picker">
+      {heading}
+      {filterBox}
+      {shown.map((option) => (
+        <label key={option.value} className="gen-choice-option">
+          <Box checked={picked.has(option.value)} onChange={() => toggle(option.value)} />
+          {option.label}
+        </label>
+      ))}
     </div>
   );
 }

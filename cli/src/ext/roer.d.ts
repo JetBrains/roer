@@ -770,4 +770,64 @@ declare module "roer/ui" {
     onDataChange?: (data: DataModel) => void;
     onOpenFile?: (path: string) => void;
   }): ReactNode;
+
+  // shadcn/ui-shaped overlays and controls: the same names, parts and props as shadcn's (Radix underneath),
+  // already styled in Roer's colours. Use these rather than adding shadcn or Tailwind classes to an extension,
+  // which nothing would generate styles for. Every part also takes `className` and the Radix part's own props.
+  type Part<P = {}> = (props: P & { className?: string; children?: ReactNode; asChild?: boolean; [prop: string]: unknown }) => ReactNode;
+
+  /** `<Select value onValueChange><SelectTrigger><SelectValue placeholder="…" /></SelectTrigger>
+   * <SelectContent><SelectItem value="a">A</SelectItem></SelectContent></Select>` */
+  export const Select: Part<{ value?: string; defaultValue?: string; onValueChange?: (value: string) => void; disabled?: boolean; open?: boolean; onOpenChange?: (open: boolean) => void }>;
+  export const SelectTrigger: Part<{ size?: "sm" | "default" }>;
+  export const SelectValue: Part<{ placeholder?: ReactNode }>;
+  export const SelectContent: Part<{ position?: "popper" | "item-aligned" }>;
+  export const SelectItem: Part<{ value: string; disabled?: boolean }>;
+  export const SelectGroup: Part;
+  export const SelectLabel: Part;
+  export const SelectSeparator: Part;
+
+  /** `<Dialog open onOpenChange><DialogTrigger asChild>…</DialogTrigger><DialogContent><DialogHeader>
+   * <DialogTitle>…</DialogTitle><DialogDescription>…</DialogDescription></DialogHeader>…<DialogFooter>
+   * </DialogFooter></DialogContent></Dialog>`. Focus is trapped while it is open; Escape closes it. */
+  export const Dialog: Part<{ open?: boolean; defaultOpen?: boolean; onOpenChange?: (open: boolean) => void }>;
+  export const DialogTrigger: Part;
+  export const DialogContent: Part<{ showCloseButton?: boolean }>;
+  export const DialogHeader: Part;
+  export const DialogFooter: Part;
+  /** Every DialogContent needs one, for screen readers. */
+  export const DialogTitle: Part;
+  export const DialogDescription: Part;
+  export const DialogClose: Part;
+
+  /** `<Tooltip><TooltipTrigger asChild><button …/></TooltipTrigger><TooltipContent>…</TooltipContent></Tooltip>`;
+   * no provider needed. */
+  export const Tooltip: Part<{ open?: boolean; defaultOpen?: boolean; onOpenChange?: (open: boolean) => void; delayDuration?: number }>;
+  export const TooltipTrigger: Part;
+  export const TooltipContent: Part<{ side?: "top" | "right" | "bottom" | "left"; sideOffset?: number }>;
+
+  /** `<Popover><PopoverTrigger asChild>…</PopoverTrigger><PopoverContent>…</PopoverContent></Popover>` */
+  export const Popover: Part<{ open?: boolean; defaultOpen?: boolean; onOpenChange?: (open: boolean) => void }>;
+  export const PopoverTrigger: Part;
+  export const PopoverContent: Part<{ align?: "start" | "center" | "end"; side?: "top" | "right" | "bottom" | "left"; sideOffset?: number }>;
+  export const PopoverAnchor: Part;
+
+  export const Switch: Part<{ checked?: boolean; defaultChecked?: boolean; onCheckedChange?: (checked: boolean) => void; disabled?: boolean }>;
+
+  /** `<DropdownMenu><DropdownMenuTrigger asChild>…</DropdownMenuTrigger><DropdownMenuContent>
+   * <DropdownMenuItem onSelect={…}>…</DropdownMenuItem></DropdownMenuContent></DropdownMenu>` */
+  export const DropdownMenu: Part<{ open?: boolean; onOpenChange?: (open: boolean) => void }>;
+  export const DropdownMenuTrigger: Part;
+  export const DropdownMenuContent: Part<{ align?: "start" | "center" | "end"; sideOffset?: number }>;
+  export const DropdownMenuItem: Part<{ onSelect?: (event: Event) => void; disabled?: boolean; variant?: "default" | "destructive"; inset?: boolean }>;
+  export const DropdownMenuCheckboxItem: Part<{ checked?: boolean; onCheckedChange?: (checked: boolean) => void }>;
+  export const DropdownMenuRadioGroup: Part<{ value?: string; onValueChange?: (value: string) => void }>;
+  export const DropdownMenuRadioItem: Part<{ value: string }>;
+  export const DropdownMenuLabel: Part<{ inset?: boolean }>;
+  export const DropdownMenuSeparator: Part;
+  export const DropdownMenuShortcut: Part;
+  export const DropdownMenuGroup: Part;
+  export const DropdownMenuSub: Part<{ open?: boolean; onOpenChange?: (open: boolean) => void }>;
+  export const DropdownMenuSubTrigger: Part<{ inset?: boolean }>;
+  export const DropdownMenuSubContent: Part;
 }

@@ -2861,8 +2861,54 @@ button.tab-x:hover {
   cursor: pointer;
 }
 
-.gen-checkbox input {
+/* A Radix checkbox (and each option of a multiple ChoicePicker). */
+button.gen-check,
+button.gen-radio {
+  all: unset;
+  box-sizing: border-box;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
   margin-top: 2px;
+  border: 1px solid var(--roer-control-border);
+  border-radius: 3px;
+  background: var(--roer-control);
+  cursor: pointer;
+}
+
+button.gen-radio {
+  border-radius: 50%;
+}
+
+button.gen-check[data-state="checked"] {
+  background: var(--roer-accent);
+  border-color: var(--roer-accent);
+  color: #fff;
+}
+
+button.gen-check:focus-visible,
+button.gen-radio:focus-visible {
+  outline: 2px solid var(--roer-accent);
+  outline-offset: 2px;
+}
+
+.gen-check-mark {
+  display: flex;
+}
+
+.gen-radio-dot {
+  display: block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--roer-accent);
+}
+
+button.gen-radio[data-state="checked"] {
+  border-color: var(--roer-accent);
 }
 
 .gen-button-row {
@@ -3071,6 +3117,47 @@ button.gen-button .gen-text {
   color: var(--roer-muted);
 }
 
+.gen-slider-root {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 80px;
+  height: 16px;
+  touch-action: none;
+  user-select: none;
+}
+
+.gen-slider-track {
+  position: relative;
+  flex: 1;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--roer-border);
+}
+
+.gen-slider-range {
+  position: absolute;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--roer-accent);
+}
+
+.gen-slider-thumb {
+  display: block;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--roer-bg);
+  border: 2px solid var(--roer-accent);
+  cursor: grab;
+}
+
+.gen-slider-thumb:focus-visible {
+  outline: 2px solid var(--roer-accent);
+  outline-offset: 2px;
+}
+
 .gen-datetime {
   font-size: 12.5px;
   padding: 6px 8px;
@@ -3089,6 +3176,16 @@ button.gen-button .gen-text {
 .gen-choice-picker.chips {
   flex-direction: row;
   flex-wrap: wrap;
+}
+
+.gen-choice-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.gen-choice-group.column {
+  flex-direction: column;
 }
 
 button.gen-chip {
@@ -3141,15 +3238,23 @@ button.gen-chip.on {
 .gen-modal-backdrop {
   position: fixed;
   inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
   background: var(--roer-scrim);
   z-index: 100;
 }
 
+/* Radix draws the backdrop and the dialog side by side, so the dialog
+   centres itself. */
 .gen-modal {
-  max-width: 480px;
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 101;
+  width: max-content;
+  max-width: min(480px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  overflow: auto;
+  color: var(--roer-fg);
   padding: 20px 22px;
   background: var(--roer-panel);
   border: 1px solid var(--roer-border);
