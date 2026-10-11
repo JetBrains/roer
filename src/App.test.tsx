@@ -70,6 +70,7 @@ vi.mock("@xterm/xterm", () => ({
       mocks.terminal.current = this as never;
     }
     loadAddon = vi.fn();
+    unicode = { activeVersion: "6" };
     open = vi.fn();
     focus = vi.fn();
     write = vi.fn();
@@ -85,6 +86,9 @@ vi.mock("@xterm/xterm", () => ({
       }),
     };
   },
+}));
+vi.mock("@xterm/addon-unicode11", () => ({
+  Unicode11Addon: class {},
 }));
 vi.mock("@xterm/addon-fit", () => ({
   FitAddon: class {
