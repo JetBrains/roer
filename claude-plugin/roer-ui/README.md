@@ -26,6 +26,10 @@ terminal cannot do drawn another way:
 - An obscured TextField never shows its value, only its length. The field
   itself cannot mask what is being typed.
 - A long TextField is one line.
+- A Chart is text: a bar per row and series, a stack per row, or a sparkline
+  per series, in the panel's series colours, with no hover readout or table
+  view. Its numbers are written beside the bars instead.
+- A Table's columns share the pane's width: the widest is cut first.
 
 Beyond A2UI v1.0, and not in Roer's panel yet, the pane can work without a
 turn of Claude's, which is where the waiting was (`hooks/local.ts`):

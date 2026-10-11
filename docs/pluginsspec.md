@@ -420,10 +420,10 @@ has to catch anything:
 Inside `fileRow` and its descendants, relative paths (`"path"`, `"status"`)
 resolve against the current element.
 
-### Dashboard components (proposed)
+### Dashboard components
 
-Not yet implemented — tracked here until they land in `schema.ts` /
-`GenerativeSurface.tsx` and the live `mcp-guide.md` catalog. They're plain
+Implemented, in `schema.ts` / `GenerativeSurface.tsx` and the live
+`mcp-guide.md` catalog (which also has a dashboard example). They're plain
 catalog components, not host components below: no self-fetching, bound to
 the data model like `WorkItem` is today.
 

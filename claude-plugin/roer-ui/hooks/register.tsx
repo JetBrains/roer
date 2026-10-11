@@ -4,8 +4,8 @@
 // the same A2UI v1.0 messages as Roer's `show_ui`, so nothing here needs Roer
 // running. A press in the pane comes back to the model as a prompt.
 //
-// Spike: layout, text and the basic inputs of the catalog. The rest of
-// `roer:catalog/1` draws as a dim placeholder naming the component.
+// It draws the whole of `roer:catalog/1`, each component the way a terminal
+// can; a component the catalog does not have draws as a dim placeholder.
 
 import { atom, read, update } from 'claude-code'
 import type { Register, RenderChildren } from 'claude-code'
@@ -27,6 +27,7 @@ import {
 } from './workItem'
 import type { Comment, Decision, Finding, FindingState, Note, Requirement, SourceRef, Tone } from './workItem'
 import { bashRan, fetchLoad, opened, readLoadData, readLocal, shellCommand } from './local'
+import { toNumber } from './functions'
 import type { Load, LocalAction, RunIo } from './local'
 
 const PANE = 'roer-ui'
@@ -53,7 +54,13 @@ Input:
   "multipleSelection", displayStyle?: "checkbox" | "chips", filterable? },
   Slider { max, value, min?, steps?, label? }, DateTimeInput { value, enableDate?, enableTime?, min?, max?, label? }
 Roer's own:
-- StatTile { label, value, trend?: { delta, direction: "up" | "down" | "flat" }, icon? }
+- Table { columns: [{ key, title, align?: "start" | "end", width?, mono? }], rows, toneKey?, emptyText?, source? }: rows
+  of records, each cell the row's field key; with toneKey a row whose field reads as failed or blocked is coloured
+- Chart { rows, x, series: [{ key, title? }], variant?: "bar" | "stackedBar" | "line", title?, source?, emptyText? }:
+  numbers from rows on one axis, at most 8 series; x is the row field naming each point. A non-number is a gap
+- Badge { text, tone?: "neutral" | "accent" | "success" | "warning" | "danger" }; EmptyState { text, detail?,
+  variant?: "empty" | "loading" | "error", footer? }
+- StatTile { label, value, trend?: { delta, direction: "up" | "down" | "flat" }, icon?, source? }
 - StatusCard { title, subtitle?, meta?, icon?, status?, progress? (0-100), url?, footer? }
 - WorkItem { title, source?, key?, status?, url?, assignee?, labels?, meta?, footer? }; with variant: "detail" also goal,
   requirements [{ id, text, met }], decisions [{ id, question, options: [{ label, value }], answer? }],
@@ -63,7 +70,10 @@ Roer's own:
 - Requirements / Findings / Decisions / Sources / Comments { items }: one of those sections on its own
 - DiffView { diff (a whole git diff), title?, emptyText?, notes?: [{ path, line?, text }] }
 Any string/number/boolean prop may instead be { "path": "/json/pointer" } into the surface's dataModel; bind an
-input's value that way and the person's edits write back to the data model.`
+input's value that way and the person's edits write back to the data model. Or a { "call": name, "args": {...} }
+computed from it in the pane: add, subtract, multiply, divide, min, max, round, gt, lt, eq, and, or, not, if, isSet,
+isNumber, length, formatNumber, formatString ("\${/path}", "\${argName}"), pluralize; bad input gives nothing, never
+NaN. Every component takes visible: drawn only while it is true.`
 
 // The engine caps a tool's description at 4096 characters, so the catalog
 // and the pane-side rules are the guide tool's answer, read before drawing.
@@ -207,6 +217,102 @@ export const register: Register = on => {
       )
     }
     const columns = Math.max(10, (e.props as { bodyColumns?: number }).bodyColumns ?? 60)
+    /** A Chart in text: a bar per row and series, a stack per row, or a
+     * sparkline per series, with a legend from two series as in the panel. */
+    const chart = (c: RoerUiComponent, value: (v: unknown) => unknown, str: (prop: string) => string, room: number): RenderChildren => {
+      const rows = records(value(c.rows))
+      const x = typeof c.x === 'string' ? c.x : ''
+      const series = (Array.isArray(c.series) ? c.series : []).filter(isColumn).slice(0, 8)
+      const name = (s: TableColumnWire) => {
+        const t = value(s.title)
+        return typeof t === 'string' && t !== '' ? t : s.key
+      }
+      const values = rows.map(row => series.map(s => toNumber(row[s.key])))
+      const title = str('title')
+      const source = str('source')
+      const head = title !== '' && <Text bold>{title}</Text>
+      const foot = source !== '' && <Text dimColor>{source}</Text>
+      if (rows.length === 0 || series.length === 0 || values.every(vs => vs.every(v => v === undefined))) {
+        return (
+          <Box flexDirection="column">
+            {head}
+            <Text dimColor>{c.emptyText === undefined ? 'Nothing to chart.' : str('emptyText')}</Text>
+            {foot}
+          </Box>
+        )
+      }
+      const legend = series.length > 1 && (
+        <Text>
+          {series.map((s, j) => <Text color={SERIES[j]}>{`■ ${name(s)}  `}</Text>)}
+        </Text>
+      )
+      const labels = rows.map(row => cell(row[x]))
+      const labelWidth = Math.min(16, Math.max(...labels.map(l => l.length)))
+      const variant = c.variant === 'line' || c.variant === 'stackedBar' ? c.variant : 'bar'
+
+      if (variant === 'line') {
+        const flat = values.flat().filter((v): v is number => v !== undefined)
+        const lo = Math.min(...flat)
+        const hi = Math.max(...flat)
+        return (
+          <Box flexDirection="column">
+            {head}
+            {series.map((s, j) => {
+              const ys = values.map(vs => vs[j])
+              const spark = ys
+                .map(v => (v === undefined ? ' ' : SPARKS[hi === lo ? 3 : Math.round(((v - lo) / (hi - lo)) * 7)]))
+                .join('')
+              const last = [...ys].reverse().find(v => v !== undefined)
+              return (
+                <Text>
+                  <Text color={SERIES[j]}>{spark}</Text>
+                  {` ${last === undefined ? '' : valueFormat.format(last)} ${series.length > 1 ? name(s) : ''}`}
+                </Text>
+              )
+            })}
+            <Text dimColor>{`${labels[0] ?? ''} … ${labels[labels.length - 1] ?? ''}`}</Text>
+            {foot}
+          </Box>
+        )
+      }
+
+      const stacked = variant === 'stackedBar'
+      const totals = values.map(vs => vs.reduce<number>((sum, v) => sum + Math.max(0, v ?? 0), 0))
+      const top = Math.max(1e-9, stacked ? Math.max(...totals) : Math.max(0, ...values.flat().map(v => v ?? 0)))
+      const width = Math.max(10, Math.min(50, room - labelWidth - 12))
+      const cells = (v: number) => Math.round((Math.max(0, v) / top) * width)
+      return (
+        <Box flexDirection="column">
+          {head}
+          {rows.map((_, i) => {
+            const label = fit(labels[i] ?? '', labelWidth, false)
+            const vs = values[i] ?? []
+            if (stacked) {
+              return (
+                <Text>
+                  {`${label} `}
+                  {vs.map((v, j) => <Text color={SERIES[j]}>{'█'.repeat(cells(v ?? 0))}</Text>)}
+                  {` ${valueFormat.format(totals[i] ?? 0)}`}
+                </Text>
+              )
+            }
+            return (
+              <Box flexDirection="column">
+                {vs.map((v, j) => (
+                  <Text>
+                    {`${j === 0 ? label : ' '.repeat(labelWidth)} `}
+                    <Text color={SERIES[j]}>{v === undefined ? '' : '█'.repeat(cells(v)) || '▏'}</Text>
+                    {` ${v === undefined ? '–' : valueFormat.format(v)}`}
+                  </Text>
+                ))}
+              </Box>
+            )
+          })}
+          {legend}
+          {foot}
+        </Box>
+      )
+    }
     // The permission decision for each command a drawn button would run.
     // A drawing names the ones it did not know; they are asked, then drawn
     // again.
@@ -690,6 +796,49 @@ export const register: Register = on => {
             </Box>
           )
         }
+        case 'Badge': {
+          const tone = str('tone')
+          const color = BADGE_COLORS[tone as keyof typeof BADGE_COLORS]
+          return <Text color={color} dimColor={color === undefined ? true : undefined}>{`[${str('text')}]`}</Text>
+        }
+        case 'EmptyState': {
+          const variant = c.variant === 'loading' || c.variant === 'error' ? c.variant : 'empty'
+          const detail = str('detail')
+          return (
+            <Box flexDirection="column">
+              {variant === 'error'
+                ? <Text color="red">{`✗ ${str('text')}`}</Text>
+                : <Text dimColor>{`${variant === 'loading' ? '… ' : ''}${str('text')}`}</Text>}
+              {detail !== '' && <Text dimColor>{detail}</Text>}
+              {one(c.footer)}
+            </Box>
+          )
+        }
+        case 'Table': {
+          const rows = records(value(c.rows))
+          const cols = (Array.isArray(c.columns) ? c.columns : []).filter(isColumn)
+          const title = (col: TableColumnWire) => text(col.title, model, scope)
+          const widths = tableWidths(cols.map(col => [title(col), ...rows.map(row => cell(row[col.key]))]), cols, columns)
+          const line = (cells: string[]) =>
+            cells.map((v, i) => fit(v, widths[i] ?? 0, cols[i]?.align === 'end')).join(' ')
+          const toneKey = typeof c.toneKey === 'string' ? c.toneKey : undefined
+          const source = str('source')
+          return (
+            <Box flexDirection="column">
+              <Text dimColor>{line(cols.map(title))}</Text>
+              {rows.length === 0
+                ? <Text dimColor>{c.emptyText === undefined ? 'Nothing to show.' : str('emptyText')}</Text>
+                : rows.map(row => (
+                    <Text color={toneKey === undefined ? undefined : toneColor(statusTone(cell(row[toneKey])))}>
+                      {line(cols.map(col => cell(row[col.key])))}
+                    </Text>
+                  ))}
+              {source !== '' && <Text dimColor>{source}</Text>}
+            </Box>
+          )
+        }
+        case 'Chart':
+          return chart(c, value, str, columns)
         case 'StatTile': {
           const trend = typeof c.trend === 'object' && c.trend !== null ? (c.trend as { delta?: unknown; direction?: unknown }) : undefined
           const up = trend?.direction === 'up'
@@ -700,6 +849,7 @@ export const register: Register = on => {
               <Box flexDirection="column" flexGrow={1}>
                 <Text bold>{str('value')}</Text>
                 <Text dimColor>{str('label')}</Text>
+                {str('source') !== '' && <Text dimColor>{str('source')}</Text>}
               </Box>
               {trend && (
                 <Text color={up ? 'green' : down ? 'red' : undefined} dimColor={!up && !down ? true : undefined}>
@@ -1079,6 +1229,53 @@ function labelOf(child: RoerUiComponent | undefined, model: unknown, scope: stri
 function iconText(icon: unknown, model: unknown, scope: string): string {
   return typeof icon === 'object' && icon !== null && 'svgPath' in icon ? '◆' : text(icon, model, scope)
 }
+
+const BADGE_COLORS = { accent: 'cyan', success: 'green', warning: 'yellow', danger: 'red' } as const
+
+interface TableColumnWire {
+  key: string
+  title?: unknown
+  align?: unknown
+  width?: unknown
+}
+
+const isColumn = (v: unknown): v is TableColumnWire =>
+  typeof v === 'object' && v !== null && typeof (v as { key?: unknown }).key === 'string'
+
+const records = (v: unknown): Record<string, unknown>[] =>
+  Array.isArray(v) ? v.filter((r): r is Record<string, unknown> => typeof r === 'object' && r !== null && !Array.isArray(r)) : []
+
+/** A cell's text: as the panel shows it, with objects as JSON. */
+const cell = (v: unknown): string =>
+  v === undefined || v === null ? '' : typeof v === 'object' ? JSON.stringify(v) : String(v)
+
+/** `text` cut or padded to `width` cells, on the right for `end`. */
+function fit(text: string, width: number, end: boolean): string {
+  const flat = text.replace(/\s+/g, ' ')
+  const cut = flat.length > width ? `${flat.slice(0, Math.max(0, width - 1))}…` : flat
+  return end ? cut.padStart(width) : cut.padEnd(width)
+}
+
+/** Each column's width in cells: a pixel `width` at 8 px a cell, else what its
+ * longest value needs, the widest shrunk first until the row fits the pane. */
+function tableWidths(values: string[][], cols: TableColumnWire[], room: number): number[] {
+  const widths = values.map((vs, i) => {
+    const px = cols[i]?.width
+    return typeof px === 'number' && px > 0 ? Math.max(3, Math.round(px / 8)) : Math.max(3, ...vs.map(v => v.length))
+  })
+  const budget = Math.max(cols.length * 3, room - (cols.length - 1))
+  while (widths.reduce((a, b) => a + b, 0) > budget) {
+    const widest = widths.indexOf(Math.max(...widths))
+    if ((widths[widest] ?? 0) <= 3) break
+    widths[widest] = (widths[widest] ?? 0) - 1
+  }
+  return widths
+}
+
+/** The panel's eight series colours, its dark theme's steps. */
+const SERIES = ['#3987e5', '#d95926', '#199e70', '#c98500', '#d55181', '#008300', '#9085e9', '#e66767']
+const SPARKS = '▁▂▃▄▅▆▇█'
+const valueFormat = new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 })
 
 const TONE_COLORS = { done: 'green', doing: 'cyan', blocked: 'yellow', failed: 'red', todo: undefined } as const
 const toneColor = (tone: Tone) => TONE_COLORS[tone]
