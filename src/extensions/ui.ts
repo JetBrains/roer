@@ -39,6 +39,49 @@ export {
 export type { ChartSeries, ChartVariant, Common, DiagramComment, DiagramFile, DiagramThread, TableColumn, TextVariant, Tone } from "../generative-ui/components";
 export type { NoteAction, NoteAnswer } from "../DiffNote";
 export type { NewNote } from "../DiffPane";
+// Beyond the catalog, the overlays and controls a tab most often needs, with
+// shadcn/ui's names and props: what an agent writing React already knows.
+// They are Roer's own copies, compiled with Roer's styles, which is why an
+// extension takes them from here rather than adding shadcn itself.
+export {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectSeparator,
+  SelectTrigger,
+  SelectValue,
+} from "../components/ui/select";
+export {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "../components/ui/dialog";
+export { Tooltip, TooltipContent, TooltipTrigger } from "../components/ui/tooltip";
+export { Popover, PopoverAnchor, PopoverContent, PopoverTrigger } from "../components/ui/popover";
+export { Switch } from "../components/ui/switch";
+export {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
+  DropdownMenuShortcut,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
+  DropdownMenuTrigger,
+} from "../components/ui/dropdown-menu";
 export { Surface } from "../generative-ui/Surface";
 export type { SurfaceProps } from "../generative-ui/Surface";
 export type { ResolvedEvent } from "../generative-ui/GenerativeSurface";

@@ -9,8 +9,8 @@ vi.mock("../lib/github", () => ({ openUrl: vi.fn().mockResolvedValue(undefined) 
 describe("roer/ui", () => {
   it("exports every component its declarations promise", () => {
     const module = types.slice(types.indexOf('declare module "roer/ui"'));
-    const declared = [...module.matchAll(/export function (\w+)/g)].map((match) => match[1]);
-    expect(declared.length).toBeGreaterThan(20);
+    const declared = [...module.matchAll(/export (?:function|const) (\w+)/g)].map((match) => match[1]);
+    expect(declared.length).toBeGreaterThan(60);
     for (const name of declared) expect(ui, name).toHaveProperty(name);
   });
 
@@ -30,6 +30,24 @@ describe("roer/ui", () => {
     expect(screen.getByText("running")).toHaveClass("gen-status-card-status", "doing");
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     expect(retry).toHaveBeenCalled();
+  });
+
+  it("has shadcn's parts, as an agent writing React expects them", () => {
+    const change = vi.fn();
+    render(
+      <ui.Dialog defaultOpen>
+        <ui.DialogContent>
+          <ui.DialogTitle>Rename</ui.DialogTitle>
+          <ui.DialogDescription>Give the job a new name.</ui.DialogDescription>
+          <ui.Switch aria-label="Notify" onCheckedChange={change} />
+        </ui.DialogContent>
+      </ui.Dialog>,
+    );
+    expect(screen.getByRole("dialog", { name: "Rename" })).toHaveAccessibleDescription("Give the job a new name.");
+    fireEvent.click(screen.getByRole("switch", { name: "Notify" }));
+    expect(change).toHaveBeenCalledWith(true);
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 
   it("names a bare text field by its placeholder and submits it on Enter", () => {

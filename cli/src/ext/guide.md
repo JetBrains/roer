@@ -226,6 +226,18 @@ import { Button, Card, Column, Grid, Row, StatTile, StatusCard, Text } from "roe
   lines over rows), `StatTile`, `StatusCard` (its `status`
   is coloured by meaning: `statusTone`), `WorkItem`, `DiffView`, `Icon`,
   `Image`.
+- Overlays and controls, with shadcn/ui's names, parts and props:
+  `Select` (`SelectTrigger`, `SelectValue`, `SelectContent`, `SelectItem`),
+  `Dialog` (`DialogTrigger`, `DialogContent`, `DialogHeader`, `DialogTitle`,
+  `DialogDescription`, `DialogFooter`, `DialogClose`), `Tooltip`, `Popover`,
+  `Switch` and `DropdownMenu`. Write them as you would shadcn's; Radix is
+  underneath, so focus, Escape and the arrow keys already work. Give every
+  `DialogContent` a `DialogTitle`.
+- **Don't add shadcn/ui, or Tailwind classes, to an extension.** Roer's
+  styles are generated when Roer itself is built, so classes only your tab
+  uses do not exist on the page, and a copied shadcn component draws
+  unstyled. Take these from `roer/ui` instead, and write your own CSS file
+  for the rest.
 - `EmptyState` is what the tab shows in place of its content: `variant`
   `empty`, `loading` or `error`, with a `footer` for a Retry button. Use it
   rather than your own "Loading…" text.
