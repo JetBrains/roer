@@ -519,7 +519,7 @@ code {
   white-space: nowrap;
 }
 
-.split-button {
+.split-tool {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -534,11 +534,11 @@ code {
   cursor: pointer;
 }
 
-.split-button.on {
+.split-tool.on {
   color: var(--roer-accent);
 }
 
-.split-button:hover {
+.split-tool:hover {
   background: var(--roer-row-hover);
   color: var(--roer-fg);
 }
