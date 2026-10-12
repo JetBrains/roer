@@ -7,6 +7,8 @@ import { isMac } from "./keys";
  * `mailto:`, an app's own scheme) is not opened at all: the system opener
  * would launch whatever it names.
  */
+const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]"]);
+
 export type LinkTarget = { kind: "web"; url: string } | { kind: "file"; path: string; line?: number };
 
 /** Cmd+click on macOS, Ctrl+click elsewhere, as in every terminal: a plain
@@ -21,7 +23,9 @@ export function linkTarget(uri: string): LinkTarget | null {
   } catch {
     return null;
   }
-  if (url.protocol === "http:" || url.protocol === "https:") return { kind: "web", url: url.href };
+  if (url.protocol === "https:") return { kind: "web", url: url.href };
+  // Plain http only on this machine, a dev server's; as the backend has it.
+  if (url.protocol === "http:") return LOOPBACK.has(url.hostname) ? { kind: "web", url: url.href } : null;
   if (url.protocol !== "file:") return null;
   let path: string;
   try {

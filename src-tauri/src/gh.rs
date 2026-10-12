@@ -392,10 +392,25 @@ pub(crate) fn open_in_system_browser(url: &str) -> Result<(), String> {
     }
 }
 
-/// `https://`, or `http://` for a dev server's `http://localhost:3000`, with
-/// nothing the opener could read as an option or a second argument.
+/// `https://`, or `http://` on this machine for a dev server's
+/// `http://localhost:3000`, with nothing the opener could read as an option
+/// or a second argument. Plain `http://` to anywhere else stays refused:
+/// links reach this from agents' Markdown and GitHub as well as the terminal.
 fn is_web_link(url: &str) -> bool {
-    (url.starts_with("https://") || url.starts_with("http://")) && !url.chars().any(char::is_whitespace)
+    if url.chars().any(char::is_whitespace) {
+        return false;
+    }
+    if url.starts_with("https://") {
+        return true;
+    }
+    let Some(rest) = url.strip_prefix("http://") else { return false };
+    let host = rest.split(['/', '?', '#']).next().unwrap_or_default();
+    // The port, if any, after the host; `[::1]` keeps its own colons.
+    let host = match host.rsplit_once(':') {
+        Some((name, port)) if !name.is_empty() && port.chars().all(|c| c.is_ascii_digit()) && !host.ends_with(']') => name,
+        _ => host,
+    };
+    matches!(host, "localhost" | "127.0.0.1" | "[::1]")
 }
 
 /// Everything the tab shows about a pull request's review: who is still
@@ -680,6 +695,12 @@ mod tests {
         assert!(!is_web_link("/Applications/Calculator.app"));
         assert!(!is_web_link("https://x -a Calculator"));
         assert!(is_web_link("http://localhost:3000/"));
+        assert!(is_web_link("http://127.0.0.1:8080/api?x=1"));
+        assert!(is_web_link("http://[::1]:5173"));
+        assert!(is_web_link("http://localhost"));
+        assert!(!is_web_link("http://example.com/"));
+        assert!(!is_web_link("http://localhost.evil.com/"));
+        assert!(!is_web_link("http://user@localhost.evil.com/"));
         assert!(!is_web_link("javascript:alert(1)"));
         assert!(!is_web_link("httpx://example.com"));
     }

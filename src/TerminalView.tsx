@@ -260,6 +260,8 @@ export function TerminalView({ args, cwd, onAttached, onPane, onExit, onOpenFile
     // terminal on top takes them, and only a drop over it.
     const showDropTarget = (on: boolean) => container.classList.toggle("terminal-drop-target", on);
     const stopFileDrag = onFileDrag((drag) => {
+      // Unlistening is asynchronous: a drop can still arrive after cleanup.
+      if (disposed) return;
       if (drag.type === "leave") return showDropTarget(false);
       const over = activeRef.current && isOver(container, drag.x, drag.y);
       if (drag.type === "over") return showDropTarget(over);
