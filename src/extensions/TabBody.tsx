@@ -45,17 +45,19 @@ export interface TabBodyProps {
   entry: StageTabEntry;
   session: Session | null;
   active: boolean;
+  /** Takes the keyboard. Default: whenever it is active. */
+  focused?: boolean;
   openFile: (root: string, path: string, line?: number) => void;
   activateTab: (tabId: string) => void;
 }
 
 /** An extension's tab, with the session and stage its hooks read. */
-export function TabBody({ entry, session, active, openFile, activateTab }: TabBodyProps) {
+export function TabBody({ entry, session, active, focused = active, openFile, activateTab }: TabBodyProps) {
   const View = entry.component;
   // Another session is another tab, unless the tab asked to keep its state.
   const key = entry.keepAcrossSessions ? "kept" : (session?.pane ?? "none");
   return (
-    <HostProvider value={{ extension: entry.extension, session, active, openFile, activateTab }}>
+    <HostProvider value={{ extension: entry.extension, session, active, focused, openFile, activateTab }}>
       {/* A new component (a reload) starts the boundary over, and so does another session. */}
       <Catch key={`${entry.generation}:${key}`} extension={entry.extension}>
         <View />

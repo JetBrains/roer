@@ -5,15 +5,19 @@ import {
   Globe,
   Monitor,
   Moon,
+  PanelBottom,
+  PanelLeft,
   PanelLeftClose,
   PanelLeftOpen,
+  PanelRight,
   PanelRightClose,
   PanelRightOpen,
+  PanelTop,
   Puzzle,
   Search,
   Sun,
 } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { loadBundled } from "./extensions/bundled";
 import { useStageSession } from "./extensions/context";
@@ -80,6 +84,25 @@ import {
   type Tabs,
 } from "./lib/tabs";
 import {
+  closeSide,
+  loadSplit,
+  openSide,
+  ratioAt,
+  saveSplit,
+  settle,
+  sideFirst,
+  SPLIT_PLACES,
+  splitAxis,
+  type Split,
+  type SplitPlace,
+} from "./lib/split";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
+import {
   ackHandoff,
   claimHandoff,
   failHandoff,
@@ -106,6 +129,14 @@ interface StripTab {
   order: number;
   needsSession: boolean;
 }
+
+/** The side pane's place buttons: the panel the icon fills is where it goes. */
+const PLACE_ICONS: Record<SplitPlace, typeof PanelLeft> = {
+  left: PanelLeft,
+  right: PanelRight,
+  above: PanelTop,
+  below: PanelBottom,
+};
 
 /** The strip's built-in tabs. Extensions' go between and after them by `order`. */
 const CORE_TABS: readonly StripTab[] = [
@@ -155,6 +186,8 @@ export function App() {
   const [session, setSession] = useState<SessionView | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [tabs, setTabs] = useState<Tabs>(noTabs);
+  // A tab beside the stage, if one is: see lib/split.ts.
+  const [split, setSplit] = useState<Split | null>(() => loadSplit());
   const [finding, setFinding] = useState(false);
   const [showingShortcuts, setShowingShortcuts] = useState(false);
   const [showingExtensions, setShowingExtensions] = useState(false);
@@ -544,6 +577,80 @@ export function App() {
     },
     [opened],
   );
+
+  // The split's tab asked for on the stage is focused where it is instead.
+  // Before paint, so the stage never flashes the tab it is about to give back.
+  useLayoutEffect(() => {
+    const next = settle(tabs, split);
+    if (next.tabs !== tabs) setTabs(next.tabs);
+    if (next.split !== split) setSplit(next.split);
+  }, [tabs, split]);
+  // A file closed, or gone with its session, takes the split with it.
+  useEffect(() => {
+    if (split?.side.startsWith("file:") && !tabs.files.some((file) => tabId(file) === split.side)) setSplit(null);
+  }, [split, tabs.files]);
+  useEffect(() => saveSplit(split), [split]);
+
+  const openBeside = (id: string, place?: SplitPlace) => {
+    opened(id);
+    const next = openSide(tabs, split, id, place);
+    setTabs(next.tabs);
+    setSplit(next.split);
+  };
+  const closeBeside = () => {
+    // A split remembered from the last launch never went through `openBeside`.
+    if (split) opened(split.side);
+    const next = closeSide(tabs, split);
+    setTabs(next.tabs);
+    setSplit(next.split);
+  };
+  const focusPane = (focus: Split["focus"]) =>
+    setSplit((current) => (current && current.focus !== focus ? { ...current, focus } : current));
+
+  const stageBodyRef = useRef<HTMLDivElement>(null);
+  const [splitResizing, setSplitResizing] = useState(false);
+  const handleSplitResizeStart = (e: React.PointerEvent<HTMLDivElement>) => {
+    const body = stageBodyRef.current;
+    if (!body || !split) return;
+    e.preventDefault();
+    const { place } = split;
+    const row = splitAxis(place) === "row";
+    setSplitResizing(true);
+    const handleMove = (ev: PointerEvent) => {
+      const rect = body.getBoundingClientRect();
+      const at = row ? (ev.clientX - rect.left) / rect.width : (ev.clientY - rect.top) / rect.height;
+      setSplit((current) => (current ? { ...current, ratio: ratioAt(place, at) } : current));
+    };
+    const handleUp = () => {
+      setSplitResizing(false);
+      window.removeEventListener("pointermove", handleMove);
+      window.removeEventListener("pointerup", handleUp);
+    };
+    window.addEventListener("pointermove", handleMove);
+    window.addEventListener("pointerup", handleUp);
+  };
+
+  /** A strip tab's menu: put it beside the terminal, or take it back. */
+  const besideMenu = (id: string, trigger: React.ReactElement) => (
+    <ContextMenu key={id}>
+      <ContextMenuTrigger asChild>{trigger}</ContextMenuTrigger>
+      <ContextMenuContent>
+        {SPLIT_PLACES.filter(({ place }) => split?.side !== id || split.place !== place).map(({ place, label }) => (
+          <ContextMenuItem key={place} onSelect={() => openBeside(id, place)}>
+            {split?.side === id ? "Move" : "Open"} {label.toLowerCase()}
+          </ContextMenuItem>
+        ))}
+        {split?.side === id ? <ContextMenuItem onSelect={closeBeside}>Back to the stage</ContextMenuItem> : null}
+      </ContextMenuContent>
+    </ContextMenu>
+  );
+
+  // What is beside the stage: an extension's tab, or a file. An extension's
+  // that has not loaded (yet) leaves the stage whole until it does.
+  const sideExt = split ? extensionTabs.find((tab) => tab.tabId === split.side) : undefined;
+  const sideFile = split ? tabs.files.find((file) => tabId(file) === split.side) : undefined;
+  const beside = split && (sideExt || sideFile) ? split : null;
+  const mainFocused = !beside || beside.focus === "main";
 
   /** A tab's Cmd+number, for its tooltip: the first nine in the strip have one. */
   const number = (tabId: string): string | undefined => {
@@ -1100,13 +1207,15 @@ export function App() {
                   );
                 }
                 const badge = badges.get(tab.tabId);
-                return (
+                const beside = split?.side === tab.tabId;
+                return besideMenu(
+                  tab.tabId,
                   <button
                     key={tab.tabId}
                     type="button"
                     role="tab"
-                    aria-selected={tabs.active === tab.tabId}
-                    className={tabs.active === tab.tabId ? "tab on" : "tab"}
+                    aria-selected={tabs.active === tab.tabId || beside}
+                    className={tabs.active === tab.tabId ? "tab on" : beside ? "tab beside" : "tab"}
                     title={number(tab.tabId)}
                     disabled={tab.needsSession && !session}
                     onClick={() => {
@@ -1116,18 +1225,20 @@ export function App() {
                   >
                     {tab.title}
                     {badge ? <span className="tab-badge">{badge}</span> : null}
-                  </button>
+                  </button>,
                 );
               })}
               {tabs.files.map((file) => {
                 const id = tabId(file);
                 const name = tabName(file);
-                return (
+                return besideMenu(
+                  id,
                   // The tab and its close button are two controls, so they are two
                   // buttons; the wrapper is what looks like one tab.
                   <span
-                    key={id}
-                    className={tabs.active === id ? "tab-wrap on" : "tab-wrap"}
+                    className={
+                      tabs.active === id ? "tab-wrap on" : split?.side === id ? "tab-wrap beside" : "tab-wrap"
+                    }
                   >
                     <button
                       type="button"
@@ -1151,7 +1262,7 @@ export function App() {
                     >
                       ×
                     </button>
-                  </span>
+                  </span>,
                 );
               })}
             </div>
@@ -1169,7 +1280,21 @@ export function App() {
             />
           </div>
 
-          <div className="stage-body">
+          <div
+            ref={stageBodyRef}
+            className={
+              beside
+                ? `stage-body split ${splitAxis(beside.place)}${sideFirst(beside.place) ? " side-first" : ""}${splitResizing ? " resizing" : ""}`
+                : "stage-body"
+            }
+          >
+          {/* Always this wrapper, split or not: a new parent would remount the
+            terminal, and with it its PTY. */}
+          <div
+            className={beside && beside.focus === "main" ? "stage-pane focused" : "stage-pane"}
+            style={beside ? { flexBasis: `${beside.ratio * 100}%` } : undefined}
+            onPointerDownCapture={() => focusPane("main")}
+          >
             {session ? (
               <TerminalView
                 key={target}
@@ -1179,7 +1304,7 @@ export function App() {
                 onPane={handlePane}
                 onExit={handleExit}
                 onOpenFile={openLinkedFile}
-                active={tabs.active === "terminal"}
+                active={tabs.active === "terminal" && mainFocused}
               />
             ) : (
               <div className="empty">
@@ -1235,13 +1360,14 @@ export function App() {
               next. The terminal keeps its size too, so nothing reflows when
               the diff is on top of it. */}
             {extensionTabs
-              .filter((tab) => everOpened.has(tab.tabId))
+              .filter((tab) => everOpened.has(tab.tabId) && tab !== sideExt)
               .map((tab) => (
                 <div key={tab.tabId} className="overlay ext-tab" hidden={tabs.active !== tab.tabId}>
                   <TabBody
                     entry={tab}
                     session={stageSession}
                     active={tabs.active === tab.tabId}
+                    focused={tabs.active === tab.tabId && mainFocused}
                     openFile={openInTab}
                     activateTab={activateTab}
                   />
@@ -1250,7 +1376,7 @@ export function App() {
 
             {/* Open is mounted, for the same reason: a file tab keeps its scroll
               position while you are away in the terminal. */}
-            {tabs.files.map((file) => {
+            {tabs.files.filter((file) => file !== sideFile).map((file) => {
               const id = tabId(file);
               return (
                 <div key={id} className="overlay" hidden={tabs.active !== id}>
@@ -1264,6 +1390,73 @@ export function App() {
                 </div>
               );
             })}
+          </div>
+
+          {beside ? (
+            <>
+              <div
+                className="split-divider"
+                role="separator"
+                aria-orientation={splitAxis(beside.place) === "row" ? "vertical" : "horizontal"}
+                title="Drag to resize, double-click to even out"
+                onPointerDown={handleSplitResizeStart}
+                onDoubleClick={() => setSplit((current) => (current ? { ...current, ratio: 0.5 } : current))}
+              />
+              <div
+                className={beside.focus === "side" ? "stage-pane side focused" : "stage-pane side"}
+                onPointerDownCapture={() => focusPane("side")}
+              >
+                <div className="split-head">
+                  <span className="split-title">{sideExt ? sideExt.title : sideFile ? tabName(sideFile) : ""}</span>
+                  {SPLIT_PLACES.map(({ place, label }) => {
+                    const Glyph = PLACE_ICONS[place];
+                    return (
+                      <button
+                        key={place}
+                        type="button"
+                        className={beside.place === place ? "split-button on" : "split-button"}
+                        title={label}
+                        aria-label={label}
+                        aria-pressed={beside.place === place}
+                        onClick={() => openBeside(beside.side, place)}
+                      >
+                        <Glyph size={14} />
+                      </button>
+                    );
+                  })}
+                  <button
+                    type="button"
+                    className="split-button"
+                    title="Back to the stage"
+                    aria-label="Back to the stage"
+                    onClick={closeBeside}
+                  >
+                    ×
+                  </button>
+                </div>
+                <div className="split-body ext-tab">
+                  {sideExt ? (
+                    <TabBody
+                      entry={sideExt}
+                      session={stageSession}
+                      active
+                      focused={beside.focus === "side"}
+                      openFile={openInTab}
+                      activateTab={activateTab}
+                    />
+                  ) : sideFile ? (
+                    <FileView
+                      root={sideFile.root}
+                      path={sideFile.path}
+                      line={sideFile.line}
+                      active
+                      changed={changed}
+                    />
+                  ) : null}
+                </div>
+              </div>
+            </>
+          ) : null}
           </div>
         </section>
 

@@ -94,7 +94,7 @@ declare module "roer" {
 
   /** The session on the stage; null while there is none. */
   export function useSession(): Session | null;
-  /** Whether this tab is on top. Take the keyboard only while it is. */
+  /** Whether this tab is shown: on top of the stage, or beside it. Take the keyboard only while it is. */
   export function useActive(): boolean;
   /** Opens a file of the repository at `root` in a tab of its own. */
   export function useOpenFile(): (root: string, path: string, line?: number) => void;
@@ -439,7 +439,8 @@ declare module "roer" {
   // ---------------------------------------------------------------- keys
 
   /** Runs `handler` for every keydown `match` accepts, before the terminal sees it.
-   * Register only while `useActive()`, or the key is taken from every other tab. */
+   * Register only while `useActive()`, or the key is taken from every other tab. Beside the
+   * terminal, a tab's hotkeys only fire while its pane has the keyboard. */
   export function useHotkey(match: (event: KeyboardEvent) => boolean, handler: (event: KeyboardEvent) => void): void;
   export function isMac(): boolean;
   /** Cmd+Left (Alt+Left off macOS): the previous commit. */

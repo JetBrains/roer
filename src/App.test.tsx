@@ -6,11 +6,12 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { useCallback, useState } from "react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "./App";
 import { defineExtension } from "./extensions/api";
-import { useActivateTab } from "./extensions/context";
+import { useActivateTab, useTabHotkey } from "./extensions/context";
 import { registry } from "./extensions/registry";
 import { fileRead, filesSearch } from "./lib/files";
 import {
@@ -874,6 +875,104 @@ describe("App", () => {
     } finally {
       registry.unload("asker");
     }
+  });
+
+  describe("a tab beside the terminal", () => {
+    function Pager() {
+      const [pressed, setPressed] = useState(0);
+      useTabHotkey(
+        useCallback((event: KeyboardEvent) => event.key === "ArrowRight", []),
+        useCallback(() => setPressed((n) => n + 1), []),
+      );
+      return <p data-testid="pager">pressed {pressed}</p>;
+    }
+
+    beforeEach(() =>
+      registry.load(
+        "pager",
+        defineExtension((roer) => void roer.stage.registerTab({ id: "main", title: "Pager", component: Pager, needsSession: false })),
+      ),
+    );
+    afterEach(() => registry.unload("pager"));
+
+    const openBeside = async () => {
+      fireEvent.contextMenu(await screen.findByRole("tab", { name: "Pager" }));
+      fireEvent.click(await screen.findByRole("menuitem", { name: "Open right of the terminal" }));
+    };
+
+    it("shows the tab and the terminal together, without closing the terminal", async () => {
+      render(<App />);
+      await teleport();
+      await emit({ kind: "output", data: "aGk=" });
+      await openBeside();
+
+      expect(await screen.findByTestId("pager")).toBeVisible();
+      expect(screen.getByTestId("terminal")).toBeVisible();
+      expect(screen.getByRole("tab", { name: "Terminal" })).toHaveAttribute("aria-selected", "true");
+      expect(screen.getByRole("separator")).toHaveAttribute("aria-orientation", "vertical");
+      expect(closePty).not.toHaveBeenCalled();
+      expect(JSON.parse(localStorage.getItem("roer:split") ?? "null")).toMatchObject({ side: "ext:pager/main", place: "right" });
+    });
+
+    it("keeps the tab beside the terminal when its strip button is clicked", async () => {
+      render(<App />);
+      await openBeside();
+      fireEvent.click(screen.getByRole("tab", { name: "Terminal" }));
+      fireEvent.click(screen.getByRole("tab", { name: "Pager" }));
+
+      expect(screen.getAllByTestId("pager")).toHaveLength(1);
+      expect(screen.getByRole("tab", { name: "Terminal" })).toHaveAttribute("aria-selected", "true");
+    });
+
+    it("gives the tab its keys only while its pane has the keyboard", async () => {
+      render(<App />);
+      await teleport();
+      await emit({ kind: "output", data: "aGk=" });
+      await openBeside();
+      const pager = await screen.findByTestId("pager");
+
+      fireEvent.keyDown(window, { key: "ArrowRight" });
+      expect(pager).toHaveTextContent("pressed 1");
+
+      // Clicking the terminal's pane hands it the keys: its arrows are its own.
+      fireEvent.pointerDown(screen.getByTestId("terminal"));
+      fireEvent.keyDown(window, { key: "ArrowRight" });
+      expect(pager).toHaveTextContent("pressed 1");
+
+      fireEvent.pointerDown(pager);
+      fireEvent.keyDown(window, { key: "ArrowRight" });
+      expect(pager).toHaveTextContent("pressed 2");
+    });
+
+    it("moves the tab around the terminal, and puts it back on the stage", async () => {
+      render(<App />);
+      await openBeside();
+      fireEvent.click(screen.getByRole("button", { name: "Above the terminal" }));
+      expect(screen.getByRole("separator")).toHaveAttribute("aria-orientation", "horizontal");
+      expect(screen.getByRole("button", { name: "Above the terminal" })).toHaveAttribute("aria-pressed", "true");
+      expect(JSON.parse(localStorage.getItem("roer:split") ?? "null")).toMatchObject({ place: "above" });
+
+      fireEvent.contextMenu(screen.getByRole("tab", { name: "Pager" }));
+      expect(screen.queryByRole("menuitem", { name: "Move above the terminal" })).not.toBeInTheDocument();
+      fireEvent.click(await screen.findByRole("menuitem", { name: "Move left of the terminal" }));
+      expect(screen.getByRole("separator")).toHaveAttribute("aria-orientation", "vertical");
+
+      fireEvent.click(screen.getByRole("button", { name: "Back to the stage" }));
+      expect(screen.queryByRole("separator")).not.toBeInTheDocument();
+      expect(screen.getByRole("tab", { name: "Pager" })).toHaveAttribute("aria-selected", "true");
+      expect(localStorage.getItem("roer:split")).toBeNull();
+    });
+
+    it("comes back as it was left, and goes back to the stage from there", async () => {
+      localStorage.setItem("roer:split", JSON.stringify({ side: "ext:pager/main", place: "below", ratio: 0.7 }));
+      render(<App />);
+
+      expect(await screen.findByTestId("pager")).toBeVisible();
+      expect(screen.getByRole("separator")).toHaveAttribute("aria-orientation", "horizontal");
+
+      fireEvent.click(screen.getByRole("button", { name: "Back to the stage" }));
+      expect(await screen.findByTestId("pager")).toBeVisible();
+    });
   });
 
   it("has no changes to show until a session is staged", async () => {

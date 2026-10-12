@@ -92,6 +92,9 @@ The rules:
   the agent edits files. Don't poll.
 - **Take keys only while `useActive()` is true.** A `useHotkey` that is
   registered while the tab is hidden takes the key from every other tab.
+  The person can also put a tab beside the terminal: it is active there,
+  and its `useHotkey`s go quiet by themselves while the terminal has the
+  keyboard.
 - `react` and `roer` are Roer's own. Don't install them. Other npm packages
   work: add a `package.json` and run `bun install --omit peer` in the folder
   (with no `bun` on `PATH`, Roer's own is `~/.roer/bun/1.3.13/bun`). Without
