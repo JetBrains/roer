@@ -245,11 +245,18 @@ export function GenerativeUITab({
   // extension. Only while it waits at its prompt, which is the one moment
   // typing a request into the pane cannot land in the middle of its work or
   // on a draft of the person's.
-  const canAsk = !!pane && agentState === "done" && !typedSince(pane, turnStarted.current);
+  const ready = () => !!pane && agentState === "done" && !typedSince(pane, turnStarted.current);
+  const canAsk = ready();
   const keepName = (saveName.trim() || surfaceId).replace(/[^A-Za-z0-9_-]/g, "-");
   const keepPrompt = keepTabPrompt(keepName, savePrompt.trim());
+  const replacing = bundles.some((bundle) => bundle.name === keepName);
   const handleKeep = () => {
-    if (!pane || !canAsk) return;
+    // Asked again on the click: the person may have typed into the
+    // terminal since the dialog opened, and that draft would be submitted.
+    if (!pane || !ready()) {
+      setBundleStatus("The agent is busy or your prompt has a draft in it: try again when it is waiting.");
+      return;
+    }
     saveView(keepName, savePrompt.trim())
       .then(() => sendToSession(pane, keepPrompt))
       .then(() => {
@@ -387,7 +394,10 @@ export function GenerativeUITab({
               value={savePrompt}
               onChange={(e) => setSavePrompt(e.target.value)}
             />
-            <p className="gen-text muted">Saved as “{keepName}”, then this goes to the agent:</p>
+            <p className="gen-text muted">
+              {replacing ? `Replaces the saved view “${keepName}”, then` : `Saved as “${keepName}”, then`} this goes to the
+              agent:
+            </p>
             <pre className="gen-wire">{keepPrompt}</pre>
             {!canAsk ? (
               <p className="gen-text muted">

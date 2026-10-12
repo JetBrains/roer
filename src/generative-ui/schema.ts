@@ -215,7 +215,7 @@ export type Component =
         series: { key: string; title?: DynamicString }[];
         /** Where the numbers come from, or that they are a sample. */
         source?: DynamicString;
-        /** In px. @default 200 */
+        /** In px, for columns and lines; horizontal bars take the height their rows need. @default 200 */
         height?: number;
         emptyText?: DynamicString;
       }

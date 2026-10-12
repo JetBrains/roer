@@ -154,6 +154,19 @@ describe("GenerativeSurface", () => {
     expect(screen.getByText("Total")).toBeInTheDocument();
   });
 
+  it("leaves out a chart series that names no field, instead of failing", () => {
+    draw([
+      {
+        id: "root",
+        component: "Chart",
+        rows: [{ d: "Mon", ok: 3 }],
+        x: "d",
+        series: [null, "ok", { title: "no key" }, { key: "ok", title: "Passed" }] as never,
+      },
+    ]);
+    expect(screen.getByRole("img", { name: /column chart of 1 point/ })).toBeInTheDocument();
+  });
+
   it("charts bound rows, with their source under them", () => {
     draw(
       [

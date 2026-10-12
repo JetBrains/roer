@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
@@ -113,6 +116,30 @@ describe("horizontal bars", () => {
   it("keeps lines vertical", () => {
     render(<Chart orientation="horizontal" variant="line" rows={rows} x="week" series={series} />);
     expect(screen.getByRole("img", { name: /line chart/ })).toBeInTheDocument();
+  });
+});
+
+describe("a chart kept live", () => {
+  it("drops a hover on a row that is gone, rather than crashing", () => {
+    const { rerender } = render(<Chart rows={rows} x="week" series={series} />);
+    const plot = screen.getByRole("img");
+    fireEvent.keyDown(plot, { key: "End" });
+    fireEvent.keyDown(plot, { key: "ArrowLeft" });
+    fireEvent.keyDown(plot, { key: "ArrowRight" });
+    fireEvent.keyDown(plot, { key: "ArrowRight" });
+    fireEvent.keyDown(plot, { key: "ArrowRight" });
+    expect(screen.getByRole("status")).toHaveTextContent("W3");
+    rerender(<Chart rows={rows.slice(0, 1)} x="week" series={series} />);
+    expect(screen.queryByRole("status")).toBeNull();
+  });
+
+  it("draws in the same colours in the roer-ui plugin's terminal pane", () => {
+    const css = readFileSync(resolve(__dirname, "../index.css"), "utf8");
+    // The first set is the default (dark) theme's, which the pane uses.
+    const panel = Array.from({ length: 8 }, (_, i) => new RegExp(`--roer-series-${i + 1}: (#[0-9a-f]{6})`).exec(css)?.[1]);
+    const plugin = readFileSync(resolve(__dirname, "../../claude-plugin/roer-ui/hooks/register.tsx"), "utf8");
+    const listed = /const SERIES = \[([^\]]*)\]/.exec(plugin)?.[1].match(/#[0-9a-f]{6}/g);
+    expect(listed).toEqual(panel);
   });
 });
 

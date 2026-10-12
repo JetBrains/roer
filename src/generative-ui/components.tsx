@@ -671,16 +671,23 @@ export function Slider({
   const { "aria-label": ariaLabel, ...rest } = common;
   // A float step leaves 0.30000000000000004 behind; round it away.
   const tidy = (v: number) => Number(v.toPrecision(12));
+  // A range with nothing in it (max not above min, or max not set yet) has
+  // no step to take: shown, but not movable, and never NaN.
+  const empty = !(max > min);
+  const top = empty ? min + 1 : max;
   return (
     <div {...rest} className="gen-slider">
       {label ? <span className="gen-field-label">{label}</span> : null}
       <SliderPrimitive.Root
         className="gen-slider-root"
         min={min}
-        max={max}
-        step={tidy((max - min) / (steps && steps > 0 ? steps : 100))}
-        value={[Math.min(max, Math.max(min, value))]}
-        onValueChange={([next]) => next !== undefined && onChange(tidy(next))}
+        max={top}
+        // Without `steps` it moves finely, as a native range input with
+        // step "any" did; Radix needs a step, so a thousandth of the range.
+        step={tidy((top - min) / (steps && steps > 0 ? steps : 1000))}
+        value={[Math.min(top, Math.max(min, Number.isFinite(value) ? value : min))]}
+        disabled={empty}
+        onValueChange={([next]) => next !== undefined && Number.isFinite(next) && onChange(tidy(next))}
       >
         <SliderPrimitive.Track className="gen-slider-track">
           <SliderPrimitive.Range className="gen-slider-range" />
