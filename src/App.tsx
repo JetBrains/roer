@@ -570,13 +570,25 @@ export function App() {
   }, [staged]);
 
   /** Brings a tab up by its id, mounting it if it never was: what an extension's `useActivateTab` does. */
+  /** Brings a tab up on the stage, which takes the keyboard back from the
+   * pane beside it; the side tab itself is focused where it is (`settle`). */
+  const showTab = useCallback((tabId: string) => {
+    setTabs((current) => activate(current, tabId));
+    setSplit((current) =>
+      current && current.side !== tabId && current.focus !== "main" ? { ...current, focus: "main" } : current,
+    );
+  }, []);
+
   const activateTab = useCallback(
     (tabId: string) => {
       opened(tabId);
-      setTabs((current) => activate(current, tabId));
+      showTab(tabId);
     },
-    [opened],
+    [opened, showTab],
   );
+
+  const stageBodyRef = useRef<HTMLDivElement>(null);
+  const [splitResizing, setSplitResizing] = useState(false);
 
   // The split's tab asked for on the stage is focused where it is instead.
   // Before paint, so the stage never flashes the tab it is about to give back.
@@ -589,7 +601,10 @@ export function App() {
   useEffect(() => {
     if (split?.side.startsWith("file:") && !tabs.files.some((file) => tabId(file) === split.side)) setSplit(null);
   }, [split, tabs.files]);
-  useEffect(() => saveSplit(split), [split]);
+  // Once a drag has ended, not on every pixel of it.
+  useEffect(() => {
+    if (!splitResizing) saveSplit(split);
+  }, [split, splitResizing]);
 
   const openBeside = (id: string, place?: SplitPlace) => {
     opened(id);
@@ -607,12 +622,15 @@ export function App() {
   const focusPane = (focus: Split["focus"]) =>
     setSplit((current) => (current && current.focus !== focus ? { ...current, focus } : current));
 
-  const stageBodyRef = useRef<HTMLDivElement>(null);
-  const [splitResizing, setSplitResizing] = useState(false);
   const handleSplitResizeStart = (e: React.PointerEvent<HTMLDivElement>) => {
     const body = stageBodyRef.current;
-    if (!body || !split) return;
+    // The primary button only: a right-click on the divider is not a drag.
+    if (!body || !split || e.button !== 0) return;
     e.preventDefault();
+    // Captured, so a release outside the window still ends the drag.
+    const handle = e.currentTarget;
+    const pointer = e.pointerId;
+    handle.setPointerCapture?.(pointer);
     const { place } = split;
     const row = splitAxis(place) === "row";
     setSplitResizing(true);
@@ -623,11 +641,16 @@ export function App() {
     };
     const handleUp = () => {
       setSplitResizing(false);
+      if (handle.hasPointerCapture?.(pointer)) handle.releasePointerCapture(pointer);
       window.removeEventListener("pointermove", handleMove);
       window.removeEventListener("pointerup", handleUp);
+      window.removeEventListener("pointercancel", handleUp);
+      window.removeEventListener("blur", handleUp);
     };
     window.addEventListener("pointermove", handleMove);
     window.addEventListener("pointerup", handleUp);
+    window.addEventListener("pointercancel", handleUp);
+    window.addEventListener("blur", handleUp);
   };
 
   /** A strip tab's menu: put it beside the terminal, or take it back. */
@@ -889,9 +912,9 @@ export function App() {
         if (!tab) return;
         if (tab.needsSession && !stagedRef.current) return;
         opened(tab.tabId);
-        setTabs((current) => activate(current, tab.tabId));
+        showTab(tab.tabId);
       },
-      [opened],
+      [opened, showTab],
     ),
   );
 
@@ -1175,9 +1198,7 @@ export function App() {
                 aria-selected={tabs.active === "sessions"}
                 className={tabs.active === "sessions" ? "tab on" : "tab"}
                 title={number(tab.tabId)}
-                onClick={() =>
-                  setTabs((current) => activate(current, "sessions"))
-                }
+                onClick={() => showTab("sessions")}
               >
                 Workspace
                 {browser.waiting.size > 0 ? (
@@ -1198,9 +1219,7 @@ export function App() {
                 aria-selected={tabs.active === "terminal"}
                 className={tabs.active === "terminal" ? "tab on" : "tab"}
                 title={number(tab.tabId)}
-                onClick={() =>
-                  setTabs((current) => activate(current, "terminal"))
-                }
+                onClick={() => showTab("terminal")}
               >
                 Terminal
               </button>
@@ -1214,13 +1233,13 @@ export function App() {
                     key={tab.tabId}
                     type="button"
                     role="tab"
-                    aria-selected={tabs.active === tab.tabId || beside}
+                    aria-selected={tabs.active === tab.tabId}
                     className={tabs.active === tab.tabId ? "tab on" : beside ? "tab beside" : "tab"}
                     title={number(tab.tabId)}
                     disabled={tab.needsSession && !session}
                     onClick={() => {
                       opened(tab.tabId);
-                      setTabs((current) => activate(current, tab.tabId));
+                      showTab(tab.tabId);
                     }}
                   >
                     {tab.title}
@@ -1246,9 +1265,7 @@ export function App() {
                       aria-selected={tabs.active === id}
                       className="tab file"
                       title={file.path}
-                      onClick={() =>
-                        setTabs((current) => activate(current, id))
-                      }
+                      onClick={() => showTab(id)}
                     >
                       {name}
                     </button>

@@ -944,6 +944,42 @@ describe("App", () => {
       expect(pager).toHaveTextContent("pressed 2");
     });
 
+    it("gives the keys back to the stage when a stage tab is asked for, and marks one tab selected", async () => {
+      render(<App />);
+      await teleport();
+      await emit({ kind: "output", data: "aGk=" });
+      await openBeside();
+      const pager = await screen.findByTestId("pager");
+      fireEvent.pointerDown(pager);
+      fireEvent.keyDown(window, { key: "ArrowRight" });
+      expect(pager).toHaveTextContent("pressed 1");
+      expect(screen.getByRole("tab", { name: "Pager" })).toHaveAttribute("aria-selected", "false");
+
+      // The Terminal tab, asked for while the side pane has the keys.
+      fireEvent.click(screen.getByRole("tab", { name: "Terminal" }));
+      fireEvent.keyDown(window, { key: "ArrowRight" });
+      expect(pager).toHaveTextContent("pressed 1");
+
+      fireEvent.pointerDown(pager);
+      fireEvent.keyDown(window, { key: "1", code: "Digit1", metaKey: true });
+      fireEvent.keyDown(window, { key: "ArrowRight" });
+      expect(pager).toHaveTextContent("pressed 1");
+    });
+
+    it("drags the divider with the primary button only, and ends a drag the system cancels", async () => {
+      render(<App />);
+      await openBeside();
+      const divider = screen.getByRole("separator");
+      const stage = divider.parentElement!;
+
+      fireEvent.pointerDown(divider, { button: 2 });
+      expect(stage).not.toHaveClass("resizing");
+      fireEvent.pointerDown(divider, { button: 0 });
+      expect(stage).toHaveClass("resizing");
+      fireEvent.pointerCancel(window);
+      expect(stage).not.toHaveClass("resizing");
+    });
+
     it("moves the tab around the terminal, and puts it back on the stage", async () => {
       render(<App />);
       await openBeside();
