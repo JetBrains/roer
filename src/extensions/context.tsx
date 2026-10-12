@@ -3,10 +3,11 @@
  * stage, whether its tab is on top, and the stage's own actions. Components
  * take no props, so an extension's tab and a bundled one are mounted alike.
  */
-import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 
 import type { FilesChanged } from "../lib/files";
 import { gitCurrentBranch, gitRoot } from "../lib/git";
+import { useHotkey } from "../lib/keys";
 import { sendToSession } from "../lib/github";
 import { resolveDir } from "../lib/session";
 import type { Session } from "./api";
@@ -15,7 +16,11 @@ interface Host {
   /** The extension whose tab this is. */
   extension: string;
   session: Session | null;
+  /** Shown: on top of the stage, or beside it. */
   active: boolean;
+  /** Shown and taking the keyboard. Beside the stage, a tab is shown while the
+   * terminal has the keys; it takes them once it is clicked. */
+  focused: boolean;
   openFile: (root: string, path: string, line?: number) => void;
   activateTab: (tabId: string) => void;
 }
@@ -24,6 +29,8 @@ const HostContext = createContext<Host>({
   extension: "",
   session: null,
   active: false,
+  // Outside a tab nothing competes for the keys.
+  focused: true,
   openFile: () => undefined,
   activateTab: () => undefined,
 });
@@ -35,8 +42,21 @@ export function HostProvider({ value, children }: { value: Host; children: React
 /** The session on the stage; null while there is none. */
 export const useSession = (): Session | null => useContext(HostContext).session;
 
-/** Whether this tab is the one on top. */
+/** Whether this tab is shown: on top of the stage, or beside it. */
 export const useActive = (): boolean => useContext(HostContext).active;
+
+/**
+ * `useHotkey` for a tab: its keys only while it has the keyboard. A tab beside
+ * the stage is active while you type in the terminal, and must not take the
+ * terminal's arrows then.
+ */
+export function useTabHotkey(match: (event: KeyboardEvent) => boolean, handler: (event: KeyboardEvent) => void): void {
+  const { focused } = useContext(HostContext);
+  useHotkey(
+    useCallback((event: KeyboardEvent) => focused && match(event), [focused, match]),
+    handler,
+  );
+}
 
 /** Opens a file of the repository at `root` in a tab of its own. */
 export const useOpenFile = (): Host["openFile"] => useContext(HostContext).openFile;

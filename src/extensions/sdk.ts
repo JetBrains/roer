@@ -40,4 +40,6 @@ export { langFor } from "../lib/lang";
 export type { Lang } from "../lib/lang";
 
 // Keys.
-export { useHotkey, shortcutLabel, isMac, isPrevCommit, isNextCommit } from "../lib/keys";
+// A tab's hotkeys go quiet while another pane has the keyboard.
+export { useTabHotkey as useHotkey } from "./context";
+export { shortcutLabel, isMac, isPrevCommit, isNextCommit } from "../lib/keys";

@@ -400,6 +400,156 @@ code {
   position: relative;
 }
 
+/* Split, the stage body lays its panes out side by side (`row`) or one above
+   the other (`column`); whole, the one pane fills it. */
+.stage-body.split {
+  display: flex;
+}
+
+.stage-body.split.column {
+  flex-direction: column;
+}
+
+/* Left of or above the terminal: reversed rather than reordered, so the
+   terminal's pane keeps its place in the DOM and is never remounted. */
+.stage-body.split.row.side-first {
+  flex-direction: row-reverse;
+}
+
+.stage-body.split.column.side-first {
+  flex-direction: column-reverse;
+}
+
+.stage-pane {
+  position: relative;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+
+.stage-body.split > .stage-pane {
+  flex: 0 0 auto;
+}
+
+.stage-body.split.column > .stage-pane {
+  height: auto;
+}
+
+.stage-body.split > .stage-pane.side {
+  flex: 1 1 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--roer-bg);
+}
+
+/* Which pane has the keys: a hairline of the accent along its top. */
+.stage-body.split > .stage-pane.focused::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--roer-accent);
+  z-index: 2;
+  pointer-events: none;
+}
+
+.split-divider {
+  flex: none;
+  background: var(--roer-border);
+  position: relative;
+  z-index: 3;
+}
+
+.stage-body.split.row > .split-divider {
+  width: 1px;
+  cursor: col-resize;
+}
+
+.stage-body.split.column > .split-divider {
+  height: 1px;
+  cursor: row-resize;
+}
+
+/* Easier to grab than its 1px. */
+.split-divider::before {
+  content: "";
+  position: absolute;
+  inset: 0 -4px;
+}
+
+.stage-body.split.column > .split-divider::before {
+  inset: -4px 0;
+}
+
+.split-divider:hover,
+.stage-body.split.resizing > .split-divider {
+  background: var(--roer-accent);
+}
+
+/* A drag over the terminal or a tab's iframe would lose the pointer. */
+.stage-body.split.resizing > .stage-pane {
+  pointer-events: none;
+  user-select: none;
+}
+
+.split-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 26px;
+  padding: 0 4px 0 10px;
+  border-bottom: 1px solid var(--roer-border);
+  background: var(--roer-panel);
+  font-size: 12px;
+  color: var(--roer-muted);
+}
+
+.stage-pane.side.focused .split-title {
+  color: var(--roer-fg);
+}
+
+.split-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.split-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  color: var(--roer-muted);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.split-button.on {
+  color: var(--roer-accent);
+}
+
+.split-button:hover {
+  background: var(--roer-row-hover);
+  color: var(--roer-fg);
+}
+
+.split-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  position: relative;
+  display: flex;
+}
+
 /* Panels that cover the terminal without displacing it. */
 .overlay {
   position: absolute;
@@ -499,6 +649,15 @@ button.tab.on {
   color: var(--roer-fg);
   background: var(--roer-bg);
   border-color: var(--roer-border);
+}
+
+/* Beside the stage: in view, but not the tab on top. */
+button.tab.beside,
+.tab-wrap.beside button.tab.file {
+  color: var(--roer-fg);
+  text-decoration: underline;
+  text-decoration-color: var(--roer-accent);
+  text-underline-offset: 4px;
 }
 
 button.tab:disabled {
