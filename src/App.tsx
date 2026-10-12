@@ -1414,7 +1414,7 @@ export function App() {
                       <button
                         key={place}
                         type="button"
-                        className={beside.place === place ? "split-button on" : "split-button"}
+                        className={beside.place === place ? "split-tool on" : "split-tool"}
                         title={label}
                         aria-label={label}
                         aria-pressed={beside.place === place}
@@ -1426,7 +1426,7 @@ export function App() {
                   })}
                   <button
                     type="button"
-                    className="split-button"
+                    className="split-tool"
                     title="Back to the stage"
                     aria-label="Back to the stage"
                     onClick={closeBeside}
