@@ -38,6 +38,9 @@ export function useHotkey(
  */
 export const isMac = (): boolean => /Mac|iPhone|iPad/.test(navigator.platform);
 
+/** Windows, where paths and shells quote differently. */
+export const isWindows = (): boolean => /Win/.test(navigator.platform);
+
 /** Exactly `Cmd` on macOS, exactly `Ctrl+Shift` elsewhere. */
 const appChord = (event: KeyboardEvent, shift: boolean): boolean =>
   isMac()

@@ -12,13 +12,14 @@ describe("terminal links", () => {
   it("sends web links to the browser, and files to Roer", () => {
     expect(linkTarget("https://github.com/JetBrains/roer")).toEqual({ kind: "web", url: "https://github.com/JetBrains/roer" });
     expect(linkTarget("http://localhost:3000")).toEqual({ kind: "web", url: "http://localhost:3000/" });
+    expect(linkTarget("http://127.0.0.1:8080/x")).toEqual({ kind: "web", url: "http://127.0.0.1:8080/x" });
     expect(linkTarget("file:///Users/a/My%20Project/src/app.ts")).toEqual({ kind: "file", path: "/Users/a/My Project/src/app.ts" });
     expect(linkTarget("file://mac.local/Users/a/x.ts#L12")).toEqual({ kind: "file", path: "/Users/a/x.ts", line: 12 });
     expect(linkTarget("file:///C:/work/x.ts")).toEqual({ kind: "file", path: "C:/work/x.ts" });
   });
 
   it("opens nothing else", () => {
-    for (const uri of ["javascript:alert(1)", "mailto:a@b.c", "vscode://file/x", "data:text/html,x", "not a url", "/Users/a/x.ts"]) {
+    for (const uri of ["http://example.com/", "http://localhost.evil.com/", "javascript:alert(1)", "mailto:a@b.c", "vscode://file/x", "data:text/html,x", "not a url", "/Users/a/x.ts"]) {
       expect(linkTarget(uri), uri).toBeNull();
     }
   });

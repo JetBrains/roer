@@ -430,6 +430,12 @@ describe("App", () => {
 
     act(() => osc8.activate(cmd, "file:///Users/test/project/src/main.ts#L7"));
     expect(await screen.findByTitle("src/main.ts")).toBeInTheDocument();
+
+    // git names the repository by its resolved path, the link by another:
+    // the file still opens, under its own folder.
+    vi.mocked(gitRoot).mockResolvedValue("/private/Users/test/project");
+    act(() => osc8.activate(cmd, "file:///Users/test/project/README.md"));
+    expect(await screen.findByTitle("README.md")).toBeInTheDocument();
     vi.mocked(gitRoot).mockReset();
     vi.mocked(gitRoot).mockResolvedValue(null);
   });

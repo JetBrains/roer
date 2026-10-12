@@ -475,7 +475,8 @@ export function StatusCard({
   url?: string;
   footer?: ReactNode;
 }) {
-  // The backend refuses anything but a web link too; checking here keeps
+  // The backend refuses anything but https (or http on this machine) too;
+  // checking for https here keeps
   // a title that could not open from looking like a link.
   const link = url.startsWith("https://") ? url : "";
   const clampedProgress = progress === undefined ? undefined : Math.min(100, Math.max(0, progress));

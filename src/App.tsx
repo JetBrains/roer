@@ -562,12 +562,15 @@ export function App() {
    * view under the repository it belongs to, or its own folder outside one. */
   const openLinkedFile = useCallback(
     (path: string, line?: number) => {
-      const dir = path.replace(/[\\/][^\\/]*$/, "") || "/";
+      // `C:` alone is the current directory on that drive, not its root.
+      const dir = path.replace(/[\\/][^\\/]*$/, "").replace(/^([A-Za-z]:)$/, "$1/") || "/";
       void gitRoot(dir)
         .catch(() => null)
         .then((root) => {
-          const base = root ?? dir;
-          const rel = insideRoot(base, path);
+          // git can spell the root another way than the link does (a
+          // symlink resolved, a drive letter's case); then the file's folder.
+          const inRepo = root ? insideRoot(root, path) : null;
+          const [base, rel] = root && inRepo ? [root, inRepo] : [dir, insideRoot(dir, path)];
           if (rel) openInTab(base, rel, line);
           else logLine(`roer: a terminal link to ${path} names no file Roer can open`);
         });

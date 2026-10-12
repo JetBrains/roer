@@ -10,6 +10,8 @@ describe("dropped files", () => {
     );
     expect(pathsAsTyped(["/tmp/it's (1) & $HOME.png"], false)).toBe("/tmp/it\\'s\\ \\(1\\)\\ \\&\\ \\$HOME.png ");
     expect(pathsAsTyped(["/a/one.png", "/a/two.png"], false)).toBe("/a/one.png /a/two.png ");
+    // A backslash before a newline would join lines: $'…' instead.
+    expect(pathsAsTyped(["/a/two\nlines's.png"], false)).toBe("$'/a/two\\nlines\\'s.png' ");
   });
 
   it("quotes a Windows path with a space in it", () => {
@@ -24,5 +26,25 @@ describe("dropped files", () => {
     expect(isOver(element, 50, 40)).toBe(true);
     expect(isOver(element, 5, 40)).toBe(false);
     expect(isOver(element, 50, 80)).toBe(false);
+  });
+
+  it("isn't over an element covered by something else, such as a dialog", () => {
+    const terminal = document.createElement("div");
+    const inside = document.createElement("span");
+    terminal.append(inside);
+    const dialog = document.createElement("div");
+    document.body.append(terminal, dialog);
+    terminal.getBoundingClientRect = () => ({ left: 0, right: 100, top: 0, bottom: 100 }) as DOMRect;
+    const original = document.elementFromPoint;
+    try {
+      document.elementFromPoint = () => inside;
+      expect(isOver(terminal, 50, 50)).toBe(true);
+      document.elementFromPoint = () => dialog;
+      expect(isOver(terminal, 50, 50)).toBe(false);
+    } finally {
+      document.elementFromPoint = original;
+      terminal.remove();
+      dialog.remove();
+    }
   });
 });
