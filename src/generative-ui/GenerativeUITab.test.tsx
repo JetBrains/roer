@@ -169,6 +169,16 @@ describe("GenerativeUITab saved bundles", () => {
     expect(keepTabPrompt("demo", "open issues")).toContain(".roer/plugin-ui/bundles/demo/surface.json, which shows open issues");
   });
 
+  it("says when keeping a view as a tab replaces a saved one of that name", async () => {
+    vi.mocked(listPluginUiBundles).mockResolvedValue([{ name: "demo", prompt: "older" }]);
+    render(
+      <GenerativeUITab state={applyAll(messages)} surfaceId="demo" onChange={vi.fn()} log={messages} live cwd="/work/roer" pane="%7" onLoadBundle={vi.fn()} agentState="done" />,
+    );
+    await waitFor(() => expect(listPluginUiBundles).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole("button", { name: "Keep as tab…" }));
+    expect(await screen.findByText(/Replaces the saved view “demo”/)).toBeInTheDocument();
+  });
+
   it("loads a saved bundle as its one createSurface", async () => {
     vi.mocked(listPluginUiBundles).mockResolvedValue([{ name: "test-runner", prompt: "" }]);
     const surface: A2uiMessage & { createSurface: unknown } = {

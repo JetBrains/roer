@@ -10,7 +10,7 @@
  * cannot tell the colours apart. A value that is not a number is a gap,
  * never a zero.
  */
-import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { useEffect, useId, useState, type KeyboardEvent, type ReactNode } from "react";
 
 import { toNumber } from "./functions";
 import { Table, type Common } from "./components";
@@ -91,11 +91,12 @@ function columnPath(x: number, width: number, base: number, top: number, rounded
 
 const seriesColor = (i: number) => `var(--roer-series-${(i % MAX_SERIES) + 1})`;
 
+/** The plot's width, measured on whichever plot element is mounted: a
+ * chart that starts empty, or comes back from its table, gets a new one. */
 function useWidth() {
-  const ref = useRef<HTMLDivElement>(null);
+  const [el, setEl] = useState<HTMLDivElement | null>(null);
   const [width, setWidth] = useState(480);
   useEffect(() => {
-    const el = ref.current;
     if (!el) return;
     const measure = () => {
       if (el.clientWidth > 0) setWidth(el.clientWidth);
@@ -104,8 +105,8 @@ function useWidth() {
     const observer = new ResizeObserver(measure);
     observer.observe(el);
     return () => observer.disconnect();
-  }, []);
-  return [ref, width] as const;
+  }, [el]);
+  return [setEl, width] as const;
 }
 
 export function Chart({
@@ -134,7 +135,9 @@ export function Chart({
 }) {
   const [ref, width] = useWidth();
   const [asTable, setAsTable] = useState(false);
-  const [active, setActive] = useState<number | undefined>(undefined);
+  const [hovered, setActive] = useState<number | undefined>(undefined);
+  // Rows can shrink under a hover: a point that is gone reads as none.
+  const active = hovered !== undefined && hovered < rows.length ? hovered : undefined;
   const tipId = useId();
   const shown = series.slice(0, MAX_SERIES);
   const dropped = series.length - shown.length;

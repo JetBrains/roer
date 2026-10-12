@@ -59,6 +59,21 @@ describe("catalog inputs, on Radix", () => {
     expect(onChange).toHaveBeenLastCalledWith(1);
   });
 
+  it("a slider with nothing to range over can't move, and never writes NaN", () => {
+    const onChange = vi.fn();
+    render(<Slider label="Empty" min={5} max={5} value={5} onChange={onChange} />);
+    const thumb = screen.getByRole("slider", { name: "Empty" });
+    fireEvent.keyDown(thumb, { key: "ArrowRight" });
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("a slider without steps moves finely", () => {
+    const onChange = vi.fn();
+    render(<Slider label="Budget" min={0} max={10000} value={2500} onChange={onChange} />);
+    fireEvent.keyDown(screen.getByRole("slider", { name: "Budget" }), { key: "ArrowRight" });
+    expect(onChange).toHaveBeenLastCalledWith(2510);
+  });
+
   it("one choice is a radio group", () => {
     const onChange = vi.fn();
     render(<ChoicePicker label="Colour" options={options} value={["r"]} onChange={onChange} />);

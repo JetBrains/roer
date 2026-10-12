@@ -630,7 +630,7 @@ declare module "roer/ui" {
     series: ChartSeries[];
     /** Where the numbers come from, or that they are a sample. */
     source?: string;
-    /** In px. @default 200 */
+    /** In px, for columns and lines; horizontal bars take the height their rows need. @default 200 */
     height?: number;
     /** @default "Nothing to chart." */
     emptyText?: string;
