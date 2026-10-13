@@ -55,6 +55,10 @@ export interface TerminalViewProps {
  * Hosts the xterm.js instance and binds it to a PTY in the Rust backend.
  * The terminal owns its DOM node, so React only supplies the container.
  */
+/** Whether a key can leave text in a prompt: a character, or an edit of one. */
+export const leavesDraft = (event: KeyboardEvent): boolean =>
+  !event.ctrlKey && !event.metaKey && (event.key.length === 1 || event.key === "Backspace" || event.key === "Delete");
+
 export function TerminalView({ args, cwd, onAttached, onPane, onExit, onOpenFile, active = true }: TerminalViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
@@ -170,9 +174,11 @@ export function TerminalView({ args, cwd, onAttached, onPane, onExit, onOpenFile
     };
 
     // Keys and pastes only: onData also carries what the terminal answers
-    // on its own, such as focus and cursor reports.
-    const keySub = terminal.onKey(() => {
-      if (pane) noteTyped(pane);
+    // on its own, such as focus and cursor reports. Only keys that can leave
+    // a draft in an agent's prompt count: Enter sends it, and Escape, the
+    // arrows and Ctrl or Cmd combinations write nothing into it.
+    const keySub = terminal.onKey(({ domEvent }) => {
+      if (pane && leavesDraft(domEvent)) noteTyped(pane);
     });
     const dataSub = terminal.onData((data) => {
       if (pane && data.startsWith("\x1b[200~")) noteTyped(pane);

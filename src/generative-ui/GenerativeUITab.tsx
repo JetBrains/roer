@@ -9,6 +9,7 @@
  * about — the line saying a click reached the agent.
  */
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { AppWindow } from "lucide-react";
 
 import { applyMessage } from "./apply";
 import { GenerativeSurface, type ResolvedEvent } from "./GenerativeSurface";
@@ -21,10 +22,12 @@ import {
   type PluginUiBundleSummary,
 } from "../lib/pluginUi";
 import { gitRoot } from "../lib/git";
+import { useAskAgent } from "../lib/askAgent";
 import { sendToSession } from "../lib/github";
 import { typedSince } from "../lib/pty";
 import { resolveDir } from "../lib/session";
 import { useStageTabs } from "../extensions/registry";
+import { stopOfferingTab, noteShown, offerTab } from "./returns";
 import { A2UI_VERSION, type A2uiMessage, type ComponentId, type JsonPointer, type RenderState } from "./schema";
 
 interface Props {
@@ -56,6 +59,8 @@ interface Props {
   agentState?: "working" | "waiting" | "done" | "";
   /** Brings an extension's tab to the top, from the list of views. */
   onOpenTab?: (tabId: string) => void;
+  /** Opens the dialog that asks the agent for a new tab. */
+  onNewTab?: () => void;
 }
 
 /** Submitted for the agent when a click finds it idle at its prompt. Its
@@ -74,6 +79,7 @@ export function GenerativeUITab({
   onOpenFile,
   agentState,
   onOpenTab,
+  onNewTab,
 }: Props) {
   const [result, setResult] = useState<string | null>(null);
   const [bundles, setBundles] = useState<PluginUiBundleSummary[]>([]);
@@ -122,6 +128,24 @@ export function GenerativeUITab({
       .then(setBundles)
       .catch((e: unknown) => console.error("roer: could not list plugin-ui bundles", e));
   }, [dir]);
+
+  // Each view's arrival counts as a showing of it, whether the agent drew it
+  // or the person opened a saved one: coming back to a view is what makes it
+  // worth offering as a tab.
+  const counted = useRef(new WeakSet<A2uiMessage>());
+  const [offering, setOffering] = useState(false);
+  useEffect(() => {
+    if (!live || !dir) {
+      setOffering(false);
+      return;
+    }
+    for (const message of log) {
+      if (!("createSurface" in message) || counted.current.has(message)) continue;
+      counted.current.add(message);
+      noteShown(dir, message.createSurface.surfaceId);
+    }
+    setOffering(!!surfaceId && offerTab(dir, surfaceId));
+  }, [log, live, dir, surfaceId]);
 
   const surface = state.surfaces[surfaceId];
   const dataModel = state.dataModels[surfaceId] ?? {};
@@ -242,32 +266,110 @@ export function GenerativeUITab({
   };
 
   // "Keep as tab": the view is saved, then the agent is asked to make it an
-  // extension. Only while it waits at its prompt, which is the one moment
-  // typing a request into the pane cannot land in the middle of its work or
-  // on a draft of the person's.
-  const ready = () => !!pane && agentState === "done" && !typedSince(pane, turnStarted.current);
-  const canAsk = ready();
+  // extension. The request goes only while it waits at its prompt, the one
+  // moment it cannot land in the middle of its work or on a draft of the
+  // person's; asked at any other, it waits for that moment.
+  const agent = useAskAgent(pane, agentState);
   const keepName = (saveName.trim() || surfaceId).replace(/[^A-Za-z0-9_-]/g, "-");
   const keepPrompt = keepTabPrompt(keepName, savePrompt.trim());
   const replacing = bundles.some((bundle) => bundle.name === keepName);
+  // Where the latest "Keep as tab" request is, from the click to the tab
+  // showing up in the strip, so the person always sees what happens next.
+  const [keeping, setKeeping] = useState<{
+    name: string;
+    prompt: string;
+    tabsBefore: readonly string[];
+    saved: boolean;
+  } | null>(null);
+  useEffect(() => setKeeping(null), [pane]);
+  const keptTab = keeping ? tabs.find((tab) => !keeping.tabsBefore.includes(tab.tabId)) : undefined;
+  const keepHeld = !!keeping && agent.held.some((request) => request.text === keeping.prompt);
+
   const handleKeep = () => {
-    // Asked again on the click: the person may have typed into the
-    // terminal since the dialog opened, and that draft would be submitted.
-    if (!pane || !ready()) {
-      setBundleStatus("The agent is busy or your prompt has a draft in it: try again when it is waiting.");
+    if (!agent.canAsk) {
+      setBundleStatus("No agent here to ask: start one in this session first.");
       return;
     }
-    saveView(keepName, savePrompt.trim())
-      .then(() => sendToSession(pane, keepPrompt))
+    if (keeping && !keeping.saved) return;
+    const request = { name: keepName, prompt: keepPrompt, tabsBefore: tabs.map((tab) => tab.tabId), saved: false };
+    // The dialog closes at once: what follows is shown under it, in the panel.
+    setKeeping(request);
+    setDialog(null);
+    setBundleStatus(null);
+    if (dir) stopOfferingTab(dir, surfaceId);
+    setOffering(false);
+    saveView(request.name, savePrompt.trim())
       .then(() => {
-        setBundleStatus(`Saved as "${keepName}" and asked the agent to make it a tab.`);
-        setDialog(null);
+        setKeeping((current) => (current === request ? { ...request, saved: true } : current));
+        return agent.ask(request.prompt, `make “${request.name}” a tab`);
       })
       .catch((e: unknown) => {
         console.error("roer: could not hand a view over to become a tab", e);
+        setKeeping(null);
         setBundleStatus("Could not ask the agent to make this a tab.");
       });
   };
+
+  const keepStatus = !keeping ? null : !keeping.saved ? (
+    <>
+      <span className="gen-spinner" aria-hidden="true" />
+      <span className="gen-text">Saving “{keeping.name}”…</span>
+    </>
+  ) : keptTab ? (
+    <>
+      <span className="gen-text">“{keptTab.title}” is ready in the strip.</span>
+      {onOpenTab ? (
+        <button type="button" className="gen-button primary" onClick={() => onOpenTab(keptTab.tabId)}>
+          Open tab
+        </button>
+      ) : null}
+      <button type="button" className="gen-button borderless" onClick={() => setKeeping(null)}>
+        Dismiss
+      </button>
+    </>
+  ) : keepHeld ? (
+    <>
+      <span className="gen-text">
+        {agentState === "done"
+          ? `Your prompt has text in it, so asking the agent to make “${keeping.name}” a tab waits until you send or clear it.`
+          : `Waiting for the agent to finish, then asking it to make “${keeping.name}” a tab.`}
+      </span>
+      <button
+        type="button"
+        className="gen-button"
+        onClick={() =>
+          void agent.sendNow(keeping.prompt).catch((e: unknown) => {
+            console.error("roer: could not send a held request to the agent", e);
+            setBundleStatus("Could not ask the agent to make this a tab.");
+          })
+        }
+      >
+        Send now
+      </button>
+      <button
+        type="button"
+        className="gen-button borderless"
+        onClick={() => {
+          agent.cancel(keeping.prompt);
+          setKeeping(null);
+        }}
+      >
+        Cancel
+      </button>
+    </>
+  ) : (
+    <>
+      {agentState === "working" ? <span className="gen-spinner" aria-hidden="true" /> : null}
+      <span className="gen-text">
+        {agentState === "working"
+          ? `The agent is making “${keeping.name}” a tab. It appears in the strip once it builds.`
+          : `Asked the agent to make “${keeping.name}” a tab. It appears in the strip once it builds.`}
+      </span>
+      <button type="button" className="gen-button borderless" onClick={() => setKeeping(null)}>
+        Dismiss
+      </button>
+    </>
+  );
 
   const handleLoad = (name: string) => {
     if (!dir) return;
@@ -294,6 +396,36 @@ export function GenerativeUITab({
 
   return (
     <div className="gen-tab">
+      {keepStatus ? (
+        <div className="gen-keep keeping" role="status" data-testid="keep-status">
+          {keepStatus}
+        </div>
+      ) : dir && surface?.components.root && pane ? (
+        <div className={offering ? "gen-keep offering" : "gen-keep"}>
+          <button type="button" className="gen-button" onClick={() => setDialog("keep")}>
+            <AppWindow size={13} aria-hidden="true" />
+            Keep as tab…
+          </button>
+          <span className="gen-text muted">
+            {offering
+              ? "You keep coming back to this view. As a tab it stays in the strip and fetches its own data."
+              : "A tab stays in the strip and fetches its own data."}
+          </span>
+          {offering ? (
+            <button
+              type="button"
+              className="gen-button borderless"
+              onClick={() => {
+                stopOfferingTab(dir, surfaceId);
+                setOffering(false);
+              }}
+            >
+              Not now
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+
       {live && surface ? (
         <GenerativeSurface
           surface={surface}
@@ -303,10 +435,21 @@ export function GenerativeUITab({
           onOpenFile={handleOpenFile}
         />
       ) : (
-        <p className="gen-text muted">
-          Nothing here yet. When an agent shows you a view to look at or answer, such as a plan to
-          approve or a dashboard, it appears here.
-        </p>
+        <div className="gen-panel-empty gen-text muted">
+          <p>
+            Nothing here yet. When an agent shows you a view to look at or answer, such as a plan to
+            approve or a dashboard, it appears here.
+          </p>
+          <p>
+            For something you will come back to, ask for a tab instead, such as “a tab with my open
+            pull requests”: the agent writes it, and it stays in the strip and fetches its own data.
+          </p>
+          {onNewTab ? (
+            <button type="button" className="gen-button" onClick={onNewTab}>
+              New tab…
+            </button>
+          ) : null}
+        </div>
       )}
 
       {result ? <p className="gen-result">{result}</p> : null}
@@ -315,11 +458,6 @@ export function GenerativeUITab({
         {dir && surface?.components.root ? (
           <button type="button" className="link" onClick={() => setDialog("save")}>
             Save…
-          </button>
-        ) : null}
-        {dir && surface?.components.root && pane ? (
-          <button type="button" className="link" onClick={() => setDialog("keep")}>
-            Keep as tab…
           </button>
         ) : null}
         {dir ? (
@@ -399,16 +537,18 @@ export function GenerativeUITab({
               agent:
             </p>
             <pre className="gen-wire">{keepPrompt}</pre>
-            {!canAsk ? (
+            {!agent.canAsk ? (
+              <p className="gen-text muted">No agent here to ask: start one in this session first.</p>
+            ) : !agent.ready ? (
               <p className="gen-text muted">
                 {agentState === "done"
-                  ? "Your prompt has text in it: send that first, or clear it."
-                  : "The agent is not waiting for you right now. Try again when it is."}
+                  ? "Your prompt has text in it, so this waits until you send or clear it."
+                  : "The agent is busy, so this waits and goes to it when it is next waiting for you."}
               </p>
             ) : null}
             <div className="gen-row">
-              <button type="submit" className="gen-button primary" disabled={!canAsk}>
-                Save and ask the agent
+              <button type="submit" className="gen-button primary" disabled={!agent.canAsk}>
+                {agent.canAsk && !agent.ready ? "Save and ask when it is ready" : "Save and ask the agent"}
               </button>
               <button type="button" className="gen-button borderless" onClick={() => setDialog(null)}>
                 Cancel
