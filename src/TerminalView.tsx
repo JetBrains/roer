@@ -25,6 +25,14 @@ const ATTACH_GRACE_MS = 250;
  * alone does not say which session's pane it is. */
 const PANE_OSC = 7717;
 
+/** How far the pointer may move between press and release for a click on a
+ * link to count as one, in CSS pixels. */
+const DRAG_PX = 4;
+
+/** How long a plain click on a link waits for a second one, which makes it a
+ * double-click selecting a word instead. Cmd+click opens at once. */
+const DOUBLE_CLICK_MS = 300;
+
 /** Writes and resizes race with the session ending; that rejection is normal. */
 function ignoreClosed() {
   /* no-op */
@@ -93,14 +101,11 @@ export function TerminalView({ args, cwd, onAttached, onPane, onExit, onOpenFile
       // For `terminal.unicode`, which xterm still marks as proposed.
       allowProposedApi: true,
       // OSC 8 links, which Claude Code writes around the URLs and paths it
-      // prints. A click opens one unless it made a selection: dragging
-      // across a link to copy it doesn't open it. Without a handler xterm asks with confirm() and calls
+      // prints. Without a handler xterm asks with confirm() and calls
       // window.open, and neither does anything in Roer's window.
       linkHandler: {
         allowNonHttpProtocols: true,
-        activate: (event, uri) => {
-          if (isOpenGesture(event) && !terminal.hasSelection()) openLink(uri);
-        },
+        activate: (event, uri) => clickLink(event, uri),
       },
     });
     /** Opens what a link names: a web page in the browser, a file in Roer. */
@@ -112,12 +117,29 @@ export function TerminalView({ args, cwd, onAttached, onPane, onExit, onOpenFile
         onOpenFileRef.current?.(target.path, target.line);
       }
     };
+    // Where the last press went down, and whether the terminal had the
+    // keyboard then. tmux's `mouse on` does the selecting, so xterm never
+    // knows a drag made one: the pointer has to say a click was a click.
+    let press: { x: number; y: number; focused: boolean } | null = null;
+    let pendingOpen: ReturnType<typeof setTimeout> | undefined;
+    const onPress = (event: MouseEvent) => {
+      // A second press is a double-click, selecting a word, not an open.
+      clearTimeout(pendingOpen);
+      press = { x: event.clientX, y: event.clientY, focused: container.contains(document.activeElement) };
+    };
+    container.addEventListener("mousedown", onPress, { capture: true });
+    /** A link clicked: opened unless the click was the end of a drag, the
+     * one that brought the terminal into focus, or half of a double-click. */
+    const clickLink = (event: MouseEvent, uri: string) => {
+      if (!isOpenGesture(event) || !press) return;
+      if (Math.hypot(event.clientX - press.x, event.clientY - press.y) > DRAG_PX) return;
+      // Cmd+click (Ctrl+click elsewhere) means it: no waiting.
+      if (event.metaKey || event.ctrlKey) return openLink(uri);
+      if (!press.focused) return;
+      pendingOpen = setTimeout(() => openLink(uri), DOUBLE_CLICK_MS);
+    };
     // Plain URLs in the output, which nothing marked as links.
-    terminal.loadAddon(
-      new WebLinksAddon((event, uri) => {
-        if (isOpenGesture(event) && !terminal.hasSelection()) openLink(uri);
-      }),
-    );
+    terminal.loadAddon(new WebLinksAddon((event, uri) => clickLink(event, uri)));
     measureWithUnicode11(terminal);
     const unfollowTheme = onThemeChange((theme) => {
       terminal.options.theme = terminalTheme(theme);
@@ -284,6 +306,8 @@ export function TerminalView({ args, cwd, onAttached, onPane, onExit, onOpenFile
 
     return () => {
       disposed = true;
+      clearTimeout(pendingOpen);
+      container.removeEventListener("mousedown", onPress, { capture: true });
       void stopFileDrag.then((stop) => stop());
       clearTimeout(starting);
       if (attaching !== null) clearTimeout(attaching);

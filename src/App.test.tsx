@@ -78,7 +78,6 @@ vi.mock("@xterm/xterm", () => ({
     }
     loadAddon = vi.fn();
     paste = vi.fn();
-    hasSelection = vi.fn(() => false);
     unicode = { activeVersion: "6" };
     open = vi.fn();
     focus = vi.fn();
@@ -417,30 +416,58 @@ describe("App", () => {
     await waitFor(() => expect(mocks.terminal.current).toBeDefined());
     const osc8 = (mocks.terminal.current as unknown as { options: { linkHandler: { activate: (e: MouseEvent, uri: string) => void } } })
       .options.linkHandler;
-    const cmd = new MouseEvent("click", { metaKey: true });
-    const plain = new MouseEvent("click");
-    const shift = new MouseEvent("click", { shiftKey: true });
-    const terminal = mocks.terminal.current as unknown as { hasSelection: ReturnType<typeof vi.fn> };
+    const box = screen.getByTestId("terminal");
+    // The terminal has the keyboard, as it does while you work in it.
+    const keys = document.createElement("textarea");
+    box.append(keys);
+    keys.focus();
+    const at = (x: number, init: MouseEventInit = {}) => new MouseEvent("click", { clientX: x, clientY: 10, ...init });
+    const press = (x = 10) => fireEvent.mouseDown(box, { clientX: x, clientY: 10 });
+    const wait = () => act(() => new Promise((done) => setTimeout(done, 350)));
 
-    // Shift+click extends a selection, and a drag that made one isn't a click.
-    osc8.activate(shift, "https://github.com/JetBrains/roer");
-    terminal.hasSelection.mockReturnValueOnce(true);
-    mocks.webLinks.current?.(plain, "https://example.com");
-    osc8.activate(cmd, "javascript:alert(1)");
+    // Cmd+click opens at once.
+    press();
+    osc8.activate(at(10, { metaKey: true }), "https://github.com/JetBrains/roer");
+    expect(openUrl).toHaveBeenCalledWith("https://github.com/JetBrains/roer");
+
+    // A plain click opens once it is plainly not half of a double-click.
+    press();
+    mocks.webLinks.current?.(at(11), "http://localhost:3000");
+    expect(openUrl).not.toHaveBeenCalledWith("http://localhost:3000/");
+    await wait();
+    expect(openUrl).toHaveBeenCalledWith("http://localhost:3000/");
+    vi.mocked(openUrl).mockClear();
+
+    // Not a drag, a double-click, Shift+click, or a scheme that isn't a web page.
+    press(10);
+    mocks.webLinks.current?.(at(60), "https://example.com/dragged");
+    press();
+    mocks.webLinks.current?.(at(10), "https://example.com/double");
+    press();
+    press();
+    osc8.activate(at(10, { shiftKey: true }), "https://example.com/shift");
+    press();
+    osc8.activate(at(10, { metaKey: true }), "javascript:alert(1)");
+    await wait();
     expect(openUrl).not.toHaveBeenCalled();
 
-    osc8.activate(plain, "https://github.com/JetBrains/roer");
-    mocks.webLinks.current?.(cmd, "http://localhost:3000");
-    expect(openUrl).toHaveBeenCalledWith("https://github.com/JetBrains/roer");
-    expect(openUrl).toHaveBeenCalledWith("http://localhost:3000/");
+    // Nor the click that only brings the terminal into focus.
+    keys.blur();
+    press();
+    mocks.webLinks.current?.(at(10), "https://example.com/focus");
+    await wait();
+    expect(openUrl).not.toHaveBeenCalled();
+    keys.focus();
 
-    act(() => osc8.activate(cmd, "file:///Users/test/project/src/main.ts#L7"));
+    press();
+    act(() => osc8.activate(at(10, { metaKey: true }), "file:///Users/test/project/src/main.ts#L7"));
     expect(await screen.findByTitle("src/main.ts")).toBeInTheDocument();
 
     // git names the repository by its resolved path, the link by another:
     // the file still opens, under its own folder.
     vi.mocked(gitRoot).mockResolvedValue("/private/Users/test/project");
-    act(() => osc8.activate(cmd, "file:///Users/test/project/README.md"));
+    press();
+    act(() => osc8.activate(at(10, { metaKey: true }), "file:///Users/test/project/README.md"));
     expect(await screen.findByTitle("README.md")).toBeInTheDocument();
     vi.mocked(gitRoot).mockReset();
     vi.mocked(gitRoot).mockResolvedValue(null);
