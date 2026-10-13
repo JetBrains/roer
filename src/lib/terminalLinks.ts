@@ -1,5 +1,7 @@
 import { isMac } from "./keys";
 
+const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]"]);
+
 /**
  * What a link in the terminal points at. Web links go to the person's
  * browser; a `file:` link, which Claude Code writes around the paths it
@@ -7,14 +9,22 @@ import { isMac } from "./keys";
  * `mailto:`, an app's own scheme) is not opened at all: the system opener
  * would launch whatever it names.
  */
-const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]"]);
-
 export type LinkTarget = { kind: "web"; url: string } | { kind: "file"; path: string; line?: number };
 
-/** Cmd+click on macOS, Ctrl+click elsewhere, as in every terminal: a plain
- * click stays a click, for selecting text. */
-export const isOpenGesture = (event: Pick<MouseEvent, "metaKey" | "ctrlKey">): boolean =>
-  isMac() ? event.metaKey : event.ctrlKey;
+/**
+ * A click that opens a link: a plain left click, or Cmd+click on macOS
+ * (Ctrl+click elsewhere), which many terminals ask for.
+ * Shift+click and Alt/Option+click stay xterm's own, extending a selection
+ * and forcing one, and Ctrl+click on macOS is a right-click there.
+ */
+export const isOpenGesture = (
+  event: Pick<MouseEvent, "button" | "metaKey" | "ctrlKey" | "shiftKey" | "altKey">,
+): boolean => {
+  if (event.button !== 0 || event.shiftKey || event.altKey) return false;
+  const own = isMac() ? event.metaKey : event.ctrlKey;
+  const other = isMac() ? event.ctrlKey : event.metaKey;
+  return !other && (own || !(event.metaKey || event.ctrlKey));
+};
 
 export function linkTarget(uri: string): LinkTarget | null {
   let url: URL;

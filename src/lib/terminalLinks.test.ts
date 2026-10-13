@@ -3,10 +3,16 @@ import { describe, expect, it } from "vitest";
 import { insideRoot, isOpenGesture, linkTarget } from "./terminalLinks";
 
 describe("terminal links", () => {
-  it("opens on Cmd+click on macOS, never on a plain click", () => {
-    expect(isOpenGesture({ metaKey: true, ctrlKey: false })).toBe(true);
-    expect(isOpenGesture({ metaKey: false, ctrlKey: true })).toBe(false);
-    expect(isOpenGesture({ metaKey: false, ctrlKey: false })).toBe(false);
+  it("opens on a plain click or Cmd+click on macOS, and leaves xterm's own clicks alone", () => {
+    const click = { button: 0, metaKey: false, ctrlKey: false, shiftKey: false, altKey: false };
+    expect(isOpenGesture(click)).toBe(true);
+    expect(isOpenGesture({ ...click, metaKey: true })).toBe(true);
+    // Ctrl+click on macOS is a right-click; Shift and Option change the selection.
+    expect(isOpenGesture({ ...click, ctrlKey: true })).toBe(false);
+    expect(isOpenGesture({ ...click, shiftKey: true })).toBe(false);
+    expect(isOpenGesture({ ...click, altKey: true })).toBe(false);
+    expect(isOpenGesture({ ...click, metaKey: true, shiftKey: true })).toBe(false);
+    expect(isOpenGesture({ ...click, button: 1 })).toBe(false);
   });
 
   it("sends web links to the browser, and files to Roer", () => {

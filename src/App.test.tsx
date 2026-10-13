@@ -78,6 +78,7 @@ vi.mock("@xterm/xterm", () => ({
     }
     loadAddon = vi.fn();
     paste = vi.fn();
+    hasSelection = vi.fn(() => false);
     unicode = { activeVersion: "6" };
     open = vi.fn();
     focus = vi.fn();
@@ -409,7 +410,7 @@ describe("App", () => {
     expect(cwd).toBe("/Users/test");
   });
 
-  it("opens a Cmd+clicked link: a web page in the browser, a file in Roer", async () => {
+  it("opens a clicked link: a web page in the browser, a file in Roer", async () => {
     vi.mocked(gitRoot).mockImplementation(async (dir) => (dir.startsWith("/Users/test/project") ? "/Users/test/project" : null));
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: /new session/i }));
@@ -418,13 +419,17 @@ describe("App", () => {
       .options.linkHandler;
     const cmd = new MouseEvent("click", { metaKey: true });
     const plain = new MouseEvent("click");
+    const shift = new MouseEvent("click", { shiftKey: true });
+    const terminal = mocks.terminal.current as unknown as { hasSelection: ReturnType<typeof vi.fn> };
 
-    osc8.activate(plain, "https://github.com/JetBrains/roer");
+    // Shift+click extends a selection, and a drag that made one isn't a click.
+    osc8.activate(shift, "https://github.com/JetBrains/roer");
+    terminal.hasSelection.mockReturnValueOnce(true);
     mocks.webLinks.current?.(plain, "https://example.com");
     osc8.activate(cmd, "javascript:alert(1)");
     expect(openUrl).not.toHaveBeenCalled();
 
-    osc8.activate(cmd, "https://github.com/JetBrains/roer");
+    osc8.activate(plain, "https://github.com/JetBrains/roer");
     mocks.webLinks.current?.(cmd, "http://localhost:3000");
     expect(openUrl).toHaveBeenCalledWith("https://github.com/JetBrains/roer");
     expect(openUrl).toHaveBeenCalledWith("http://localhost:3000/");
