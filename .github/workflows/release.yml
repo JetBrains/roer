@@ -337,7 +337,7 @@ jobs:
           MIN="$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$APP/Contents/Info.plist")"
           echo "minimum system version: $MIN"
           [ "$MIN" = "15.0" ] || {
-            echo "Expected LSMinimumSystemVersion 15.0, got $MIN — tauri.conf.json and the README disagree" >&2
+            echo "Expected LSMinimumSystemVersion 15.0, got $MIN — tauri.conf.json and docs/install.md disagree" >&2
             exit 1
           }
 
