@@ -445,13 +445,16 @@ impl Server<'_> {
                 if let Some(prompt) = args.get("prompt").and_then(Value::as_str).filter(|p| !p.is_empty()) {
                     self.roer.save_piece(name, "prompt", prompt)?;
                 }
-                Ok(format!("Saved the view as {name}, under .roer/plugin-ui/bundles/{name}/. Refill it later with load_ui and a dataModel."))
+                Ok(format!(
+                    "Saved the view as {name}, under .roer/plugin-ui/bundles/{name}/. Refill it later with load_ui and \
+                     a dataModel. {KEEP_AS_TAB}"
+                ))
             }
             "load_ui" if self.here.is_some() => {
                 let name = text(args, "name");
                 let pane = self.pane(args)?;
                 let ids = self.roer.load_bundle(&pane, name, args.get("dataModel"))?;
-                delivered(&pane, &ids, name)
+                delivered(&pane, &ids, name).map(|shown| format!("{shown} {KEEP_AS_TAB}"))
             }
             "list_ui" if self.here.is_some() => Ok(self.roer.list_bundles()?.to_string()),
             "add_task" if self.here.is_some() => Ok(self.roer.tasks().add(args)?.to_string()),
@@ -504,6 +507,12 @@ impl Server<'_> {
         }
     }
 }
+
+/// Said with a view that is saved or refilled, which is one the user comes
+/// back to: the moment to offer them the tab most do not know they can have.
+const KEEP_AS_TAB: &str = "A view the user comes back to may serve them better as an extension tab, which stays in \
+    Roer's strip and fetches its own data (roer:extensions/1). Unless they have one for it or said no, offer once \
+    to make it one; most users do not know they can ask.";
 
 /// What to tell the agent about records sent to `pane`'s panel: that they
 /// were shown, or why not. Every way a message can miss the panel is silent

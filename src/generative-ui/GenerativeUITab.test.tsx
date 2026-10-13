@@ -6,7 +6,9 @@ import { GenerativeUITab, NUDGE, keepTabPrompt } from "./GenerativeUITab";
 import { defineExtension } from "../extensions/api";
 import { registry } from "../extensions/registry";
 import { sendToSession } from "../lib/github";
+import { resetAskAgent } from "../lib/askAgent";
 import { noteTyped } from "../lib/pty";
+import { noteShown } from "./returns";
 import { A2UI_VERSION, type A2uiMessage } from "./schema";
 import {
   listPluginUiBundles,
@@ -61,6 +63,8 @@ describe("GenerativeUITab saved bundles", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(listPluginUiBundles).mockResolvedValue([]);
+    resetAskAgent();
+    localStorage.clear();
   });
 
   it("hides the saved-bundles section without a cwd", () => {
@@ -147,26 +151,114 @@ describe("GenerativeUITab saved bundles", () => {
     }
   });
 
-  it("keeps a view as a tab only while the agent waits, saving it before asking", async () => {
+  it("keeps a view as a tab, showing each step from waiting for the agent to the tab being ready", async () => {
     vi.mocked(writePluginUiBundle).mockResolvedValue(undefined);
-    const { rerender } = render(
-      <GenerativeUITab state={applyAll(messages)} surfaceId="demo" onChange={vi.fn()} log={messages} live cwd="/work/roer" pane="%7" onLoadBundle={vi.fn()} agentState="working" />,
+    const onOpenTab = vi.fn();
+    const tab = (agentState: "working" | "done") => (
+      <GenerativeUITab state={applyAll(messages)} surfaceId="demo" onChange={vi.fn()} log={messages} live cwd="/work/roer" pane="%7" onLoadBundle={vi.fn()} agentState={agentState} onOpenTab={onOpenTab} />
     );
-    fireEvent.click(screen.getByRole("button", { name: "Keep as tab…" }));
-    expect(screen.getByRole("button", { name: "Save and ask the agent" })).toBeDisabled();
-    expect(screen.getByText(/not waiting for you/)).toBeInTheDocument();
+    const { rerender } = render(tab("working"));
+    fireEvent.click(await screen.findByRole("button", { name: "Keep as tab…" }));
+    expect(screen.getByText(/The agent is busy, so this waits/)).toBeInTheDocument();
+    fireEvent.change(screen.getAllByPlaceholderText(/what it shows/)[0]!, { target: { value: "open issues" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save and ask when it is ready" }));
+    // The dialog goes at once; the panel says what happens next.
+    expect(screen.queryByRole("dialog")).toBeNull();
 
-    rerender(
+    expect(await screen.findByText(/Waiting for the agent to finish, then asking it to make “demo” a tab/)).toBeInTheDocument();
+    expect(writePluginUiBundle).toHaveBeenCalledWith("/work/roer", "demo", expect.objectContaining({ prompt: "open issues" }));
+    expect(sendToSession).not.toHaveBeenCalled();
+
+    rerender(tab("done"));
+    await waitFor(() => expect(sendToSession).toHaveBeenCalledWith("%7", keepTabPrompt("demo", "open issues")));
+    expect(sendToSession).toHaveBeenCalledTimes(1);
+    expect(await screen.findByText(/Asked the agent to make “demo” a tab/)).toBeInTheDocument();
+    rerender(tab("working"));
+    expect(screen.getByText(/The agent is making “demo” a tab/)).toBeInTheDocument();
+
+    // The tab the agent made shows up in the strip.
+    registry.load(
+      "demo-tab",
+      defineExtension((roer) => {
+        roer.stage.registerTab({ id: "main", title: "Demo", component: () => null });
+      }),
+    );
+    try {
+      expect(await screen.findByText(/“Demo” is ready in the strip/)).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Open tab" }));
+      expect(onOpenTab).toHaveBeenCalledWith("ext:demo-tab/main");
+    } finally {
+      registry.unload("demo-tab");
+    }
+    expect(keepTabPrompt("demo", "open issues")).toContain(".roer/plugin-ui/bundles/demo/surface.json, which shows open issues");
+  });
+
+  it("sends a held request now, or drops it, when the person says so", async () => {
+    vi.mocked(writePluginUiBundle).mockResolvedValue(undefined);
+    renderTab({ pane: "%7", agentState: "working" });
+    fireEvent.click(await screen.findByRole("button", { name: "Keep as tab…" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save and ask when it is ready" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Send now" }));
+    await waitFor(() => expect(sendToSession).toHaveBeenCalledWith("%7", keepTabPrompt("demo", "")));
+    expect(await screen.findByText(/The agent is making “demo” a tab/)).toBeInTheDocument();
+  });
+
+  it("drops a held request on Cancel", async () => {
+    vi.mocked(writePluginUiBundle).mockResolvedValue(undefined);
+    renderTab({ pane: "%7", agentState: "working" });
+    fireEvent.click(await screen.findByRole("button", { name: "Keep as tab…" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save and ask when it is ready" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Cancel" }));
+    expect(screen.getByRole("button", { name: "Keep as tab…" })).toBeInTheDocument();
+    expect(sendToSession).not.toHaveBeenCalled();
+  });
+
+  it("asks at once while the agent waits at an empty prompt", async () => {
+    vi.mocked(writePluginUiBundle).mockResolvedValue(undefined);
+    renderTab({ pane: "%7", agentState: "done" });
+    fireEvent.click(await screen.findByRole("button", { name: "Keep as tab…" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save and ask the agent" }));
+    await waitFor(() => expect(sendToSession).toHaveBeenCalledWith("%7", keepTabPrompt("demo", "")));
+    expect(vi.mocked(writePluginUiBundle).mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(sendToSession).mock.invocationCallOrder[0]!);
+    expect(await screen.findByText(/Asked the agent to make “demo” a tab/)).toBeInTheDocument();
+  });
+
+  it("cannot ask for a tab with no agent to ask", async () => {
+    renderTab({ pane: "%7" });
+    fireEvent.click(await screen.findByRole("button", { name: "Keep as tab…" }));
+    expect(screen.getByRole("button", { name: "Save and ask the agent" })).toBeDisabled();
+    expect(screen.getByText(/No agent here to ask/)).toBeInTheDocument();
+  });
+
+  it("offers a view the person keeps coming back to as a tab, until they say not now", async () => {
+    const hour = 60 * 60 * 1000;
+    noteShown("/work/roer", "demo", Date.now() - 3 * hour);
+    noteShown("/work/roer", "demo", Date.now() - 2 * hour);
+    const { unmount } = render(
       <GenerativeUITab state={applyAll(messages)} surfaceId="demo" onChange={vi.fn()} log={messages} live cwd="/work/roer" pane="%7" onLoadBundle={vi.fn()} agentState="done" />,
     );
-    fireEvent.change(screen.getAllByPlaceholderText(/what it shows/)[0]!, { target: { value: "open issues" } });
-    expect(screen.getByText(/Saved as “demo”/)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Save and ask the agent" }));
+    expect(await screen.findByText(/You keep coming back to this view/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Not now" }));
+    expect(screen.queryByText(/You keep coming back/)).toBeNull();
+    expect(screen.getByRole("button", { name: "Keep as tab…" })).toBeInTheDocument();
+    unmount();
 
-    await waitFor(() => expect(sendToSession).toHaveBeenCalledWith("%7", keepTabPrompt("demo", "open issues")));
-    expect(writePluginUiBundle).toHaveBeenCalledWith("/work/roer", "demo", expect.objectContaining({ prompt: "open issues" }));
-    expect(vi.mocked(writePluginUiBundle).mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(sendToSession).mock.invocationCallOrder[0]!);
-    expect(keepTabPrompt("demo", "open issues")).toContain(".roer/plugin-ui/bundles/demo/surface.json, which shows open issues");
+    renderTab({ pane: "%7", log: [...messages] });
+    await screen.findByRole("button", { name: "Keep as tab…" });
+    expect(screen.queryByText(/You keep coming back/)).toBeNull();
+  });
+
+  it("does not offer a tab for a view seen only once", async () => {
+    renderTab({ pane: "%7" });
+    await screen.findByRole("button", { name: "Keep as tab…" });
+    expect(screen.queryByText(/You keep coming back/)).toBeNull();
+  });
+
+  it("points to a new tab before any view arrives", () => {
+    const onNewTab = vi.fn();
+    renderTab({ live: false, onNewTab });
+    fireEvent.click(screen.getByRole("button", { name: "New tab…" }));
+    expect(onNewTab).toHaveBeenCalled();
   });
 
   it("says when keeping a view as a tab replaces a saved one of that name", async () => {

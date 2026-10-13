@@ -36,8 +36,9 @@ const SCOPE_TITLES: Record<Row["scope"], string> = {
 /**
  * Every extension, built in or not, with a switch to turn each off. Off means
  * neither built nor loaded: its tabs leave the strip and its server stops.
+ * `onNewTab` asks the agent for one of the person's own.
  */
-export function ExtensionsDialog({ onClose }: { onClose: () => void }) {
+export function ExtensionsDialog({ onClose, onNewTab }: { onClose: () => void; onNewTab?: () => void }) {
   const ref = useRef<HTMLDivElement>(null);
   const [found, setFound] = useState<ExtensionInfo[] | null>(null);
   const [disabled, setDisabled] = useState<ReadonlySet<string>>(new Set());
@@ -160,9 +161,24 @@ export function ExtensionsDialog({ onClose }: { onClose: () => void }) {
         <h3>Yours</h3>
         {found === null && !error ? <EmptyState variant="loading" text="Reading your extensions…" /> : null}
         {found !== null && yours.length === 0 ? (
-          <EmptyState text="No extensions of your own yet." detail="Ask your agent for a tab you will keep coming back to, and it makes one." />
+          <EmptyState
+            text="No extensions of your own yet."
+            detail="Ask your agent for a tab you will keep coming back to, such as one with your open pull requests, and it writes one."
+            footer={
+              onNewTab ? (
+                <button type="button" className="gen-button" onClick={onNewTab}>
+                  New tab…
+                </button>
+              ) : undefined
+            }
+          />
         ) : null}
         {yours.length > 0 ? <ul className="ext-list">{yours.map(row)}</ul> : null}
+        {yours.length > 0 && onNewTab ? (
+          <button type="button" className="gen-button ext-new-tab" onClick={onNewTab}>
+            New tab…
+          </button>
+        ) : null}
       </div>
     </div>
   );

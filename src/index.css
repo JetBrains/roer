@@ -3092,6 +3092,11 @@ button.gen-button.primary {
   color: #fff;
 }
 
+button.gen-button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 button.gen-button.borderless {
   border-color: transparent;
   padding-inline: 4px;
@@ -3110,6 +3115,62 @@ button.gen-button .gen-text {
   margin-top: 16px;
   font-size: 12.5px;
   color: var(--roer-accent);
+}
+
+/* The panel before any view: what it is for, and the way to a tab. */
+.gen-panel-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.gen-panel-empty p {
+  margin: 0;
+}
+
+/* "Keep as tab…" above a view, and the offer it becomes once the person
+   keeps coming back to that view. */
+.gen-keep {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  margin-bottom: 16px;
+}
+
+.gen-keep .gen-text {
+  margin: 0;
+  font-size: 11.5px;
+}
+
+.gen-keep > button.gen-button:first-child {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.gen-keep.offering,
+.gen-keep.keeping {
+  padding: 8px 10px;
+  border: 1px solid var(--roer-border);
+  border-radius: 8px;
+  background: var(--roer-row-hover);
+}
+
+.gen-keep.offering .gen-text,
+.gen-keep.keeping .gen-text {
+  color: var(--roer-fg);
+}
+
+.gen-keep.keeping .gen-text {
+  flex: 1 1 200px;
+}
+
+.gen-keep .gen-spinner {
+  width: 12px;
+  height: 12px;
+  flex: none;
 }
 
 .gen-panel-links {
@@ -4838,4 +4899,117 @@ button.danger:hover {
   outline: 2px dashed var(--roer-accent);
   outline-offset: -4px;
   border-radius: 4px;
+}
+
+/* "New tab…": asks the session's agent for a tab of the person's own. */
+.popup.new-tab {
+  align-self: flex-start;
+  width: min(520px, 90vw);
+  max-height: 76vh;
+  overflow-y: auto;
+  gap: 10px;
+  padding: 14px 16px;
+  font-size: 12.5px;
+  color: var(--ide-text);
+  outline: none;
+}
+
+.popup.new-tab h2 {
+  margin: 0;
+  font-size: 13px;
+}
+
+.popup.new-tab p {
+  margin: 0;
+  line-height: 1.45;
+}
+
+.popup.new-tab form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.popup.new-tab textarea {
+  resize: vertical;
+  font-family: inherit;
+}
+
+.new-tab-ideas {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.new-tab-ideas button.gen-button {
+  padding: 4px 10px;
+  color: var(--roer-muted);
+}
+
+.new-tab-ideas button.gen-button:hover {
+  color: var(--roer-fg);
+}
+
+.new-tab-actions {
+  justify-content: flex-end;
+}
+
+/* The strip's "+": a tab of your own, asked of the agent. */
+.tabs button.tab-add {
+  flex: none;
+  display: flex;
+  align-items: center;
+  align-self: center;
+  padding: 3px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: none;
+  color: var(--roer-muted);
+}
+
+.tabs button.tab-add:hover {
+  color: var(--roer-fg);
+  background: var(--roer-row-hover);
+}
+
+.ext-new-tab {
+  margin-top: 8px;
+}
+
+/* What is waiting for the agent, in the New tab dialog. */
+.new-tab-held {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--roer-border);
+  border-radius: 8px;
+  background: var(--roer-row-hover);
+}
+
+.new-tab-held ul {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.new-tab-held li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.new-tab-held li > span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tabs button.tab-add .tab-badge {
+  margin-left: 3px;
 }

@@ -13,6 +13,7 @@ import {
   PanelRightClose,
   PanelRightOpen,
   PanelTop,
+  Plus,
   Puzzle,
   Search,
   Sun,
@@ -46,6 +47,8 @@ import {
   type OpenRequest,
 } from "./SessionBrowser";
 import { ExtensionsDialog } from "./ExtensionsDialog";
+import { NewTabDialog } from "./NewTabDialog";
+import { useAskAgent } from "./lib/askAgent";
 import { ShortcutsDialog } from "./ShortcutsDialog";
 import { TerminalView } from "./TerminalView";
 import { WorkspaceSidebar } from "./WorkspaceSidebar";
@@ -191,6 +194,7 @@ export function App() {
   const [finding, setFinding] = useState(false);
   const [showingShortcuts, setShowingShortcuts] = useState(false);
   const [showingExtensions, setShowingExtensions] = useState(false);
+  const [showingNewTab, setShowingNewTab] = useState(false);
   // The agent integrations dialog on screen, if it is: put there by the app on the
   // first launch that finds Claude Code, or asked for from the menu.
   const [setup, setSetup] = useState<{ status: SetupStatus; firstRun: boolean } | null>(null);
@@ -981,6 +985,10 @@ export function App() {
     busy: onStage?.state === "working",
     changed,
   });
+  const agentState = onStage && runningAgent(onStage) ? onStage.state : undefined;
+  // Asks the agent on stage for a tab. Here rather than in the dialog, since
+  // a request made while the agent works waits after the dialog is gone.
+  const askAgent = useAskAgent(session?.pane, agentState);
   const stageName = !session
     ? ""
     : onStage
@@ -1282,6 +1290,20 @@ export function App() {
                   </span>,
                 );
               })}
+              <button
+                type="button"
+                className="tab-add"
+                aria-label="New tab…"
+                title={
+                  askAgent.held.length > 0
+                    ? `${askAgent.held.length} waiting for the agent: ${askAgent.held.map((request) => request.label).join("; ")}`
+                    : "New tab: ask the agent to make one"
+                }
+                onClick={() => setShowingNewTab(true)}
+              >
+                <Plus size={14} />
+                {askAgent.held.length > 0 ? <span className="tab-badge">{askAgent.held.length}</span> : null}
+              </button>
             </div>
 
             <NewSessionButton
@@ -1513,8 +1535,9 @@ export function App() {
                 setGenerativeUi({ state: applyAll(messages), surfaceId, log: messages, live: true })
               }
               onOpenFile={openInTab}
-              agentState={onStage && runningAgent(onStage) ? onStage.state : undefined}
+              agentState={agentState}
               onOpenTab={activateTab}
+              onNewTab={() => setShowingNewTab(true)}
             />
           </aside>
         ) : null}
@@ -1558,7 +1581,18 @@ export function App() {
           />
         ) : null}
 
-        {showingExtensions ? <ExtensionsDialog onClose={() => setShowingExtensions(false)} /> : null}
+        {showingExtensions ? (
+          <ExtensionsDialog
+            onClose={() => setShowingExtensions(false)}
+            onNewTab={() => {
+              setShowingExtensions(false);
+              setShowingNewTab(true);
+            }}
+          />
+        ) : null}
+        {showingNewTab ? (
+          <NewTabDialog agent={askAgent} agentState={agentState} onClose={() => setShowingNewTab(false)} />
+        ) : null}
         {showingShortcuts ? <ShortcutsDialog tabs={strip.slice(0, 9).map((tab) => tab.title)} onClose={() => setShowingShortcuts(false)} /> : null}
 
         {finding ? (

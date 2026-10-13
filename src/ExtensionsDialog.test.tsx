@@ -82,3 +82,15 @@ describe("ExtensionsDialog", () => {
     expect(onClose).toHaveBeenCalled();
   });
 });
+
+describe("ExtensionsDialog with none of your own", () => {
+  it("points to a new tab", async () => {
+    vi.mocked(listExtensions).mockResolvedValue([]);
+    vi.mocked(listDisabled).mockResolvedValue([]);
+    const onNewTab = vi.fn();
+    render(<ExtensionsDialog onClose={vi.fn()} onNewTab={onNewTab} />);
+    expect(await screen.findByText("No extensions of your own yet.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "New tab…" }));
+    expect(onNewTab).toHaveBeenCalled();
+  });
+});

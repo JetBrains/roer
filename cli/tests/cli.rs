@@ -1308,6 +1308,10 @@ fn mcp_refills_a_saved_view_and_lists_its_shape() {
         call("load_ui", serde_json::json!({ "name": "board", "dataModel": [1, 2] })),
     ]);
     assert!(replies[..3].iter().all(|r| r["result"]["isError"] == false), "{replies:?}");
+    for reply in [&replies[0], &replies[2]] {
+        let said = reply["result"]["content"][0]["text"].as_str().unwrap();
+        assert!(said.contains("extension tab"), "a kept view is the moment to offer a tab: {said}");
+    }
 
     let listed: serde_json::Value =
         serde_json::from_str(replies[1]["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
