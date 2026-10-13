@@ -93,12 +93,13 @@ export function TerminalView({ args, cwd, onAttached, onPane, onExit, onOpenFile
       // For `terminal.unicode`, which xterm still marks as proposed.
       allowProposedApi: true,
       // OSC 8 links, which Claude Code writes around the URLs and paths it
-      // prints. Without a handler xterm asks with confirm() and calls
+      // prints. A click opens one unless it made a selection: dragging
+      // across a link to copy it doesn't open it. Without a handler xterm asks with confirm() and calls
       // window.open, and neither does anything in Roer's window.
       linkHandler: {
         allowNonHttpProtocols: true,
         activate: (event, uri) => {
-          if (isOpenGesture(event)) openLink(uri);
+          if (isOpenGesture(event) && !terminal.hasSelection()) openLink(uri);
         },
       },
     });
@@ -114,7 +115,7 @@ export function TerminalView({ args, cwd, onAttached, onPane, onExit, onOpenFile
     // Plain URLs in the output, which nothing marked as links.
     terminal.loadAddon(
       new WebLinksAddon((event, uri) => {
-        if (isOpenGesture(event)) openLink(uri);
+        if (isOpenGesture(event) && !terminal.hasSelection()) openLink(uri);
       }),
     );
     measureWithUnicode11(terminal);
