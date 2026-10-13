@@ -8,119 +8,30 @@ Roer is a workspace for terminal coding agents.
 - Review its changes, from diff to merged PR.
 - Let it draw the UI you need, beside the session.
 
-Latest build: [v0.9.1](https://github.com/JetBrains/roer/releases/tag/v0.9.1).
+**[Download the latest release](https://github.com/JetBrains/roer/releases/latest)** for macOS, Linux or Windows. Installing, the MCP server and the skills: [docs/install.md](docs/install.md).
 
-## Install
-
-1. Download `Roer_<version>_universal.dmg` from the [release](https://github.com/JetBrains/roer/releases/tag/v0.9.1) (one build, Apple silicon + Intel, macOS 15+).
-2. Drag `Roer.app` to Applications.
-3. Open Roer once. It puts the `roer` command on your `PATH`, and a new terminal can run `roer shell`.
-
-Nothing else to install: the app carries `roer` and the tmux it drives. On launch it links `roer` into `~/.local/bin`, where Claude Code's installer puts `claude`. If your shell cannot find it there, the app asks once for your password and links it into `/usr/local/bin` instead. A `roer` you installed yourself as a regular file is left alone.
-
-### MCP server
-
-`roer mcp` is Roer's MCP server, on stdio. Its tools show a UI in a session's Generative UI panel and read back the clicks on it:
-
-- **In a Roer session** (Claude Code run in a Roer terminal): `show_ui` and `read_ui_actions` act on that session, and `save_ui`/`load_ui` keep UIs with the project.
-- **Any other MCP client** it is added to by hand: `show_ui` and `read_ui_actions` only, each naming the session to act on.
-- **Claude Code in a plain terminal**: nothing. The server connects but offers no tools and no instructions, so that session carries none of Roer in its context.
-
-The first time the app finds Claude Code, it offers agent integrations. **Roer › Agent Integrations…** opens the same controls later: shared extension authoring for Codex, Pi and Junie, plus Claude Code skills and MCP. Set up, the MCP server is registered with Claude Code as `roer` (`claude mcp add-json --scope user`). It leaves the Claude app alone; `roer mcp install --client claude-desktop` adds it there (restart the Claude app to pick it up).
-
-- `roer mcp status` says where it is registered.
-- `roer mcp install` registers it yourself, or after an uninstall.
-- `roer mcp uninstall` removes roer's entries. Removing the entry in the client itself also sticks.
-
-### Skills
-
-Roer's Claude Code skill `roer-handoff` (in `.claude/skills`) ships with `roer`. Set up from the app, as above, it is linked into `~/.claude/skills`, so a session in any project can hand itself over. The link points into the app, so updating Roer updates it; the app never installs anything you have not said yes to.
-
-`roer skills install` installs both Roer skills for Claude Code and the portable `roer-extension-authoring` skill for Codex, Pi and Junie. The latter three read it from the shared `~/.agents/skills` directory. `--agent claude|codex|pi|junie` selects one target; Codex, Pi and Junie select the same shared installation, so removing it for one removes it for all three. The authoring skill tells agents to create extension drafts outside the project's source tree. The `roer ext` CLI works without an MCP connection.
-
-- `roer skills` lists them and whether each is installed.
-- `roer skills install` installs them yourself: from the Linux or Windows CLI, or after an uninstall.
-- `roer skills uninstall` removes them. Deleting one link by hand also sticks: the app never reinstalls a skill you removed.
-
-A skill of the same name that you made yourself is never replaced or removed, and neither is a `roer` MCP entry you wrote yourself. Before deleting Roer.app, run `roer skills uninstall` and `roer mcp uninstall`; afterwards, `rm ~/.claude/skills/roer-handoff` and `claude mcp remove --scope user roer`.
-
-### From a checkout
-
-`cargo build --manifest-path cli/Cargo.toml` builds `roer` into `cli/target/debug/roer`; a debug build finds `scripts/roer-tmux.conf` on its own. `export ROER_BIN=$PWD/cli/target/debug/roer` points `npm run tauri dev` at it.
-
-### Linux
-
-1. Install the package from the release: `sudo apt install ./Roer_<version>_amd64.deb`, or `sudo dnf install ./Roer-<version>-1.x86_64.rpm`. It installs the app and the `roer` command together (`roer` in `/usr/lib/Roer/cli`, linked as `/usr/bin/roer`) and pulls in tmux, which has to be 3.3 or later: Ubuntu 24.04 or Debian 12 and newer, or a current Fedora.
-2. In a new terminal: `roer shell`, then `M-h` to hand the session to the app.
-
-`Roer_<version>_amd64.AppImage` is the same app for any other distribution. Install tmux yourself, make the AppImage executable and open it once: it copies `roer` out of the image to `~/.roer/appimage-cli`, and links it as `~/.local/bin/roer` and the AppImage as `~/.local/bin/roer-app`, which `roer` starts the app by.
-
-`roer-cli-<version>-linux-x86_64.tar.gz` is the command alone, for use without the app. Unpack it and symlink `roer` onto your `PATH`, keeping `roer`, `roer-tmux.conf` and `skills/` together: `roer` finds them beside itself. `roer skills install` then links the skills for Claude Code, Codex, Pi and Junie, and `roer mcp install` registers the MCP server with Claude Code. Between releases, the `roer-linux` artifact of a [Nightly bundles](../../actions/workflows/nightly-bundles.yml) run has the packages.
-
-Shortcuts use `Ctrl+Shift` instead of `⌘` (`Ctrl+Shift+T` new session, `Ctrl+Shift+O` Go to File) and `Alt+←`/`Alt+→` to step through commits, leaving plain `Ctrl` keys to the terminal.
-
-### Windows
-
-A preview, natively in PowerShell (no WSL). Sessions run on [psmux](https://github.com/psmux/psmux), a tmux reimplementation on ConPTY. The installers, `roer-app.exe` and `roer.exe` are signed by JetBrains.
-
-1. Run `Roer_<version>_x64-setup.exe`. It installs the app and the `roer` command together (`roer.exe` with `psmux.exe`, in the app's `roer\` folder) and adds that folder to your user `PATH`.
-2. In a new terminal: `roer shell`, then `M-h` to hand the session to the app.
-
-The `.msi` installs the same files but does not touch `PATH`: add `<install folder>\roer` yourself. `roer-cli-<version>-windows-x64.zip` is the command alone, for use without the app; keep its four files together, since `roer.exe` finds `roer-tmux.conf` and `psmux.exe` beside itself.
-
-Shortcuts are as on Linux. Not there yet on Windows: `C-b` is taken off psmux's prefix but not yet checked with real keypresses. Between releases, the `roer-windows` artifact of a [Nightly bundles](../../actions/workflows/nightly-bundles.yml) run has the installers and the CLI zip, unsigned, so SmartScreen warns on install.
-
-## Agents
-
-`roer new` starts the default agent in the new session's shell; `roer new --agent <id>` starts another, and `--model`/`--effort` override it once. Every installed CLI is an agent as it comes (`claude`, `codex`, `pi`, `junie`). A saved agent is a Markdown file with YAML frontmatter, the format Claude Code, opencode and Copilot use for their own agents:
-
-```markdown
----
-name: Reviewer
-description: Careful reviewer for PR feedback
-cli: codex              # claude | codex | pi | junie | custom
-model: gpt-5.5
-effort: high            # translated to each CLI's own flag
-permissions: ask        # ask | auto | full
-args: ["--search"]
----
-Review the diff. Report bugs first, style last.
-```
-
-`~/.roer/agents/<id>.md` is yours alone; `<project>/.roer/agents/<id>.md` is committed and shared. The body is added to the agent's instructions where the CLI takes extra ones: Claude Code and pi read it from a file, Junie gets it as `--system-prompt` and Codex as `developer_instructions`, both read in by the shell (`$(cat …)`) so the text itself is never typed. Keys roer does not know are kept when the app saves the file.
-
-- `roer agents` lists them, `*` marking the default; `roer agents default <id>` changes it (`ROER_AGENT` overrides it for one shell).
-- `roer agents command <id>` prints exactly what the agent types into its session.
-- `roer resume <id> --agent codex` resumes a Codex conversation; the Resume list shows Codex conversations beside Claude Code's.
-
-## Screenshots
-
-**Extensions** — ask an agent for a tab ("make me a tab that…") and it writes one, built from Roer's own UI components; Roer reloads it on every save. Here, a tab with GitHub issues and todos.
+**Extensions.** Ask your agent for a tab ("make me a tab that…"), or click **+** in the strip, and it writes one from Roer's own UI components. Roer reloads it on every save. Here, a tab with GitHub issues and todos.
 
 ![A Roer extension tab with GitHub issues and todos](docs/screenshots/Extension.png)
 
-**Go to File** (`⌘⇧O`) — blazing fast, fuzzy-matched jump to any changed file straight from the diff view.
+**Generative UI.** The agent draws what you need beside the session: a dashboard, a plan to approve, a diagram. A view you keep coming back to can become a tab.
 
-![Go to File](docs/screenshots/Go%20To%20File.png)
+![A dashboard the agent drew in the Generative UI panel](docs/screenshots/gen-ui-dashboard.png)
 
-**Teleported `claude` session** — a running session hands off from the terminal to the Roer app without restarting.
-
-![Claude session in Roer](docs/screenshots/claude.png)
-
-**Branch diff view** — step through a branch's commits against its base and view each commit's file diff.
+**Changes and pull requests.** Step through a branch's commits against its base and each commit's files. Commit from there, with Claude drafting the message. Open the PR, request a Copilot review, decide on each review thread right on the diff and send the decisions to the session, then merge. Arrow keys and ⌘+arrows step through commits and files.
 
 ![Branch diff view](docs/screenshots/diff.png)
 
-**Markdown preview** — view rendered Markdown for any changed file straight from the diff view.
+**Go to File** (`⌘⇧O`). Fuzzy-matched jump to any changed file, straight from the diff view.
+
+![Go to File](docs/screenshots/Go%20To%20File.png)
+
+**Sessions that move.** A running `claude` hands off from your terminal to the app without restarting. Sessions live in tmux on a private socket, so they outlive the app. Start Claude Code, Codex, Pi or Junie, in a worktree of its own if you like, or [save an agent](docs/saved-agents.md) with a model, effort and instructions.
+
+![Claude session in Roer](docs/screenshots/claude.png)
+
+**Markdown preview.** Read any changed Markdown file rendered.
 
 ![Markdown preview](docs/screenshots/markdown.png)
 
-## Features
-- **Roer extensions** — ask an agent for a tab ("make me a tab that…") and it writes one, and Roer reloads it on every save. The plugins reuse the Roer UI components
-- **Worktrees support** — start your agent in any worktree
-- **Agents** — New session starts Claude Code, Codex, pi or Junie; the chevron beside it (`⌥⌘T`) picks one, and **Roer › Agents…** (`⌘,`) saves named setups with a model, reasoning effort, permissions and instructions. See [Agents](#agents).
-- **Branch diff view** — pick any branch, checked out or not, browse its commits against its base with each one's whole message, step through them, and view each commit's file diff. On the branch checked out, commit the local changes from there: leave the message empty and Claude writes one for you to read first (`roer commit-draft`).
-- **Pull request, in Changes** — for the session's branch, or any other picked in Changes, through your own `gh` login: let Claude draft the title and description, push and open the PR, request a Copilot review (Roer polls until it lands), accept, decline or instruct on each review thread right on the diff and send the decisions to the session, then merge. Under the hood it uses `roer send` (type a prompt into a session) and `roer pr-draft` (the agent hands a draft back).
-- **tmux-backed sessions** — sessions live in tmux on a private socket, a swappable detail behind the `roer` CLI.
-- **Go-to** — jump straight to any changed file from the diff view or to the session
-- **Keyboard-friendly** — arrow keys and Cmd+arrows step through commits and files without touching the mouse.
+More: [extensions](docs/extensions.md) · [running Roer on a server](docs/self-hosting.md).
