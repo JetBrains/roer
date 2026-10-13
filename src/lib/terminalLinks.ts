@@ -19,12 +19,7 @@ export type LinkTarget = { kind: "web"; url: string } | { kind: "file"; path: st
  */
 export const isOpenGesture = (
   event: Pick<MouseEvent, "button" | "metaKey" | "ctrlKey" | "shiftKey" | "altKey">,
-): boolean => {
-  if (event.button !== 0 || event.shiftKey || event.altKey) return false;
-  const own = isMac() ? event.metaKey : event.ctrlKey;
-  const other = isMac() ? event.ctrlKey : event.metaKey;
-  return !other && (own || !(event.metaKey || event.ctrlKey));
-};
+): boolean => event.button === 0 && !event.shiftKey && !event.altKey && !(isMac() ? event.ctrlKey : event.metaKey);
 
 export function linkTarget(uri: string): LinkTarget | null {
   let url: URL;
