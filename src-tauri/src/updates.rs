@@ -2,12 +2,14 @@
 //!
 //! The answer is GitHub's latest release of this repository, which only ever
 //! names a published one: a draft waiting to be signed, or a pre-release, is
-//! never offered. It is fetched with the system's `curl`, as `bun_fetch` does.
+//! never offered. It is read from where the releases page's `latest` redirects
+//! rather than from GitHub's API, which allows 60 requests an hour to everyone
+//! behind one address, so a shared VPN or office exit soon runs out of them.
+//! It is fetched with the system's `curl`, as `bun_fetch` does.
 //! The app only tells; downloading and installing is still the person's.
 
 use serde::Serialize;
 
-const LATEST: &str = "https://api.github.com/repos/JetBrains/roer/releases/latest";
 const RELEASES: &str = "https://github.com/JetBrains/roer/releases";
 
 #[derive(Debug, Serialize, PartialEq)]
@@ -38,10 +40,10 @@ pub fn update_check(automatic: bool) -> Result<Option<UpdateStatus>, String> {
     if automatic && cfg!(debug_assertions) {
         return Ok(None);
     }
+    // Only the headers of the first answer: its redirect is what's wanted.
     let out = crate::process::command("curl")
-        .args(["--fail", "--silent", "--show-error", "--location", "--max-time", "15"])
-        .args(["--header", "Accept: application/vnd.github+json"])
-        .arg(LATEST)
+        .args(["--fail", "--silent", "--show-error", "--head", "--max-time", "15"])
+        .arg(format!("{RELEASES}/latest"))
         .output()
         .map_err(|e| format!("could not run curl: {e}"))?;
     if !out.status.success() {
@@ -62,12 +64,24 @@ pub fn update_skip(version: String) -> Result<(), String> {
     std::fs::write(&path, version).map_err(|e| format!("could not write {}: {e}", path.display()))
 }
 
-/// Reads GitHub's answer. The page's address is built here from the tag
-/// rather than taken from the answer, since it goes on to the opener.
-fn status(current: &str, body: &[u8], skipped: &str) -> Result<UpdateStatus, String> {
-    let release: serde_json::Value =
-        serde_json::from_slice(body).map_err(|e| format!("GitHub's answer is not JSON: {e}"))?;
-    let tag = release["tag_name"].as_str().ok_or("GitHub's answer names no release")?;
+/// Reads GitHub's answer, the headers of a redirect to the latest release's
+/// page. The page's address is built here from the tag rather than taken
+/// from the answer, since it goes on to the opener.
+fn status(current: &str, headers: &[u8], skipped: &str) -> Result<UpdateStatus, String> {
+    let headers = String::from_utf8_lossy(headers);
+    let location = headers
+        .lines()
+        .find_map(|line| {
+            let (name, value) = line.split_once(':')?;
+            name.trim().eq_ignore_ascii_case("location").then(|| value.trim())
+        })
+        .ok_or("GitHub's answer names no release")?;
+    // With no release at all, `latest` sends to the list of releases instead.
+    let tag = location
+        .split_once("/releases/tag/")
+        .map(|(_, tag)| tag.trim_end_matches('/'))
+        .filter(|tag| !tag.is_empty() && !tag.contains(['/', '?', '#']))
+        .ok_or("GitHub's answer names no release")?;
     let latest = tag.strip_prefix('v').unwrap_or(tag);
     let Some(parsed) = version(latest) else {
         return Err(format!("the latest release, {tag}, is not a version"));
@@ -93,7 +107,8 @@ mod tests {
     use super::*;
 
     fn release(tag: &str) -> Vec<u8> {
-        serde_json::json!({ "tag_name": tag, "html_url": "https://example.com/elsewhere" }).to_string().into_bytes()
+        format!("HTTP/2 302 \r\ndate: Wed, 14 Oct 2026 21:35:12 GMT\r\nLocation: https://github.com/JetBrains/roer/releases/tag/{tag}\r\n\r\n")
+            .into_bytes()
     }
 
     #[test]
@@ -127,6 +142,12 @@ mod tests {
     fn a_tag_that_is_not_a_version_is_an_error() {
         assert!(status("0.9.2", &release("nightly"), "").is_err());
         assert!(status("0.9.2", &release("v1.0.0-rc.1"), "").is_err());
-        assert!(status("0.9.2", b"{}", "").is_err());
+    }
+
+    #[test]
+    fn a_redirect_to_no_release_is_an_error() {
+        assert!(status("0.9.2", b"HTTP/2 200 \r\n\r\n", "").is_err());
+        let to_list = b"HTTP/2 302 \r\nlocation: https://github.com/JetBrains/roer/releases\r\n\r\n";
+        assert!(status("0.9.2", to_list, "").is_err());
     }
 }
