@@ -24,6 +24,7 @@ pub mod pty;
 mod roer;
 pub mod server;
 mod watch;
+mod updates;
 mod workspaces;
 mod worktrees;
 
@@ -75,6 +76,8 @@ pub fn run() {
             gh::gh_pr_merge,
             gh::gh_pr_can_bypass,
             gh::open_url,
+            updates::update_check,
+            updates::update_skip,
             files::files_search,
             files::file_read,
             roer::roer_sessions,
@@ -162,10 +165,13 @@ fn menu(app: &mut tauri::App) -> tauri::Result<()> {
         // Where a Mac app keeps its settings, and on the key every Mac app
         // opens them with.
         let agents = MenuItem::with_id(handle, "agents", "Agents…", true, Some("CmdOrCtrl+,"))?;
+        let updates = MenuItem::with_id(handle, "check-updates", "Check for Updates…", true, None::<&str>)?;
         if let Some(app_menu) = menu.items()?.first().and_then(|item| item.as_submenu().cloned()) {
-            app_menu.insert(&agents, 1)?;
-            app_menu.insert(&setup, 2)?;
-            app_menu.insert(&browser, 3)?;
+            // Right under About, where Mac apps keep it.
+            app_menu.insert(&updates, 1)?;
+            app_menu.insert(&agents, 2)?;
+            app_menu.insert(&setup, 3)?;
+            app_menu.insert(&browser, 4)?;
         }
         // Where a user reporting a problem finds the log to send with it.
         let logs = MenuItem::with_id(handle, "show-logs", "Show Logs in Finder", true, None::<&str>)?;
@@ -178,6 +184,8 @@ fn menu(app: &mut tauri::App) -> tauri::Result<()> {
                 let _ = app.emit("roer://claude-setup", ());
             } else if event.id() == "agents" {
                 let _ = app.emit("roer://agents", ());
+            } else if event.id() == "check-updates" {
+                let _ = app.emit("roer://check-updates", ());
             } else if event.id() == "browser-server" {
                 let _ = app.emit("roer://browser-server", ());
             } else if event.id() == "show-logs" {
