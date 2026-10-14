@@ -430,7 +430,8 @@ export function App() {
   }, []);
 
   // A day apart, since the app stays open for days. A check of its own that
-  // fails says nothing; the menu's says why, or that this is the latest.
+  // fails only says so in the log; the menu's says why, or that this is the
+  // latest.
   useEffect(() => {
     if (!("__TAURI_INTERNALS__" in window)) return;
     let cancelled = false;
@@ -445,7 +446,8 @@ export function App() {
           }
         })
         .catch((cause: unknown) => {
-          if (!automatic) void message(String(cause), { title: "Could not check for updates", kind: "error" });
+          if (automatic) logLine(`roer: update check failed: ${String(cause)}`);
+          else void message(String(cause), { title: "Could not check for updates", kind: "error" });
         });
 
     void onCheckUpdatesMenu(() => void check(false))
