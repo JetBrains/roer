@@ -5013,3 +5013,49 @@ button.danger:hover {
 .tabs button.tab-add .tab-badge {
   margin-left: 3px;
 }
+
+/* A newer release is out: one line in the corner, over whatever is there,
+   never modal. */
+.update-notice {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: calc(100vw - 32px);
+  padding: 6px 6px 6px 12px;
+  background: var(--roer-panel);
+  border: 1px solid var(--roer-accent);
+  border-radius: 8px;
+  box-shadow: 0 6px 18px var(--roer-shadow);
+  color: var(--roer-fg);
+  font-size: 12px;
+}
+
+.update-notice-text {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.update-notice button.link {
+  font-size: 12px;
+}
+
+.update-notice button.link.muted {
+  color: var(--roer-muted);
+}
+
+.update-notice-close {
+  display: flex;
+  padding: 3px;
+  background: none;
+  border: none;
+  color: var(--roer-muted);
+}
+
+.update-notice-close:hover {
+  color: var(--roer-fg);
+}

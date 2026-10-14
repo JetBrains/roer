@@ -33,6 +33,7 @@ import { applyAll, applyMessage } from "./generative-ui/apply";
 import { emptyState, surfaceIdOf, type A2uiMessage, type RenderState } from "./generative-ui/schema";
 import { AgentsDialog, type AgentsDialogStart } from "./AgentsDialog";
 import { ClaudeSetup } from "./ClaudeSetup";
+import { UpdateNotice } from "./UpdateNotice";
 import { GoToFile, type SessionHit } from "./GoToFile";
 import { NewSessionButton } from "./NewSessionButton";
 import { NewSessionPicker } from "./NewSessionPicker";
@@ -56,6 +57,7 @@ import { claudeSetupStatus, onClaudeSetupMenu, type SetupStatus } from "./lib/cl
 import { onBrowserServerMenu, startBrowserServer } from "./lib/browserServer";
 import { onFilesChanged, type FilesChanged } from "./lib/files";
 import { listAgents, onAgentsMenu, type AgentList } from "./lib/agents";
+import { checkForUpdate, onCheckUpdatesMenu, type UpdateStatus } from "./lib/updates";
 import {
   isGoToFile,
   isMac,
@@ -198,6 +200,8 @@ export function App() {
   // The agent integrations dialog on screen, if it is: put there by the app on the
   // first launch that finds Claude Code, or asked for from the menu.
   const [setup, setSetup] = useState<{ status: SetupStatus; firstRun: boolean } | null>(null);
+  // A newer release, offered in the corner until it is answered.
+  const [update, setUpdate] = useState<UpdateStatus | null>(null);
   // The agents New session offers, read for the directory it would start in,
   // and the editor when it is open.
   const [agents, setAgents] = useState<AgentList | null>(null);
@@ -421,6 +425,43 @@ export function App() {
 
     return () => {
       cancelled = true;
+      unlisten?.();
+    };
+  }, []);
+
+  // A day apart, since the app stays open for days. A check of its own that
+  // fails says nothing; the menu's says why, or that this is the latest.
+  useEffect(() => {
+    if (!("__TAURI_INTERNALS__" in window)) return;
+    let cancelled = false;
+    let unlisten: (() => void) | undefined;
+    const check = (automatic: boolean) =>
+      checkForUpdate(automatic)
+        .then((found) => {
+          if (cancelled || !found) return;
+          if (found.newer && !(automatic && found.skipped)) setUpdate(found);
+          else if (!automatic) {
+            void message(`Roer ${found.current} is the latest version.`, { title: "No update available" });
+          }
+        })
+        .catch((cause: unknown) => {
+          if (!automatic) void message(String(cause), { title: "Could not check for updates", kind: "error" });
+        });
+
+    void onCheckUpdatesMenu(() => void check(false))
+      .then((fn) => {
+        if (cancelled) fn();
+        else unlisten = fn;
+      })
+      .catch(() => undefined);
+    // Not in launch's own rush.
+    const first = window.setTimeout(() => void check(true), 10_000);
+    const daily = window.setInterval(() => void check(true), 24 * 60 * 60 * 1000);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(first);
+      window.clearInterval(daily);
       unlisten?.();
     };
   }, []);
@@ -1549,6 +1590,8 @@ export function App() {
             onClose={() => setSetup(null)}
           />
         ) : null}
+
+        {update ? <UpdateNotice update={update} onClose={() => setUpdate(null)} /> : null}
 
         {agentsDialog && agents ? (
           <AgentsDialog
