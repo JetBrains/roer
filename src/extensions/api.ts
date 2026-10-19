@@ -55,6 +55,10 @@ export interface ToolOptions {
   description: string;
   /** JSON Schema for its arguments. Default: an object with no properties. */
   inputSchema?: Record<string, unknown>;
+  /** A sentence or two for every agent that starts while the extension is loaded, in `roer mcp`'s
+   * instructions: when to call the tool without being asked. An agent reads a description only once
+   * it thinks of the tool. */
+  instructions?: string;
   /** Answers the call: a string goes to the agent as it is, anything else as JSON. A throw is the agent's error. */
   run(args: Record<string, unknown>, context: ToolContext): unknown;
 }

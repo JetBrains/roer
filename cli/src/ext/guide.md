@@ -360,6 +360,11 @@ export default defineExtension((roer) => {
 - An agent started before the extension loaded still sees the tool: `roer
   mcp` tells it the list changed. To try the tool while developing, call it
   from your own session once `extension_dev` reports the tab up.
+- An agent reads a tool's description only once it thinks of the tool. When
+  agents should use it unasked, say, hand over what a new session works on,
+  give it `instructions`: a sentence or two that every agent starting while
+  the extension is loaded reads in `roer mcp`'s instructions. Agents already
+  running don't get them.
 
 Roer's Changes tab (`src/extensions/changes/`) works this way:
 `changes__add_comments` puts an agent's review on the branch's diff, and the

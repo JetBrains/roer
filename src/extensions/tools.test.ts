@@ -89,4 +89,20 @@ describe("extension tools", () => {
     expect(invoke).toHaveBeenLastCalledWith("extension_tools_publish", { tools: [] });
     stop();
   });
+
+  it("publishes a tool's instructions for agents, when it has any", () => {
+    const registry = new Registry();
+    registry.load(
+      "todos",
+      defineExtension((roer) => {
+        roer.tools.register({ name: "add", description: "Adds one.", instructions: "  Add the user's todos.  ", run: () => "" });
+        roer.tools.register({ name: "list", description: "Lists them.", instructions: " ", run: () => "" });
+      }),
+    );
+    const stop = serveTools(registry);
+    const [{ tools }] = vi.mocked(invoke).mock.calls.at(-1)!.slice(1) as [{ tools: Array<Record<string, unknown>> }];
+    expect(tools[0].instructions).toBe("Add the user's todos.");
+    expect(tools[1]).not.toHaveProperty("instructions");
+    stop();
+  });
 });

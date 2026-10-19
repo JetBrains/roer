@@ -63,7 +63,7 @@ fn write_atomic(file: &Path, body: &str) -> Result<(), String> {
     std::fs::rename(&partial, file).map_err(|e| e.to_string())
 }
 
-/// What `roer mcp` lists: `{ extension, name, description, inputSchema }[]`.
+/// What `roer mcp` lists: `{ extension, name, description, inputSchema, instructions? }[]`.
 #[tauri::command]
 pub fn extension_tools_publish(tools: Vec<Value>) -> Result<(), String> {
     let body = serde_json::to_string_pretty(&serde_json::json!({ "tools": tools })).map_err(|e| e.to_string())?;
