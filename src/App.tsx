@@ -1376,6 +1376,8 @@ export function App() {
             className={beside && beside.focus === "main" ? "stage-pane focused" : "stage-pane"}
             style={beside ? { flexBasis: `${beside.ratio * 100}%` } : undefined}
             onPointerDownCapture={() => focusPane("main")}
+            // A drop of files focuses the terminal without a press on it.
+            onFocusCapture={() => focusPane("main")}
           >
             {session ? (
               <TerminalView
@@ -1387,6 +1389,7 @@ export function App() {
                 onExit={handleExit}
                 onOpenFile={openLinkedFile}
                 active={tabs.active === "terminal" && mainFocused}
+                shown={tabs.active === "terminal"}
               />
             ) : (
               <div className="empty">

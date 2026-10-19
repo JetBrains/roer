@@ -976,6 +976,20 @@ describe("App", () => {
       expect(pager).toHaveTextContent("pressed 2");
     });
 
+    it("types files dropped on the terminal while the tab beside it has the keyboard", async () => {
+      render(<App />);
+      await teleport();
+      await emit({ kind: "output", data: "aGk=" });
+      await openBeside();
+      fireEvent.pointerDown(await screen.findByTestId("pager"));
+      const terminal = mocks.terminal.current as unknown as { paste: ReturnType<typeof vi.fn> };
+
+      act(() => mocks.fileDrag.current?.({ type: "over", x: 0, y: 0 }));
+      expect(screen.getByTestId("terminal")).toHaveClass("terminal-drop-target");
+      act(() => mocks.fileDrag.current?.({ type: "drop", x: 0, y: 0, paths: ["/shot.png"] }));
+      expect(terminal.paste).toHaveBeenCalledWith("/shot.png ");
+    });
+
     it("gives the keys back to the stage when a stage tab is asked for, and marks one tab selected", async () => {
       render(<App />);
       await teleport();

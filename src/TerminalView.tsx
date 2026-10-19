@@ -57,6 +57,9 @@ export interface TerminalViewProps {
    * whenever it comes to the front, so a session just opened can be typed
    * into without clicking it first. */
   active?: boolean;
+  /** Whether the terminal is on screen, focused or not: beside a tab that
+   * has the keyboard, it still takes files dropped on it. */
+  shown?: boolean;
 }
 
 /**
@@ -67,11 +70,13 @@ export interface TerminalViewProps {
 export const leavesDraft = (event: KeyboardEvent): boolean =>
   !event.ctrlKey && !event.metaKey && (event.key.length === 1 || event.key === "Backspace" || event.key === "Delete");
 
-export function TerminalView({ args, cwd, onAttached, onPane, onExit, onOpenFile, active = true }: TerminalViewProps) {
+export function TerminalView({ args, cwd, onAttached, onPane, onExit, onOpenFile, active = true, shown = active }: TerminalViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
   const activeRef = useRef(active);
   activeRef.current = active;
+  const shownRef = useRef(shown);
+  shownRef.current = shown;
 
   // Args and callbacks are read through refs so a parent re-render can never
   // tear down a live session; only a genuinely different target should.
@@ -286,13 +291,13 @@ export function TerminalView({ args, cwd, onAttached, onPane, onExit, onOpenFile
 
     // Files dropped from the desktop type their paths, as in a native
     // terminal; Claude Code attaches an image it finds that way. Only the
-    // terminal on top takes them, and only a drop over it.
+    // terminal on screen takes them, and only a drop over it.
     const showDropTarget = (on: boolean) => container.classList.toggle("terminal-drop-target", on);
     const stopFileDrag = onFileDrag((drag) => {
       // Unlistening is asynchronous: a drop can still arrive after cleanup.
       if (disposed) return;
       if (drag.type === "leave") return showDropTarget(false);
-      const over = activeRef.current && isOver(container, drag.x, drag.y);
+      const over = shownRef.current && isOver(container, drag.x, drag.y);
       if (drag.type === "over") return showDropTarget(over);
       showDropTarget(false);
       if (!over || drag.paths.length === 0) return;
