@@ -25,7 +25,9 @@ import {
 } from "./lib/pty";
 import type { Handoff, PtyEvent } from "./lib/pty";
 import { claudeSetupStatus } from "./lib/claudeSetup";
-import { listWorkspaces } from "./lib/workspaces";
+import { attachProject, listWorkspaces } from "./lib/workspaces";
+import { createProject, listProjects } from "./lib/projects";
+import { pickFolder } from "./lib/folderPicker";
 import { reportPluginUiReceipt } from "./lib/pluginUi";
 import { startBrowserServer } from "./lib/browserServer";
 import { gitRoot } from "./lib/git";
@@ -195,6 +197,8 @@ vi.mock("./lib/workspaces", () => ({
   unassignSession: vi.fn(),
 }));
 
+vi.mock("./lib/folderPicker", () => ({ pickFolder: vi.fn(async () => null) }));
+
 vi.mock("./lib/projects", () => ({
   listProjects: vi.fn(async () => []),
   createProject: vi.fn(),
@@ -305,6 +309,29 @@ describe("App", () => {
     render(<App />);
     await waitFor(() => expect(claudeSetupStatus).toHaveBeenCalledTimes(2));
     expect(screen.queryByRole("dialog", { name: /Agent Integrations/ })).not.toBeInTheDocument();
+  });
+
+  it("tells the Workspace tab with no project yet where new sessions start, and adds one", async () => {
+    vi.mocked(listWorkspaces).mockResolvedValue([{ id: "w1", name: "Default", projects: [], items: [] }]);
+    vi.mocked(pickFolder).mockResolvedValueOnce("/Users/test/roer");
+    const project = { id: "p1", name: "roer", path: "/Users/test/roer" };
+    vi.mocked(createProject).mockResolvedValueOnce(project);
+    vi.mocked(attachProject).mockResolvedValueOnce({ id: "w1", name: "Default", projects: ["p1"], items: [] });
+    render(<App />);
+
+    expect(await screen.findByText(/start in your home folder until you add a project/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Add a project…" }));
+    await waitFor(() => expect(attachProject).toHaveBeenCalledWith("w1", "p1"));
+    expect(createProject).toHaveBeenCalledWith("roer", "/Users/test/roer");
+    await waitFor(() => expect(screen.queryByText(/until you add a project/)).not.toBeInTheDocument());
+  });
+
+  it("says nothing about projects once there is one", async () => {
+    vi.mocked(listProjects).mockResolvedValueOnce([{ id: "p1", name: "roer", path: "/Users/test/roer" }]);
+    render(<App />);
+    await waitFor(() => expect(listProjects).toHaveBeenCalled());
+    await screen.findByText(/Pick a session/);
+    expect(screen.queryByText(/until you add a project/)).not.toBeInTheDocument();
   });
 
   it("opens agent integrations from the menu, showing what is set up", async () => {

@@ -504,6 +504,17 @@ export function SessionBrowser({
 
   return (
     <nav className="sessions-view" aria-label="Workspace">
+      {/* Without a project New session has nowhere to go but home. The
+        Workspace is there once both are read, so this never flashes. */}
+      {selectedWorkspace && projects.length === 0 ? (
+        <p className="notice">
+          New sessions start in your home folder until you add a project, the folder of what you work on.{" "}
+          <button type="button" className="link" onClick={() => void attachNewProject()}>
+            Add a project…
+          </button>
+        </p>
+      ) : null}
+
       <h2>
         Sessions
         <button type="button" className="link" onClick={() => void refresh()}>
