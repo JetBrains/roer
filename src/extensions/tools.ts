@@ -22,11 +22,12 @@ export interface ExtensionCall {
 
 /** What `roer mcp` lists: everything but the handler. */
 const published = (tools: readonly ToolEntry[]) =>
-  tools.map(({ extension, name, description, inputSchema }) => ({
+  tools.map(({ extension, name, description, inputSchema, instructions }) => ({
     extension,
     name,
     description,
     inputSchema: inputSchema ?? { type: "object", properties: {} },
+    ...(typeof instructions === "string" && instructions.trim() ? { instructions: instructions.trim() } : {}),
   }));
 
 function isCall(value: unknown): value is ExtensionCall {

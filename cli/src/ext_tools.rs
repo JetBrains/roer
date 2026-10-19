@@ -30,7 +30,13 @@ pub struct Tool {
     pub name: String,
     pub description: String,
     pub input_schema: Value,
+    /// What every agent starting now is told about it, in the server's instructions.
+    pub instructions: Option<String>,
 }
+
+/// How much of one tool's instructions an agent is told: a client may cut the
+/// whole string short, and Roer's own part comes first.
+const MAX_INSTRUCTIONS: usize = 500;
 
 /// What the app last published; nothing when it never has.
 pub fn published() -> Vec<Tool> {
@@ -49,6 +55,11 @@ pub fn published() -> Vec<Tool> {
                     Value::Object(_) => tool["inputSchema"].clone(),
                     _ => json!({ "type": "object", "properties": {} }),
                 },
+                instructions: tool["instructions"]
+                    .as_str()
+                    .map(str::trim)
+                    .filter(|text| !text.is_empty())
+                    .map(|text| text.chars().take(MAX_INSTRUCTIONS).collect()),
             })
         })
         .collect()

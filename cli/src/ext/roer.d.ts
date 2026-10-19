@@ -54,6 +54,10 @@ declare module "roer" {
     description: string;
     /** JSON Schema for the arguments. Default: an object with no properties. */
     inputSchema?: Record<string, unknown>;
+    /** A sentence or two that every agent starting while the extension is loaded reads in `roer mcp`'s
+     * instructions: when to call this tool unasked, e.g. "Once you know the task, call it". Agents
+     * already running don't get it. */
+    instructions?: string;
     /** A string goes to the agent as it is, anything else as JSON; a throw is the agent's error. */
     run(args: Record<string, unknown>, context: ToolContext): unknown;
   }

@@ -1501,6 +1501,31 @@ fn mcp_adds_updates_lists_and_deletes_tasks() {
     assert_eq!(text(5), "[]");
 }
 
+/// An extension's tool can ask every agent that starts to use it unasked: the
+/// ask joins the server's instructions, under the tool's name.
+#[test]
+fn mcp_instructions_carry_what_extension_tools_ask() {
+    let env = Env::new("mcp-ext-instructions");
+    std::fs::create_dir_all(&env.home).unwrap();
+    std::fs::write(
+        env.home.join("extension-tools.json"),
+        serde_json::json!({ "tools": [
+            { "extension": "work-item", "name": "show", "description": "Show it.", "instructions": "Call it once you know the task." },
+            { "extension": "todos", "name": "add", "description": "Add one." },
+        ] })
+        .to_string(),
+    )
+    .unwrap();
+    let init = serde_json::json!({ "method": "initialize", "params": {
+        "protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": { "name": "some-other-client", "version": "1" },
+    }});
+
+    let replies = mcp(&env, &[], &[init]);
+    let text = replies[0]["result"]["instructions"].as_str().unwrap();
+    assert!(text.ends_with("\n- `work-item__show`: Call it once you know the task."), "{text}");
+    assert!(!text.contains("todos__add"), "{text}");
+}
+
 #[test]
 fn mcp_offers_extension_tools_and_hands_their_calls_to_the_app() {
     let env = Env::new("mcp-ext-tools");

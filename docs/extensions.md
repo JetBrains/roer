@@ -300,7 +300,11 @@ bare system `PATH`.
 `roer.tools.register({ name, description, inputSchema, run(args, { pane, cwd }) })`.
 They run in the app's window, beside the tab they feed. `roer mcp` lists
 every loaded extension's tools as `<id>__<name>` and sends
-`notifications/tools/list_changed` when they change.
+`notifications/tools/list_changed` when they change. A tool's optional
+`instructions` join the server's `instructions` on `initialize`, under the
+tool's name, cut to 500 characters each, so an agent starting while the
+extension is loaded knows to call it unasked; MCP has no way to change them
+for an agent already running.
 
 They ride the same files as the Generative UI panel, so agents reach the
 app one way:

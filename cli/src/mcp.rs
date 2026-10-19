@@ -177,7 +177,8 @@ impl Server<'_> {
              Extensions are the other way to put something on screen: a tab of its own in Roer's stage, \
              written in React, which stays there and stays live. Make one when the user asks for a tab or \
              a view they will keep coming back to. Read `{EXTENSIONS_URI}` (or call `describe_extension_api`) \
-             before writing one, then load it with `extension_dev`."
+             before writing one, then load it with `extension_dev`.{}",
+            extension_instructions(&crate::ext_tools::published())
         )
     }
 
@@ -560,6 +561,22 @@ fn delivered(pane: &str, ids: &[String], what: &str) -> Result<String, Fail> {
         return Err(Fail::new(3, problem));
     }
     Ok(format!("Showing {what} in the Generative UI panel."))
+}
+
+/// What the loaded extensions ask of an agent from its start, each under the
+/// name its tool goes by; nothing when none asks anything.
+fn extension_instructions(tools: &[crate::ext_tools::Tool]) -> String {
+    let lines: Vec<String> = tools
+        .iter()
+        .filter_map(|tool| {
+            let text = tool.instructions.as_deref()?;
+            Some(format!("- `{}{}{}`: {text}", tool.extension, crate::ext_tools::SEPARATOR, tool.name))
+        })
+        .collect();
+    if lines.is_empty() {
+        return String::new();
+    }
+    format!("\n\nRoer's extensions offer tools of their own:\n{}", lines.join("\n"))
 }
 
 fn text<'a>(args: &'a Value, key: &str) -> &'a str {
