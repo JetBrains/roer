@@ -580,6 +580,28 @@ in view under the list, do the same with a Connect button, and mark each
 extension that opens there "Other apps". Nothing connects either app on its
 own: the launch's `install --auto` only keeps Claude Code's entry up to date.
 
+### 12.4 Views in the conversation
+
+`show_ui`'s views follow the same road. `roer mcp` notes in `initialize`
+whether the client draws MCP Apps (`capabilities.extensions` has
+`io.modelcontextprotocol/ui`). Outside a Roer session:
+
+- In a client that draws them, `show_ui` names a second page,
+  `ui://roer/view`: the same runtime, told by its root to draw views
+  (`src/mcp-app/view.tsx`) with the renderer Roer's panel uses. It needs no
+  `session`; its result carries every message of the surfaces it touched,
+  since each call is a page of its own, and `roer mcp` keeps them for the
+  conversation's life. A click goes into the conversation as the person's
+  next message and, through `roer_view_action` (app-only, like
+  `roer_ext_call`), to `read_ui_actions`. Given a `session`, either tool acts
+  on that Roer session's panel instead.
+- In a client that does not (Codex in a terminal, whose only capability is
+  `elicitation`), neither tool is offered, and the instructions say to answer
+  in text: a view could only land in some session in the Roer app, which the
+  person would have to name for no reason.
+
+Inside a Roer session nothing changes: the view goes to its own panel.
+
 ## Open questions
 
 - **Servers under `roer-server`.** Servers run on the machine `roer-server`
