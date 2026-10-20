@@ -10,6 +10,7 @@ mod agents;
 mod ext;
 mod ext_tools;
 mod mcp;
+mod mcp_apps;
 mod mcp_install;
 mod names;
 mod records;

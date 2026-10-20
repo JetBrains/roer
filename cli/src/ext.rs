@@ -200,6 +200,10 @@ fn dev(dir: &Path) -> Result<String, Fail> {
     report(&id, &dir, &started, "session")
 }
 
+pub fn is_id(id: &str) -> bool {
+    valid_id(id)
+}
+
 fn install(dir: &Path) -> Result<String, Fail> {
     let dir = dunce(dir)?;
     let (_, id) = manifest(&dir)?;
@@ -343,8 +347,10 @@ fn pointer_dir(path: &Path) -> Option<PathBuf> {
     pointer["dir"].as_str().map(PathBuf::from)
 }
 
-pub fn list() -> String {
-    let mut rows: Vec<(String, &str, PathBuf)> = Vec::new();
+/// Every extension on disk: id, scope ("session" or "user") and folder, by id. A session folder hides an
+/// installed one of the same id, as it does in the app.
+pub fn found() -> Vec<(String, &'static str, PathBuf)> {
+    let mut rows: Vec<(String, &'static str, PathBuf)> = Vec::new();
     if let Ok(entries) = std::fs::read_dir(dev_dir()) {
         for entry in entries.flatten() {
             let path = entry.path();
@@ -365,6 +371,11 @@ pub fn list() -> String {
         }
     }
     rows.sort();
+    rows
+}
+
+pub fn list() -> String {
+    let rows = found();
     if rows.is_empty() {
         return "No extensions. `roer ext new <id>` writes one.".to_string();
     }

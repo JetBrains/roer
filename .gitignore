@@ -9,6 +9,7 @@
 # Node
 node_modules/
 dist/
+dist-mcp-app/
 *.log
 
 # Rust / Tauri

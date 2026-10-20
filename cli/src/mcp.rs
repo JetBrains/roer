@@ -113,6 +113,7 @@ impl Server<'_> {
                 let version = VERSIONS.iter().find(|v| **v == asked).unwrap_or(&VERSIONS[VERSIONS.len() - 1]);
                 let client = params.pointer("/clientInfo/name").and_then(Value::as_str).unwrap_or_default();
                 self.idle.set(self.here.is_none() && client == "claude-code");
+                crate::mcp_apps::log_client(&params);
                 let mut reply = json!({
                     "protocolVersion": version,
                     "capabilities": { "tools": { "listChanged": true }, "resources": {} },
@@ -137,6 +138,12 @@ impl Server<'_> {
             "tools/call" => {
                 let name = params.get("name").and_then(Value::as_str).unwrap_or_default();
                 let args = params.get("arguments").cloned().unwrap_or_else(|| json!({}));
+                if !self.idle.get() && [crate::mcp_apps::OPEN, crate::mcp_apps::CALL].contains(&name) {
+                    return Some(match crate::mcp_apps::call(name, &args) {
+                        Ok(whole) => result(id, whole),
+                        Err(fail) => result(id, json!({ "content": [{ "type": "text", "text": fail.message }], "isError": true })),
+                    });
+                }
                 // A tool's failure is its result, for the model to read; only a
                 // malformed request is a protocol error.
                 let outcome = self.call(name, &args);
@@ -201,6 +208,7 @@ impl Server<'_> {
                     API's types. Read it in full before writing one.",
                 "mimeType": "text/markdown",
             }),
+            crate::mcp_apps::resource(),
         ]
     }
 
@@ -211,6 +219,7 @@ impl Server<'_> {
         match uri {
             CATALOG_URI => Ok(json!({ "uri": CATALOG_URI, "mimeType": "text/markdown", "text": GUIDE })),
             EXTENSIONS_URI => Ok(json!({ "uri": EXTENSIONS_URI, "mimeType": "text/markdown", "text": crate::ext::guide() })),
+            crate::mcp_apps::LOADER_URI => Ok(crate::mcp_apps::read()),
             _ => Err(Fail::new(2, format!("no such resource: {uri}"))),
         }
     }
@@ -382,6 +391,7 @@ impl Server<'_> {
             "description": "The extensions Roer has, one per line: id, scope (session or user), ok or failed, folder.",
             "inputSchema": { "type": "object", "properties": {} },
         }));
+        tools.extend(crate::mcp_apps::tools());
         tools.extend(self.extension_tools(&session));
         tools
     }
