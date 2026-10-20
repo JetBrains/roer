@@ -1048,7 +1048,7 @@ fn mcp_offers_the_session_tools_only_inside_a_roer_session() {
     let list = serde_json::json!({ "method": "tools/list" });
 
     let outside = mcp(&env, &[], std::slice::from_ref(&list));
-    assert_eq!(tool_names(&outside[0]), ["show_ui", "read_ui_actions", "describe_extension_api", "extension_dev", "extension_install", "extension_logs", "list_extensions", "open_extension", "roer_ext_call"]);
+    assert_eq!(tool_names(&outside[0]), ["show_ui", "read_ui_actions", "describe_extension_api", "extension_dev", "extension_install", "extension_logs", "list_extensions", "open_extension", "extension_write", "roer_ext_call"]);
     assert_eq!(outside[0]["result"]["tools"][0]["inputSchema"]["required"], serde_json::json!(["messages", "session"]));
 
     let vars = in_pane(&env, &here);
@@ -1072,6 +1072,7 @@ fn mcp_offers_the_session_tools_only_inside_a_roer_session() {
             "extension_logs",
             "list_extensions",
             "open_extension",
+            "extension_write",
             "roer_ext_call"
         ]
     );
@@ -1118,7 +1119,7 @@ fn mcp_offers_claude_code_nothing_outside_a_roer_session() {
 
     let app = mcp(&env, &[], &[init("some-other-client"), list.clone()]);
     assert!(app[0]["result"]["instructions"].is_string());
-    assert_eq!(tool_names(&app[1]), ["show_ui", "read_ui_actions", "describe_extension_api", "extension_dev", "extension_install", "extension_logs", "list_extensions", "open_extension", "roer_ext_call"]);
+    assert_eq!(tool_names(&app[1]), ["show_ui", "read_ui_actions", "describe_extension_api", "extension_dev", "extension_install", "extension_logs", "list_extensions", "open_extension", "extension_write", "roer_ext_call"]);
 
     let vars = in_pane(&env, &here);
     let vars: Vec<(&str, &str)> = vars.iter().map(|(k, v)| (*k, v.as_str())).collect();
@@ -1583,3 +1584,31 @@ fn mcp_offers_extension_tools_and_hands_their_calls_to_the_app() {
     assert_eq!(text, format!(r#""code-review" "add_comments" from "{here}" with {{"comments":[]}}"#));
 }
 
+/// A chat app's agent has no files on this machine to point `extension_install` at, so it hands over their
+/// contents; none of them may land outside the extension's own folder.
+#[test]
+fn mcp_writes_an_extension_only_inside_its_folder() {
+    let env = Env::new("mcp-write");
+    let write = |id: &str, files: Value| call("extension_write", serde_json::json!({ "id": id, "files": files }));
+    let replies = mcp(
+        &env,
+        &[],
+        &[
+            write("Not An Id", serde_json::json!({ "extension.json": "{}" })),
+            write("chat-made", serde_json::json!({ "../outside.txt": "x" })),
+            write("chat-made", serde_json::json!({ "/tmp/absolute.txt": "x" })),
+            write("chat-made", serde_json::json!({ "app.tsx": "export default 1;" })),
+        ],
+    );
+    // Notifications that the tools changed come in between; the answers are the ones with an id.
+    let answers: Vec<&Value> = replies.iter().filter(|r| r.get("id").is_some()).collect();
+    let text = |n: usize| answers[n]["result"]["content"][0]["text"].as_str().unwrap().to_string();
+    assert!(answers.iter().all(|a| a["result"]["isError"] == true), "{answers:?}");
+    assert!(text(0).contains("is not an extension id"), "{}", text(0));
+    assert!(text(1).contains("not a path inside"), "{}", text(1));
+    assert!(text(2).contains("not a path inside"), "{}", text(2));
+    assert!(text(3).contains("no extension.json"), "{}", text(3));
+    assert!(!env.home.join("extension-drafts").join("outside.txt").exists());
+    assert!(env.home.join("extension-drafts").join("chat-made").join("app.tsx").is_file());
+    assert!(!env.home.join("extensions-dev").join("chat-made.json").exists());
+}
