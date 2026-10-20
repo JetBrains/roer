@@ -95,6 +95,8 @@ interface ExtensionManifest {
   generatedFrom?: { prompt: string; agent?: string; at?: string };
   /** Set by `roer ext fork`: the bundled extension this one started from, and its version. */
   forkedFrom?: { id: string; roer: string };
+  /** Where else it opens. "mcp-app": in the chats of apps that draw MCP Apps (§12). */
+  hosts?: "mcp-app"[];
 
   // A data extension (pluginsspec.md) has these and no `app`.
   surfaces?: …; sources?: …; actions?: …; contributes?: …;
@@ -504,6 +506,56 @@ There's no compatibility promise. What Roer does instead:
    - side panel, sidebar sections, status bar, context menus
    - data extensions loading through the registry (`pluginsspec.md`
      phases 1–3)
+
+---
+
+## 12. In other apps
+
+An extension's tab can open in the chat of an app that draws MCP Apps, the
+Claude app and Codex among them, with no Roer window: `roer mcp`, which those
+apps already run, is the host there. The extension opts in: it lists
+`"mcp-app"` in its manifest's `hosts`, since only its author knows it works
+without a terminal beside it.
+
+### 12.1 Opening one
+
+`roer mcp` offers `open_extension({ id, tab?, cwd? })`. Its description lists
+every extension that opens there, with its manifest's `description`, so the
+model picks the id from what the person asked for ("show me the deck"). The
+tool names one page, `ui://roer/extension` (`text/html;profile=mcp-app`),
+which the app draws in a sandboxed iframe.
+
+The page (`src/mcp-app/`, built with `npm run build:mcp-app` into
+`dist-mcp-app/`) is the host the desktop app is, made smaller: it hands the
+extension the same `react`, `roer` and `roer/ui` (`extensions/host.ts`), with
+`lib/backend` swapped for one that talks to `roer mcp`
+(`vite.mcp-app.config.ts`). So the extension's own build runs unchanged. The
+page reaches `roer mcp` through `roer_ext_call`, a tool marked
+`_meta.ui.visibility: ["app"]`, which the model is never offered:
+
+- `load` builds the extension here, with Bun and the desktop app's own build
+  script, on an entry that hands its `defineExtension` to the page. The page
+  runs it as an inline module: every app's CSP lets that through, where some
+  refuse a blob or a data URL.
+- `invoke` runs what the tab asks the backend for. Outside Roer that is only
+  `extension_rpc`, into the extension's `server.ts`, which `roer mcp` runs
+  with the desktop app's host script and starts again when anything in the
+  extension's folder changes. Every other command fails with "not available
+  outside Roer yet". `openUrl` asks the app to open the link, and
+  `session.send` puts the text in the conversation as the person's next
+  message.
+
+A tab gets `useSession()` as the conversation: `root` and `cwd` are the
+`cwd` it was opened with, or else the folder of the session the person last
+worked in in Roer; `busy` is false and `changed` null.
+
+### 12.2 When it fails
+
+The agent in the chat cannot see the tab. When a call or a render fails, the
+page tells it through `ui/update-model-context` and writes the error into the
+extension's own log, where `extension_logs` reads it. `roer mcp` appends what
+each app said of itself on connecting, and every open and failure, to
+`$ROER_HOME/mcp-apps.log`.
 
 ## Open questions
 

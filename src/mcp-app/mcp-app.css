@@ -1,0 +1,42 @@
+/* The page an extension's tab is drawn in inside another app: one box of the height `main.tsx` picks. */
+html,
+body {
+  margin: 0;
+  height: var(--mcp-height, 480px);
+  overflow: hidden;
+  background: var(--roer-bg);
+}
+
+#root,
+.mcp-frame {
+  position: relative;
+  height: 100%;
+}
+
+/* Laid out as Roer's stage lays a tab out (`.ext-tab` in index.css): its root fills the box. */
+.mcp-frame {
+  display: flex;
+}
+
+.mcp-message {
+  padding: 16px;
+}
+
+.mcp-full {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 10;
+  width: 26px;
+  height: 26px;
+  border: 1px solid var(--roer-border);
+  border-radius: 4px;
+  background: var(--roer-panel);
+  color: var(--roer-fg);
+  cursor: pointer;
+  opacity: 0.7;
+}
+
+.mcp-full:hover {
+  opacity: 1;
+}
