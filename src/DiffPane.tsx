@@ -264,9 +264,9 @@ function Side({
   other?: DiffLine;
   which: "old" | "new";
 }) {
-  if (!line) return <span className="side gap" />;
+  if (!line) return <span className="diff-side gap" />;
   return (
-    <span className={`side ${line.kind}`}>
+    <span className={`diff-side ${line.kind}`}>
       <span
         className="no"
         data-no={(which === "old" ? line.oldNo : line.newNo) ?? ""}
