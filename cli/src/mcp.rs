@@ -58,15 +58,18 @@ fn watch_extension_tools() {
                 continue;
             }
             seen = now;
-            if OFFERING.load(Ordering::Relaxed) {
-                let note = json!({ "jsonrpc": "2.0", "method": "notifications/tools/list_changed" });
-                let mut stdout = std::io::stdout().lock();
-                if writeln!(stdout, "{note}").and_then(|()| stdout.flush()).is_err() {
-                    return;
-                }
+            if OFFERING.load(Ordering::Relaxed) && !tools_changed() {
+                return;
             }
         }
     });
+}
+
+/// Tells the client its tool list changed; false once stdout is gone.
+fn tools_changed() -> bool {
+    let note = json!({ "jsonrpc": "2.0", "method": "notifications/tools/list_changed" });
+    let mut stdout = std::io::stdout().lock();
+    writeln!(stdout, "{note}").and_then(|()| stdout.flush()).is_ok()
 }
 
 pub fn serve(roer: &Roer) -> Result<(), Fail> {
@@ -138,8 +141,13 @@ impl Server<'_> {
             "tools/call" => {
                 let name = params.get("name").and_then(Value::as_str).unwrap_or_default();
                 let args = params.get("arguments").cloned().unwrap_or_else(|| json!({}));
-                if !self.idle.get() && [crate::mcp_apps::OPEN, crate::mcp_apps::CALL].contains(&name) {
-                    return Some(match crate::mcp_apps::call(name, &args) {
+                if !self.idle.get() && [crate::mcp_apps::OPEN, crate::mcp_apps::CALL, crate::mcp_apps::WRITE].contains(&name) {
+                    let outcome = crate::mcp_apps::call(name, &args);
+                    // A written extension is one more that open_extension's description names.
+                    if name == crate::mcp_apps::WRITE {
+                        tools_changed();
+                    }
+                    return Some(match outcome {
                         Ok(whole) => result(id, whole),
                         Err(fail) => result(id, json!({ "content": [{ "type": "text", "text": fail.message }], "isError": true })),
                     });

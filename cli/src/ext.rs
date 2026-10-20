@@ -200,6 +200,18 @@ fn dev(dir: &Path) -> Result<String, Fail> {
     report(&id, &dir, &started, "session")
 }
 
+/// `dev` without waiting for the app: the folder is a session extension from now on, which a running Roer
+/// loads, and `roer mcp` can open in another app whether one runs or not.
+pub fn register(id: &str, dir: &Path) -> Result<(), Fail> {
+    std::fs::create_dir_all(dev_dir()).map_err(|e| Fail::new(1, format!("{}: {e}", dev_dir().display())))?;
+    let _ = std::fs::remove_file(cache_dir(id).join("status.json"));
+    write_atomic(&dev_dir().join(format!("{id}.json")), &json!({ "dir": dir }).to_string())
+}
+
+pub fn drafts_dir() -> PathBuf {
+    home().join("extension-drafts")
+}
+
 pub fn is_id(id: &str) -> bool {
     valid_id(id)
 }

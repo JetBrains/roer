@@ -30,6 +30,10 @@ const LOADER_MIME: &str = "text/html;profile=mcp-app";
 
 pub const OPEN: &str = "open_extension";
 pub const CALL: &str = "roer_ext_call";
+pub const WRITE: &str = "extension_write";
+
+/// What one `extension_write` may hold: an extension's sources, not its assets' worth of video.
+const WRITE_LIMIT: usize = 20 * 1024 * 1024;
 
 /// The app's own scripts, so an extension builds and serves here as it does there.
 const BUILD_SCRIPT: &str = include_str!("../../src-tauri/src/extension_build.ts");
@@ -145,7 +149,7 @@ pub fn tools() -> Vec<Value> {
                 tab, live and interactive, as it is in Roer. Call it whenever the user asks to see, open, show or \
                 present something one of these is for, even without naming it or Roer, and pick the id yourself; \
                 ask only when two fit equally. {where_} When the tab fails, its error reaches you in the tab's \
-                context, and the whole of it is in extension_logs: fix it and open it again. \
+                context, and the whole of it is in extension_logs: fix it with extension_write and open it again. \
                 {which}"),
             "inputSchema": {
                 "type": "object",
@@ -157,6 +161,31 @@ pub fn tools() -> Vec<Value> {
                 "required": ["id"],
             },
             "_meta": { "ui": { "resourceUri": LOADER_URI }, "ui/resourceUri": LOADER_URI },
+        }),
+        json!({
+            "name": WRITE,
+            "description": "Write a Roer extension's files onto the user's machine, by their contents: for an agent \
+                whose own files are not on that machine (a chat app's sandbox), where extension_dev and \
+                extension_install, which take a folder, cannot reach them. Read describe_extension_api first. The \
+                files go to ~/.roer/extension-drafts/<id>/ (a file not given is left as it was), the extension \
+                opens with open_extension from then on and loads in Roer when it runs, and it is built at once: \
+                the build's errors come back, to fix and write again. Its server.ts, if running, restarts with \
+                the new sources on its next call; call open_extension again to show the new version. A tab gets \
+                its project folder as useSession().root (open_extension's cwd). Only react, roer, roer/ui and \
+                the extension's own files can be imported: nothing gets installed.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "id": { "type": "string", "description": "The extension's id, as in its extension.json: lowercase letters, digits and dashes." },
+                    "files": {
+                        "type": "object",
+                        "description": "Path within the extension's folder → the file's whole text. extension.json, \
+                            with \"app\", is needed the first time.",
+                        "additionalProperties": { "type": "string" },
+                    },
+                },
+                "required": ["id", "files"],
+            },
         }),
         json!({
             "name": CALL,
@@ -186,6 +215,7 @@ pub fn call(name: &str, args: &Value) -> Result<Value, Fail> {
                 found.name, found.id
             )
         }
+        WRITE => write(args)?,
         CALL => {
             let answer = page_call(args).inspect_err(|fail| {
                 log(&json!({ "event": "failed", "args": brief(args), "error": fail.message }));
@@ -247,6 +277,59 @@ fn page_call(args: &Value) -> Result<Value, Fail> {
         }
         other => Err(Fail::new(2, format!("unknown method: {other}"))),
     }
+}
+
+/// `extension_write`: the files into the draft's folder, the folder registered, `"mcp-app"` in its hosts (it
+/// was written from an app like this one, to be opened in it), and a build, whose errors are the agent's to fix.
+fn write(args: &Value) -> Result<String, Fail> {
+    let id = args.get("id").and_then(Value::as_str).unwrap_or_default();
+    if !crate::ext::is_id(id) {
+        return Err(Fail::new(2, format!("{id:?} is not an extension id: lowercase letters, digits and dashes")));
+    }
+    let files = args.get("files").and_then(Value::as_object).filter(|f| !f.is_empty()).ok_or_else(|| Fail::new(2, "`files` needs at least one file"))?;
+    let size: usize = files.values().filter_map(Value::as_str).map(str::len).sum();
+    if size > WRITE_LIMIT {
+        return Err(Fail::new(2, format!("{size} bytes is more than one write takes ({WRITE_LIMIT})")));
+    }
+    let dir = crate::ext::drafts_dir().join(id);
+    let mut written = Vec::new();
+    for (path, text) in files {
+        let text = text.as_str().ok_or_else(|| Fail::new(2, format!("{path}: a file's contents must be text")))?;
+        let rel = Path::new(path);
+        let inside = !path.is_empty() && rel.components().all(|c| matches!(c, std::path::Component::Normal(_)));
+        if !inside {
+            return Err(Fail::new(2, format!("{path:?} is not a path inside the extension's folder")));
+        }
+        let target = dir.join(rel);
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| Fail::new(1, format!("{}: {e}", parent.display())))?;
+        }
+        std::fs::write(&target, text).map_err(|e| Fail::new(1, format!("{}: {e}", target.display())))?;
+        written.push(path.as_str());
+    }
+
+    let manifest_path = dir.join("extension.json");
+    let text = std::fs::read_to_string(&manifest_path).map_err(|_| Fail::new(2, format!("{id} has no extension.json yet: write it too")))?;
+    let mut manifest: Value = serde_json::from_str(&text).map_err(|e| Fail::new(2, format!("extension.json: {e}")))?;
+    if manifest.get("id").and_then(Value::as_str) != Some(id) {
+        return Err(Fail::new(2, format!("extension.json's \"id\" must be {id:?}")));
+    }
+    let hosts = manifest.as_object_mut().ok_or_else(|| Fail::new(2, "extension.json must be an object"))?.entry("hosts").or_insert_with(|| json!([]));
+    if let Some(list) = hosts.as_array_mut().filter(|list| !list.iter().any(|h| h == HOST)) {
+        list.push(json!(HOST));
+        let text = serde_json::to_string_pretty(&manifest).unwrap_or_default() + "\n";
+        std::fs::write(&manifest_path, text).map_err(|e| Fail::new(1, format!("{}: {e}", manifest_path.display())))?;
+    }
+    crate::ext::register(id, &dir)?;
+    log(&json!({ "event": "write", "id": id, "files": written }));
+
+    let found = portable().into_iter().find(|p| p.id == id).ok_or_else(|| Fail::new(1, format!("{id} was written but is not found")))?;
+    build(&found).map_err(|fail| Fail::new(fail.code, format!("Wrote the files to {}, but {}", dir.display(), fail.message)))?;
+    Ok(format!(
+        "Wrote {} file(s) to {} and built {id}: it opens with open_extension now, and loads in Roer too.",
+        written.len(),
+        dir.display()
+    ))
 }
 
 /// Where the user last worked in Roer: the folder of the session touched last, if it is still there. What a

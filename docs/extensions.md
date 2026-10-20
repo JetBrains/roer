@@ -549,11 +549,22 @@ A tab gets `useSession()` as the conversation: `root` and `cwd` are the
 `cwd` it was opened with, or else the folder of the session the person last
 worked in in Roer; `busy` is false and `changed` null.
 
+An agent in a chat app usually has no files on the person's machine: what
+it writes stays in its own sandbox, out of `extension_dev`'s and
+`extension_install`'s reach. `extension_write({ id, files })` takes the
+files' contents instead and writes them to
+`~/.roer/extension-drafts/<id>/`, refusing any path outside it. It adds
+`"mcp-app"` to the manifest's `hosts`, registers the folder as `roer ext dev`
+would, without waiting for Roer, and builds it at once, so the build's
+errors come back to the agent to fix. The tool list then changes, and
+`open_extension` names the new extension.
+
 ### 12.2 When it fails
 
 The agent in the chat cannot see the tab. When a call or a render fails, the
 page tells it through `ui/update-model-context` and writes the error into the
-extension's own log, where `extension_logs` reads it. `roer mcp` appends what
+extension's own log, where `extension_logs` reads it, so it can fix it with
+`extension_write` and open the tab again. `roer mcp` appends what
 each app said of itself on connecting, and every open and failure, to
 `$ROER_HOME/mcp-apps.log`.
 
