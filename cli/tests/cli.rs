@@ -1151,8 +1151,9 @@ fn mcp_draws_views_in_a_conversation_that_draws_mcp_apps() {
     assert_eq!(replies[6]["result"]["content"][0]["text"], "", "a click is read once");
     assert_eq!(replies[7]["result"]["structuredContent"]["messages"], serde_json::json!([]), "a deleted surface is gone");
 
+    // The view page, or, in a roer built without the page (CI's), the note saying how to build it.
     let page = replies[8]["result"]["contents"][0]["text"].as_str().unwrap();
-    assert!(page.contains("data-view=\"genui\""), "{page}");
+    assert!(page.contains("<title>Roer view</title>"), "{page}");
     assert!(env.records("plugin-ui").is_empty(), "nothing went to a Roer session");
 }
 
