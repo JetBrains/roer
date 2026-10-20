@@ -1047,9 +1047,17 @@ fn mcp_offers_the_session_tools_only_inside_a_roer_session() {
     let here = pane(&env, "work", "sh");
     let list = serde_json::json!({ "method": "tools/list" });
 
+    // Outside a session, a client that draws no MCP Apps could only send a view to some session in the
+    // Roer app, so it is offered no view tools; one that draws them is.
     let outside = mcp(&env, &[], std::slice::from_ref(&list));
-    assert_eq!(tool_names(&outside[0]), ["show_ui", "read_ui_actions", "describe_extension_api", "extension_dev", "extension_install", "extension_logs", "list_extensions", "open_extension", "extension_write", "roer_ext_call"]);
-    assert_eq!(outside[0]["result"]["tools"][0]["inputSchema"]["required"], serde_json::json!(["messages", "session"]));
+    assert_eq!(tool_names(&outside[0]), ["describe_extension_api", "extension_dev", "extension_install", "extension_logs", "list_extensions", "open_extension", "extension_write", "roer_ext_call"]);
+    let draws = serde_json::json!({ "method": "initialize", "params": {
+        "protocolVersion": "2025-11-25", "clientInfo": { "name": "claude-ai", "version": "1" },
+        "capabilities": { "extensions": { "io.modelcontextprotocol/ui": { "mimeTypes": ["text/html;profile=mcp-app"] } } },
+    }});
+    let app = mcp(&env, &[], &[draws, list.clone()]);
+    assert_eq!(tool_names(&app[1])[..2], ["show_ui", "read_ui_actions"]);
+    assert_eq!(app[1]["result"]["tools"][0]["inputSchema"]["required"], serde_json::json!(["messages", "session"]));
 
     let vars = in_pane(&env, &here);
     let vars: Vec<(&str, &str)> = vars.iter().map(|(k, v)| (*k, v.as_str())).collect();
@@ -1076,6 +1084,28 @@ fn mcp_offers_the_session_tools_only_inside_a_roer_session() {
             "roer_ext_call"
         ]
     );
+}
+
+/// Codex in a plain terminal asked which Roer session to draw in, then drew there, in the Roer app: a client
+/// outside a session that draws no MCP Apps is told there is nowhere to show a view, and to answer in text.
+#[test]
+fn mcp_tells_a_client_that_cannot_draw_to_answer_in_text() {
+    let env = Env::new("mcp-nowhere");
+    pane(&env, "work", "sh");
+    let init = serde_json::json!({ "method": "initialize", "params": {
+        "protocolVersion": "2025-11-25", "capabilities": { "elicitation": {} }, "clientInfo": { "name": "codex-mcp-client", "version": "1" },
+    }});
+    let show = call("show_ui", serde_json::json!({ "session": "work", "messages": [{ "version": "v1.0", "deleteSurface": { "surfaceId": "s" } }] }));
+    let replies = mcp(&env, &[], &[init, show, call("read_ui_actions", serde_json::json!({ "session": "work" }))]);
+
+    let instructions = replies[0]["result"]["instructions"].as_str().unwrap();
+    assert!(instructions.contains("answer in text"), "{instructions}");
+    assert!(!instructions.contains("show_ui"), "{instructions}");
+    for reply in &replies[1..] {
+        assert_eq!(reply["result"]["isError"], true, "{reply}");
+        assert!(reply["result"]["content"][0]["text"].as_str().unwrap().contains("nowhere to show a view"), "{reply}");
+    }
+    assert!(env.records("plugin-ui").is_empty(), "nothing went to the session it named");
 }
 
 #[test]
@@ -1119,7 +1149,7 @@ fn mcp_offers_claude_code_nothing_outside_a_roer_session() {
 
     let app = mcp(&env, &[], &[init("some-other-client"), list.clone()]);
     assert!(app[0]["result"]["instructions"].is_string());
-    assert_eq!(tool_names(&app[1]), ["show_ui", "read_ui_actions", "describe_extension_api", "extension_dev", "extension_install", "extension_logs", "list_extensions", "open_extension", "extension_write", "roer_ext_call"]);
+    assert_eq!(tool_names(&app[1]), ["describe_extension_api", "extension_dev", "extension_install", "extension_logs", "list_extensions", "open_extension", "extension_write", "roer_ext_call"]);
 
     let vars = in_pane(&env, &here);
     let vars: Vec<(&str, &str)> = vars.iter().map(|(k, v)| (*k, v.as_str())).collect();

@@ -73,7 +73,7 @@ fn tools_changed() -> bool {
 }
 
 pub fn serve(roer: &Roer) -> Result<(), Fail> {
-    let server = Server { roer, here: roer.tmux.inside_roer().ok(), idle: Cell::new(false) };
+    let server = Server { roer, here: roer.tmux.inside_roer().ok(), idle: Cell::new(false), draws: Cell::new(false) };
     watch_extension_tools();
     let stdin = std::io::stdin();
     let mut stdout = std::io::stdout();
@@ -102,6 +102,8 @@ struct Server<'a> {
     here: Option<String>,
     /// Offering nothing: Claude Code, outside a Roer session.
     idle: Cell<bool>,
+    /// The client said in `initialize` that it draws MCP Apps.
+    draws: Cell<bool>,
 }
 
 impl Server<'_> {
@@ -116,6 +118,7 @@ impl Server<'_> {
                 let version = VERSIONS.iter().find(|v| **v == asked).unwrap_or(&VERSIONS[VERSIONS.len() - 1]);
                 let client = params.pointer("/clientInfo/name").and_then(Value::as_str).unwrap_or_default();
                 self.idle.set(self.here.is_none() && client == "claude-code");
+                self.draws.set(params.pointer("/capabilities/extensions/io.modelcontextprotocol~1ui").is_some());
                 crate::mcp_apps::log_client(&params);
                 let mut reply = json!({
                     "protocolVersion": version,
@@ -171,6 +174,16 @@ impl Server<'_> {
     /// whole component catalog and worked examples, which used to live here
     /// and so were the part a cut client never got to.
     fn instructions(&self) -> String {
+        if !self.panel() {
+            return format!(
+                "This agent is not running in a Roer session, and its app does not draw MCP Apps, so Roer has \
+                 nowhere to show a view here: answer in text. Ask the user to start the agent in a Roer session \
+                 when they want its Generative UI.\n\n\
+                 Roer's extensions are tabs of their own in Roer's stage, written in React. Read `{EXTENSIONS_URI}` \
+                 (or call `describe_extension_api`) before writing one, then load it with `extension_dev`.{}",
+                extension_instructions(&crate::ext_tools::published())
+            );
+        }
         let scope = if self.here.is_some() {
             "This agent is running in a Roer session: `show_ui` and `read_ui_actions` act on it unless given \
              another `session`, `save_ui`, `load_ui` and `list_ui` keep views with this project and refill them with new data, and `add_task`, \
@@ -232,6 +245,13 @@ impl Server<'_> {
         }
     }
 
+    /// Whether a view `show_ui` draws has somewhere to go that the person sees from where the agent runs:
+    /// its own Roer session's panel, or a client that draws MCP Apps. Elsewhere, a Codex in a plain terminal
+    /// say, it could only land in some session in the Roer app, which they would have to name for no reason.
+    fn panel(&self) -> bool {
+        self.here.is_some() || self.draws.get()
+    }
+
     fn tools(&self) -> Vec<Value> {
         if self.idle.get() {
             return Vec::new();
@@ -247,8 +267,9 @@ impl Server<'_> {
             }
             names
         };
-        let mut tools = vec![
-            json!({
+        let mut tools = Vec::new();
+        if self.panel() {
+            tools.push(json!({
                 "name": "show_ui",
                 "description": format!("Show or update a view in a Roer session's Generative UI panel. `messages` is \
                     the sequence of A2UI v1.0 messages to send: usually one createSurface with the components and \
@@ -263,8 +284,8 @@ impl Server<'_> {
                     },
                     "required": required(vec!["messages"]),
                 },
-            }),
-            json!({
+            }));
+            tools.push(json!({
                 "name": "read_ui_actions",
                 "description": "The button clicks waiting in a Roer session's Generative UI panel, oldest first, \
                     each an A2UI v1.0 action message on its own line, consumed as it is read. Empty when nothing \
@@ -274,8 +295,8 @@ impl Server<'_> {
                     "properties": { "session": session },
                     "required": required(vec![]),
                 },
-            }),
-        ];
+            }));
+        }
         if self.here.is_some() {
             let name = json!({ "type": "string", "description": "Letters, digits, - and _ only." });
             tools.push(json!({
@@ -433,6 +454,13 @@ impl Server<'_> {
     fn call(&self, name: &str, args: &Value) -> Result<String, Fail> {
         if self.idle.get() {
             return Err(Fail::new(3, "Roer's tools are only offered to Claude Code running in a Roer session"));
+        }
+        if !self.panel() && ["show_ui", "read_ui_actions"].contains(&name) {
+            return Err(Fail::new(
+                3,
+                "Roer has nowhere to show a view here: this agent is not in a Roer session, and its app does not draw \
+                 MCP Apps. Answer in text.",
+            ));
         }
         match name {
             "show_ui" => {
