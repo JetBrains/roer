@@ -209,10 +209,18 @@ jobs:
           workspaces: cli -> target
           key: cli-linux
 
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+
       - name: Build and stage
         run: |
           set -euo pipefail
-          cargo build --release --locked --manifest-path cli/Cargo.toml
+          npm run build:mcp-app
+          ROER_REQUIRE_MCP_APP=1 cargo build --release --locked --manifest-path cli/Cargo.toml
           mkdir -p shim dist
           install -m 755 cli/target/release/roer shim/roer
           install -m 644 scripts/roer-tmux.conf shim/roer-tmux.conf
@@ -274,10 +282,18 @@ jobs:
           workspaces: cli -> target
           key: cli-windows
 
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+
       - name: Build and package
         run: |
           set -euo pipefail
-          cargo build --release --locked --manifest-path cli/Cargo.toml
+          npm run build:mcp-app
+          ROER_REQUIRE_MCP_APP=1 cargo build --release --locked --manifest-path cli/Cargo.toml
           bash .github/windows/fetch-psmux.sh "$RUNNER_TEMP/psmux"
           mkdir -p dist
           bash .github/windows/package-cli.sh cli/target/release/roer.exe "$RUNNER_TEMP/psmux" \

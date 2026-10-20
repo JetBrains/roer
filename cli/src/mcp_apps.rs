@@ -54,7 +54,8 @@ pub fn resource() -> Value {
     })
 }
 
-/// The page's built JS and CSS: `$ROER_MCP_APP` (a `dist-mcp-app` folder), else this checkout's `dist-mcp-app`.
+/// The page's built JS and CSS: `$ROER_MCP_APP` (a `dist-mcp-app` folder, to try a new build without rebuilding
+/// roer), else the copy built into this roer (`build.rs`), else this checkout's `dist-mcp-app`.
 fn runtime() -> Result<(String, String), PathBuf> {
     let from = |dir: PathBuf| match (std::fs::read_to_string(dir.join("runtime.js")), std::fs::read_to_string(dir.join("runtime.css"))) {
         (Ok(js), Ok(css)) => Ok((js, css)),
@@ -63,6 +64,9 @@ fn runtime() -> Result<(String, String), PathBuf> {
     if let Some(dir) = std::env::var_os("ROER_MCP_APP").filter(|v| !v.is_empty()) {
         return from(PathBuf::from(dir));
     }
+    #[cfg(mcp_app)]
+    return Ok((include_str!(env!("ROER_MCP_APP_JS")).to_string(), include_str!(env!("ROER_MCP_APP_CSS")).to_string()));
+    #[cfg(not(mcp_app))]
     from(Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("dist-mcp-app"))
 }
 
