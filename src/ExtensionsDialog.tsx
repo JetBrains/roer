@@ -10,6 +10,7 @@ import {
 } from "./extensions/loader";
 import { Badge, EmptyState } from "./generative-ui/components";
 import { listen } from "./lib/backend";
+import { connectOtherApp, MCP_APP_HOST, otherApps, type OtherApp } from "./lib/otherApps";
 
 /** One row: a bundled extension, or one from disk. */
 interface Row {
@@ -19,12 +20,22 @@ interface Row {
   scope: "bundled" | "user" | "session";
   dir?: string;
   errors: string[];
+  /** Opens in the Claude app's and Codex's chats too. */
+  elsewhere?: boolean;
 }
 
 const SCOPES: Record<Row["scope"], string> = {
   bundled: "Built in",
   user: "Installed",
   session: "Session",
+};
+
+/** What each state of a connection to another app means, said in its row. */
+const APP_STATES: Record<OtherApp["state"], string> = {
+  connected: "Its chats open the ones marked Other apps",
+  off: "Its chats could open the ones marked Other apps",
+  theirs: "Has a roer entry you set up yourself, left as it is",
+  missing: "Not on this machine",
 };
 
 const SCOPE_TITLES: Record<Row["scope"], string> = {
@@ -43,6 +54,27 @@ export function ExtensionsDialog({ onClose, onNewTab }: { onClose: () => void; o
   const [found, setFound] = useState<ExtensionInfo[] | null>(null);
   const [disabled, setDisabled] = useState<ReadonlySet<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
+  const [apps, setApps] = useState<OtherApp[] | null>(null);
+  const [connecting, setConnecting] = useState<string | null>(null);
+  // Its own: trouble with another app says nothing about the extensions above it.
+  const [appsError, setAppsError] = useState<string | null>(null);
+
+  useEffect(() => {
+    otherApps().then(setApps, (cause: unknown) => setAppsError(String(cause)));
+  }, []);
+
+  const connect = async (app: OtherApp, on: boolean) => {
+    setAppsError(null);
+    setConnecting(app.id);
+    try {
+      setApps(await connectOtherApp(app.id, on));
+    } catch (cause) {
+      setAppsError(String(cause));
+      void otherApps().then(setApps, () => undefined);
+    } finally {
+      setConnecting(null);
+    }
+  };
 
   useEffect(() => {
     const back = document.activeElement;
@@ -101,6 +133,7 @@ export function ExtensionsDialog({ onClose, onNewTab }: { onClose: () => void; o
     scope: info.scope,
     dir: info.dir,
     errors: info.ok ? [] : info.errors,
+    elsewhere: info.hosts?.includes(MCP_APP_HOST) ?? false,
   }));
 
   const row = (item: Row) => {
@@ -114,6 +147,11 @@ export function ExtensionsDialog({ onClose, onNewTab }: { onClose: () => void; o
             <span title={SCOPE_TITLES[item.scope]}>
               <Badge tone={item.scope === "session" ? "warning" : "neutral"}>{SCOPES[item.scope]}</Badge>
             </span>
+            {item.elsewhere ? (
+              <span title="Opens in the Claude app's and Codex's chats, once they are connected">
+                <Badge tone="accent">Other apps</Badge>
+              </span>
+            ) : null}
             {!on ? <Badge>Off</Badge> : failed ? <Badge tone="danger">Build failed</Badge> : null}
           </div>
           {item.description ? <p className="ext-row-text">{item.description}</p> : null}
@@ -151,34 +189,73 @@ export function ExtensionsDialog({ onClose, onNewTab }: { onClose: () => void; o
           if (event.key === "Escape") onClose();
         }}
       >
-        <h2>Extensions</h2>
-        <p className="muted ext-intro">A switched-off extension is neither built nor loaded: its tabs and tools go away until you switch it on.</p>
-        {error ? <p className="error">{error}</p> : null}
+        <div className="ext-head">
+          <h2>Extensions</h2>
+          <p className="muted ext-intro">A switched-off extension is neither built nor loaded: its tabs and tools go away until you switch it on.</p>
+          {error ? <p className="error">{error}</p> : null}
+        </div>
 
-        <h3>Built in</h3>
-        <ul className="ext-list">{bundled.map(row)}</ul>
+        <div className="ext-body">
+          <h3>Built in</h3>
+          <ul className="ext-list">{bundled.map(row)}</ul>
 
-        <h3>Yours</h3>
-        {found === null && !error ? <EmptyState variant="loading" text="Reading your extensions…" /> : null}
-        {found !== null && yours.length === 0 ? (
-          <EmptyState
-            text="No extensions of your own yet."
-            detail="Ask your agent for a tab you will keep coming back to, such as one with your open pull requests, and it writes one."
-            footer={
-              onNewTab ? (
-                <button type="button" className="gen-button" onClick={onNewTab}>
-                  New tab…
-                </button>
-              ) : undefined
-            }
-          />
-        ) : null}
-        {yours.length > 0 ? <ul className="ext-list">{yours.map(row)}</ul> : null}
-        {yours.length > 0 && onNewTab ? (
-          <button type="button" className="gen-button ext-new-tab" onClick={onNewTab}>
-            New tab…
-          </button>
-        ) : null}
+          <h3>Yours</h3>
+          {found === null && !error ? <EmptyState variant="loading" text="Reading your extensions…" /> : null}
+          {found !== null && yours.length === 0 ? (
+            <EmptyState
+              text="No extensions of your own yet."
+              detail="Ask your agent for a tab you will keep coming back to, such as one with your open pull requests, and it writes one."
+              footer={
+                onNewTab ? (
+                  <button type="button" className="gen-button" onClick={onNewTab}>
+                    New extension…
+                  </button>
+                ) : undefined
+              }
+            />
+          ) : null}
+          {yours.length > 0 ? <ul className="ext-list">{yours.map(row)}</ul> : null}
+          {/* Held at the bottom of the list as it scrolls, so a new extension is always a click away. */}
+          {yours.length > 0 && onNewTab ? (
+            <div className="ext-new-tab">
+              <button type="button" className="gen-button" onClick={onNewTab}>
+                New extension…
+              </button>
+            </div>
+          ) : null}
+        </div>
+
+        {/* Always in view, under the list: whether the person's other apps can open these. */}
+        <div className="ext-apps">
+          <h3>In other apps</h3>
+          {appsError ? <p className="error">{appsError}</p> : null}
+          {apps === null && !appsError ? <p className="muted ext-intro">Looking for the apps…</p> : null}
+          {apps ? (
+            <ul className="ext-list">
+              {apps.map((app) => (
+                <li key={app.id} className={app.state === "missing" ? "ext-row ext-app off" : "ext-row ext-app"} title={app.config ?? undefined}>
+                  <div className="ext-row-main">
+                    <div className="ext-row-head">
+                      <strong>{app.name}</strong>
+                      {app.state === "connected" ? <Badge tone="success">Connected</Badge> : null}
+                      <span className="ext-row-text ext-app-state">{APP_STATES[app.state]}</span>
+                    </div>
+                  </div>
+                  {app.state === "connected" || app.state === "off" ? (
+                    <button
+                      type="button"
+                      className={app.state === "off" ? "gen-button primary" : "gen-button"}
+                      disabled={connecting !== null}
+                      onClick={() => void connect(app, app.state === "off")}
+                    >
+                      {connecting === app.id ? "…" : app.state === "off" ? "Connect" : "Disconnect"}
+                    </button>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
       </div>
     </div>
   );

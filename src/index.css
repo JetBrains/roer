@@ -4728,9 +4728,51 @@ button.danger:hover {
   align-self: flex-start;
   width: min(560px, 92vw);
   max-height: 76vh;
-  overflow-y: auto;
-  padding: 14px 16px 10px;
   outline: none;
+}
+
+/* The header and the other apps stay put; only the lists between them scroll. */
+.ext-head {
+  flex: none;
+  padding: 14px 16px 0;
+}
+
+.ext-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 16px;
+}
+
+.ext-new-tab {
+  position: sticky;
+  bottom: 0;
+  padding: 8px 0 10px;
+  background: var(--ide-head);
+}
+
+.ext-apps {
+  flex: none;
+  padding: 0 16px 10px;
+  border-top: 1px solid var(--ide-border);
+  background: var(--ide-head);
+}
+
+.ext-apps .ext-row {
+  align-items: center;
+  padding: 6px 0;
+}
+
+.ext-apps .ext-row:first-child {
+  border-top: none;
+}
+
+.ext-app-state {
+  margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .popup.extensions h2 {
@@ -4970,10 +5012,6 @@ button.danger:hover {
 .tabs button.tab-add:hover {
   color: var(--roer-fg);
   background: var(--roer-row-hover);
-}
-
-.ext-new-tab {
-  margin-top: 8px;
 }
 
 /* What is waiting for the agent, in the New tab dialog. */

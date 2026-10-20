@@ -384,6 +384,8 @@ fn dispatch(state: &Arc<AppState>, cmd: &str, args: Value, cid: Option<&str>) ->
             call_res!(args, crate::claude_setup::claude_setup_apply, "skills": bool, "sharedSkills": bool, "mcp": bool)
         }
         "claude_setup_dismiss" => call_res!(args, crate::claude_setup::claude_setup_dismiss,),
+        "other_apps" => call_res!(args, crate::other_apps::other_apps,),
+        "other_app_connect" => call_res!(args, crate::other_apps::other_app_connect, "id": String, "connect": bool),
 
         // workspaces
         "workspaces_list" => call!(args, crate::workspaces::workspaces_list,),

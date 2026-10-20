@@ -16,6 +16,7 @@ mod git;
 mod handoff;
 mod history;
 mod logfile;
+mod other_apps;
 mod plugin_ui;
 mod pr_draft;
 mod process;
@@ -95,6 +96,8 @@ pub fn run() {
             claude_setup::claude_setup_status,
             claude_setup::claude_setup_apply,
             claude_setup::claude_setup_dismiss,
+            other_apps::other_apps,
+            other_apps::other_app_connect,
             workspaces::workspaces_list,
             workspaces::workspace_create,
             workspaces::workspace_rename,

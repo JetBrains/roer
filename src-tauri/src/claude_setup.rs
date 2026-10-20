@@ -106,7 +106,7 @@ fn status(mcp: &str, skills: &str, shared: &str, asked: bool) -> SetupStatus {
     }
 }
 
-fn roer(args: &[&str]) -> Result<String, String> {
+pub(crate) fn roer(args: &[&str]) -> Result<String, String> {
     let bin = crate::roer::bin();
     let out = crate::process::command(&bin)
         .args(args)

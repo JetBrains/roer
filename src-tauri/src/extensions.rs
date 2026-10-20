@@ -112,6 +112,9 @@ struct Manifest {
     app: Option<String>,
     #[serde(default)]
     server: Option<String>,
+    /// Where else it opens: `"mcp-app"` for the Claude app and Codex (`cli/src/mcp_apps.rs`).
+    #[serde(default)]
+    hosts: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -146,6 +149,9 @@ pub struct ExtensionInfo {
     /// Switched off by the person: neither built nor loaded, and its server not started.
     #[serde(default)]
     pub disabled: bool,
+    /// The manifest's `hosts`, read again each time rather than kept with the build: where else it opens.
+    #[serde(default)]
+    pub hosts: Vec<String>,
 }
 
 /// What the frontend imports: the built module, and its stylesheet if any.
@@ -335,6 +341,16 @@ fn read_status(id: &str) -> Option<ExtensionInfo> {
 /// The extension as built from its sources now, building it if the last
 /// build was of something else.
 fn ensure(found: &Found) -> ExtensionInfo {
+    let mut info = ensure_built(found);
+    info.hosts = hosts(found);
+    info
+}
+
+fn hosts(found: &Found) -> Vec<String> {
+    found.manifest.as_ref().map(|m| m.hosts.clone()).unwrap_or_default()
+}
+
+fn ensure_built(found: &Found) -> ExtensionInfo {
     let _guard = BUILDING.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     let hash = fingerprint(found);
     if let Some(status) = read_status(&found.id) {
@@ -364,6 +380,7 @@ fn build(found: &Found, hash: String) -> ExtensionInfo {
         errors: Vec::new(),
         built_at: now(),
         disabled: false,
+        hosts: Vec::new(),
     };
     let manifest = match &found.manifest {
         Ok(manifest) => manifest,
@@ -524,9 +541,11 @@ fn described(found: &Found) -> ExtensionInfo {
             errors: Vec::new(),
             built_at: 0,
             disabled: false,
+            hosts: Vec::new(),
         });
     info.scope = found.scope.to_string();
     info.disabled = true;
+    info.hosts = hosts(found);
     info
 }
 

@@ -513,9 +513,9 @@ There's no compatibility promise. What Roer does instead:
 
 An extension's tab can open in the chat of an app that draws MCP Apps, the
 Claude app and Codex among them, with no Roer window: `roer mcp`, which those
-apps already run, is the host there. The extension opts in: it lists
+apps already run, is the host there. Both sides opt in. The extension lists
 `"mcp-app"` in its manifest's `hosts`, since only its author knows it works
-without a terminal beside it.
+without a terminal beside it, and the person connects the app (§12.3).
 
 ### 12.1 Opening one
 
@@ -570,6 +570,15 @@ extension's own log, where `extension_logs` reads it, so it can fix it with
 `extension_write` and open the tab again. `roer mcp` appends what
 each app said of itself on connecting, and every open and failure, to
 `$ROER_HOME/mcp-apps.log`.
+
+### 12.3 Connecting an app
+
+`roer mcp install --client claude-desktop` or `--client codex` registers
+`roer mcp` with that app (Codex's through `codex mcp`, which also turns on its
+`enable_mcp_apps` feature). The Extensions dialog's "In other apps" rows, kept
+in view under the list, do the same with a Connect button, and mark each
+extension that opens there "Other apps". Nothing connects either app on its
+own: the launch's `install --auto` only keeps Claude Code's entry up to date.
 
 ## Open questions
 
