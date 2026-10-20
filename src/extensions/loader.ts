@@ -30,6 +30,8 @@ export interface ExtensionInfo {
   builtAt: number;
   /** Switched off: neither built nor loaded. */
   disabled?: boolean;
+  /** Where else it opens, from its manifest: `"mcp-app"` for the Claude app and Codex. */
+  hosts?: string[];
 }
 
 interface Bundle {
