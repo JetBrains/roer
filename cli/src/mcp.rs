@@ -15,7 +15,7 @@
 //! JSON-RPC 2.0, one message per line, as MCP's stdio transport has it. Only
 //! the few methods a tools-only server needs; stdout carries nothing else.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::io::{BufRead, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -73,7 +73,7 @@ fn tools_changed() -> bool {
 }
 
 pub fn serve(roer: &Roer) -> Result<(), Fail> {
-    let server = Server { roer, here: roer.tmux.inside_roer().ok(), idle: Cell::new(false), draws: Cell::new(false) };
+    let server = Server { roer, here: roer.tmux.inside_roer().ok(), idle: Cell::new(false), draws: Cell::new(false), views: RefCell::default() };
     watch_extension_tools();
     let stdin = std::io::stdin();
     let mut stdout = std::io::stdout();
@@ -104,6 +104,8 @@ struct Server<'a> {
     idle: Cell<bool>,
     /// The client said in `initialize` that it draws MCP Apps.
     draws: Cell<bool>,
+    /// What `show_ui` drew in the conversation, when it draws there.
+    views: RefCell<crate::mcp_apps::Views>,
 }
 
 impl Server<'_> {
@@ -144,6 +146,18 @@ impl Server<'_> {
             "tools/call" => {
                 let name = params.get("name").and_then(Value::as_str).unwrap_or_default();
                 let args = params.get("arguments").cloned().unwrap_or_else(|| json!({}));
+                if !self.idle.get() && (self.in_chat(&args) && ["show_ui", "read_ui_actions"].contains(&name) || name == crate::mcp_apps::VIEW_ACTION && self.draws.get()) {
+                    let mut views = self.views.borrow_mut();
+                    let outcome = match name {
+                        "show_ui" => views.show(&args),
+                        "read_ui_actions" => Ok(views.take()),
+                        _ => views.act(&args),
+                    };
+                    return Some(match outcome {
+                        Ok(whole) => result(id, whole),
+                        Err(fail) => result(id, json!({ "content": [{ "type": "text", "text": fail.message }], "isError": true })),
+                    });
+                }
                 if !self.idle.get() && [crate::mcp_apps::OPEN, crate::mcp_apps::CALL, crate::mcp_apps::WRITE].contains(&name) {
                     let outcome = crate::mcp_apps::call(name, &args);
                     // A written extension is one more that open_extension's description names.
@@ -189,16 +203,19 @@ impl Server<'_> {
              another `session`, `save_ui`, `load_ui` and `list_ui` keep views with this project and refill them with new data, and `add_task`, \
              `update_task`, `list_tasks` and `delete_task` keep the user's personal tasks with it."
         } else {
-            "This agent is not running in a Roer session, so each tool needs the `session` to act on: \
-             the name Roer shows for it. Ask the user which session if they have not said."
+            // Outside a session the client draws MCP Apps, or `instructions` returned above.
+            "This agent is not running in a Roer session, and its app draws MCP Apps: `show_ui` draws its views \
+             right here in the conversation, and a click on one arrives as the user's next message, and in \
+             `read_ui_actions`. Given a `session`, either acts on that Roer session's panel in the Roer app instead; \
+             do that only when the user asks for it."
         };
         format!(
             "{scope}\n\n\
-             Roer's Generative UI: a panel beside a Roer session's terminal that draws UI from a small, \
-             fixed catalog of trusted components, never from code you write. Every message is an envelope \
+             Roer's Generative UI draws UI from a small, fixed catalog of trusted components, never from code \
+             you write: in a panel beside a Roer session's terminal, or in a conversation that draws MCP Apps. Every message is an envelope \
              with `\"version\": \"v1.0\"` and one body (`createSurface`, `updateComponents`, \
              `updateDataModel` or `deleteSurface`), naming the `surfaceId` it belongs to; pass them to \
-             `show_ui`, which shows the panel itself once the first message arrives.\n\n\
+             `show_ui`, which shows the view once the first message arrives.\n\n\
              Before drafting anything, read the `{CATALOG_URI}` resource: it has the whole catalog, every \
              field, and worked examples, none of which fits here reliably. There is no escape hatch to \
              arbitrary markup, so whatever component you reach for is only documented there.\n\n\
@@ -230,6 +247,7 @@ impl Server<'_> {
                 "mimeType": "text/markdown",
             }),
             crate::mcp_apps::resource(),
+            crate::mcp_apps::view_resource(),
         ]
     }
 
@@ -240,7 +258,7 @@ impl Server<'_> {
         match uri {
             CATALOG_URI => Ok(json!({ "uri": CATALOG_URI, "mimeType": "text/markdown", "text": GUIDE })),
             EXTENSIONS_URI => Ok(json!({ "uri": EXTENSIONS_URI, "mimeType": "text/markdown", "text": crate::ext::guide() })),
-            crate::mcp_apps::LOADER_URI => Ok(crate::mcp_apps::read()),
+            crate::mcp_apps::LOADER_URI | crate::mcp_apps::VIEW_URI => Ok(crate::mcp_apps::read(uri)),
             _ => Err(Fail::new(2, format!("no such resource: {uri}"))),
         }
     }
@@ -252,26 +270,36 @@ impl Server<'_> {
         self.here.is_some() || self.draws.get()
     }
 
+    /// Whether `show_ui` and `read_ui_actions` act on this conversation: outside a Roer session, in a client that
+    /// draws MCP Apps, unless the agent named a session to act on instead.
+    fn in_chat(&self, args: &Value) -> bool {
+        self.here.is_none() && self.draws.get() && args.get("session").and_then(Value::as_str).is_none_or(str::is_empty)
+    }
+
     fn tools(&self) -> Vec<Value> {
         if self.idle.get() {
             return Vec::new();
         }
+        let chat = self.here.is_none() && self.draws.get();
         let session = if self.here.is_some() {
             json!({ "type": "string", "description": "A Roer session's name, to act on it rather than this one." })
+        } else if chat {
+            json!({ "type": "string", "description": "A Roer session's name, to act on its panel in the Roer app rather than this conversation." })
         } else {
             json!({ "type": "string", "description": "The Roer session to act on, by the name Roer shows for it." })
         };
         let required = |mut names: Vec<&'static str>| {
-            if self.here.is_none() {
+            if self.here.is_none() && !chat {
                 names.push("session");
             }
             names
         };
         let mut tools = Vec::new();
         if self.panel() {
+            let where_ = if chat { "right here in the conversation" } else { "in a Roer session's Generative UI panel" };
             tools.push(json!({
                 "name": "show_ui",
-                "description": format!("Show or update a view in a Roer session's Generative UI panel. `messages` is \
+                "description": format!("Show or update a view {where_}. `messages` is \
                     the sequence of A2UI v1.0 messages to send: usually one createSurface with the components and \
                     data model inline, later updateComponents / updateDataModel for the same surfaceId. The \
                     messages and the whole component catalog are in this server's instructions, and also as a \
@@ -284,12 +312,20 @@ impl Server<'_> {
                     },
                     "required": required(vec!["messages"]),
                 },
+                "_meta": if chat {
+                    json!({ "ui": { "resourceUri": crate::mcp_apps::VIEW_URI }, "ui/resourceUri": crate::mcp_apps::VIEW_URI })
+                } else {
+                    json!({})
+                },
             }));
             tools.push(json!({
                 "name": "read_ui_actions",
-                "description": "The button clicks waiting in a Roer session's Generative UI panel, oldest first, \
+                "description": if chat { "The button clicks waiting in the views show_ui drew in this conversation (each also arrived as \
+                    the user's message), or with `session` in that Roer session's panel, oldest first, \
                     each an A2UI v1.0 action message on its own line, consumed as it is read. Empty when nothing \
-                    was clicked.",
+                    was clicked." } else { "The button clicks waiting in a Roer session's Generative UI panel, oldest first, \
+                    each an A2UI v1.0 action message on its own line, consumed as it is read. Empty when nothing \
+                    was clicked." },
                 "inputSchema": {
                     "type": "object",
                     "properties": { "session": session },
@@ -421,6 +457,9 @@ impl Server<'_> {
             "inputSchema": { "type": "object", "properties": {} },
         }));
         tools.extend(crate::mcp_apps::tools());
+        if chat {
+            tools.push(crate::mcp_apps::view_action_tool());
+        }
         tools.extend(self.extension_tools(&session));
         tools
     }

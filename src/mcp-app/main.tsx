@@ -3,7 +3,8 @@
  * `roer mcp` serves as `ui://roer/extension`. It hands the extension the same
  * host modules the desktop app does (`extensions/host.ts`), with the backend
  * swapped for `./backend`, then mounts the tab the extension registers, so
- * the extension's own build runs here unchanged.
+ * the extension's own build runs here unchanged. Served as `ui://roer/view`,
+ * it draws `show_ui`'s views instead (`./view`).
  */
 import { Component, type ErrorInfo, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
@@ -16,6 +17,7 @@ import { installHost } from "../extensions/host";
 import { Registry, type StageTabEntry } from "../extensions/registry";
 import { setExtension } from "./backend";
 import { call, failed, on, open, request, resized, say, type HostContext } from "./bridge";
+import { runView } from "./view";
 
 interface Args {
   id?: string;
@@ -167,8 +169,15 @@ let render: (() => void) | undefined;
 
 let opening = "";
 
-main().catch((error: unknown) => {
-  const message = String(error instanceof Error ? error.message : error);
-  if (opening) failed(opening, `could not open: ${message}`);
-  show(<Message error>{message}</Message>);
-});
+const fail = (error: unknown) => String(error instanceof Error ? error.message : error);
+
+// The same page draws `show_ui`'s views, when the root it is served with says so.
+if (document.getElementById("root")?.dataset.view === "genui") {
+  runView(root).catch((error: unknown) => show(<Message error>{fail(error)}</Message>));
+} else {
+  main().catch((error: unknown) => {
+    const message = fail(error);
+    if (opening) failed(opening, `could not open: ${message}`);
+    show(<Message error>{message}</Message>);
+  });
+}

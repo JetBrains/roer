@@ -10,6 +10,12 @@
 //! script. Only an extension whose manifest lists `"mcp-app"` in `hosts`
 //! opens: its author has seen it work outside Roer.
 //!
+//! Generative UI views go the same way: outside a Roer session, in a client
+//! that draws MCP Apps, `show_ui` draws in the conversation, on the page
+//! `ui://roer/view` (the same runtime, told to draw views), not in a Roer
+//! session's panel. `Views` keeps what has been shown, so each call's page
+//! draws its surfaces whole, and the clicks on them for `read_ui_actions`.
+//!
 //! Opens and failures are appended to `$ROER_HOME/mcp-apps.log`, with what
 //! each client said of itself when it connected.
 
@@ -26,11 +32,13 @@ use serde_json::{json, Value};
 use crate::{records, Fail};
 
 pub const LOADER_URI: &str = "ui://roer/extension";
+pub const VIEW_URI: &str = "ui://roer/view";
 const LOADER_MIME: &str = "text/html;profile=mcp-app";
 
 pub const OPEN: &str = "open_extension";
 pub const CALL: &str = "roer_ext_call";
 pub const WRITE: &str = "extension_write";
+pub const VIEW_ACTION: &str = "roer_view_action";
 
 /// What one `extension_write` may hold: an extension's sources, not its assets' worth of video.
 const WRITE_LIMIT: usize = 20 * 1024 * 1024;
@@ -54,6 +62,15 @@ pub fn resource() -> Value {
     })
 }
 
+pub fn view_resource() -> Value {
+    json!({
+        "uri": VIEW_URI,
+        "name": "Roer view",
+        "description": "Draws the Generative UI views show_ui sends, in the conversation.",
+        "mimeType": LOADER_MIME,
+    })
+}
+
 /// The page's built JS and CSS: `$ROER_MCP_APP` (a `dist-mcp-app` folder, to try a new build without rebuilding
 /// roer), else the copy built into this roer (`build.rs`), else this checkout's `dist-mcp-app`.
 fn runtime() -> Result<(String, String), PathBuf> {
@@ -70,11 +87,13 @@ fn runtime() -> Result<(String, String), PathBuf> {
     from(Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("dist-mcp-app"))
 }
 
-/// The page, whole: the runtime's CSS and JS inline, since the client's iframe fetches nothing else.
-pub fn read() -> Value {
+/// The page, whole: the runtime's CSS and JS inline, since the client's iframe fetches nothing else. The view
+/// page is the same runtime, told by its root to draw `show_ui`'s views rather than an extension.
+pub fn read(uri: &str) -> Value {
+    let (title, root) = if uri == VIEW_URI { ("Roer view", "<div id=\"root\" data-view=\"genui\"></div>") } else { ("Roer extension", "<div id=\"root\"></div>") };
     let body = match runtime() {
         Ok((js, css)) => format!(
-            "<style>{}</style>\n<div id=\"root\"></div>\n<script type=\"module\">{}</script>",
+            "<style>{}</style>\n{root}\n<script type=\"module\">{}</script>",
             css.replace("</style", "<\\/style"),
             js.replace("</script", "<\\/script")
         ),
@@ -89,10 +108,10 @@ pub fn read() -> Value {
     };
     let html = format!(
         "<!doctype html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width, \
-         initial-scale=1\">\n<title>Roer extension</title>\n</head>\n<body>\n{body}\n</body>\n</html>\n"
+         initial-scale=1\">\n<title>{title}</title>\n</head>\n<body>\n{body}\n</body>\n</html>\n"
     );
     json!({
-        "uri": LOADER_URI,
+        "uri": uri,
         "mimeType": LOADER_MIME,
         "text": html,
         "_meta": { "ui": { "prefersBorder": true } },
@@ -202,6 +221,90 @@ pub fn tools() -> Vec<Value> {
             "_meta": { "ui": { "visibility": ["app"] } },
         }),
     ]
+}
+
+/// What `show_ui` has drawn in this conversation, and the clicks on it not yet read. One `roer mcp` serves one
+/// conversation, so this lives as long as it does.
+#[derive(Default)]
+pub struct Views {
+    /// Every message of each surface still shown, in order: a call's page is new, so it draws these whole.
+    messages: Vec<Value>,
+    /// Action messages, one JSON line each, for `read_ui_actions`.
+    actions: Vec<String>,
+}
+
+/// The surface an A2UI v1.0 message is about.
+fn surface_of(message: &Value) -> Option<&str> {
+    ["createSurface", "updateComponents", "updateDataModel", "deleteSurface"]
+        .iter()
+        .find_map(|body| message.get(*body))
+        .and_then(|body| body.get("surfaceId"))
+        .and_then(Value::as_str)
+}
+
+impl Views {
+    /// `show_ui`'s whole result: its messages kept, and every message of the surfaces they touch as the
+    /// structured content the view page draws.
+    pub fn show(&mut self, args: &Value) -> Result<Value, Fail> {
+        let messages = args.get("messages").and_then(Value::as_array).filter(|m| !m.is_empty());
+        let messages = messages.ok_or_else(|| Fail::new(2, "`messages` needs at least one message"))?;
+        let mut touched = Vec::new();
+        for (n, message) in messages.iter().enumerate() {
+            let Some(surface) = surface_of(message).filter(|_| message.get("version") == Some(&json!("v1.0"))) else {
+                return Err(Fail::new(2, format!("message {} is not an A2UI v1.0 message naming its surfaceId", n + 1)));
+            };
+            let surface = surface.to_string();
+            if message.get("deleteSurface").is_some() {
+                self.messages.retain(|m| surface_of(m) != Some(surface.as_str()));
+            } else {
+                self.messages.push(message.clone());
+            }
+            if !touched.contains(&surface) {
+                touched.push(surface);
+            }
+        }
+        let shown: Vec<&Value> = self.messages.iter().filter(|m| surface_of(m).is_some_and(|s| touched.iter().any(|t| t == s))).collect();
+        log(&json!({ "event": "view", "surfaces": touched, "messages": messages.len() }));
+        Ok(json!({
+            "content": [{ "type": "text", "text": format!(
+                "Showing {} message(s) to the user, right here in the conversation. A click on one of its buttons \
+                 arrives as their next message, and in read_ui_actions.",
+                messages.len()
+            ) }],
+            "structuredContent": { "messages": shown },
+        }))
+    }
+
+    /// A click the view page reports: kept for `read_ui_actions`.
+    pub fn act(&mut self, args: &Value) -> Result<Value, Fail> {
+        let message = args.get("message").filter(|m| m.get("action").is_some()).ok_or_else(|| Fail::new(2, "`message` must be an A2UI action message"))?;
+        let mut line = message.clone();
+        if let Some(data) = args.get("dataModel") {
+            line["dataModel"] = data.clone();
+        }
+        self.actions.push(line.to_string());
+        Ok(json!({ "content": [{ "type": "text", "text": "{}" }] }))
+    }
+
+    /// `read_ui_actions` here: the clicks waiting, oldest first, consumed.
+    pub fn take(&mut self) -> Value {
+        let text = std::mem::take(&mut self.actions).join("\n");
+        json!({ "content": [{ "type": "text", "text": text }] })
+    }
+}
+
+/// The page-only tool a view reports its clicks through.
+pub fn view_action_tool() -> Value {
+    json!({
+        "name": VIEW_ACTION,
+        "description": "Called by Roer's view page, not by the model.",
+        "inputSchema": {
+            "type": "object",
+            "properties": { "message": { "type": "object" }, "dataModel": { "type": "object" } },
+            "required": ["message"],
+        },
+        "_meta": { "ui": { "visibility": ["app"] } },
+    })
 }
 
 /// A tool's whole result. `roer_ext_call` answers in JSON text, which the page parses.

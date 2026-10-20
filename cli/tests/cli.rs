@@ -1057,7 +1057,7 @@ fn mcp_offers_the_session_tools_only_inside_a_roer_session() {
     }});
     let app = mcp(&env, &[], &[draws, list.clone()]);
     assert_eq!(tool_names(&app[1])[..2], ["show_ui", "read_ui_actions"]);
-    assert_eq!(app[1]["result"]["tools"][0]["inputSchema"]["required"], serde_json::json!(["messages", "session"]));
+    assert_eq!(app[1]["result"]["tools"][0]["inputSchema"]["required"], serde_json::json!(["messages"]), "it draws in the conversation");
 
     let vars = in_pane(&env, &here);
     let vars: Vec<(&str, &str)> = vars.iter().map(|(k, v)| (*k, v.as_str())).collect();
@@ -1106,6 +1106,54 @@ fn mcp_tells_a_client_that_cannot_draw_to_answer_in_text() {
         assert!(reply["result"]["content"][0]["text"].as_str().unwrap().contains("nowhere to show a view"), "{reply}");
     }
     assert!(env.records("plugin-ui").is_empty(), "nothing went to the session it named");
+}
+
+/// The Claude app outside a Roer session: show_ui draws in the conversation, on the view page, with no session
+/// to name; each call's result carries its surfaces whole, and the page's clicks come back in read_ui_actions.
+#[test]
+fn mcp_draws_views_in_a_conversation_that_draws_mcp_apps() {
+    let env = Env::new("mcp-chat-view");
+    pane(&env, "work", "sh");
+    let init = serde_json::json!({ "method": "initialize", "params": {
+        "protocolVersion": "2025-11-25", "clientInfo": { "name": "claude-ai", "version": "1" },
+        "capabilities": { "extensions": { "io.modelcontextprotocol/ui": { "mimeTypes": ["text/html;profile=mcp-app"] } } },
+    }});
+    let create = serde_json::json!([{ "version": "v1.0", "createSurface": { "surfaceId": "arch", "catalogId": "roer:catalog/1",
+        "components": [{ "id": "root", "component": "Text", "text": "hi" }] } }]);
+    let update = serde_json::json!([{ "version": "v1.0", "updateDataModel": { "surfaceId": "arch", "path": "/n", "value": 1 } }]);
+    let click = serde_json::json!({ "version": "v1.0", "action": { "name": "approve", "surfaceId": "arch", "sourceComponentId": "go", "context": {} } });
+    let replies = mcp(&env, &[], &[
+        init,
+        serde_json::json!({ "method": "tools/list" }),
+        call("show_ui", serde_json::json!({ "messages": create })),
+        call("show_ui", serde_json::json!({ "messages": update })),
+        call("roer_view_action", serde_json::json!({ "message": click })),
+        call("read_ui_actions", serde_json::json!({})),
+        call("read_ui_actions", serde_json::json!({})),
+        call("show_ui", serde_json::json!({ "messages": [{ "version": "v1.0", "deleteSurface": { "surfaceId": "arch" } }] })),
+        serde_json::json!({ "method": "resources/read", "params": { "uri": "ui://roer/view" } }),
+    ]);
+
+    assert!(replies[0]["result"]["instructions"].as_str().unwrap().contains("right here in the conversation"));
+    let tools = replies[1]["result"]["tools"].as_array().unwrap();
+    let show = tools.iter().find(|t| t["name"] == "show_ui").unwrap();
+    assert_eq!(show["_meta"]["ui"]["resourceUri"], "ui://roer/view");
+    assert_eq!(show["inputSchema"]["required"], serde_json::json!(["messages"]), "no session to name");
+    assert!(tools.iter().any(|t| t["name"] == "roer_view_action"));
+
+    assert_eq!(replies[2]["result"]["isError"], Value::Null, "{}", replies[2]);
+    let whole = replies[3]["result"]["structuredContent"]["messages"].as_array().unwrap();
+    assert_eq!(whole.len(), 2, "an update's page draws its surface whole: {whole:?}");
+    assert!(whole[0].get("createSurface").is_some() && whole[1].get("updateDataModel").is_some());
+
+    let read = replies[5]["result"]["content"][0]["text"].as_str().unwrap();
+    assert_eq!(serde_json::from_str::<Value>(read).unwrap()["action"]["name"], "approve");
+    assert_eq!(replies[6]["result"]["content"][0]["text"], "", "a click is read once");
+    assert_eq!(replies[7]["result"]["structuredContent"]["messages"], serde_json::json!([]), "a deleted surface is gone");
+
+    let page = replies[8]["result"]["contents"][0]["text"].as_str().unwrap();
+    assert!(page.contains("data-view=\"genui\""), "{page}");
+    assert!(env.records("plugin-ui").is_empty(), "nothing went to a Roer session");
 }
 
 #[test]
@@ -1168,10 +1216,11 @@ fn mcp_serves_the_guide_as_a_resource_too() {
 
     let replies = mcp(&env, &[], &[list, read("roer:catalog/1"), read("nonsense")]);
     let resources = replies[0]["result"]["resources"].as_array().unwrap();
-    assert_eq!(resources.len(), 3);
+    assert_eq!(resources.len(), 4);
     assert_eq!(resources[0]["uri"], "roer:catalog/1");
     assert_eq!(resources[1]["uri"], "roer:extensions/1");
     assert_eq!(resources[2]["uri"], "ui://roer/extension");
+    assert_eq!(resources[3]["uri"], "ui://roer/view");
 
     let contents = &replies[1]["result"]["contents"][0];
     assert_eq!(contents["uri"], "roer:catalog/1");

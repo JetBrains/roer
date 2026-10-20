@@ -40,3 +40,15 @@ body {
 .mcp-full:hover {
   opacity: 1;
 }
+
+/* `show_ui`'s views (view.tsx): as tall as what they hold, which the page reports to the app. */
+html.mcp-view-page,
+html.mcp-view-page body,
+html.mcp-view-page #root {
+  height: auto;
+  overflow: visible;
+}
+
+.mcp-view {
+  padding: 12px;
+}
