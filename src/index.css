@@ -1855,10 +1855,11 @@ button.tree-row.selected {
 /* The + that starts a comment on a line: over the sign column in unified,
    at the edge of the number in split, and only while the line is hovered. */
 .line .text,
-.side .text {
+.diff-side .text {
   position: relative;
 }
 
+/* Quiet until asked for: an outline in the accent, on the hovered line only, filled once the pointer is on it. */
 .line-add {
   position: absolute;
   top: 1px;
@@ -1866,22 +1867,30 @@ button.tree-row.selected {
   width: 16px;
   height: 16px;
   padding: 0;
-  border: none;
+  border: 1px solid color-mix(in srgb, var(--roer-accent) 55%, transparent);
   border-radius: 4px;
-  background: var(--roer-accent);
-  color: #fff;
-  font-size: 13px;
-  font-weight: 600;
-  line-height: 16px;
+  background: color-mix(in srgb, var(--roer-accent) 12%, transparent);
+  color: var(--roer-accent);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 14px;
   text-align: center;
   cursor: pointer;
   opacity: 0;
+  transition: opacity 80ms ease-out, background-color 80ms ease-out;
 }
 
 .line:hover .line-add,
-.side:hover .line-add,
+.diff-side:hover .line-add,
 .line-add:focus-visible {
   opacity: 1;
+}
+
+.line-add:hover,
+.line-add:focus-visible {
+  border-color: var(--roer-accent);
+  background: var(--roer-accent);
+  color: #fff;
 }
 
 .line.add {
@@ -2048,25 +2057,25 @@ button.tree-row.selected {
   grid-template-columns: 1fr 1fr;
 }
 
-.pair .side {
+.pair .diff-side {
   display: grid;
   grid-template-columns: 38px minmax(0, 1fr);
   align-items: start;
   min-width: 0;
 }
 
-.pair .side + .side {
+.pair .diff-side + .diff-side {
   border-left: 1px solid var(--ide-border);
 }
 
-.side .no {
+.diff-side .no {
   text-align: right;
   padding-right: 10px;
   color: var(--ide-gutter);
   user-select: none;
 }
 
-.side .no::before {
+.diff-side .no::before {
   content: attr(data-no);
 }
 
@@ -2074,22 +2083,22 @@ button.tree-row.selected {
    answer — a scrollbar per side — is worse in a pane this narrow. Both halves
    of a row are as tall as the taller one, so a wrapped line cannot leave the
    other side's colour half-painted. */
-.side .text {
+.diff-side .text {
   padding: 0 10px;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 
-.side.add {
+.diff-side.add {
   background: var(--ide-add);
 }
 
-.side.del {
+.diff-side.del {
   background: var(--ide-del);
 }
 
 /* Nothing on this side of an edit — not an empty line, an absent one. */
-.side.gap {
+.diff-side.gap {
   background: var(--ide-gap);
 }
 
@@ -2116,12 +2125,12 @@ button.tree-row.selected {
 }
 
 .add .ink,
-.side.add .ink {
+.diff-side.add .ink {
   background: var(--ide-add-ink);
 }
 
 .del .ink,
-.side.del .ink {
+.diff-side.del .ink {
   background: var(--ide-del-ink);
 }
 
