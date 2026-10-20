@@ -1,8 +1,9 @@
 //! `roer mcp install|uninstall|status`: registers `roer mcp` with the MCP
 //! clients on this machine, the way `roer skills` installs skills and on the
-//! same terms. Claude Code only, unless `--client claude-desktop` asks for the
-//! Claude app too: it is not offered there yet, so neither the app's launch
-//! nor a plain `roer mcp install` touches the Claude app's config.
+//! same terms. Claude Code only, unless `--client claude-desktop` or `--client
+//! codex` asks for the Claude app or Codex too, which is what their "Use in"
+//! buttons in Roer's Extensions dialog do: neither the app's launch nor a plain
+//! `roer mcp install` touches them.
 //!
 //! What roer registered is written down under `$ROER_HOME/mcp`, with the
 //! command it registered, and only an entry still exactly that is ever
@@ -13,9 +14,11 @@
 //! entry away there.
 //!
 //! Claude Code is changed through its own `claude mcp`, never by writing its
-//! `.claude.json`, which it rewrites constantly; roer only reads it. The
-//! Claude app has no such command, so its config file is edited directly,
-//! keeping everything else in it as it was.
+//! `.claude.json`, which it rewrites constantly; roer only reads it. Codex,
+//! likewise, through `codex mcp`, and its `enable_mcp_apps` feature, without
+//! which it does not draw extensions, through `codex features`. The Claude app
+//! has no such command, so its config file is edited directly, keeping
+//! everything else in it as it was.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -61,6 +64,7 @@ pub fn run(args: &[&str]) -> Outcome {
 enum Client {
     ClaudeCode,
     ClaudeDesktop,
+    Codex,
 }
 
 impl Client {
@@ -68,7 +72,8 @@ impl Client {
         match name {
             "claude-code" => Ok(Client::ClaudeCode),
             "claude-desktop" => Ok(Client::ClaudeDesktop),
-            other => Err(Fail::new(64, format!("unknown client: {other} (known: claude-code, claude-desktop)"))),
+            "codex" => Ok(Client::Codex),
+            other => Err(Fail::new(64, format!("unknown client: {other} (known: claude-code, claude-desktop, codex)"))),
         }
     }
 
@@ -76,6 +81,7 @@ impl Client {
         match self {
             Client::ClaudeCode => "claude-code",
             Client::ClaudeDesktop => "claude-desktop",
+            Client::Codex => "codex",
         }
     }
 
@@ -162,6 +168,7 @@ impl Client {
         match self {
             Client::ClaudeCode => claude_root().is_dir() && claude_bin().is_some(),
             Client::ClaudeDesktop => self.config().and_then(|p| p.parent().map(Path::is_dir)).unwrap_or(false),
+            Client::Codex => codex_bin().is_some(),
         }
     }
 
@@ -181,12 +188,16 @@ impl Client {
                 };
                 Some(dir.join("claude_desktop_config.json"))
             }
+            Client::Codex => Some(codex_home().join("config.toml")),
         }
     }
 
     /// The command of the client's `roer` entry, if it has one; empty for an
     /// entry that is not a plain `<command> mcp`, which is never roer's.
     fn entry(self) -> Result<Option<String>, Fail> {
+        if let Client::Codex = self {
+            return codex_entry();
+        }
         let Some(servers) = self.read_config()?.get("mcpServers").and_then(|s| s.get("roer")).cloned() else {
             return Ok(None);
         };
@@ -219,6 +230,17 @@ impl Client {
             Client::ClaudeDesktop => self.edit_desktop(|servers| {
                 servers.insert("roer".into(), json!({ "command": me, "args": ["mcp"] }));
             })?,
+            Client::Codex => {
+                if replacing {
+                    codex(&["mcp", "remove", "roer"])?;
+                }
+                codex(&["mcp", "add", "roer", "--", me, "mcp"])?;
+                // Without it Codex lists the extensions' tool but draws nothing. Left on at uninstall: other servers
+                // may want it too.
+                if let Err(fail) = codex(&["features", "enable", "enable_mcp_apps"]) {
+                    eprintln!("roer: codex: could not turn on its enable_mcp_apps feature, so it will not draw extensions: {}", fail.message);
+                }
+            }
         }
         self.write("installed", me)
     }
@@ -229,6 +251,7 @@ impl Client {
             Client::ClaudeDesktop => self.edit_desktop(|servers| {
                 servers.remove("roer");
             }),
+            Client::Codex => codex(&["mcp", "remove", "roer"]),
         }
     }
 
@@ -250,6 +273,7 @@ impl Client {
         match self {
             Client::ClaudeCode => "; new Claude Code sessions have it",
             Client::ClaudeDesktop => "; restart the Claude app to use it",
+            Client::Codex => "; new Codex threads have it",
         }
     }
 
@@ -316,4 +340,64 @@ fn claude(args: &[&str]) -> Outcome {
     } else {
         Err(Fail::new(1, format!("claude {}: {}", args.join(" "), String::from_utf8_lossy(&out.stderr).trim())))
     }
+}
+
+/// `$CODEX_HOME`, or `~/.codex`: where Codex keeps its config.
+fn codex_home() -> PathBuf {
+    std::env::var_os("CODEX_HOME")
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| records::user_home().join(".codex"))
+}
+
+/// Codex's `codex`: on `PATH`, or where its installers put it.
+fn codex_bin() -> Option<PathBuf> {
+    let name = if cfg!(windows) { "codex.exe" } else { "codex" };
+    let home = records::user_home();
+    std::env::var_os("PATH")
+        .map(|path| std::env::split_paths(&path).map(|dir| dir.join(name)).collect::<Vec<_>>())
+        .unwrap_or_default()
+        .into_iter()
+        .chain([
+            home.join(".local/bin").join(name),
+            PathBuf::from("/opt/homebrew/bin").join(name),
+            PathBuf::from("/usr/local/bin").join(name),
+        ])
+        .find(|path| path.is_file())
+}
+
+fn codex(args: &[&str]) -> Outcome {
+    codex_output(args).and_then(|out| {
+        if out.status.success() {
+            Ok(())
+        } else {
+            Err(Fail::new(1, format!("codex {}: {}", args.join(" "), String::from_utf8_lossy(&out.stderr).trim())))
+        }
+    })
+}
+
+fn codex_output(args: &[&str]) -> Result<std::process::Output, Fail> {
+    let bin = codex_bin().ok_or_else(|| Fail::new(1, "codex not found"))?;
+    Command::new(&bin)
+        .args(args)
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|e| Fail::new(1, format!("could not run {}: {e}", bin.display())))
+}
+
+/// The command of Codex's `roer` server, from `codex mcp get`; empty for one that is not a plain `<command> mcp`.
+fn codex_entry() -> Result<Option<String>, Fail> {
+    let out = codex_output(&["mcp", "get", "roer", "--json"])?;
+    if !out.status.success() {
+        let said = String::from_utf8_lossy(&out.stderr);
+        if said.contains("No MCP server named") {
+            return Ok(None);
+        }
+        return Err(Fail::new(1, format!("codex mcp get roer: {}", said.trim())));
+    }
+    let server: Value = serde_json::from_slice(&out.stdout).map_err(|e| Fail::new(1, format!("codex mcp get roer: {e}")))?;
+    let transport = &server["transport"];
+    let plain = transport["type"] == "stdio" && transport["args"] == json!(["mcp"]);
+    let command = transport["command"].as_str().filter(|_| plain).unwrap_or_default();
+    Ok(Some(command.to_owned()))
 }
