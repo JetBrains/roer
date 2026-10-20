@@ -529,7 +529,10 @@ The page (`src/mcp-app/`, built with `npm run build:mcp-app` into
 `dist-mcp-app/`) is the host the desktop app is, made smaller: it hands the
 extension the same `react`, `roer` and `roer/ui` (`extensions/host.ts`), with
 `lib/backend` swapped for one that talks to `roer mcp`
-(`vite.mcp-app.config.ts`). So the extension's own build runs unchanged. The
+(`vite.mcp-app.config.ts`). So the extension's own build runs unchanged.
+`cli/build.rs` puts the built page into the `roer` binary, and a release
+build fails without it; a `roer` built without it reads it from the
+checkout, and `$ROER_MCP_APP` points one at another `dist-mcp-app`. The
 page reaches `roer mcp` through `roer_ext_call`, a tool marked
 `_meta.ui.visibility: ["app"]`, which the model is never offered:
 
