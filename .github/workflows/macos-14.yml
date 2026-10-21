@@ -1,0 +1,130 @@
+name: macOS 14
+
+# Whether Roer runs on macOS 14, its floor. The tmux it bundles is built for
+# macOS 15, which macOS does not hold a command-line tool to, and the app is
+# built against a newer SDK than 14's, so only running it there tells: this
+# bundles the app exactly as a release does, then runs that bundle's tmux,
+# roer and app with a session on macOS 14. Apple silicon only: no free runner
+# has macOS 14 on Intel.
+
+on:
+  # A new tmux or a new build target, the likeliest ways to raise the floor.
+  push:
+    paths:
+      - .github/macos/**
+      - .github/workflows/macos-14.yml
+      - src-tauri/tauri.conf.json
+      - src-tauri/tauri.macos-cli.conf.json
+  # And everything else that could, such as a crate, Tauri or the toolchain,
+  # within a day of the commit that did it.
+  schedule:
+    # 03:47 UTC: off the top of the hour, and clear of nightly-bundles.yml.
+    - cron: "47 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  bundle:
+    name: Bundle
+    # As release.yml's bundle-macos, so what runs below is what users get.
+    uses: ./.github/workflows/tauri-bundle.yml
+    with:
+      runner: macos-26
+      rust_targets: aarch64-apple-darwin,x86_64-apple-darwin
+      prepare_script: .github/macos/prepare-bundle.sh
+      tauri_args: --target universal-apple-darwin --bundles app --config src-tauri/tauri.macos-cli.conf.json
+      bundle_dir: src-tauri/target/universal-apple-darwin/release/bundle
+      artifact_name: macos-14-bundle
+      cache_key: macos-universal
+      artifact_paths: Roer.app.tar.gz
+      retention_days: 3
+
+  run:
+    name: Run on macOS 14
+    needs: bundle
+    runs-on: macos-14
+    timeout-minutes: 15
+    env:
+      APP: ${{ github.workspace }}/Roer.app
+    steps:
+      - name: The runner is macOS 14
+        run: |
+          sw_vers
+          [ "$(sw_vers -productVersion | cut -d. -f1)" = 14 ]
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: macos-14-bundle
+
+      - name: Unpack the app bundle
+        run: |
+          tar -xzf Roer.app.tar.gz
+          /usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$APP/Contents/Info.plist"
+          for bin in roer-app roer tmux; do
+            for arch in arm64 x86_64; do
+              echo "$bin $arch: macOS $(otool -arch "$arch" -l "$APP/Contents/MacOS/$bin" | awk '/LC_BUILD_VERSION/ { found = 1 } found && $1 == "minos" { print $2; exit }')"
+            done
+          done
+
+      - name: tmux runs sessions
+        run: |
+          set -euo pipefail
+          t() { "$APP/Contents/MacOS/tmux" -L probe-tmux -f "$APP/Contents/Resources/roer-tmux.conf" "$@"; }
+          t new-session -d -s probe -x 120 -y 40
+          t split-window -t probe
+          # Single quotes on purpose: the pane's shell works out the sum, so
+          # finding 42 means it ran the line, not that the line was echoed.
+          # shellcheck disable=SC2016
+          t send-keys -t probe 'echo "probe $((6 * 7))"' Enter
+          sleep 2
+          t capture-pane -p -t probe | tee pane.txt
+          grep -q 'probe 42' pane.txt
+          t list-panes -t probe
+          t kill-server
+
+      - name: The app shows a session
+        run: |
+          set -euo pipefail
+          # A home of its own, so the app links roer and registers MCP there.
+          export HOME="$RUNNER_TEMP/home" ROER_SOCKET=probe-app
+          handoffs="$HOME/.roer/handoffs"
+          mkdir -p "$handoffs"
+          # A shell session, put on stage as `roer handoff` would. Written
+          # before the app starts, which picks up a waiting record once its
+          # window is ready to show it.
+          printf '{"args":["new","--shell"],"cwd":"%s","label":"probe"}' "$PWD" > "$handoffs/probe.json.partial"
+          mv "$handoffs/probe.json.partial" "$handoffs/probe.json"
+          "$APP/Contents/MacOS/roer-app" > app.log 2>&1 &
+          pid=$!
+
+          # The window acks the record, deleting it, once the session is
+          # attached on screen; a record it could not show becomes .failed.
+          for _ in $(seq 120); do
+            [ -n "$(find "$handoffs" -name 'probe.json*' -print -quit)" ] || break
+            kill -0 "$pid" || { echo "the app exited"; cat app.log; exit 1; }
+            sleep 1
+          done
+          ls -la "$handoffs"
+          [ -z "$(find "$handoffs" -name 'probe.json*' -print -quit)" ] || {
+            echo "the app did not show the session"
+            cat app.log
+            exit 1
+          }
+          mkdir -p shots
+          screencapture -x shots/roer.png || true
+          "$APP/Contents/MacOS/roer" list | tee sessions.txt
+          [ -s sessions.txt ] || { echo "no session behind the one on screen"; exit 1; }
+          kill -0 "$pid" || { echo "the app exited"; cat app.log; exit 1; }
+          cat "$HOME/Library/Logs/Roer/roer.log" || true
+
+      - if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: macos-14
+          path: |
+            shots/
+            app.log
+            ${{ runner.temp }}/home/Library/Logs/Roer/
+          if-no-files-found: ignore

@@ -6,8 +6,10 @@
 # ships psmux, so installing the .dmg is the whole install: no Homebrew. These
 # are tmux's own builds (github.com/tmux/tmux-builds), one per architecture,
 # joined here with lipo. Their libraries are linked in statically, so they
-# depend on nothing outside macOS itself; they need macOS 15, which is why
-# Roer does too.
+# depend on nothing outside macOS itself. They are built for macOS 15, but
+# macOS does not hold a command-line tool to its build version, and they run on
+# macOS 14, Roer's floor: .github/workflows/macos-14.yml runs them there, and
+# is the check to run again when this version moves.
 #
 # Pinned by version and checksum in this one place, so the tmux released is
 # the one reviewed, and moving it is a change of its own.
@@ -16,9 +18,10 @@ TMUX_VERSION=3.7c
 TMUX_ARM64_SHA256=0a763dd0380aa980d239509654da1bc7455843706a3c050f6709c8cd2e13d12d
 TMUX_X86_64_SHA256=1c21f9ade964e4a539be05ffe3a4e95854ab76a0a9c4c05d0ffbe7fc6c4d783f
 LICENSES_SHA256=094905d3ba42397c65fecd817dc29736dd14bd35e75600441403a365125f47d1
-# The app's own floor, from tauri.conf.json: a tmux needing more would not
-# start on a Mac the app runs on.
-MIN_MACOS=15.0
+# The newest build version shown to run on Roer's floor, by macos-14.yml. A
+# tmux built for more may need it: raise this on the branch that moves tmux,
+# and macos-14.yml, which runs on that push, tells whether it may.
+TMUX_MAX_MINOS=15.0
 
 dest=${1:?usage: fetch-tmux.sh <directory>}
 mkdir -p "$dest"
@@ -47,8 +50,8 @@ cp "$work/LICENSES/LICENSE.libevent" "$dest/libevent-LICENSE.txt"
 cp "$work/LICENSES/LICENSE.utf8proc" "$dest/utf8proc-LICENSE.txt"
 cp "$work/LICENSES/COPYING.ncurses" "$dest/ncurses-LICENSE.txt"
 
-# What makes it installable on any Mac Roer supports: both slices, nothing
-# linked from outside /usr/lib and /System, and no newer macOS required.
+# What makes it installable on any Mac Roer supports: both slices, and
+# nothing linked from outside /usr/lib and /System.
 ARCHS="$(lipo -archs "$dest/tmux")"
 [ "$ARCHS" = "x86_64 arm64" ] || [ "$ARCHS" = "arm64 x86_64" ] || {
     echo "tmux is not universal: $ARCHS" >&2
@@ -61,8 +64,8 @@ if otool -L "$dest/tmux" | grep -E '^[[:space:]]' | grep -vE '^[[:space:]]+/(usr
 fi
 for arch in arm64 x86_64; do
     minos=$(otool -arch "$arch" -l "$dest/tmux" | awk '/LC_BUILD_VERSION/ { found = 1 } found && $1 == "minos" { print $2; exit }')
-    [ "$(printf '%s\n%s\n' "$minos" "$MIN_MACOS" | sort -V | tail -1)" = "$MIN_MACOS" ] || {
-        echo "tmux ($arch) needs macOS $minos, more than Roer's $MIN_MACOS" >&2
+    [ "$(printf '%s\n%s\n' "$minos" "$TMUX_MAX_MINOS" | sort -V | tail -1)" = "$TMUX_MAX_MINOS" ] || {
+        echo "tmux ($arch) is built for macOS $minos, newer than the $TMUX_MAX_MINOS shown to run on Roer's floor" >&2
         exit 1
     }
 done
