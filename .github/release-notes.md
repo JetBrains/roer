@@ -1,7 +1,7 @@
 Roer is a session host for agent terminals: `roer shell` starts a terminal you
 work in normally, and `M-h` hands that live session over to the desktop app.
 
-Requires **macOS 15** or later. The `.dmg` is a universal build — one download
+Requires **macOS 14** or later. The `.dmg` is a universal build — one download
 for Apple silicon and Intel.
 
 ## Install

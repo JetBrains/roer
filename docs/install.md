@@ -4,7 +4,7 @@ The app and the `roer` command it drives, on each platform, and the agent integr
 
 ## macOS
 
-1. Download `Roer_<version>_universal.dmg` from the [latest release](https://github.com/JetBrains/roer/releases/latest) (one build, Apple silicon + Intel, macOS 15+).
+1. Download `Roer_<version>_universal.dmg` from the [latest release](https://github.com/JetBrains/roer/releases/latest) (one build, Apple silicon + Intel, macOS 14+).
 2. Drag `Roer.app` to Applications.
 3. Open Roer once. It puts the `roer` command on your `PATH`, and a new terminal can run `roer shell`.
 

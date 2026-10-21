@@ -6,7 +6,7 @@
 # PATH itself (src-tauri/src/cli_link.rs). Run from the repository root before
 # `tauri build`.
 set -euo pipefail
-export MACOSX_DEPLOYMENT_TARGET=15.0
+export MACOSX_DEPLOYMENT_TARGET=14.0
 # The page roer mcp serves to apps that draw MCP Apps, built into roer (cli/build.rs); without it, fail here.
 npm run build:mcp-app
 export ROER_REQUIRE_MCP_APP=1
