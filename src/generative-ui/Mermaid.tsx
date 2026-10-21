@@ -8,7 +8,7 @@
  * rather than with the app. It runs in its `strict` security level: labels
  * are sanitized, and `click` directives in the source bind nothing.
  */
-import { useEffect, useId, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type RefObject } from "react";
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type RefObject } from "react";
 
 import { NoteCard } from "../DiffNote";
 import { currentTheme, onThemeChange, type Theme } from "../lib/theme";
@@ -164,7 +164,8 @@ function useZoom(viewport: RefObject<HTMLDivElement | null>, ready: boolean) {
   current.current = view;
   const dragged = useRef(false);
 
-  useEffect(() => {
+  // In the commit that puts the diagram in, so no wheel reaches it untaken.
+  useLayoutEffect(() => {
     const el = viewport.current;
     if (!el || !ready) return;
     const at = (e: { clientX: number; clientY: number }) => {
