@@ -52,9 +52,11 @@ has "  ...its record names the pane" "$(seen)" "\"$PANE\""
 # What M-h runs: the binding roer set, with the pane filled in, via run-shell.
 rm -f "$RUNNER_TEMP"/seen/*.json
 MH=$(m list-keys 2>&1 | grep 'M-h'); echo "      M-h: $MH"
-has "roer bound M-h for PowerShell" "$MH" "run-shell -b &"
-CMD=$(printf '%s' "$MH" | sed -e "s/.*run-shell -b //" -e "s/^[\"']//" -e "s/[\"']\$//" -e "s/=#{session_name}:\.#{pane_id}/$PANE/")
+# psmux from 3.4.0 lists the command quoted, as tmux does, with its
+# backslashes doubled; before, bare.
+CMD=$(printf '%s' "$MH" | sed -e "s/.*run-shell -b //" -e "s/^[\"']//" -e "s/[\"']\$//" -e 's/\\\\/\\/g' -e "s/=#{session_name}:\.#{pane_id}/$PANE/")
 echo "      runs: $CMD"
+case "$CMD" in "& "*) ok "roer bound M-h for PowerShell" ;; *) bad "roer bound M-h for PowerShell" "$MH" ;; esac
 rs=$(m run-shell -t "$PANE" "$CMD" 2>&1); echo "      run-shell exit=$? out=[$(printf '%s' "$rs" | tr '\n' '|')]"
 echo "      run-shell env: [$(m run-shell -t "$PANE" 'cmd /c echo ROER_SOCKET=%ROER_SOCKET% ROER_HOME=%ROER_HOME%' 2>&1 | tr '\n' '|')]"
 sleep 3
