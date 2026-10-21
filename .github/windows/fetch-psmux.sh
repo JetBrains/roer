@@ -5,8 +5,8 @@
 # and the release all read: psmux ships inside roer's Windows CLI, so the
 # version tested is the version released, and moving it is a reviewed change.
 set -euo pipefail
-PSMUX_VERSION=3.3.8
-PSMUX_SHA256=1ad127ba937194a890b933a73d9b023e297bd73dc742abd841bf159984c2effe
+PSMUX_VERSION=3.4.0
+PSMUX_SHA256=a66b6be7c13c6fa0dc3660a267b9e34eaa91a4eb7f07fbd55a0468018bd0f721
 
 dest=${1:?usage: fetch-psmux.sh <directory>}
 zip="psmux-v${PSMUX_VERSION}-windows-x64.zip"
