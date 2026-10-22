@@ -11,6 +11,7 @@
 import { invoke as tauriInvoke, Channel as TauriChannel } from "@tauri-apps/api/core";
 import { listen as tauriListen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { dropPoint } from "./fileDrop";
 
 export type { UnlistenFn };
 
@@ -208,9 +209,7 @@ export async function onFileDrag(handler: (drag: FileDrag) => void): Promise<Unl
   if (!inTauri()) return () => {};
   return getCurrentWebview().onDragDropEvent(({ payload }) => {
     if (payload.type === "leave") return handler({ type: "leave" });
-    // Tauri reports device pixels; the page measures in CSS ones.
-    const ratio = window.devicePixelRatio || 1;
-    const at = { x: payload.position.x / ratio, y: payload.position.y / ratio };
+    const at = dropPoint(payload.position);
     if (payload.type === "drop") handler({ type: "drop", ...at, paths: payload.paths });
     else handler({ type: "over", ...at });
   });

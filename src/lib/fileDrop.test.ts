@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { isOver, pathsAsTyped } from "./fileDrop";
+import { dropPoint, isOver, pathsAsTyped } from "./fileDrop";
 
 describe("dropped files", () => {
   it("types each path as a POSIX shell reads it, a space after the last", () => {
@@ -46,5 +46,10 @@ describe("dropped files", () => {
       terminal.remove();
       dialog.remove();
     }
+  });
+
+  it("takes a drag's point as CSS pixels, but for Windows, which gives device ones", () => {
+    expect(dropPoint({ x: 900, y: 400 }, 2, false)).toEqual({ x: 900, y: 400 });
+    expect(dropPoint({ x: 900, y: 400 }, 2, true)).toEqual({ x: 450, y: 200 });
   });
 });
