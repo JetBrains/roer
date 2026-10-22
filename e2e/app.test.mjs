@@ -218,4 +218,20 @@ test("past conversations are all listed by name, and found by what was said", as
   await app.until("only the conversation that said it", async () => (await count()) === "1 of 36");
   await app.waitForText("The quokka migration drops every second row.", ".conversations");
   assert.match(await app.text(".conversations"), /Importer drops rows/);
+
+  // Read before resuming: the panel shows what was said, and starts nothing.
+  const panes = app.sessions().length;
+  await app.click("Preview Importer drops rows");
+  await app.waitForText("Look at the importer", ".conversation-preview");
+  await app.waitForText("The quokka migration drops every second row.", ".conversation-preview");
+  assert.equal(app.sessions().length, panes, "a preview starts no claude");
+  await app.click("Close the preview");
+  assert.equal(app.sessions().length, panes, "nor did closing it");
+
+  // The search popup finds it by what was said, too.
+  await app.click("Search sessions and files");
+  await (await app.find("input.popup-input", "Search")).sendKeys("quokka");
+  await app.waitForText("Importer drops rows", ".popup");
+  await app.waitForText("quokka migration", ".popup");
+  await (await app.find("input.popup-input", "Search")).sendKeys(Key.ESCAPE);
 });
