@@ -201,8 +201,8 @@ export function Conversations({
                   <span>{conversation.agent ?? "claude"}</span>
                 </span>
                 {conversation.openElsewhere ? (
-                  <span id={badge} className="badge held" title="A CLI outside Roer has this conversation open">
-                    open elsewhere
+                  <span id={badge} className="badge held" title="A claude started outside Roer, in a terminal or an editor, has this conversation open">
+                    running outside Roer
                   </span>
                 ) : null}
                 <span className="badge resume">{relativeAge(conversation.updatedAt)}</span>

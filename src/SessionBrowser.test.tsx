@@ -397,7 +397,7 @@ describe("past Claude conversations", () => {
     await waitFor(() => expect(listClaudeSessions).toHaveBeenCalledWith(["/Users/test/live"], [4242, 4343]));
   });
 
-  it("asks before resuming a conversation another terminal has open", async () => {
+  it("asks before resuming a conversation running outside Roer", async () => {
     vi.mocked(listClaudeSessions).mockResolvedValue([
       { id: "abc-123", cwd: "/Users/test/project", title: "fix the flaky test", updatedAt: Math.floor(Date.now() / 1000), openElsewhere: true },
     ]);
@@ -409,7 +409,7 @@ describe("past Claude conversations", () => {
 
     fireEvent.click(row);
     await waitFor(() => expect(confirmAction).toHaveBeenCalledTimes(1));
-    expect(vi.mocked(confirmAction).mock.calls[0][0]).toMatch(/open in another terminal/);
+    expect(vi.mocked(confirmAction).mock.calls[0][0]).toMatch(/is running outside Roer/);
     expect(onOpen).not.toHaveBeenCalled();
 
     fireEvent.click(row);
