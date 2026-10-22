@@ -351,6 +351,14 @@ fn list_json_says_when_a_window_last_printed_and_whether_it_rang() {
     assert_eq!(rows[0]["session"], "ringer");
     assert_eq!(rows[0]["bell"], true, "rang in a session nobody watches");
     assert!(rows[0]["activity"].as_u64().unwrap() > 1_700_000_000, "{}", rows[0]);
+    // The pane's own process, which is how the app tells a conversation
+    // running in one of its panes from one open in another terminal.
+    let pid = rows[0]["pid"].as_u64().expect("a pid");
+    #[cfg(unix)]
+    assert!(
+        std::process::Command::new("ps").args(["-p", &pid.to_string()]).output().unwrap().status.success(),
+        "{pid} is not a process"
+    );
 
     // The TSV is what it was, for whoever reads it.
     let tsv = String::from_utf8_lossy(&env.run(&["list"]).stdout).into_owned();
