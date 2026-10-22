@@ -208,12 +208,15 @@ fn threads_for_home(home: &Path, cwds: &[String]) -> Vec<ClaudeThread> {
 }
 
 fn threads_in(home: &Path, cwds: &[String], panes: Option<&[u64]>) -> Vec<ClaudeThread> {
-    transcripts_in(home, cwds, panes).into_iter().map(|(thread, _)| thread).collect()
+    let live = live_sessions(home, panes);
+    transcripts_in(home, cwds, &live).into_iter().map(|(thread, _)| thread).collect()
 }
 
-/// [`threads_in`], each with the transcript it was read from.
-fn transcripts_in(home: &Path, cwds: &[String], panes: Option<&[u64]>) -> Vec<(ClaudeThread, PathBuf)> {
-    let live = live_sessions(home, panes);
+/// [`threads_in`], each with the transcript it was read from. `live` says
+/// which conversations a running `claude` has open, and where; a search or
+/// a preview, which goes to every conversation whoever has it open, passes
+/// none, and so never reads the process table.
+fn transcripts_in(home: &Path, cwds: &[String], live: &HashMap<String, Owner>) -> Vec<(ClaudeThread, PathBuf)> {
     let mut dirs_seen = HashSet::new();
     let mut threads = Vec::new();
 
@@ -690,7 +693,7 @@ pub struct Transcript {
 }
 
 fn transcript_in(home: &Path, cwds: &[String], id: &str) -> Option<Transcript> {
-    let (_, path) = transcripts_in(home, cwds, Some(&[])).into_iter().find(|(thread, _)| thread.id == id)?;
+    let (_, path) = transcripts_in(home, cwds, &HashMap::new()).into_iter().find(|(thread, _)| thread.id == id)?;
     let file = std::fs::File::open(path).ok()?;
     let mut reader = std::io::BufReader::new(file);
     let mut messages = std::collections::VecDeque::with_capacity(PREVIEW_MESSAGES + 1);
@@ -757,7 +760,7 @@ fn search_in(home: &Path, cwds: &[String], query: &str, index: &TextIndex) -> Ve
     }
     // Every conversation, whoever has it open: a search finds, the list
     // decides what to show.
-    let transcripts = transcripts_in(home, cwds, Some(&[]));
+    let transcripts = transcripts_in(home, cwds, &HashMap::new());
     let mut hits = Vec::new();
     for (thread, path) in &transcripts {
         let place = fold(&format!("{}\n{}\n{}", thread.title, thread.cwd, thread.branch.as_deref().unwrap_or("")));
@@ -1339,6 +1342,25 @@ mod tests {
         assert!(transcript_in(&home, &asked, "../-tmp-other/def").is_none());
         assert!(transcript_in(&home, &asked, "abc/../abc").is_none());
         assert!(transcript_in(&home, &asked, "abc.jsonl").is_none());
+
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    /// A conversation a live `claude` has open is left out of the list, but
+    /// a search and a preview still go to it, on every platform: where who
+    /// started whom cannot be told (Windows), it was taken for one in a pane
+    /// and skipped.
+    #[test]
+    fn search_and_preview_reach_a_conversation_a_live_process_has_open() {
+        let home = temp_home();
+        write_lines(&home, "/tmp/x", "abc", &current_transcript("/tmp/x", &[user("about narwhals")]));
+        write_session(&home, std::process::id() as u64, "abc");
+        let roots = ["/tmp/x".to_string()];
+        assert!(threads_in(&home, &roots, None).is_empty(), "left to its live row");
+
+        assert_eq!(ids(&search_in(&home, &roots, "narwhals", &TextIndex::default())), ["abc"]);
+        let transcript = transcript_in(&home, &roots, "abc").expect("a transcript");
+        assert_eq!(transcript.messages[0].text, "about narwhals");
 
         std::fs::remove_dir_all(&home).ok();
     }
