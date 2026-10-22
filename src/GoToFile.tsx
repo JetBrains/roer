@@ -314,8 +314,9 @@ export function GoToFile({
   }, [query, searchSessions]);
 
   // Those whose names match first, as before; then those found only in what
-  // was said, each with the words that matched.
-  const sessionRows: Row[] = useMemo(() => {
+  // was said, each with the words that matched. All of them, to count; the
+  // list shows the first few.
+  const sessionMatches: Row[] = useMemo(() => {
     if (!query.trim()) {
       return sessions.slice(0, SESSIONS_IDLE).map((session) => ({ kind: "session", key: `session:${session.key}`, session }));
     }
@@ -325,8 +326,9 @@ export function GoToFile({
     return [
       ...named.map((session): Row => ({ kind: "session", key: `session:${session.key}`, session })),
       ...spoken.map((session): Row => ({ kind: "session", key: `session:${session.key}`, session, snippet: hits?.get(session.key) })),
-    ].slice(0, SESSIONS_MAX);
+    ];
   }, [query, sessions, said]);
+  const sessionRows = useMemo(() => sessionMatches.slice(0, SESSIONS_MAX), [sessionMatches]);
   const fileRows: Row[] = useMemo(
     () =>
       noFiles
@@ -401,12 +403,18 @@ export function GoToFile({
     });
   }, [at, rows]);
 
+  /** How many sessions matched, and how many of them are listed. */
+  const sessionCount = () => {
+    const found = sessionMatches.length;
+    const noun = found === 1 ? "session" : "sessions";
+    return found > sessionRows.length ? `${sessionRows.length} of ${found} ${noun}` : `${found} ${noun}`;
+  };
+
   /** The line above the list: what was searched, and how it went. */
   const status = () => {
     if (noFiles) {
-      const count = sessionRows.length;
-      if (!query.trim()) return count ? "Sessions" : "No sessions yet";
-      return count === 0 ? "No matches" : `${count} ${count === 1 ? "session" : "sessions"}`;
+      if (!query.trim()) return sessionRows.length ? "Sessions" : "No sessions yet";
+      return sessionMatches.length === 0 ? "No matches" : sessionCount();
     }
     if (error) return error;
     if (!query.trim()) {
@@ -423,9 +431,8 @@ export function GoToFile({
           ? `${shown.length} of ${matched} matches`
           : `${matched} ${matched === 1 ? "match" : "matches"}`;
     const files = indexing ? `${counted} — indexing…` : counted;
-    const found = sessionRows.length;
-    if (found === 0) return files;
-    const named = `${found} ${found === 1 ? "session" : "sessions"}`;
+    if (sessionMatches.length === 0) return files;
+    const named = sessionCount();
     return matched === 0 && !indexing ? named : `${named} · ${files}`;
   };
 
