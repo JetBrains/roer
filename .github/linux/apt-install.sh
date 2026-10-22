@@ -1,17 +1,26 @@
 #!/usr/bin/env bash
-# Installs the given Ubuntu packages, giving up on a mirror that crawls.
+# Installs the given Ubuntu packages, moving off a mirror that crawls.
 #
-# The runners' package mirror usually serves these in well under a minute, but
-# now and then one sends at tens of kB/s and a plain install sits there for
-# twenty minutes. Each try here gets three minutes and fresh connections, and
-# apt keeps what it had fetched, so a retry carries on rather than starting
-# over. Three slow tries fail the step, which is quicker to re-run than to wait.
+# The runners fetch from their own Azure mirror first, listed ahead of
+# Ubuntu's archive in apt-mirrors.txt, and it usually serves these in well
+# under a minute. Now and then it sends at tens of kB/s instead, and apt only
+# moves down that list on errors, never because a mirror is slow. So the first
+# try gets ninety seconds there; if it runs out, the Azure mirror is dropped
+# from the list and the rest go to Ubuntu's archive, three minutes each. apt
+# keeps what it had fetched, so a retry carries on rather than starting over.
 set -euo pipefail
+MIRRORS=/etc/apt/apt-mirrors.txt
 sudo apt-get update
-for try in 1 2 3; do
-  if sudo timeout 180 apt-get install -y "$@"; then
+for seconds in 90 180 180; do
+  if sudo timeout "$seconds" apt-get install -y "$@"; then
     exit 0
   fi
-  echo "::warning::apt-get install try $try of 3 failed or ran out of time"
+  echo "::warning::apt-get install failed or ran out of its ${seconds}s"
+  if [ -f "$MIRRORS" ] && grep -q 'azure\.archive\.ubuntu\.com' "$MIRRORS"; then
+    sudo sed -i '/azure\.archive\.ubuntu\.com/d' "$MIRRORS"
+    echo "Fetching from the next mirror instead:"
+    cat "$MIRRORS"
+    sudo apt-get update
+  fi
 done
 exit 1
