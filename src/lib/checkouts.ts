@@ -19,7 +19,6 @@ export interface TreeProject<T> {
 }
 
 /** Whether `cwd` is `path` or somewhere under it. */
-/** Whether `cwd` is `path` or somewhere under it. */
 export const within = (cwd: string, path: string) => cwd === path || cwd.startsWith(`${path.replace(/\/+$/, "")}/`);
 
 /** A checkout git has not described, only named: the main one first. */
