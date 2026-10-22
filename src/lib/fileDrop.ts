@@ -46,3 +46,18 @@ export function isOver(element: Element, x: number, y: number): boolean {
   const top = typeof document.elementFromPoint === "function" ? document.elementFromPoint(x, y) : null;
   return top === null || element.contains(top);
 }
+
+/**
+ * Where on the page a drag is, from the point Tauri reports. Tauri calls it
+ * physical, but only Windows gives device pixels: macOS gives points and
+ * Linux the widget's own, both already CSS pixels, so dividing those by the
+ * pixel ratio put a drop on a 2x screen at half its place.
+ */
+export function dropPoint(
+  position: { x: number; y: number },
+  ratio = window.devicePixelRatio || 1,
+  windows = isWindows(),
+): { x: number; y: number } {
+  const scale = windows ? ratio : 1;
+  return { x: position.x / scale, y: position.y / scale };
+}
