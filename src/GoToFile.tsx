@@ -10,6 +10,7 @@ import {
 } from "react";
 
 import { baseName, filesSearch, parts, type Hit, type Hits } from "./lib/files";
+import { marked } from "./lib/marks";
 import { resolveDir } from "./lib/session";
 
 /** How long after a keystroke the query is sent, so a burst is one search. */
@@ -28,6 +29,8 @@ const LIMIT = 50;
 /** Sessions shown before anything is typed, and at most once something is. */
 const SESSIONS_IDLE = 6;
 const SESSIONS_MAX = 20;
+/** How long typing pauses before what was said in the sessions is searched. */
+const SAID_DEBOUNCE_MS = 150;
 
 /**
  * A session the popup can offer: how it reads, what it is found by, and how
@@ -62,7 +65,7 @@ type RootedHit = Hit & { root: string };
 
 /** One row of the list: a session or a file, keyed so the two never clash. */
 type Row =
-  | { kind: "session"; key: string; session: SessionHit }
+  | { kind: "session"; key: string; session: SessionHit; snippet?: string }
   | { kind: "file"; key: string; hit: RootedHit };
 
 /** A repository searched besides the session's own, and what to call it. */
@@ -127,6 +130,10 @@ export interface GoToFileProps {
   recent?: readonly RecentFile[];
   /** Sessions to offer above the files, matched here as the query changes. */
   sessions?: readonly SessionHit[];
+  /** Which of `sessions`, by key, have every word of the query in what was
+   * said in them, with the words around the match: past conversations,
+   * found by more than their names. */
+  searchSessions?: (query: string) => Promise<ReadonlyMap<string, string | undefined>>;
   /** No session on the stage, so no repository: sessions only. */
   noFiles?: boolean;
   onOpen: (root: string, path: string, line?: number) => void;
@@ -164,6 +171,7 @@ export function GoToFile({
   roots = [],
   recent = [],
   sessions = [],
+  searchSessions,
   noFiles = false,
   onOpen,
   onClose,
@@ -287,14 +295,38 @@ export function GoToFile({
   // moves the selection on its own.
   useEffect(() => setChosen(null), [query]);
 
-  const sessionRows: Row[] = useMemo(
-    () =>
-      (query.trim()
-        ? sessions.filter((session) => matchesQuery(session.fields, query)).slice(0, SESSIONS_MAX)
-        : sessions.slice(0, SESSIONS_IDLE)
-      ).map((session) => ({ kind: "session", key: `session:${session.key}`, session })),
-    [query, sessions],
-  );
+  // What was said in the sessions, searched once typing pauses: by key,
+  // the words around the match, for the query it answers.
+  const [said, setSaid] = useState<{ query: string; hits: ReadonlyMap<string, string | undefined> } | null>(null);
+  const saidAsked = useRef(0);
+  useEffect(() => {
+    const request = ++saidAsked.current;
+    const asking = query.trim();
+    if (!searchSessions || !asking) return;
+    const timer = window.setTimeout(() => {
+      searchSessions(asking)
+        .then((hits) => {
+          if (request === saidAsked.current) setSaid({ query: asking, hits });
+        })
+        .catch(() => undefined);
+    }, SAID_DEBOUNCE_MS);
+    return () => window.clearTimeout(timer);
+  }, [query, searchSessions]);
+
+  // Those whose names match first, as before; then those found only in what
+  // was said, each with the words that matched.
+  const sessionRows: Row[] = useMemo(() => {
+    if (!query.trim()) {
+      return sessions.slice(0, SESSIONS_IDLE).map((session) => ({ kind: "session", key: `session:${session.key}`, session }));
+    }
+    const named = sessions.filter((session) => matchesQuery(session.fields, query));
+    const hits = said?.query === query.trim() ? said.hits : null;
+    const spoken = hits ? sessions.filter((session) => hits.has(session.key) && !named.includes(session)) : [];
+    return [
+      ...named.map((session): Row => ({ kind: "session", key: `session:${session.key}`, session })),
+      ...spoken.map((session): Row => ({ kind: "session", key: `session:${session.key}`, session, snippet: hits?.get(session.key) })),
+    ].slice(0, SESSIONS_MAX);
+  }, [query, sessions, said]);
   const fileRows: Row[] = useMemo(
     () =>
       noFiles
@@ -463,7 +495,9 @@ export function GoToFile({
                 ) : (
                   <>
                     <span className="hit-name">{row.session.name}</span>
-                    <span className="hit-dir">{row.session.detail}</span>
+                    <span className="hit-dir">
+                      {row.snippet ? marked(row.snippet, query.toLowerCase().split(/\s+/)) : row.session.detail}
+                    </span>
                     {row.session.badge ? <span className="hit-badge">{row.session.badge}</span> : null}
                   </>
                 )}

@@ -1,8 +1,9 @@
 import { Search } from "lucide-react";
-import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 
 import { checkoutName, within } from "./lib/checkouts";
 import type { Repo } from "./lib/git";
+import { marked } from "./lib/marks";
 import type { Project } from "./lib/projects";
 import { searchClaudeSessions, type ClaudeSession } from "./lib/pty";
 import type { Workspace } from "./lib/workspaces";
@@ -40,16 +41,6 @@ export function bucketOf(updatedAt: number, now: number): Bucket {
 function matchesPlace(conversation: ClaudeSession, terms: string[]): boolean {
   const place = `${conversation.title}\n${conversation.cwd}\n${conversation.branch ?? ""}`.toLowerCase();
   return terms.every((term) => place.includes(term));
-}
-
-/** `text` with each occurrence of any of `terms` (already lower case)
- * marked, for the snippet of what matched. */
-function marked(text: string, terms: string[]): ReactNode[] {
-  const escaped = terms.map((term) => term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
-  if (escaped.length === 0) return [text];
-  return text
-    .split(new RegExp(`(${escaped.join("|")})`, "gi"))
-    .map((part, index) => (index % 2 === 1 ? <mark key={index}>{part}</mark> : part));
 }
 
 export interface ConversationsProps {
