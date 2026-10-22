@@ -136,6 +136,15 @@ export class Roer {
     if (!windows) this.env.SHELL = "/bin/bash";
   }
 
+  /** Writes a Claude Code transcript for a conversation had in `cwd`, where
+   * Claude Code keeps it: under `~/.claude/projects`, in a folder named for
+   * the directory with every character but a letter or digit made `-`. */
+  transcript(cwd, id, events) {
+    const dir = join(this.home, ".claude", "projects", cwd.replace(/[^A-Za-z0-9]/g, "-"));
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, `${id}.jsonl`), events.map((event) => `${JSON.stringify(event)}\n`).join(""));
+  }
+
   /** `roer`, as a terminal in the project runs it. */
   roer(args, input) {
     return must(ROER, args, { cwd: this.project, env: this.env, input });
