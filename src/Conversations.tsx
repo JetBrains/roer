@@ -301,66 +301,66 @@ export function Conversations({
   return (
     <section className={showing ? "conversations previewing" : "conversations"} aria-label="Conversations">
       <div className="conversations-list" ref={listRef}>
-      <h2>
-        <span>
-          Conversations <span className="conversations-count">{count}</span>
-        </span>
-        <span className="conversations-tools">
-          {searching ? <span className="conversations-status">Searching…</span> : null}
-          {conversations.length > 0 ? (
-            <button
-              type="button"
-              className="link preview-toggle"
-              aria-pressed={previewing}
-              title={previewing ? "Close the preview" : "Read a conversation beside the list, without resuming it"}
-              onClick={() => setPreviewing(!previewing)}
-            >
-              <Eye size={12} aria-hidden="true" />
-              Preview
-            </button>
-          ) : null}
-        </span>
-      </h2>
-      {conversations.length === 0 ? (
-        <p className="muted">No past conversations here yet.</p>
-      ) : (
-        <>
-          <div className="conversations-filter">
-            <Search size={13} aria-hidden="true" />
-            <input
-              type="search"
-              aria-label="Filter conversations"
-              placeholder="Filter by name, folder, branch or what was said…"
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Escape") setQuery("");
-              }}
-            />
-          </div>
-          {failed === termsKey && filtering ? <p className="muted">Could not search what was said; matching names, folders and branches only.</p> : null}
-          {shown.length === 0 && !searching ? <p className="muted">Nothing matches “{query.trim()}”.</p> : null}
-          {BUCKETS.filter((bucket) => buckets.has(bucket)).map((bucket) => {
-            const list = buckets.get(bucket) ?? [];
-            const open = unfolded.has(bucket) ? list : list.slice(0, SHOWN);
-            return (
-              <div key={bucket} className="conversation-bucket">
-                <h4 className="bucket">{bucket}</h4>
-                <ul>{open.map(row)}</ul>
-                {list.length > open.length ? (
-                  <button
-                    type="button"
-                    className="link show-more"
-                    onClick={() => setUnfolded((current) => new Set([...current, bucket]))}
-                  >
-                    Show {list.length - open.length} more
-                  </button>
-                ) : null}
-              </div>
-            );
-          })}
-        </>
-      )}
+        <h2>
+          <span>
+            Conversations <span className="conversations-count">{count}</span>
+          </span>
+          <span className="conversations-tools">
+            {searching ? <span className="conversations-status">Searching…</span> : null}
+            {conversations.length > 0 ? (
+              <button
+                type="button"
+                className="link preview-toggle"
+                aria-pressed={previewing}
+                title={previewing ? "Close the preview" : "Read a conversation beside the list, without resuming it"}
+                onClick={() => setPreviewing(!previewing)}
+              >
+                <Eye size={12} aria-hidden="true" />
+                Preview
+              </button>
+            ) : null}
+          </span>
+        </h2>
+        {conversations.length === 0 ? (
+          <p className="muted">No past conversations here yet.</p>
+        ) : (
+          <>
+            <div className="conversations-filter">
+              <Search size={13} aria-hidden="true" />
+              <input
+                type="search"
+                aria-label="Filter conversations"
+                placeholder="Filter by name, folder, branch or what was said…"
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Escape") setQuery("");
+                }}
+              />
+            </div>
+            {failed === termsKey && filtering ? <p className="muted">Could not search what was said; matching names, folders and branches only.</p> : null}
+            {shown.length === 0 && !searching ? <p className="muted">Nothing matches “{query.trim()}”.</p> : null}
+            {BUCKETS.filter((bucket) => buckets.has(bucket)).map((bucket) => {
+              const list = buckets.get(bucket) ?? [];
+              const open = unfolded.has(bucket) ? list : list.slice(0, SHOWN);
+              return (
+                <div key={bucket} className="conversation-bucket">
+                  <h4 className="bucket">{bucket}</h4>
+                  <ul>{open.map(row)}</ul>
+                  {list.length > open.length ? (
+                    <button
+                      type="button"
+                      className="link show-more"
+                      onClick={() => setUnfolded((current) => new Set([...current, bucket]))}
+                    >
+                      Show {list.length - open.length} more
+                    </button>
+                  ) : null}
+                </div>
+              );
+            })}
+          </>
+        )}
       </div>
       {showing ? (
         <ConversationPreview
