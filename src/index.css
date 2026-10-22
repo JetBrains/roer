@@ -1323,6 +1323,125 @@ button.row.active {
   border-style: dashed;
 }
 
+/* Past conversations: a filter, then a timeline under day headings. Set
+   apart from the live sessions above, which are what is happening now. */
+.conversations {
+  margin-top: 22px;
+}
+
+.conversations-count {
+  margin-left: 6px;
+  letter-spacing: 0;
+  color: var(--roer-disabled);
+}
+
+.conversations-status {
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.conversations-filter {
+  position: relative;
+  display: flex;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.conversations-filter svg {
+  position: absolute;
+  left: 9px;
+  color: var(--roer-muted);
+  pointer-events: none;
+}
+
+.conversations-filter input {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-size: 12.5px;
+  padding: 6px 8px 6px 28px;
+  color: var(--roer-fg);
+  background: var(--roer-panel);
+  border: 1px solid var(--roer-border);
+  border-radius: 6px;
+}
+
+.conversations-filter input:focus {
+  outline: none;
+  border-color: var(--roer-accent);
+}
+
+.conversations-filter input::placeholder {
+  color: var(--roer-muted);
+}
+
+h4.bucket {
+  margin: 14px 0 6px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--roer-muted);
+}
+
+/* The name and its details on one line, as every row; what the filter found
+   in what was said on a second, only while filtering. */
+button.row.conversation {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 3px;
+}
+
+.conversation-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.conversation-line strong {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-weight: 600;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conversation-line .badge {
+  flex: 0 0 auto;
+}
+
+/* A branch can be long; it gives way before the name does. */
+.conversation-line .row-meta > span {
+  min-width: 0;
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.conversation-line .badge.held {
+  margin-left: auto;
+}
+
+.conversation-snippet {
+  font-size: 11px;
+  color: var(--roer-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conversation-snippet mark {
+  color: var(--roer-fg);
+  background: color-mix(in srgb, var(--roer-warn) 30%, transparent);
+  border-radius: 2px;
+}
+
+button.link.show-more {
+  margin: 6px 0 0 9px;
+  font-size: 11px;
+}
+
 .notice,
 .error {
   font-size: 12px;
