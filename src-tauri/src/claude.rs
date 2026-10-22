@@ -19,6 +19,8 @@ use std::time::SystemTime;
 use serde::Serialize;
 use serde_json::Value;
 
+use crate::live::{Owner, Started, Table};
+
 /// How much of the start of a transcript to read. Claude Code 2.x opens one
 /// with the queued prompt and its attachments (hooks, skills, CLAUDE.md), so
 /// the first real prompt sits some 17 KB in, at times past 100 KB.
@@ -46,6 +48,11 @@ pub struct ClaudeThread {
     /// Owned by a `claude` process still running, in another terminal or
     /// window: resuming it here would make two writers of one transcript.
     pub open_elsewhere: bool,
+    /// When it began, in seconds since the epoch, where its CLI says: which
+    /// is how one a pane's agent began is told, for a CLI that keeps no
+    /// registry of what it has open.
+    #[serde(skip)]
+    pub created_at: Option<u64>,
 }
 
 fn claude_home() -> PathBuf {
@@ -63,21 +70,12 @@ fn encode_project_path(cwd: &str) -> String {
         .collect()
 }
 
-/// Where a live `claude` has a conversation open.
-#[derive(Clone, Copy, Debug, PartialEq)]
-enum Owner {
-    /// In one of Roer's own panes, whose live row stands for it.
-    Pane,
-    /// Anywhere else: another terminal, an editor, another Roer.
-    Elsewhere,
-}
-
 /// Session ids still-running `claude` processes own, per
 /// `~/.claude/sessions/<pid>.json`, and where each runs. Best-effort: a
 /// missing/unreadable registry means "nothing known to be live," never an
 /// error that blocks resume. `panes` are the processes of Roer's own panes;
 /// `None` when they are not known, an older shim's, which is any of them.
-fn live_sessions(home: &Path, panes: Option<&[u64]>) -> HashMap<String, Owner> {
+fn live_sessions(home: &Path, panes: Option<&[u64]>, table: &Table) -> HashMap<String, Owner> {
     let mut owners = HashMap::new();
     let Ok(entries) = std::fs::read_dir(home.join("sessions")) else {
         return owners;
@@ -104,102 +102,22 @@ fn live_sessions(home: &Path, panes: Option<&[u64]>) -> HashMap<String, Owner> {
     if claimed.is_empty() {
         return owners;
     }
-    let processes = Processes::read();
     let panes: Option<HashSet<u64>> = panes.map(|panes| panes.iter().copied().collect());
     for (pid, started, session_id) in claimed {
-        if let Some(owner) = processes.owner(pid, started.as_deref(), panes.as_ref()) {
+        let started = started.as_deref().map_or(Started::Unknown, Started::Lstart);
+        if let Some(owner) = table.get().owner(pid, started, panes.as_ref()) {
             owners.insert(session_id, owner);
         }
     }
     owners
 }
 
-/// The process table, read once per listing: who is alive, since when, and
-/// who started whom, which is what says a `claude` runs in one of Roer's
-/// panes.
-#[cfg(not(windows))]
-struct Processes {
-    /// By pid: its parent, and when it started as `ps` and Claude Code's
-    /// `procStart` both say it (`Mon Jan  5 09:30:00 2026`, in UTC).
-    table: HashMap<u64, (u64, String)>,
-}
-
-#[cfg(not(windows))]
-impl Processes {
-    fn read() -> Self {
-        let out = crate::process::command("ps")
-            .env("TZ", "UTC")
-            .env("LC_ALL", "C")
-            .args(["-A", "-o", "pid=,ppid=,lstart="])
-            .output();
-        let text = out.map(|out| String::from_utf8_lossy(&out.stdout).into_owned()).unwrap_or_default();
-        let table = text
-            .lines()
-            .filter_map(|line| {
-                let mut fields = line.split_whitespace();
-                let pid = fields.next()?.parse().ok()?;
-                let parent = fields.next()?.parse().ok()?;
-                Some((pid, (parent, fields.collect::<Vec<_>>().join(" "))))
-            })
-            .collect();
-        Processes { table }
-    }
-
-    /// `None` once the process is gone, or its pid has gone to another
-    /// process since the registry was written. A pane's process is its
-    /// shell, or the agent itself, so the pane is found among the process's
-    /// ancestors.
-    fn owner(&self, pid: u64, started: Option<&str>, panes: Option<&HashSet<u64>>) -> Option<Owner> {
-        let (_, since) = self.table.get(&pid)?;
-        if started.is_some_and(|started| started.split_whitespace().collect::<Vec<_>>().join(" ") != *since) {
-            return None;
-        }
-        let Some(panes) = panes else {
-            return Some(Owner::Pane);
-        };
-        let mut at = pid;
-        for _ in 0..64 {
-            if panes.contains(&at) {
-                return Some(Owner::Pane);
-            }
-            match self.table.get(&at) {
-                Some(&(parent, _)) if parent != at && parent != 0 => at = parent,
-                _ => break,
-            }
-        }
-        Some(Owner::Elsewhere)
-    }
-}
-
-/// Windows has no `ps`. `tasklist` filtered to one pid prints its row, or
-/// an "INFO: No tasks" line — and exits 0 either way, so the answer is in
-/// what it prints: the pid as a quoted CSV field. It says nothing of who
-/// started whom, so a live conversation is taken for one in a pane, and left
-/// to its live row, as before any could be told apart.
-#[cfg(windows)]
-struct Processes;
-
-#[cfg(windows)]
-impl Processes {
-    fn read() -> Self {
-        Processes
-    }
-
-    fn owner(&self, pid: u64, _started: Option<&str>, _panes: Option<&HashSet<u64>>) -> Option<Owner> {
-        crate::process::command("tasklist")
-            .args(["/FI", &format!("PID eq {pid}"), "/NH", "/FO", "CSV"])
-            .output()
-            .is_ok_and(|out| String::from_utf8_lossy(&out.stdout).contains(&format!("\"{pid}\"")))
-            .then_some(Owner::Pane)
-    }
-}
-
 /// Past Claude conversations across the given cwds, most recently updated
 /// first. Scoped to those cwds and their descendant directories — never a
 /// scan of every Claude project on the machine. `panes` are the processes of
 /// Roer's panes, so a conversation running in one is left to its live row.
-pub fn threads_for(cwds: &[String], panes: Option<&[u64]>) -> Vec<ClaudeThread> {
-    threads_in(&claude_home(), cwds, panes)
+pub fn threads_for(cwds: &[String], panes: Option<&[u64]>, table: &Table) -> Vec<ClaudeThread> {
+    threads_with(&claude_home(), cwds, panes, table)
 }
 
 #[cfg(test)]
@@ -207,8 +125,13 @@ fn threads_for_home(home: &Path, cwds: &[String]) -> Vec<ClaudeThread> {
     threads_in(home, cwds, Some(&[]))
 }
 
+#[cfg(test)]
 fn threads_in(home: &Path, cwds: &[String], panes: Option<&[u64]>) -> Vec<ClaudeThread> {
-    let live = live_sessions(home, panes);
+    threads_with(home, cwds, panes, &Table::default())
+}
+
+fn threads_with(home: &Path, cwds: &[String], panes: Option<&[u64]>, table: &Table) -> Vec<ClaudeThread> {
+    let live = live_sessions(home, panes, table);
     transcripts_in(home, cwds, &live).into_iter().map(|(thread, _)| thread).collect()
 }
 
@@ -305,6 +228,7 @@ fn transcripts_in(home: &Path, cwds: &[String], live: &HashMap<String, Owner>) -
                     updated_at,
                     branch: meta.branch,
                     open_elsewhere: owner == Some(Owner::Elsewhere),
+                    created_at: None,
                 };
                 threads.push((thread, path));
             }
@@ -436,7 +360,7 @@ pub(crate) fn read_head(path: &Path, bytes: u64) -> String {
     String::from_utf8_lossy(&buf).into_owned()
 }
 
-fn read_tail(path: &Path, bytes: u64) -> String {
+pub(crate) fn read_tail(path: &Path, bytes: u64) -> String {
     let Ok(mut file) = std::fs::File::open(path) else {
         return String::new();
     };
@@ -510,14 +434,18 @@ pub(crate) fn truncate(title: &str) -> String {
     truncated
 }
 
-/// Every resumable conversation under `cwds`: Claude Code's and Codex's,
-/// most recently updated first. `panes` are the processes of Roer's own
+/// Every resumable conversation under `cwds`: Claude Code's, Codex's, Pi's
+/// and Junie's, most recently updated first. `panes` are the processes of Roer's own
 /// panes (`roer list`'s `pid`); absent from an older frontend, or one whose
 /// shim does not say them, and then any live conversation may be in one.
 #[tauri::command(async)]
 pub fn roer_claude_threads(cwds: Vec<String>, panes: Option<Vec<u64>>) -> Vec<ClaudeThread> {
-    let mut threads = threads_for(&cwds, panes.as_deref());
-    threads.extend(crate::codex::threads_for(&cwds));
+    let table = Table::default();
+    let panes = panes.as_deref();
+    let mut threads = threads_for(&cwds, panes, &table);
+    threads.extend(crate::codex::threads_for(&cwds, panes, &table));
+    threads.extend(crate::pi::threads_for(&cwds, panes, &table));
+    threads.extend(crate::junie::threads_for(&cwds, panes, &table));
     threads.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
     threads
 }
@@ -602,7 +530,7 @@ fn fold(text: &str) -> String {
 
 /// Reads whatever was appended to `path` since it was last read, a line at
 /// a time: a transcript can run to hundreds of MB, most of it tool output.
-fn read_appended(entry: &mut Indexed, path: &Path) {
+fn read_appended(entry: &mut Indexed, path: &Path, read: LineReader) {
     let Ok(mut file) = std::fs::File::open(path) else {
         return;
     };
@@ -630,7 +558,7 @@ fn read_appended(entry: &mut Indexed, path: &Path) {
         if line.last() != Some(&b'\n') {
             break;
         }
-        if let Some(message) = message_in(&line[..line.len() - 1]) {
+        if let Some(message) = read(&line[..line.len() - 1]) {
             let from = entry.text.len();
             entry.text.push_str(&message.text);
             entry.messages.push(Said { role: message.role, at: message.at, span: (from, entry.text.len()) });
@@ -642,12 +570,31 @@ fn read_appended(entry: &mut Indexed, path: &Path) {
     }
 }
 
+/// How one CLI's transcript says a prompt or a reply on one of its lines.
+pub(crate) type LineReader = fn(&[u8]) -> Option<Message>;
+
+/// The [`LineReader`] for `agent`'s transcripts.
+fn reader(agent: &str) -> LineReader {
+    match agent {
+        "codex" => crate::codex::message_in,
+        "pi" => crate::pi::message_in,
+        "junie" => crate::junie::message_in,
+        _ => message_in,
+    }
+}
+
+/// Whether `needle` is somewhere in `line`: far cheaper than parsing a
+/// line, which most are not worth.
+pub(crate) fn holds(line: &[u8], needle: &[u8]) -> bool {
+    line.windows(needle.len()).any(|window| window == needle)
+}
+
 /// The words of a prompt or a reply on one transcript line, with who said
 /// it and when; `None` for everything else: tool calls and their output, and
 /// what Claude Code writes in a prompt's place itself.
 fn message_in(line: &[u8]) -> Option<Message> {
     // Far cheaper than parsing every line, most of which are neither.
-    let is = |needle: &[u8]| line.windows(needle.len()).any(|window| window == needle);
+    let is = |needle: &[u8]| holds(line, needle);
     if !is(br#""type":"user""#) && !is(br#""type":"assistant""#) {
         return None;
     }
@@ -721,13 +668,30 @@ fn transcript_in(home: &Path, cwds: &[String], id: &str) -> Option<Transcript> {
     transcript_from(home, cwds, id, &TextIndex::default())
 }
 
-/// Read through the same index a search reads, so stepping from row to row
-/// reads each transcript once, and after that only what was added to it.
+#[cfg(test)]
 fn transcript_from(home: &Path, cwds: &[String], id: &str, index: &TextIndex) -> Option<Transcript> {
-    let (_, path) = transcripts_in(home, cwds, &HashMap::new()).into_iter().find(|(thread, _)| thread.id == id)?;
+    transcript_of(transcripts_in(home, cwds, &HashMap::new()), id, index)
+}
+
+/// Every conversation under `cwds` whose transcript Roer can read, whoever
+/// has it open, each with that transcript: Claude Code's, Codex's, Pi's and
+/// Junie's.
+fn readable_transcripts(cwds: &[String]) -> Vec<(ClaudeThread, PathBuf)> {
+    let mut all = transcripts_in(&claude_home(), cwds, &HashMap::new());
+    all.extend(crate::codex::transcripts_for(cwds));
+    all.extend(crate::pi::transcripts_for(cwds));
+    all.extend(crate::junie::transcripts_for(cwds));
+    all
+}
+
+/// `id`'s conversation among `transcripts`, read through the same index a
+/// search reads, so stepping from row to row reads each transcript once, and
+/// after that only what was added to it.
+fn transcript_of(transcripts: Vec<(ClaudeThread, PathBuf)>, id: &str, index: &TextIndex) -> Option<Transcript> {
+    let (thread, path) = transcripts.into_iter().find(|(thread, _)| thread.id == id)?;
     let entry = index.entry(&path);
     let mut indexed = lock(&entry);
-    read_appended(&mut indexed, &path);
+    read_appended(&mut indexed, &path, reader(&thread.agent));
     let earlier = indexed.messages.len().saturating_sub(PREVIEW_MESSAGES);
     let messages = indexed.messages[earlier..]
         .iter()
@@ -743,12 +707,12 @@ fn transcript_from(home: &Path, cwds: &[String], id: &str, index: &TextIndex) ->
     Some(Transcript { messages, earlier })
 }
 
-/// A past Claude conversation's prompts and replies, read from its
-/// transcript and nothing else: no `claude` is started to show them.
-/// `None` when it is not among those under `cwds`.
+/// A past conversation's prompts and replies, read from its transcript and
+/// nothing else: no agent is started to show them. `None` when it is not
+/// among those under `cwds`.
 #[tauri::command(async)]
 pub fn roer_claude_transcript(cwds: Vec<String>, id: String) -> Option<Transcript> {
-    transcript_from(&claude_home(), &cwds, &id, TEXT.get_or_init(TextIndex::default))
+    transcript_of(readable_transcripts(&cwds), &id, TEXT.get_or_init(TextIndex::default))
 }
 
 /// The text around the first of `terms` it holds, on one line.
@@ -774,48 +738,48 @@ fn snippet(indexed: &Indexed, terms: &[String]) -> Option<String> {
 /// whatever its case: in the name, the folder (so a worktree's), the branch,
 /// or what was said.
 pub fn search(cwds: &[String], query: &str) -> Vec<SearchHit> {
-    search_in(&claude_home(), cwds, query, TEXT.get_or_init(TextIndex::default))
-}
-
-fn search_in(home: &Path, cwds: &[String], query: &str, index: &TextIndex) -> Vec<SearchHit> {
-    let terms: Vec<String> = fold(query).split_whitespace().map(str::to_string).collect();
+    let terms = terms_of(query);
     if terms.is_empty() {
         return Vec::new();
     }
-    // Every conversation, whoever has it open: a search finds, the list
-    // decides what to show.
-    let transcripts = transcripts_in(home, cwds, &HashMap::new());
+    search_over(readable_transcripts(cwds), &terms, TEXT.get_or_init(TextIndex::default))
+}
+
+fn terms_of(query: &str) -> Vec<String> {
+    fold(query).split_whitespace().map(str::to_string).collect()
+}
+
+#[cfg(test)]
+fn search_in(home: &Path, cwds: &[String], query: &str, index: &TextIndex) -> Vec<SearchHit> {
+    let terms = terms_of(query);
+    if terms.is_empty() {
+        return Vec::new();
+    }
+    search_over(transcripts_in(home, cwds, &HashMap::new()), &terms, index)
+}
+
+/// Every conversation, whoever has it open: a search finds, the list
+/// decides what to show.
+fn search_over(transcripts: Vec<(ClaudeThread, PathBuf)>, terms: &[String], index: &TextIndex) -> Vec<SearchHit> {
     let mut hits = Vec::new();
     for (thread, path) in &transcripts {
         let place = fold(&format!("{}\n{}\n{}", thread.title, thread.cwd, thread.branch.as_deref().unwrap_or("")));
         let entry = index.entry(path);
         let mut indexed = lock(&entry);
-        read_appended(&mut indexed, path);
+        read_appended(&mut indexed, path, reader(&thread.agent));
         if !terms.iter().all(|term| place.contains(term.as_str()) || indexed.folded.contains(term.as_str())) {
             continue;
         }
-        hits.push(SearchHit { id: thread.id.clone(), snippet: snippet(&indexed, &terms) });
+        hits.push(SearchHit { id: thread.id.clone(), snippet: snippet(&indexed, terms) });
     }
     index.keep_only(&transcripts.iter().map(|(_, path)| path.as_path()).collect());
     hits
 }
 
-/// [`search`] over Claude Code's conversations, and Codex's by their names
-/// and folders.
+/// [`search`], as the app asks it.
 #[tauri::command(async)]
 pub fn roer_claude_search(cwds: Vec<String>, query: String) -> Vec<SearchHit> {
-    let mut hits = search(&cwds, &query);
-    let terms: Vec<String> = fold(&query).split_whitespace().map(str::to_string).collect();
-    hits.extend(
-        crate::codex::threads_for(&cwds)
-            .into_iter()
-            .filter(|thread| {
-                let place = fold(&format!("{}\n{}", thread.title, thread.cwd));
-                !terms.is_empty() && terms.iter().all(|term| place.contains(term.as_str()))
-            })
-            .map(|thread| SearchHit { id: thread.id, snippet: None }),
-    );
-    hits
+    search(&cwds, &query)
 }
 
 #[cfg(test)]
@@ -1447,6 +1411,39 @@ mod tests {
         assert_eq!(ids(&search_in(&home, &roots, "narwhals", &TextIndex::default())), ["abc"]);
         let transcript = transcript_in(&home, &roots, "abc").expect("a transcript");
         assert_eq!(transcript.messages[0].text, "about narwhals");
+
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    /// Another CLI's transcript is read in its own format, by its own reader.
+    #[test]
+    fn search_and_preview_read_each_agent_in_its_own_format() {
+        let home = temp_home();
+        let path = home.join("rollout.jsonl");
+        std::fs::create_dir_all(&home).unwrap();
+        let said = serde_json::json!({
+            "type": "response_item",
+            "payload": {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "One ring to rule them all"}]},
+        });
+        std::fs::write(&path, format!("{said}\n")).unwrap();
+        let thread = ClaudeThread {
+            id: "lotr".to_string(),
+            agent: "codex".to_string(),
+            cwd: "/w".to_string(),
+            title: "Discuss a book".to_string(),
+            updated_at: 0,
+            branch: None,
+            open_elsewhere: false,
+            created_at: None,
+        };
+        let index = TextIndex::default();
+        let transcripts = || vec![(thread.clone(), path.clone())];
+
+        let hits = search_over(transcripts(), &terms_of("ring"), &index);
+        assert_eq!(ids(&hits), ["lotr"]);
+        assert!(hits[0].snippet.as_deref().unwrap().contains("One ring"));
+        let transcript = transcript_of(transcripts(), "lotr", &index).unwrap();
+        assert_eq!(transcript.messages[0].text, "One ring to rule them all");
 
         std::fs::remove_dir_all(&home).ok();
     }

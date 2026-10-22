@@ -198,8 +198,9 @@ export const killSession = (pane: string): Promise<void> => invoke("roer_kill", 
 export const listPastSessions = (): Promise<PastSession[]> => invoke("roer_past_sessions");
 
 /**
- * Past Claude conversations across the given cwds, most recently updated
- * first. Scoped to cwds roer already knows about — never a global scan.
+ * Past conversations across the given cwds, Claude Code's, Codex's, Pi's and
+ * Junie's, most recently updated first. Scoped to cwds roer already knows
+ * about — never a global scan.
  * `panes` are the processes of Roer's panes, so a conversation running in
  * one is left to its live row.
  */
