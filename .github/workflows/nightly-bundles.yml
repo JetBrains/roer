@@ -32,9 +32,7 @@ jobs:
 
       # As in CI's Checks, plus `file`, which the AppImage tooling shells out to.
       - name: Linux build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev libssl-dev librsvg2-dev file
+        run: .github/linux/apt-install.sh libwebkit2gtk-4.1-dev libxdo-dev libssl-dev librsvg2-dev file
 
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
 

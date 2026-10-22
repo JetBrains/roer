@@ -32,6 +32,9 @@ jobs:
       matrix:
         os: [macos-26, ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    # A few minutes warm, and a cold build well under half an hour: anything
+    # longer is a hang, which would otherwise hold a runner for six hours.
+    timeout-minutes: 30
     # Windows builds and opens but runs no sessions yet (there is no tmux),
     # and this suite has never passed there: report it without gating on it
     # until it does.
@@ -50,9 +53,7 @@ jobs:
       # the CLI tests, which drive a real server.
       - name: Linux build dependencies
         if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev libssl-dev librsvg2-dev tmux
+        run: .github/linux/apt-install.sh libwebkit2gtk-4.1-dev libxdo-dev libssl-dev librsvg2-dev tmux
 
       - name: tmux, for the CLI tests
         if: runner.os == 'macOS'
@@ -104,7 +105,9 @@ jobs:
 
       # The release guard is shell with no compiler behind it.
       - name: Shell syntax
-        run: sh -n scripts/check-version
+        run: |
+          sh -n scripts/check-version
+          bash -n .github/linux/apt-install.sh
 
   # roer on native Windows: its session engine there is psmux, a tmux
   # reimplementation on ConPTY, and this drives the real roer.exe against it
@@ -179,9 +182,7 @@ jobs:
       # ffmpeg to record that display.
       - name: Linux dependencies
         if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev libssl-dev librsvg2-dev tmux webkit2gtk-driver xvfb ffmpeg
+        run: .github/linux/apt-install.sh libwebkit2gtk-4.1-dev libxdo-dev libssl-dev librsvg2-dev tmux webkit2gtk-driver xvfb ffmpeg
 
       - name: ffmpeg, to record the run
         if: runner.os == 'Windows'
