@@ -441,6 +441,15 @@ describe("GoToFile — sessions", () => {
     expect(screen.getByText("quokka", { selector: "mark" })).toBeInTheDocument();
   });
 
+  it("counts the sessions it found past the ones it lists", async () => {
+    const many = Array.from({ length: 25 }, (_, n) => session(`Otters ${n + 1}`, "/work/zoo"));
+    render(<GoToFile noFiles sessions={many} onOpen={vi.fn()} onClose={vi.fn()} />);
+    fireEvent.change(screen.getByRole("combobox"), { target: { value: "otters" } });
+
+    expect(await screen.findByText("20 of 25 sessions")).toBeInTheDocument();
+    expect(screen.getAllByRole("option")).toHaveLength(20);
+  });
+
   it("drops what was said for an older query", async () => {
     let answerFirst: (hits: Map<string, string | undefined>) => void = () => {};
     const searchSessions = vi
