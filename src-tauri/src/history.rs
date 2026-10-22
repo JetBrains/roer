@@ -205,6 +205,7 @@ mod tests {
             state: String::new(),
             note: String::new(),
             opened: 0,
+            pid: 0,
         }
     }
 

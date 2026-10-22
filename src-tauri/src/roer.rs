@@ -182,6 +182,9 @@ pub struct SessionInfo {
     /// When the session was last opened, in seconds since the epoch; 0 when
     /// it never was, or the shim is too old to say.
     pub opened: u64,
+    /// The pane's own process, which a `claude` in it descends from; 0 when
+    /// the shim is too old to say.
+    pub pid: u64,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -321,6 +324,8 @@ struct JsonRow {
     note: String,
     #[serde(default)]
     opened: u64,
+    #[serde(default)]
+    pid: u64,
 }
 
 /// One row of `roer list`: JSON from a shim that knows `--json`, otherwise
@@ -342,6 +347,7 @@ fn parse_line(line: &str) -> Option<SessionInfo> {
             state: row.state,
             note: row.note,
             opened: row.opened,
+            pid: row.pid,
         };
         return (!info.session.is_empty()).then_some(info);
     }
@@ -361,6 +367,7 @@ fn parse_line(line: &str) -> Option<SessionInfo> {
         state: String::new(),
         note: String::new(),
         opened: 0,
+        pid: 0,
     };
     (!info.session.is_empty()).then_some(info)
 }
@@ -485,9 +492,10 @@ mod tests {
     #[test]
     fn parses_a_json_row() {
         let got = parse_line(
-            r#"{"id":"abc","session":"roer","pane":"%0","attached":false,"cwd":"/tmp","command":"2.1.280","agent":"","title":"\u2733 fix","activity":1790000000,"bell":true,"opened":1790000100}"#,
+            r#"{"id":"abc","session":"roer","pane":"%0","attached":false,"cwd":"/tmp","command":"2.1.280","agent":"","title":"\u2733 fix","activity":1790000000,"bell":true,"opened":1790000100,"pid":4242}"#,
         )
         .expect("row");
+        assert_eq!(got.pid, 4242);
         assert_eq!(got.session, "roer");
         assert_eq!(got.command, "claude");
         assert_eq!(got.title, "\u{2733} fix");
