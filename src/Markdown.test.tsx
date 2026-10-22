@@ -16,6 +16,25 @@ describe("Markdown", () => {
     expect(container.firstElementChild?.className).toBe("file-markdown pr-md");
   });
 
+  it("marks the words asked for, in any case, inside the formatting and not in its markup", () => {
+    const { container } = render(<Markdown marks={["cents"]}>{"The **Cents** are lost; see [cents](https://example.com/cents)."}</Markdown>);
+    expect([...container.querySelectorAll("mark")].map((mark) => mark.textContent)).toEqual(["Cents", "cents"]);
+    expect(container.querySelector("strong mark")?.textContent).toBe("Cents");
+    expect(container.querySelector("a")?.getAttribute("href")).toBe("https://example.com/cents");
+  });
+
+  it("marks no word inside raw HTML's attributes", () => {
+    const { container } = render(<Markdown marks={["cents"]}>{'<div title="cents" lang="cents">c</div> cents'}</Markdown>);
+    expect(container.querySelector("div[lang]")?.getAttribute("lang")).toBe("cents");
+    expect([...container.querySelectorAll("mark")].map((mark) => mark.textContent)).toEqual(["cents"]);
+  });
+
+  it("can leave images out, saying what they were, so reading loads nothing", () => {
+    const { container } = render(<Markdown images={false}>{"![a chart](https://example.com/chart.png) <img src=\"https://example.com/x.png\" alt=\"x\">"}</Markdown>);
+    expect(container.querySelector("img")).toBeNull();
+    expect(container).toHaveTextContent("[image: a chart]");
+  });
+
   it("renders the HTML GitHub allows", () => {
     const { container } = render(
       <Markdown>{"<div><em>emphasis</em></div>\n\n<details><summary>More</summary>hidden</details>"}</Markdown>,

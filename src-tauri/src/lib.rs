@@ -88,6 +88,7 @@ pub fn run() {
             roer::roer_kill,
             claude::roer_claude_threads,
             claude::roer_claude_search,
+            claude::roer_claude_transcript,
             agents::agents_list,
             agents::agent_save,
             agents::agent_remove,
