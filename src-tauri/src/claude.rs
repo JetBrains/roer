@@ -621,6 +621,11 @@ fn read_appended(entry: &mut Indexed, path: &Path) {
 /// everything else: tool calls and their output, and what Claude Code writes
 /// in a prompt's place itself.
 fn said_in(line: &[u8]) -> Option<String> {
+    message_in(line).map(|message| message.text)
+}
+
+/// [`said_in`], with who said it and when.
+fn message_in(line: &[u8]) -> Option<Message> {
     // Far cheaper than parsing every line, most of which are neither.
     let is = |needle: &[u8]| line.windows(needle.len()).any(|window| window == needle);
     if !is(br#""type":"user""#) && !is(br#""type":"assistant""#) {
@@ -634,17 +639,89 @@ fn said_in(line: &[u8]) -> Option<String> {
     }
     let said = |text: &&str| kind != "user" || !is_wrapper(text);
     let content = event.get("message")?.get("content")?;
-    if let Some(text) = content.as_str() {
-        return said(&text).then(|| text.to_string());
+    let text = if let Some(text) = content.as_str() {
+        said(&text).then(|| text.to_string())?
+    } else {
+        let texts: Vec<&str> = content
+            .as_array()?
+            .iter()
+            .filter(|block| block.get("type").and_then(Value::as_str) == Some("text"))
+            .filter_map(|block| block.get("text").and_then(Value::as_str))
+            .filter(said)
+            .collect();
+        if texts.is_empty() {
+            return None;
+        }
+        texts.join("\n")
+    };
+    Some(Message {
+        role: kind.to_string(),
+        text,
+        at: event.get("timestamp").and_then(Value::as_str).map(str::to_string),
+    })
+}
+
+/// How many of a conversation's latest messages a preview shows.
+const PREVIEW_MESSAGES: usize = 200;
+/// How much of one message a preview shows: a reply can be a whole file.
+const PREVIEW_CHARS: usize = 4000;
+
+/// One prompt or reply, as a preview shows it.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Message {
+    /// `user` or `assistant`.
+    pub role: String,
+    pub text: String,
+    /// When it was said, as Claude recorded it (RFC 3339).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub at: Option<String>,
+}
+
+/// What a conversation said, to read without resuming it: resuming starts
+/// `claude`, and with it its hooks and MCP servers.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Transcript {
+    /// The latest of its prompts and replies, oldest first.
+    pub messages: Vec<Message>,
+    /// How many before those were left out.
+    pub earlier: usize,
+}
+
+fn transcript_in(home: &Path, cwds: &[String], id: &str) -> Option<Transcript> {
+    let (_, path) = transcripts_in(home, cwds, Some(&[])).into_iter().find(|(thread, _)| thread.id == id)?;
+    let file = std::fs::File::open(path).ok()?;
+    let mut reader = std::io::BufReader::new(file);
+    let mut messages = std::collections::VecDeque::with_capacity(PREVIEW_MESSAGES + 1);
+    let mut earlier = 0;
+    let mut line = Vec::new();
+    loop {
+        line.clear();
+        if !matches!(reader.read_until(b'\n', &mut line), Ok(read) if read > 0) {
+            break;
+        }
+        let Some(mut message) = message_in(line.strip_suffix(b"\n").unwrap_or(&line)) else {
+            continue;
+        };
+        if message.text.chars().count() > PREVIEW_CHARS {
+            message.text = message.text.chars().take(PREVIEW_CHARS).collect::<String>() + "…";
+        }
+        messages.push_back(message);
+        if messages.len() > PREVIEW_MESSAGES {
+            messages.pop_front();
+            earlier += 1;
+        }
     }
-    let texts: Vec<&str> = content
-        .as_array()?
-        .iter()
-        .filter(|block| block.get("type").and_then(Value::as_str) == Some("text"))
-        .filter_map(|block| block.get("text").and_then(Value::as_str))
-        .filter(said)
-        .collect();
-    (!texts.is_empty()).then(|| texts.join("\n"))
+    Some(Transcript { messages: messages.into(), earlier })
+}
+
+/// A past Claude conversation's prompts and replies, read from its
+/// transcript and nothing else: no `claude` is started to show them.
+/// `None` when it is not among those under `cwds`.
+#[tauri::command(async)]
+pub fn roer_claude_transcript(cwds: Vec<String>, id: String) -> Option<Transcript> {
+    transcript_in(&claude_home(), &cwds, &id)
 }
 
 /// The text around the first of `terms` it holds, on one line.
@@ -1183,6 +1260,85 @@ mod tests {
 
         search_in(&home, &["/tmp/one".to_string()], "shared", &index);
         assert_eq!(index.len(), 1);
+
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn a_transcript_reads_as_its_prompts_and_replies() {
+        let home = temp_home();
+        let tool_use = serde_json::json!({
+            "type": "assistant", "cwd": "$CWD",
+            "message": {"content": [{"type": "tool_use", "name": "Bash", "input": {"command": "ls"}}]},
+        })
+        .to_string();
+        let tool_result = serde_json::json!({
+            "type": "user", "cwd": "$CWD",
+            "message": {"content": [{"type": "tool_result", "content": "a file listing"}]},
+        })
+        .to_string();
+        let lines = current_transcript(
+            "/tmp/x",
+            &[
+                user("<command-name>/model</command-name>"),
+                user("look at the importer").replace(r#""cwd""#, r#""timestamp":"2026-01-05T09:30:00.000Z","cwd""#),
+                tool_use,
+                tool_result,
+                assistant("It drops every second row."),
+            ],
+        );
+        write_lines(&home, "/tmp/x", "abc", &lines);
+
+        let transcript = transcript_in(&home, &["/tmp/x".to_string()], "abc").expect("a transcript");
+        let said: Vec<(&str, &str)> = transcript.messages.iter().map(|m| (m.role.as_str(), m.text.as_str())).collect();
+        assert_eq!(said, [("user", "look at the importer"), ("assistant", "It drops every second row.")]);
+        assert_eq!(transcript.messages[0].at.as_deref(), Some("2026-01-05T09:30:00.000Z"));
+        assert_eq!(transcript.earlier, 0);
+
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn a_long_transcript_reads_as_its_latest_messages() {
+        let home = temp_home();
+        let mut lines = current_transcript("/tmp/x", &[]);
+        for n in 0..250 {
+            lines.push(user(&format!("message {n}")).replace("$CWD", "/tmp/x"));
+        }
+        lines.push(assistant(&"y".repeat(20_000)).replace("$CWD", "/tmp/x"));
+        write_lines(&home, "/tmp/x", "abc", &lines);
+
+        let transcript = transcript_in(&home, &["/tmp/x".to_string()], "abc").unwrap();
+        assert_eq!(transcript.messages.len(), PREVIEW_MESSAGES);
+        assert_eq!(transcript.earlier, 251 - PREVIEW_MESSAGES);
+        assert_eq!(transcript.messages[0].text, format!("message {}", 251 - PREVIEW_MESSAGES));
+        let last = &transcript.messages.last().unwrap().text;
+        assert!(last.chars().count() <= PREVIEW_CHARS + 1 && last.ends_with('…'), "{}", last.len());
+
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn no_transcript_for_a_conversation_not_there() {
+        let home = temp_home();
+        write_lines(&home, "/tmp/x", "abc", &current_transcript("/tmp/x", &[user("hello")]));
+
+        assert!(transcript_in(&home, &["/tmp/x".to_string()], "nope").is_none());
+        assert!(transcript_in(&home, &["/tmp/elsewhere".to_string()], "abc").is_none());
+
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn an_id_is_never_a_path_out_of_the_directories_asked_about() {
+        let home = temp_home();
+        write_lines(&home, "/tmp/x", "abc", &current_transcript("/tmp/x", &[user("hello")]));
+        write_lines(&home, "/tmp/other", "def", &current_transcript("/tmp/other", &[user("not yours")]));
+
+        let asked = ["/tmp/x".to_string()];
+        assert!(transcript_in(&home, &asked, "../-tmp-other/def").is_none());
+        assert!(transcript_in(&home, &asked, "abc/../abc").is_none());
+        assert!(transcript_in(&home, &asked, "abc.jsonl").is_none());
 
         std::fs::remove_dir_all(&home).ok();
     }

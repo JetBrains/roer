@@ -315,7 +315,7 @@ describe("past Claude conversations", () => {
     ]);
     renderList();
 
-    const row = await screen.findByRole("button", { name: /fix the flaky test/i });
+    const row = await screen.findByRole("button", { name: /^Resume fix the flaky test/i });
     expect(row).toHaveTextContent("ago");
   });
 
@@ -341,7 +341,7 @@ describe("past Claude conversations", () => {
     const onOpen = vi.fn();
     renderList(onOpen);
 
-    fireEvent.click(await screen.findByRole("button", { name: /fix the flaky test/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /^Resume fix the flaky test/i }));
 
     expect(onOpen).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -782,7 +782,7 @@ describe("naming the agent", () => {
     ]);
     renderList();
 
-    const row = await screen.findByRole("button", { name: /fix the flaky test/i });
+    const row = await screen.findByRole("button", { name: /^Resume fix the flaky test/i });
     expect(row).toHaveTextContent("claude");
   });
 });

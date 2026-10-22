@@ -213,6 +213,29 @@ export const listClaudeSessions = (cwds: string[], panes?: number[]): Promise<Cl
 export const searchClaudeSessions = (cwds: string[], query: string): Promise<ClaudeHit[]> =>
   invoke("roer_claude_search", { cwds, query });
 
+/** One prompt or reply of a past conversation. */
+export interface ClaudeMessage {
+  role: "user" | "assistant";
+  text: string;
+  /** When it was said (RFC 3339), where the transcript says. */
+  at?: string;
+}
+
+/** The latest of a past conversation's prompts and replies, oldest first,
+ * and how many before them were left out. */
+export interface ClaudeTranscript {
+  messages: ClaudeMessage[];
+  earlier: number;
+}
+
+/**
+ * What a past conversation said, read from its transcript alone: nothing
+ * is started to show it, as resuming starts the CLI and its hooks. `null`
+ * when it is not among the conversations under `cwds`.
+ */
+export const readClaudeTranscript = (cwds: string[], id: string): Promise<ClaudeTranscript | null> =>
+  invoke("roer_claude_transcript", { cwds, id });
+
 export const roerStatus = (): Promise<RoerStatus> => invoke("roer_status");
 
 /**

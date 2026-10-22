@@ -1,5 +1,5 @@
-import { Search } from "lucide-react";
-import { useEffect, useId, useRef, useState } from "react";
+import { Eye, Search } from "lucide-react";
+import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from "react";
 
 import { checkoutName, within } from "./lib/checkouts";
 import type { Repo } from "./lib/git";
@@ -8,12 +8,23 @@ import type { Project } from "./lib/projects";
 import { searchClaudeSessions, type ClaudeSession } from "./lib/pty";
 import type { Workspace } from "./lib/workspaces";
 import type { Worktree } from "./lib/worktrees";
+import { ConversationPreview, readable } from "./ConversationPreview";
 import { AssignMenu, relativeAge, shorten } from "./SessionBrowser";
 
 /** How many of a bucket show before "Show N more". */
 const SHOWN = 10;
 /** How long typing has to pause before what was said is searched. */
 const DEBOUNCE_MS = 200;
+/** Whether the preview beside the timeline is open, from one launch to the next. */
+const PREVIEW_KEY = "roer:conversation-preview";
+
+function previewWasOn(): boolean {
+  try {
+    return localStorage.getItem(PREVIEW_KEY) === "on";
+  } catch {
+    return false;
+  }
+}
 
 const BUCKETS = ["Today", "Yesterday", "Previous 7 days", "Previous 30 days", "Older"] as const;
 type Bucket = (typeof BUCKETS)[number];
@@ -86,9 +97,24 @@ export function Conversations({
   const asked = useRef(0);
   const cwdsKey = cwds.join("\n");
   const ids = useId();
+  // The preview beside the timeline, and the conversation it shows. While
+  // it is open a click on a row shows that row; Resume is the panel's.
+  const [previewing, setPreviewingRaw] = useState(previewWasOn);
+  const [picked, setPicked] = useState<string | null>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+  const setPreviewing = (on: boolean) => {
+    setPreviewingRaw(on);
+    try {
+      localStorage.setItem(PREVIEW_KEY, on ? "on" : "off");
+    } catch {
+      /* only a convenience */
+    }
+  };
 
-  const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
-  const termsKey = terms.join(" ");
+  const termsKey = query.toLowerCase().split(/\s+/).filter(Boolean).join(" ");
+  // The same array while the words are the same, so the preview's messages
+  // need not render again on a keystroke that changes nothing.
+  const terms = useMemo(() => (termsKey ? termsKey.split(" ") : []), [termsKey]);
 
   useEffect(() => {
     const request = ++asked.current;
@@ -148,14 +174,54 @@ export function Conversations({
       .filter((checkout) => within(cwd, checkout.path))
       .sort((a, b) => b.path.length - a.path.length)[0];
 
-  const row = (conversation: ClaudeSession) => {
-    // The branch it was on, which is what it was about; else the checkout's
-    // name, or a linked worktree's folder.
+  // The branch it was on, which is what it was about; else the checkout's
+  // name, or a linked worktree's folder.
+  const placeOf = (conversation: ClaudeSession) => {
     const repo = repos[conversation.cwd];
     const checkout = checkoutOf(conversation.cwd);
     const linked = checkout ? !checkout.main : repo != null && repo.root !== repo.main;
     const where =
       conversation.branch ?? (checkout ? checkoutName(checkout) : linked ? repo?.root.split("/").pop() : undefined);
+    return { where, linked };
+  };
+
+  // The rows in the order they are drawn, for the arrows to step through.
+  const drawn = BUCKETS.flatMap((bucket) => {
+    const list = buckets.get(bucket) ?? [];
+    return unfolded.has(bucket) ? list : list.slice(0, SHOWN);
+  });
+  // Open only beside a list: with nothing to pick, the toggle is gone too.
+  const showing = previewing && conversations.length > 0;
+  const current = showing ? (conversations.find((conversation) => conversation.id === picked) ?? null) : null;
+  /** Closes the preview, and gives the keyboard back to the row it showed. */
+  const closePreview = () => {
+    setPreviewing(false);
+    if (picked) listRef.current?.querySelector<HTMLButtonElement>(`[data-conversation="${CSS.escape(picked)}"]`)?.focus();
+  };
+
+  const pick = (conversation: ClaudeSession) => {
+    setPicked(conversation.id);
+    listRef.current?.querySelector<HTMLButtonElement>(`[data-conversation="${CSS.escape(conversation.id)}"]`)?.focus();
+  };
+
+  const onRowKey = (event: KeyboardEvent, conversation: ClaudeSession) => {
+    if (!previewing) return;
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      const at = drawn.findIndex((other) => other.id === conversation.id);
+      const next = drawn[at + (event.key === "ArrowDown" ? 1 : -1)];
+      if (next) pick(next);
+    } else if (event.key === "Enter") {
+      // Not the click Enter would make, which only shows it.
+      event.preventDefault();
+      onOpen(conversation);
+    } else if (event.key === "Escape") {
+      setPreviewing(false);
+    }
+  };
+
+  const row = (conversation: ClaudeSession) => {
+    const { where, linked } = placeOf(conversation);
     const project = projectOf(conversation.cwd);
     const snippet = found?.get(conversation.id);
     const badge = `${ids}-${conversation.id}-badge`;
@@ -172,11 +238,15 @@ export function Conversations({
           <span className="workspace-row">
             <button
               type="button"
-              className="row conversation"
-              aria-label={`Resume ${conversation.title}`}
+              className={current?.id === conversation.id ? "row conversation active" : "row conversation"}
+              data-conversation={conversation.id}
+              aria-label={`${previewing ? "Show" : "Resume"} ${conversation.title}`}
               aria-describedby={described || undefined}
-              title={shorten(conversation.cwd, home)}
-              onClick={() => onOpen(conversation)}
+              aria-current={current?.id === conversation.id ? "true" : undefined}
+              title={previewing ? "Shown beside; double-click or Enter to resume" : shorten(conversation.cwd, home)}
+              onClick={() => (previewing ? setPicked(conversation.id) : onOpen(conversation))}
+              onDoubleClick={() => previewing && onOpen(conversation)}
+              onKeyDown={(event) => onRowKey(event, conversation)}
             >
               <span className="conversation-line">
                 <strong>{conversation.title}</strong>
@@ -189,7 +259,7 @@ export function Conversations({
                   ) : null}
                   {/* Named the same way live rows name themselves: the agent
                       that will run, not an icon for it. */}
-                  <span>{conversation.agent ?? "claude"}</span>
+                  <span className="agent">{conversation.agent ?? "claude"}</span>
                 </span>
                 {conversation.openElsewhere ? (
                   <span id={badge} className="badge held" title="A claude started outside Roer, in a terminal or an editor, has this conversation open">
@@ -204,6 +274,22 @@ export function Conversations({
                 </span>
               ) : null}
             </button>
+            {readable(conversation) ? (
+              <button
+                type="button"
+                className="tree-action conversation-peek"
+                aria-label={`Preview ${conversation.title}`}
+                title="Read it without resuming it"
+                onClick={() => {
+                  setPreviewing(true);
+                  setPicked(conversation.id);
+                }}
+              >
+                <Eye size={13} aria-hidden="true" />
+              </button>
+            ) : (
+              <span className="conversation-peek" aria-hidden="true" />
+            )}
           </span>
         </AssignMenu>
       </li>
@@ -213,12 +299,27 @@ export function Conversations({
   const count = filtering ? `${shown.length} of ${conversations.length}` : `${conversations.length}`;
 
   return (
-    <section className="conversations" aria-label="Conversations">
+    <section className={showing ? "conversations previewing" : "conversations"} aria-label="Conversations">
+      <div className="conversations-list" ref={listRef}>
       <h2>
         <span>
           Conversations <span className="conversations-count">{count}</span>
         </span>
-        {searching ? <span className="conversations-status">Searching…</span> : null}
+        <span className="conversations-tools">
+          {searching ? <span className="conversations-status">Searching…</span> : null}
+          {conversations.length > 0 ? (
+            <button
+              type="button"
+              className="link preview-toggle"
+              aria-pressed={previewing}
+              title={previewing ? "Close the preview" : "Read a conversation beside the list, without resuming it"}
+              onClick={() => setPreviewing(!previewing)}
+            >
+              <Eye size={12} aria-hidden="true" />
+              Preview
+            </button>
+          ) : null}
+        </span>
       </h2>
       {conversations.length === 0 ? (
         <p className="muted">No past conversations here yet.</p>
@@ -260,6 +361,18 @@ export function Conversations({
           })}
         </>
       )}
+      </div>
+      {showing ? (
+        <ConversationPreview
+          conversation={current}
+          cwds={cwds}
+          terms={terms}
+          where={current ? placeOf(current).where : undefined}
+          home={home}
+          onResume={onOpen}
+          onClose={closePreview}
+        />
+      ) : null}
     </section>
   );
 }

@@ -1437,6 +1437,266 @@ button.row.conversation {
   border-radius: 2px;
 }
 
+.conversations-tools {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+
+/* The preview's switch: says whether it is on, not only that it exists. */
+button.link.preview-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+button.link.preview-toggle[aria-pressed="true"] {
+  color: var(--roer-fg);
+  background: color-mix(in srgb, var(--roer-accent) 22%, transparent);
+}
+
+/* Every row the same width, whatever it says, so their preview buttons
+   line up. */
+.conversations .workspace-row button.row.conversation {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+/* A row's own way into the preview, out of the way until the row is. */
+button.conversation-peek {
+  flex: 0 0 auto;
+  align-self: center;
+  opacity: 0.45;
+}
+
+/* Where a row that cannot be previewed has no button, the room for one, so
+   its edge lines up with the others'. */
+span.conversation-peek {
+  flex: 0 0 18px;
+}
+
+/* Where a row is too narrow for everything on one line (beside the
+   preview, in a small window), it takes two: the name and how long ago on
+   the first, where it was and who has it open under them. */
+.conversations-list {
+  container-type: inline-size;
+}
+
+@container (max-width: 760px) {
+  .conversation-line {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "name age"
+      "meta held";
+    column-gap: 8px;
+    row-gap: 3px;
+  }
+
+  .conversation-line strong {
+    grid-area: name;
+  }
+
+  .conversation-line .row-meta {
+    grid-area: meta;
+  }
+
+  .conversation-line .badge.resume {
+    grid-area: age;
+    justify-self: end;
+  }
+
+  .conversation-line .badge.held {
+    grid-area: held;
+    justify-self: end;
+    margin-left: 0;
+  }
+}
+
+/* A short word, and the one that tells a codex row from a claude one. */
+.conversation-line .row-meta > span.agent {
+  flex-shrink: 0;
+}
+
+.workspace-row:hover button.conversation-peek,
+button.conversation-peek:focus-visible {
+  opacity: 1;
+}
+
+/* The timeline and, beside it, the conversation picked from it. */
+.conversations.previewing {
+  display: grid;
+  grid-template-columns: minmax(0, 5fr) minmax(0, 6fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.conversation-preview {
+  position: sticky;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - 150px);
+  overflow: hidden;
+  background: var(--roer-panel);
+  border: 1px solid var(--roer-border);
+  border-radius: 8px;
+}
+
+.conversation-preview header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--roer-border);
+}
+
+.conversation-preview-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.conversation-preview-title h3 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conversation-preview-title .muted {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conversation-preview > p {
+  margin: 0;
+  padding: 8px 12px;
+}
+
+p.conversation-preview-note {
+  padding: 5px 12px;
+  border-bottom: 1px solid var(--roer-border);
+}
+
+.conversation-messages {
+  /* What the scroll to a match measures from. */
+  position: relative;
+  list-style: none;
+  margin: 0;
+  padding: 12px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.conversation-message {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr);
+  gap: 8px;
+  font-size: 12px;
+}
+
+.conversation-message-who {
+  padding-top: 1px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--roer-muted);
+}
+
+.conversation-message-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.45;
+}
+
+/* What you typed, set apart from what came back. */
+.conversation-message.user .conversation-message-text {
+  padding: 6px 8px;
+  background: var(--roer-row);
+  border-radius: 6px;
+}
+
+.conversation-message-text mark {
+  color: var(--roer-fg);
+  background: color-mix(in srgb, var(--roer-warn) 30%, transparent);
+  border-radius: 2px;
+}
+
+/* A reply in the preview: Markdown sized to the panel, and the first and
+   last block flush with the speaker's name. */
+.file-markdown.conversation-message-md {
+  flex: none;
+  overflow: visible;
+  padding: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  min-width: 0;
+}
+
+.file-markdown.conversation-message-md > :first-child {
+  margin-top: 0;
+}
+
+.file-markdown.conversation-message-md > :last-child {
+  margin-bottom: 0;
+}
+
+.file-markdown.conversation-message-md h1,
+.file-markdown.conversation-message-md h2,
+.file-markdown.conversation-message-md h3 {
+  display: block;
+  margin: 1em 0 0.4em;
+  font-size: 1.1em;
+  text-transform: none;
+  letter-spacing: normal;
+  color: var(--ide-text);
+}
+
+/* The sessions view takes the markers off its own lists; a reply's lists
+   keep theirs. */
+.file-markdown.conversation-message-md ul,
+.file-markdown.conversation-message-md ol {
+  display: block;
+  padding-left: 1.6em;
+}
+
+.file-markdown.conversation-message-md ul {
+  list-style: disc;
+}
+
+.file-markdown.conversation-message-md ol {
+  list-style: decimal;
+}
+
+/* A wide table or block scrolls inside the reply, not the panel. */
+.file-markdown.conversation-message-md table,
+.file-markdown.conversation-message-md pre {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.file-markdown.conversation-message-md mark {
+  color: inherit;
+  background: color-mix(in srgb, var(--roer-warn) 30%, transparent);
+  border-radius: 2px;
+}
+
+li.conversation-earlier {
+  text-align: center;
+}
+
 button.link.show-more {
   margin: 6px 0 0 9px;
   font-size: 11px;
