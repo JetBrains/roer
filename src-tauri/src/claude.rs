@@ -219,6 +219,10 @@ fn threads_in(home: &Path, cwds: &[String], panes: Option<&[u64]>) -> Vec<Claude
 fn transcripts_in(home: &Path, cwds: &[String], live: &HashMap<String, Owner>) -> Vec<(ClaudeThread, PathBuf)> {
     let mut dirs_seen = HashSet::new();
     let mut threads = Vec::new();
+    // The folders read, and every transcript in them, which is what says
+    // which cached titles are of transcripts since deleted.
+    let mut dirs_read = HashSet::new();
+    let mut present = HashSet::new();
 
     let Ok(project_dirs) = std::fs::read_dir(home.join("projects")) else {
         return threads;
@@ -248,11 +252,13 @@ fn transcripts_in(home: &Path, cwds: &[String], live: &HashMap<String, Owner>) -
             let Ok(entries) = std::fs::read_dir(dir) else {
                 continue;
             };
+            dirs_read.insert(dir.clone());
             for entry in entries.flatten() {
                 let path = entry.path();
                 if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
                     continue;
                 }
+                present.insert(path.clone());
                 let Some(id) = path.file_stem().and_then(|s| s.to_str()) else {
                     continue;
                 };
@@ -305,6 +311,10 @@ fn transcripts_in(home: &Path, cwds: &[String], live: &HashMap<String, Owner>) -
         }
     }
 
+    // A deleted transcript's title would otherwise be held on to for as long
+    // as the app runs. Only in the folders read: another listing's are its own.
+    lock(META.get_or_init(Default::default))
+        .retain(|path, _| present.contains(path) || !path.parent().is_some_and(|dir| dirs_read.contains(dir)));
     threads.sort_by(|a, b| b.0.updated_at.cmp(&a.0.updated_at));
     threads
 }
@@ -539,6 +549,16 @@ struct Indexed {
     text: String,
     /// `text` through [`fold`], char for char.
     folded: String,
+    /// Each message in `text`, in order, which is what a preview reads.
+    messages: Vec<Said>,
+}
+
+/// One message of [`Indexed::text`]: who said it, when, and where it ends.
+struct Said {
+    role: String,
+    at: Option<String>,
+    /// The byte its text starts at, and the one past its end.
+    span: (usize, usize),
 }
 
 /// Every transcript the last search looked in, each behind a lock of its
@@ -610,28 +630,32 @@ fn read_appended(entry: &mut Indexed, path: &Path) {
         if line.last() != Some(&b'\n') {
             break;
         }
-        if let Some(said) = said_in(&line[..line.len() - 1]) {
-            entry.text.push_str(&said);
+        if let Some(message) = message_in(&line[..line.len() - 1]) {
+            let from = entry.text.len();
+            entry.text.push_str(&message.text);
+            entry.messages.push(Said { role: message.role, at: message.at, span: (from, entry.text.len()) });
             entry.text.push('\n');
-            entry.folded.push_str(&fold(&said));
+            entry.folded.push_str(&fold(&message.text));
             entry.folded.push('\n');
         }
         entry.parsed_to += line.len() as u64;
     }
 }
 
-/// The words of a prompt or a reply on one transcript line; `None` for
-/// everything else: tool calls and their output, and what Claude Code writes
-/// in a prompt's place itself.
-fn said_in(line: &[u8]) -> Option<String> {
-    message_in(line).map(|message| message.text)
-}
-
-/// [`said_in`], with who said it and when.
+/// The words of a prompt or a reply on one transcript line, with who said
+/// it and when; `None` for everything else: tool calls and their output, and
+/// what Claude Code writes in a prompt's place itself.
 fn message_in(line: &[u8]) -> Option<Message> {
     // Far cheaper than parsing every line, most of which are neither.
     let is = |needle: &[u8]| line.windows(needle.len()).any(|window| window == needle);
     if !is(br#""type":"user""#) && !is(br#""type":"assistant""#) {
+        return None;
+    }
+    // Most of a transcript's bytes are tool calls and their output, which are
+    // `user` and `assistant` events too: one with no text block says nothing.
+    // Inside a string the quotes would be escaped, so this is only ever a
+    // block's own `type`.
+    if (is(br#""type":"tool_result""#) || is(br#""type":"tool_use""#)) && !is(br#""type":"text""#) {
         return None;
     }
     let event: Value = serde_json::from_slice(line).ok()?;
@@ -692,31 +716,31 @@ pub struct Transcript {
     pub earlier: usize,
 }
 
+#[cfg(test)]
 fn transcript_in(home: &Path, cwds: &[String], id: &str) -> Option<Transcript> {
+    transcript_from(home, cwds, id, &TextIndex::default())
+}
+
+/// Read through the same index a search reads, so stepping from row to row
+/// reads each transcript once, and after that only what was added to it.
+fn transcript_from(home: &Path, cwds: &[String], id: &str, index: &TextIndex) -> Option<Transcript> {
     let (_, path) = transcripts_in(home, cwds, &HashMap::new()).into_iter().find(|(thread, _)| thread.id == id)?;
-    let file = std::fs::File::open(path).ok()?;
-    let mut reader = std::io::BufReader::new(file);
-    let mut messages = std::collections::VecDeque::with_capacity(PREVIEW_MESSAGES + 1);
-    let mut earlier = 0;
-    let mut line = Vec::new();
-    loop {
-        line.clear();
-        if !matches!(reader.read_until(b'\n', &mut line), Ok(read) if read > 0) {
-            break;
-        }
-        let Some(mut message) = message_in(line.strip_suffix(b"\n").unwrap_or(&line)) else {
-            continue;
-        };
-        if message.text.chars().count() > PREVIEW_CHARS {
-            message.text = message.text.chars().take(PREVIEW_CHARS).collect::<String>() + "…";
-        }
-        messages.push_back(message);
-        if messages.len() > PREVIEW_MESSAGES {
-            messages.pop_front();
-            earlier += 1;
-        }
-    }
-    Some(Transcript { messages: messages.into(), earlier })
+    let entry = index.entry(&path);
+    let mut indexed = lock(&entry);
+    read_appended(&mut indexed, &path);
+    let earlier = indexed.messages.len().saturating_sub(PREVIEW_MESSAGES);
+    let messages = indexed.messages[earlier..]
+        .iter()
+        .map(|said| {
+            let text = &indexed.text[said.span.0..said.span.1];
+            let text = match text.char_indices().nth(PREVIEW_CHARS) {
+                Some((cut, _)) => format!("{}…", &text[..cut]),
+                None => text.to_string(),
+            };
+            Message { role: said.role.clone(), text, at: said.at.clone() }
+        })
+        .collect();
+    Some(Transcript { messages, earlier })
 }
 
 /// A past Claude conversation's prompts and replies, read from its
@@ -724,7 +748,7 @@ fn transcript_in(home: &Path, cwds: &[String], id: &str) -> Option<Transcript> {
 /// `None` when it is not among those under `cwds`.
 #[tauri::command(async)]
 pub fn roer_claude_transcript(cwds: Vec<String>, id: String) -> Option<Transcript> {
-    transcript_in(&claude_home(), &cwds, &id)
+    transcript_from(&claude_home(), &cwds, &id, TEXT.get_or_init(TextIndex::default))
 }
 
 /// The text around the first of `terms` it holds, on one line.
@@ -1342,6 +1366,68 @@ mod tests {
         assert!(transcript_in(&home, &asked, "../-tmp-other/def").is_none());
         assert!(transcript_in(&home, &asked, "abc/../abc").is_none());
         assert!(transcript_in(&home, &asked, "abc.jsonl").is_none());
+
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn a_preview_reads_what_was_added_since_the_last() {
+        let home = temp_home();
+        let index = TextIndex::default();
+        let roots = ["/tmp/x".to_string()];
+        let mut lines = current_transcript("/tmp/x", &[user("first")]);
+        write_lines(&home, "/tmp/x", "abc", &lines);
+        let said = |index: &TextIndex| -> Vec<String> {
+            transcript_from(&home, &roots, "abc", index).unwrap().messages.into_iter().map(|m| m.text).collect()
+        };
+        assert_eq!(said(&index), ["first"]);
+
+        lines.push(assistant("second").replace("$CWD", "/tmp/x"));
+        write_lines(&home, "/tmp/x", "abc", &lines);
+        assert_eq!(said(&index), ["first", "second"]);
+        // And a search after it finds what it read.
+        assert_eq!(ids(&search_in(&home, &roots, "second", &index)), ["abc"]);
+
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn a_reply_with_text_beside_a_tool_call_is_still_read() {
+        let home = temp_home();
+        let both = serde_json::json!({
+            "type": "assistant", "cwd": "$CWD",
+            "message": {"content": [
+                {"type": "text", "text": "Let me check the lighthouse"},
+                {"type": "tool_use", "name": "Bash", "input": {"command": "ls"}},
+            ]},
+        })
+        .to_string();
+        let tool_only = serde_json::json!({
+            "type": "assistant", "cwd": "$CWD",
+            "message": {"content": [{"type": "tool_use", "name": "Write", "input": {"content": "lighthouse keeper"}}]},
+        })
+        .to_string();
+        write_lines(&home, "/tmp/x", "abc", &current_transcript("/tmp/x", &[user("go"), both, tool_only]));
+
+        let transcript = transcript_in(&home, &["/tmp/x".to_string()], "abc").unwrap();
+        let said: Vec<&str> = transcript.messages.iter().map(|m| m.text.as_str()).collect();
+        assert_eq!(said, ["go", "Let me check the lighthouse"]);
+
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn forgets_the_title_of_a_deleted_transcript() {
+        let home = temp_home();
+        write_lines(&home, "/tmp/x", "gone", &current_transcript("/tmp/x", &[user("soon deleted")]));
+        let path = home.join("projects").join(encode_project_path("/tmp/x")).join("gone.jsonl");
+        threads_for_home(&home, &["/tmp/x".to_string()]);
+        let cached = || lock(META.get_or_init(Default::default)).contains_key(&path);
+        assert!(cached());
+
+        std::fs::remove_file(&path).unwrap();
+        threads_for_home(&home, &["/tmp/x".to_string()]);
+        assert!(!cached());
 
         std::fs::remove_dir_all(&home).ok();
     }
