@@ -976,6 +976,16 @@ export function App() {
     );
   }, [stripIds, tabs.active]);
 
+  // The strip has no scrollbar, so the tab picked is brought into view, and
+  // a mouse's wheel scrolls it sideways as a trackpad does.
+  const tabStripRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    tabStripRef.current?.querySelector('[aria-selected="true"]')?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+  }, [tabs.active, stripIds]);
+  const scrollTabStrip = (event: React.WheelEvent<HTMLDivElement>) => {
+    if (Math.abs(event.deltaY) > Math.abs(event.deltaX)) event.currentTarget.scrollLeft += event.deltaY;
+  };
+
   // The session on the stage before this one, for Ctrl+Tab: the pane it was
   // in, held while a different one comes up.
   const previousPaneRef = useRef<string | undefined>(undefined);
@@ -1238,7 +1248,7 @@ export function App() {
 
         <section className="stage">
           <div className="tab-bar">
-            <div className="tabs" role="tablist" aria-label="Stage">
+            <div ref={tabStripRef} className="tabs" role="tablist" aria-label="Stage" onWheel={scrollTabStrip}>
               {strip.map((tab) => {
                 if (tab.tabId === "sessions") {
                   return (

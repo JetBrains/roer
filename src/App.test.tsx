@@ -1017,6 +1017,16 @@ describe("App", () => {
       expect(terminal.paste).toHaveBeenCalledWith("/shot.png ");
     });
 
+    it("scrolls the tab strip sideways with a mouse's wheel", async () => {
+      render(<App />);
+      await teleport();
+      const strip = screen.getByRole("tablist", { name: "Stage" });
+      fireEvent.wheel(strip, { deltaY: 40 });
+      expect(strip.scrollLeft).toBe(40);
+      fireEvent.wheel(strip, { deltaX: 30, deltaY: 5 });
+      expect(strip.scrollLeft).toBe(40);
+    });
+
     it("gives the keys back to the stage when a stage tab is asked for, and marks one tab selected", async () => {
       render(<App />);
       await teleport();

@@ -597,7 +597,9 @@ code {
      ellipsis floor since overflow: hidden removes the usual min-content
      stop. `flex: none` below is what makes that floor real. */
   overflow-x: auto;
-  scrollbar-width: thin;
+  /* No bar: on hover WebKit drew a full-size one over the tabs. A wheel
+     still scrolls the strip, and the tab picked scrolls into view. */
+  scrollbar-width: none;
 }
 
 .tab-bar .new-session {
@@ -610,20 +612,9 @@ code {
   flex: none;
 }
 
-/* `scrollbar-width` above is Firefox's own property; the app's actual
-   runtime is WKWebView, which only understands the `::-webkit-scrollbar`
-   pseudo-elements, so both are needed for the same thin, unobtrusive bar. */
+/* For a WebKit too old to know `scrollbar-width`. */
 .tabs::-webkit-scrollbar {
-  height: 4px;
-}
-
-.tabs::-webkit-scrollbar-thumb {
-  background: var(--roer-border);
-  border-radius: 2px;
-}
-
-.tabs::-webkit-scrollbar-track {
-  background: transparent;
+  display: none;
 }
 
 /* Which of "Workspaces" or "Projects" the sidebar's list below is showing —
