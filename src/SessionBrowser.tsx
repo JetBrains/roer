@@ -24,6 +24,7 @@ import type { ClaudeSession, SessionInfo } from "./lib/pty";
 import type { DirStats, SessionBrowserState } from "./lib/useSessionBrowser";
 import type { Workspace } from "./lib/workspaces";
 import { buildTree, checkoutName } from "./lib/checkouts";
+import { Conversations } from "./Conversations";
 import { useFolded } from "./lib/folded";
 
 export interface OpenRequest {
@@ -404,6 +405,7 @@ export type SessionBrowserProps = Pick<
   | "visibleClaudeSessions"
   | "activePane"
   | "openClaudeSession"
+  | "conversationCwds"
   | "refresh"
   | "projectsInView"
   | "worktrees"
@@ -443,6 +445,7 @@ export function SessionBrowser({
   visibleClaudeSessions,
   activePane,
   openClaudeSession,
+  conversationCwds,
   refresh,
   projectsInView,
   worktrees,
@@ -459,13 +462,10 @@ export function SessionBrowser({
     if (typeof picked === "string") handleAttachNewProject(picked);
   };
 
-  // One list, one heading per root — a running session and a resumable
-  // conversation in the same repo are both just "Roer here", not two
-  // differently-worded things.
-  const entries: SessionEntry[] = [
-    ...visibleSessions.map((session): SessionEntry => ({ kind: "live", session })),
-    ...visibleClaudeSessions.map((session): SessionEntry => ({ kind: "resume", session })),
-  ];
+  // What is running, by checkout. Past conversations are a timeline of
+  // their own below: there can be hundreds, and they are come back to by
+  // what and when more than by where.
+  const entries: SessionEntry[] = visibleSessions.map((session): SessionEntry => ({ kind: "live", session }));
   const sections = sessionSections(projectsInView, worktrees, repos, roots, entries, waiting);
   // A Project's group is always two levels, Project then checkout, as the
   // sidebar's tree is. A repository outside the Projects in view needs a
@@ -522,7 +522,7 @@ export function SessionBrowser({
         </button>
       </h2>
 
-      {visibleSessions.length === 0 && visibleClaudeSessions.length === 0 ? (
+      {visibleSessions.length === 0 ? (
         <p className="muted">
           {selectedWorkspace ? (
             "Nothing running in this Workspace's projects yet."
@@ -658,6 +658,19 @@ export function SessionBrowser({
           </div>
         ))
       )}
+
+      <Conversations
+        conversations={visibleClaudeSessions}
+        cwds={conversationCwds}
+        repos={repos}
+        worktrees={worktrees}
+        projects={projectsInView}
+        home={status?.home}
+        workspaces={workspaces}
+        assignments={assignments}
+        handleAssign={handleAssign}
+        onOpen={openClaudeSession}
+      />
 
       {selectedWorkspace ? (
         <>

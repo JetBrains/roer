@@ -36,6 +36,8 @@ export interface SessionInfo {
   /** When the session was last opened, in seconds since the epoch; 0 or
    * missing when it never was or the shim cannot say. */
   opened?: number;
+  /** The pane's own process; 0 or absent when the shim is too old to say. */
+  pid?: number;
 }
 
 /**
@@ -67,6 +69,18 @@ export interface ClaudeSession {
   title: string;
   /** Seconds since the epoch (the transcript file's mtime). */
   updatedAt: number;
+  /** The branch it was last on, as the CLI recorded it. */
+  branch?: string;
+  /** Open in a CLI still running outside Roer: resuming it here as well
+   * would have two of them writing one conversation. */
+  openElsewhere?: boolean;
+}
+
+/** A conversation a search found, and the words of it that matched when
+ * they were in what was said rather than in its name or place. */
+export interface ClaudeHit {
+  id: string;
+  snippet?: string;
 }
 
 export interface RoerStatus {
@@ -186,9 +200,18 @@ export const listPastSessions = (): Promise<PastSession[]> => invoke("roer_past_
 /**
  * Past Claude conversations across the given cwds, most recently updated
  * first. Scoped to cwds roer already knows about — never a global scan.
+ * `panes` are the processes of Roer's panes, so a conversation running in
+ * one is left to its live row.
  */
-export const listClaudeSessions = (cwds: string[]): Promise<ClaudeSession[]> =>
-  invoke("roer_claude_threads", { cwds });
+export const listClaudeSessions = (cwds: string[], panes?: number[]): Promise<ClaudeSession[]> =>
+  invoke("roer_claude_threads", { cwds, panes });
+
+/**
+ * The conversations across `cwds` in which every word of `query` appears,
+ * in any case: in the name, the folder, the branch, or what was said.
+ */
+export const searchClaudeSessions = (cwds: string[], query: string): Promise<ClaudeHit[]> =>
+  invoke("roer_claude_search", { cwds, query });
 
 export const roerStatus = (): Promise<RoerStatus> => invoke("roer_status");
 

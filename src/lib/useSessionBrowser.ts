@@ -82,6 +82,9 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
   const [status, setStatus] = useState<RoerStatus | null>(null);
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [pastSessions, setPastSessions] = useState<ClaudeSession[]>([]);
+  // Every directory conversations were looked for in, which is where a
+  // search of them looks too.
+  const [conversationCwds, setConversationCwds] = useState<string[]>([]);
   const [roots, setRoots] = useState<Record<string, string>>({});
   // Each known directory's repository, which is what says a session in a
   // linked worktree is still the same project.
@@ -321,13 +324,19 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
       const everywhere = [
         ...new Set([...cwds, ...[...found.values()].flatMap((repo) => repo?.worktrees ?? [])]),
       ];
-      const claude = everywhere.length > 0 ? await listClaudeSessions(everywhere) : [];
+      // Roer's own panes, so a conversation running in one is left to its
+      // live row rather than listed again as open elsewhere. A shim too old
+      // to say them leaves it unknown, and then any could be in one.
+      const pids = live.map((session) => session.pid ?? 0);
+      const panes = pids.every((pid) => pid > 0) ? pids : undefined;
+      const claude = everywhere.length > 0 ? await listClaudeSessions(everywhere, panes) : [];
       for (const [cwd, repo] of await Promise.all(
         claude.map((thread) => thread.cwd).filter((cwd) => !found.has(cwd)).map(repoOf),
       )) {
         found.set(cwd, repo);
       }
       setPastSessions(claude);
+      setConversationCwds((current) => (current.join("\n") === everywhere.join("\n") ? current : everywhere));
       // Grouped by repository, not by checkout: a worktree's sessions sit
       // with the rest of its project, and their rows say which worktree.
       setRoots(Object.fromEntries([...found].map(([cwd, repo]) => [cwd, repo?.main ?? cwd])));
@@ -864,8 +873,22 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
 
   // Resuming a past conversation goes through the shim's own `resume`, not
   // `new` — the transcript, not just the directory, is what's being
-  // reopened, by the CLI that wrote it.
+  // reopened, by the CLI that wrote it. One a CLI outside Roer still has
+  // open is asked about first: both would go on writing it.
   const openClaudeSession = (session: ClaudeSession) => {
+    if (session.openElsewhere) {
+      void confirmAction(
+        `"${session.title}" is open in another terminal. Resume it here as well? Both would then be writing the one conversation.`,
+        "Resume here",
+      )
+        .then((confirmed) => confirmed && resumeClaudeSession(session))
+        .catch((cause: unknown) => setFailure(String(cause)));
+      return;
+    }
+    resumeClaudeSession(session);
+  };
+
+  const resumeClaudeSession = (session: ClaudeSession) => {
     openedRef.current += 1;
     const agent = session.agent && session.agent !== "claude" ? ["--agent", session.agent] : [];
     onOpen({
@@ -990,6 +1013,7 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
     handleEndSession,
     allSessions,
     claudeSessions,
+    conversationCwds,
     visibleSessions,
     visibleClaudeSessions,
     activePane,

@@ -1443,6 +1443,7 @@ export function App() {
                 visibleClaudeSessions={browser.visibleClaudeSessions}
                 activePane={browser.activePane}
                 openClaudeSession={browser.openClaudeSession}
+                conversationCwds={browser.conversationCwds}
                 refresh={browser.refresh}
                 projectsInView={browser.projectsInView}
                 worktrees={browser.worktrees}

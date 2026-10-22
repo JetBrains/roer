@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { gitChanges, gitRepo } from "./lib/git";
@@ -32,6 +32,7 @@ vi.mock("./lib/pty", () => ({
   listSessions: vi.fn(),
   listPastSessions: vi.fn(),
   listClaudeSessions: vi.fn(),
+  searchClaudeSessions: vi.fn(async () => []),
   roerStatus: vi.fn(),
 }));
 
@@ -141,6 +142,7 @@ function Harness({ onOpen }: { onOpen: (request: OpenRequest) => void }) {
         visibleClaudeSessions={browser.visibleClaudeSessions}
         activePane={browser.activePane}
         openClaudeSession={browser.openClaudeSession}
+        conversationCwds={browser.conversationCwds}
         refresh={browser.refresh}
         projectsInView={browser.projectsInView}
         worktrees={browser.worktrees}
@@ -211,7 +213,7 @@ describe("worktrees", () => {
 });
 
 describe("grouping by checkout", () => {
-  it("puts live sessions and past conversations under the checkout they are in", async () => {
+  it("puts live sessions under their checkout, and past conversations on the timeline, by their worktree", async () => {
     vi.mocked(listWorkspaces).mockResolvedValue([{ id: "w1", name: "Roer", projects: ["p1"], items: [] }]);
     vi.mocked(listProjects).mockResolvedValue([{ id: "p1", name: "roer", path: "/work/roer" }]);
     const worktree = "/Users/test/.roer/worktrees/roer/fix-login";
@@ -227,11 +229,15 @@ describe("grouping by checkout", () => {
     ]);
     renderList();
 
-    const linked = await screen.findByRole("heading", { level: 4, name: "fix-login" });
-    const main = screen.getByRole("heading", { level: 4, name: "main" });
+    const conversation = await screen.findByRole("button", { name: "Resume earlier login work" });
+    expect(within(screen.getByRole("region", { name: "Conversations" })).getByText("Today")).toBeInTheDocument();
+    // The checkouts come from their own read, which can land after the list.
+    const main = await screen.findByRole("heading", { level: 4, name: "main" });
     // The heading sits in its fold row; the list follows that.
-    expect(linked.parentElement?.nextElementSibling).toHaveTextContent("earlier login work");
     expect(main.parentElement?.nextElementSibling).toHaveTextContent("zsh");
+    // A checkout with nothing running in it has no heading of its own.
+    expect(screen.queryByRole("heading", { level: 4, name: "fix-login" })).not.toBeInTheDocument();
+    await waitFor(() => expect(within(conversation).getByText("fix-login")).toBeInTheDocument());
     // Always two levels, as in the sidebar, even with one Project.
     expect(screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent)).toEqual(["roer"]);
   });
@@ -370,7 +376,44 @@ describe("past Claude conversations", () => {
     renderList();
 
     await screen.findByRole("navigation", { name: "Workspace" });
-    expect(listClaudeSessions).toHaveBeenCalledWith(["/Users/test/live", "/Users/test/ended"]);
+    // A shim that does not say its panes' processes: any could hold one.
+    expect(listClaudeSessions).toHaveBeenCalledWith(["/Users/test/live", "/Users/test/ended"], undefined);
+  });
+
+  it("says there are no panes when there are none", async () => {
+    vi.mocked(listProjects).mockResolvedValue([{ id: "p1", name: "project", path: "/Users/test/project" }]);
+    renderList();
+
+    await waitFor(() => expect(listClaudeSessions).toHaveBeenCalledWith(["/Users/test/project"], []));
+  });
+
+  it("tells the lookup which processes are Roer's panes", async () => {
+    vi.mocked(listSessions).mockResolvedValue([
+      { id: "1", session: "roer-a", pane: "%0", attached: true, cwd: "/Users/test/live", command: "claude", pid: 4242 },
+      { id: "2", session: "roer-b", pane: "%1", attached: true, cwd: "/Users/test/live", command: "zsh", pid: 4343 },
+    ]);
+    renderList();
+
+    await waitFor(() => expect(listClaudeSessions).toHaveBeenCalledWith(["/Users/test/live"], [4242, 4343]));
+  });
+
+  it("asks before resuming a conversation another terminal has open", async () => {
+    vi.mocked(listClaudeSessions).mockResolvedValue([
+      { id: "abc-123", cwd: "/Users/test/project", title: "fix the flaky test", updatedAt: Math.floor(Date.now() / 1000), openElsewhere: true },
+    ]);
+    vi.mocked(listProjects).mockResolvedValue([{ id: "p1", name: "project", path: "/Users/test/project" }]);
+    vi.mocked(confirmAction).mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+    const onOpen = vi.fn();
+    renderList(onOpen);
+    const row = await screen.findByRole("button", { name: "Resume fix the flaky test" });
+
+    fireEvent.click(row);
+    await waitFor(() => expect(confirmAction).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(confirmAction).mock.calls[0][0]).toMatch(/open in another terminal/);
+    expect(onOpen).not.toHaveBeenCalled();
+
+    fireEvent.click(row);
+    await waitFor(() => expect(onOpen).toHaveBeenCalledWith(expect.objectContaining({ args: ["resume", "abc-123"] })));
   });
 
 });
