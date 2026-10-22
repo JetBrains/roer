@@ -10,9 +10,11 @@ import { relativeAge, shorten } from "./SessionBrowser";
  * the arrows can run down the list without reading each one on the way. */
 const READ_DEBOUNCE_MS = 100;
 
-/** Whether Roer can read this conversation's transcript: only Claude Code's
- * are, so far. */
-export const readable = (conversation: ClaudeSession) => (conversation.agent ?? "claude") === "claude";
+/** The agents whose transcripts Roer can read. */
+const READABLE = new Set(["claude", "codex", "pi", "junie"]);
+
+/** Whether Roer can read this conversation's transcript. */
+export const readable = (conversation: ClaudeSession) => READABLE.has(conversation.agent ?? "claude");
 
 export interface ConversationPreviewProps {
   /** The conversation to read; `null` before one is picked. */

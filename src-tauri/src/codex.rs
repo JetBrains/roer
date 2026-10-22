@@ -11,7 +11,8 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
-use crate::claude::{read_head, truncate, ClaudeThread};
+use crate::claude::{holds, read_head, truncate, ClaudeThread, Message};
+use crate::live::{self, Table};
 
 /// A session_meta line carries Codex's whole system prompt, so the head read
 /// is larger than Claude's.
@@ -27,11 +28,37 @@ fn codex_home() -> PathBuf {
     }
 }
 
-pub fn threads_for(cwds: &[String]) -> Vec<ClaudeThread> {
-    threads_for_home(&codex_home(), cwds)
+/// Past Codex conversations under `cwds`, but for those a Codex in one of
+/// Roer's panes (`panes`, their processes) has open, which its live row
+/// stands for. Codex keeps no registry of what it has open, so that is told
+/// from what each was started with and when: see [`live::open_in`].
+pub fn threads_for(cwds: &[String], panes: Option<&[u64]>, table: &Table) -> Vec<ClaudeThread> {
+    let threads: Vec<ClaudeThread> = transcripts_for(cwds).into_iter().map(|(thread, _)| thread).collect();
+    let Some(panes) = panes.filter(|panes| !panes.is_empty()) else {
+        return threads;
+    };
+    let agents = table.get().in_panes(panes, |words| live::runs(words, "codex"));
+    let open = live::open_in(&threads, &agents, resumed_with);
+    threads.into_iter().filter(|thread| !open.contains(&thread.id)).collect()
 }
 
+/// The conversation `codex resume <id>` was started with.
+fn resumed_with(args: &[String]) -> Option<String> {
+    let at = args.iter().position(|word| word == "resume")?;
+    args.get(at + 1).filter(|id| !id.starts_with('-')).cloned()
+}
+
+/// Every past Codex conversation under `cwds`, each with its transcript.
+pub fn transcripts_for(cwds: &[String]) -> Vec<(ClaudeThread, PathBuf)> {
+    rollouts_in(&codex_home(), cwds)
+}
+
+#[cfg(test)]
 fn threads_for_home(home: &Path, cwds: &[String]) -> Vec<ClaudeThread> {
+    rollouts_in(home, cwds).into_iter().map(|(thread, _)| thread).collect()
+}
+
+fn rollouts_in(home: &Path, cwds: &[String]) -> Vec<(ClaudeThread, PathBuf)> {
     let names = thread_names(home);
     let mut threads = Vec::new();
     for path in newest_rollouts(&home.join("sessions")) {
@@ -53,7 +80,11 @@ fn threads_for_home(home: &Path, cwds: &[String]) -> Vec<ClaudeThread> {
             .cloned()
             .or_else(|| first_prompt_in(&head))
             .map_or_else(|| id.clone(), |title| truncate(&title));
-        threads.push(ClaudeThread { id, agent: "codex".to_string(), cwd, title, updated_at, branch: None, open_elsewhere: false });
+        // The first event's, `session_meta`'s: when Codex began it.
+        let created_at = string_field(&head, "timestamp").as_deref().and_then(live::rfc3339_epoch);
+        let thread =
+            ClaudeThread { id, agent: "codex".to_string(), cwd, title, updated_at, branch: None, open_elsewhere: false, created_at };
+        threads.push((thread, path));
     }
     threads
 }
@@ -138,9 +169,48 @@ fn first_prompt_in(text: &str) -> Option<String> {
                 .to_string(),
             _ => return None,
         };
-        let text = text.trim();
-        (!text.is_empty() && !text.starts_with('<') && !text.starts_with("# AGENTS.md")).then(|| text.to_string())
+        (!is_injected(&text)).then(|| text.trim().to_string())
     })
+}
+
+/// A prompt or a reply on one rollout line: a `message` the person or Codex
+/// wrote, not what Codex adds as the person's turn itself (AGENTS.md, its
+/// `<environment_context>`), its own instructions, or tool calls.
+pub(crate) fn message_in(line: &[u8]) -> Option<Message> {
+    if !holds(line, br#""type":"response_item""#) || !holds(line, br#""type":"message""#) {
+        return None;
+    }
+    let event: Value = serde_json::from_slice(line).ok()?;
+    let payload = event.get("payload")?;
+    if payload.get("type")?.as_str()? != "message" {
+        return None;
+    }
+    let role = payload.get("role")?.as_str()?;
+    if role != "user" && role != "assistant" {
+        return None;
+    }
+    let texts: Vec<&str> = payload
+        .get("content")?
+        .as_array()?
+        .iter()
+        .filter(|block| matches!(block.get("type").and_then(Value::as_str), Some("input_text" | "output_text")))
+        .filter_map(|block| block.get("text").and_then(Value::as_str))
+        .filter(|text| role != "user" || !is_injected(text))
+        .collect();
+    if texts.is_empty() {
+        return None;
+    }
+    Some(Message {
+        role: role.to_string(),
+        text: texts.join("\n"),
+        at: event.get("timestamp").and_then(Value::as_str).map(str::to_string),
+    })
+}
+
+/// What Codex puts in the person's turn itself.
+fn is_injected(text: &str) -> bool {
+    let text = text.trim();
+    text.is_empty() || text.starts_with('<') || text.starts_with("# AGENTS.md")
 }
 
 #[cfg(test)]
@@ -201,5 +271,44 @@ mod tests {
     #[test]
     fn reads_the_cwd_from_a_first_line_cut_short() {
         assert_eq!(string_field(r#"{"payload":{"cwd":"/a \"b\"","base_instructions":{"text":"trunc"#, "cwd").as_deref(), Some("/a \"b\""));
+    }
+    #[test]
+    fn reads_what_was_said_not_what_codex_adds() {
+        let message = |role: &str, kind: &str, text: &str| {
+            serde_json::json!({
+                "timestamp": "2026-10-22T19:53:02.000Z", "type": "response_item",
+                "payload": {"type": "message", "role": role, "content": [{"type": kind, "text": text}]},
+            })
+            .to_string()
+        };
+        let asked = message_in(message("user", "input_text", "Discuss Lord of the Rings").as_bytes()).unwrap();
+        assert_eq!((asked.role.as_str(), asked.text.as_str()), ("user", "Discuss Lord of the Rings"));
+        assert_eq!(asked.at.as_deref(), Some("2026-10-22T19:53:02.000Z"));
+        let replied = message_in(message("assistant", "output_text", "Gladly.").as_bytes()).unwrap();
+        assert_eq!((replied.role.as_str(), replied.text.as_str()), ("assistant", "Gladly."));
+
+        assert!(message_in(message("user", "input_text", "# AGENTS.md instructions").as_bytes()).is_none());
+        assert!(message_in(message("user", "input_text", "<environment_context>…").as_bytes()).is_none());
+        assert!(message_in(message("developer", "input_text", "be terse").as_bytes()).is_none());
+        let call = r#"{"type":"response_item","payload":{"type":"function_call","name":"shell","arguments":"{}"}}"#;
+        assert!(message_in(call.as_bytes()).is_none());
+    }
+
+    #[test]
+    fn knows_when_it_began_and_what_it_was_resumed_with() {
+        let home = temp_home();
+        write_rollout(&home, "2026/09/25", ID, "/work/roer", "fix the build");
+        let path = home.join("sessions/2026/09/25").join(format!("rollout-2026-09-25T14-30-33-{ID}.jsonl"));
+        let raw = std::fs::read_to_string(&path).unwrap().replacen(r#"{"type":"session_meta""#, r#"{"timestamp":"2026-09-25T12:30:33.000Z","type":"session_meta""#, 1);
+        std::fs::write(&path, raw).unwrap();
+        let threads = threads_for_home(&home, &["/work/roer".to_string()]);
+        assert_eq!(threads[0].created_at, crate::live::rfc3339_epoch("2026-09-25T12:30:33Z"));
+
+        let args = |words: &[&str]| words.iter().map(|word| word.to_string()).collect::<Vec<_>>();
+        assert_eq!(resumed_with(&args(&["codex", "resume", ID, "-a", "untrusted"])).as_deref(), Some(ID));
+        assert_eq!(resumed_with(&args(&["codex", "resume", "--last"])), None);
+        assert_eq!(resumed_with(&args(&["codex"])), None);
+
+        std::fs::remove_dir_all(&home).ok();
     }
 }

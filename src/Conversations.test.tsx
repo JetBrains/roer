@@ -371,14 +371,20 @@ describe("the preview", () => {
     expect(await within(panel()!).findByText("Could not read it: permission denied")).toBeInTheDocument();
   });
 
+  it.each(["codex", "pi", "junie"])("reads a %s conversation too", async (agent) => {
+    renderList([...list, at("x", "port the parser", 2 * DAY, { agent })]);
+    fireEvent.click(screen.getByRole("button", { name: "Preview port the parser" }));
+    await waitFor(() => expect(readClaudeTranscript).toHaveBeenCalledWith(expect.any(Array), "x"));
+  });
+
   it("offers no preview of a conversation it cannot read, and still resumes it", async () => {
-    const both = [...list, at("x", "port the parser", 2 * DAY, { agent: "codex" })];
+    const both = [...list, at("x", "port the parser", 2 * DAY, { agent: "opencode" })];
     const onOpen = renderList(both);
     expect(screen.queryByRole("button", { name: "Preview port the parser" })).not.toBeInTheDocument();
 
     fireEvent.click(toggle());
     fireEvent.click(screen.getByRole("button", { name: "Show port the parser" }));
-    expect(within(panel()!).getByText("Roer can't read codex conversations yet; Resume opens it.")).toBeInTheDocument();
+    expect(within(panel()!).getByText("Roer can't read opencode conversations yet; Resume opens it.")).toBeInTheDocument();
     expect(readClaudeTranscript).not.toHaveBeenCalled();
     fireEvent.click(within(panel()!).getByRole("button", { name: "Resume" }));
     expect(onOpen).toHaveBeenCalledWith(both[2]);
