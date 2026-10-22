@@ -53,7 +53,7 @@ fn threads_for_home(home: &Path, cwds: &[String]) -> Vec<ClaudeThread> {
             .cloned()
             .or_else(|| first_prompt_in(&head))
             .map_or_else(|| id.clone(), |title| truncate(&title));
-        threads.push(ClaudeThread { id, agent: "codex".to_string(), cwd, title, updated_at });
+        threads.push(ClaudeThread { id, agent: "codex".to_string(), cwd, title, updated_at, branch: None, open_elsewhere: false });
     }
     threads
 }

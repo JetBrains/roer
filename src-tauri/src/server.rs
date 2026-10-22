@@ -361,7 +361,12 @@ fn dispatch(state: &Arc<AppState>, cmd: &str, args: Value, cid: Option<&str>) ->
         "roer_status" => call!(args, crate::roer::roer_status,),
         "roer_send" => call_res!(args, crate::roer::roer_send, "pane": String, "text": String),
         "roer_kill" => call_res!(args, crate::roer::roer_kill, "pane": String),
-        "roer_claude_threads" => call!(args, crate::claude::roer_claude_threads, "cwds": Vec<String>),
+        "roer_claude_threads" => {
+            call!(args, crate::claude::roer_claude_threads, "cwds": Vec<String>, "panes": Option<Vec<u64>>)
+        }
+        "roer_claude_search" => {
+            call!(args, crate::claude::roer_claude_search, "cwds": Vec<String>, "query": String)
+        }
 
         // agents
         "agents_list" => call_res!(args, crate::agents::agents_list, "cwd": Option<String>),
