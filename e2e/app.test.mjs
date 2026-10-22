@@ -167,3 +167,55 @@ test("an agent out of sight that stops to ask is shown as needing you", async ()
     app.driver.executeScript("return !document.querySelector('.tab-dot.waiting')"),
   );
 });
+
+/** A conversation as Claude Code 2.x writes it: the queued prompt and its
+ * attachments first, pushing the first prompt well into the file, and the
+ * title Claude gave it last. */
+function conversation(cwd, { prompt, reply = "Done.", title, entrypoint = "cli", cwdInHead = true }) {
+  const filler = "x".repeat(5000);
+  const where = (event) => (cwdInHead ? { ...event, cwd } : event);
+  return [
+    { type: "queue-operation", operation: "enqueue", content: prompt },
+    ...Array.from({ length: 4 }, () => where({ type: "attachment", attachment: { content: filler } })),
+    ...(cwdInHead ? [] : Array.from({ length: 16 }, () => ({ type: "attachment", attachment: { content: filler } }))),
+    { type: "user", cwd, entrypoint, gitBranch: "main", message: { role: "user", content: prompt } },
+    { type: "assistant", cwd, message: { role: "assistant", content: [{ type: "text", text: reply }] } },
+    ...(title ? [{ type: "ai-title", aiTitle: title }] : []),
+  ];
+}
+
+test("past conversations are all listed by name, and found by what was said", async () => {
+  const id = (n) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+  for (let n = 1; n <= 34; n += 1) {
+    app.transcript(app.project, id(n), conversation(app.project, { prompt: `Task number ${n}`, title: `Seeded conversation ${n}` }));
+  }
+  app.transcript(app.project, id(35), conversation(app.project, {
+    prompt: "Look at the importer",
+    reply: "The quokka migration drops every second row.",
+    title: "Importer drops rows",
+  }));
+  // In a folder under the project, with its cwd only near the end.
+  const sub = join(app.project, "packages", "api");
+  app.transcript(sub, id(36), conversation(sub, { prompt: "Tidy the API package", title: "API package tidy-up", cwdInHead: false }));
+  // A pipeline's run through the Agent SDK, which nobody comes back to.
+  app.transcript(app.project, id(37), conversation(app.project, { prompt: "Summarize", title: "Automated run", entrypoint: "sdk-cli" }));
+
+  await app.tab("Workspace");
+  await app.click("Refresh");
+  await app.waitForText("Seeded conversation 1", ".conversations");
+  const count = () => app.driver.executeScript("return document.querySelector('.conversations-count')?.textContent");
+  await app.until("all 36 counted", async () => (await count()) === "36");
+  const listed = await app.text(".conversations");
+  assert.doesNotMatch(listed, /00000000-0000-4000/, "named, not by id");
+  assert.doesNotMatch(listed, /Automated run/);
+
+  await app.click("Show 26 more");
+  await app.waitForText("API package tidy-up", ".conversations");
+  await app.waitForText("Importer drops rows", ".conversations");
+
+  const filter = await app.find("input", "Filter conversations");
+  await filter.sendKeys("quokka");
+  await app.until("only the conversation that said it", async () => (await count()) === "1 of 36");
+  await app.waitForText("The quokka migration drops every second row.", ".conversations");
+  assert.match(await app.text(".conversations"), /Importer drops rows/);
+});
