@@ -90,14 +90,14 @@ describe("the timeline", () => {
     expect(titles()).toHaveLength(14);
   });
 
-  it("says the branch, and when another terminal has it open", () => {
+  it("says the branch, and when a claude outside Roer has it open", () => {
     renderList([at("a", "fix rounding", 60, { branch: "fix/billing-rounding", openElsewhere: true })]);
 
     const row = screen.getByRole("button", { name: "Resume fix rounding" });
     expect(within(row).getByText("fix/billing-rounding")).toBeInTheDocument();
-    expect(within(row).getByText("open elsewhere")).toBeInTheDocument();
+    expect(within(row).getByText("running outside Roer")).toBeInTheDocument();
     // Said to a screen reader too, which hears the row by its label.
-    expect(row).toHaveAccessibleDescription(/open elsewhere/);
+    expect(row).toHaveAccessibleDescription(/running outside Roer/);
   });
 
   it("keeps a day unfolded when the list is read again", () => {

@@ -325,7 +325,7 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
         ...new Set([...cwds, ...[...found.values()].flatMap((repo) => repo?.worktrees ?? [])]),
       ];
       // Roer's own panes, so a conversation running in one is left to its
-      // live row rather than listed again as open elsewhere. A shim too old
+      // live row rather than listed again as running outside Roer. A shim too old
       // to say them leaves it unknown, and then any could be in one.
       const pids = live.map((session) => session.pid ?? 0);
       const panes = pids.every((pid) => pid > 0) ? pids : undefined;
@@ -878,7 +878,7 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
   const openClaudeSession = (session: ClaudeSession) => {
     if (session.openElsewhere) {
       void confirmAction(
-        `"${session.title}" is open in another terminal. Resume it here as well? Both would then be writing the one conversation.`,
+        `"${session.title}" is running outside Roer, in a terminal or an editor. Resume it here as well? Both would then be writing the one conversation.`,
         "Resume here",
       )
         .then((confirmed) => confirmed && resumeClaudeSession(session))
