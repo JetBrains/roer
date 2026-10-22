@@ -112,6 +112,7 @@ import {
   claimHandoff,
   failHandoff,
   listSessions,
+  searchClaudeSessions,
   onHandoff,
   pendingHandoffs,
   type Handoff,
@@ -1086,6 +1087,16 @@ export function App() {
       open: () => browser.openClaudeSession(past),
     })),
   ];
+  // Past conversations found by what was said in them, keyed as their hits
+  // above are; looked for where the session browser looks for them.
+  const conversationCwds = browser.conversationCwds;
+  const searchSessions = useCallback(
+    async (query: string) =>
+      new Map(
+        (await searchClaudeSessions(conversationCwds, query)).map((hit) => [`resume:${hit.id}`, hit.snippet] as const),
+      ),
+    [conversationCwds],
+  );
   useEffect(() => {
     let cancelled = false;
     let unlisten: (() => void) | undefined;
@@ -1660,6 +1671,7 @@ export function App() {
             pane={session?.pane}
             noFiles={!session}
             sessions={sessionHits}
+            searchSessions={searchSessions}
             roots={browser.selectedProject ? [browser.selectedProject] : browser.selectedWorkspaceProjects}
             recent={recent(tabs)}
             onOpen={openInTab}

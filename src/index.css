@@ -2440,6 +2440,17 @@ button.tree-row.selected {
   color: var(--ide-hit-match);
 }
 
+/* The words a past conversation was found by, in what was said. */
+.hit mark {
+  font-weight: 600;
+  color: var(--roer-accent);
+  background: none;
+}
+
+.hit.on mark {
+  color: var(--ide-hit-match);
+}
+
 /* A file tab: its label and its close button inside one tab-shaped box. */
 .tab-wrap {
   display: inline-flex;

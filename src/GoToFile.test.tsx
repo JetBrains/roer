@@ -423,6 +423,40 @@ describe("GoToFile — sessions", () => {
     expect(onOpen).not.toHaveBeenCalled();
   });
 
+  it("finds a past conversation by what was said in it, after those its name matches", async () => {
+    const searchSessions = vi.fn(async () => new Map([["Importer drops rows", "…the quokka migration drops rows…"]]));
+    await open({
+      sessions: [session("Importer drops rows", "/work/shop"), session("Quokka logo", "/work/site"), session("Fix login", "/work/api")],
+      searchSessions,
+    });
+    await type("quokka");
+
+    await waitFor(() =>
+      expect(screen.getAllByRole("option").map((row) => row.textContent)).toEqual([
+        "Quokka logoclaude · /work/site",
+        "Importer drops rows…the quokka migration drops rows…",
+      ]),
+    );
+    expect(searchSessions).toHaveBeenCalledWith("quokka");
+    expect(screen.getByText("quokka", { selector: "mark" })).toBeInTheDocument();
+  });
+
+  it("drops what was said for an older query", async () => {
+    let answerFirst: (hits: Map<string, string | undefined>) => void = () => {};
+    const searchSessions = vi
+      .fn()
+      .mockImplementationOnce(() => new Promise((resolve) => (answerFirst = resolve)))
+      .mockResolvedValueOnce(new Map());
+    await open({ sessions: [session("Importer drops rows", "/work/shop")], searchSessions });
+    await type("quok");
+    await waitFor(() => expect(searchSessions).toHaveBeenCalledTimes(1));
+    await type("quokkas");
+    await waitFor(() => expect(searchSessions).toHaveBeenCalledTimes(2));
+
+    await act(async () => answerFirst(new Map([["Importer drops rows", "…quok…"]])));
+    expect(screen.queryAllByRole("option")).toHaveLength(0);
+  });
+
   it("searches no files with nothing on the stage", async () => {
     render(
       <GoToFile noFiles sessions={[session("Add dark mode", "/work/roer")]} onOpen={vi.fn()} onClose={vi.fn()} />,

@@ -148,6 +148,7 @@ vi.mock("./lib/pty", () => ({
   listSessions: vi.fn(async () => []),
   listPastSessions: vi.fn(async () => []),
   listClaudeSessions: vi.fn(async () => []),
+  searchClaudeSessions: vi.fn(async () => []),
   roerStatus: vi.fn(async () => ({
     bin: "roer",
     available: true,
