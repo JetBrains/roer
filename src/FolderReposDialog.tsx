@@ -60,10 +60,23 @@ export function FolderReposDialog({
       >
         <h2 id="folder-repos-title">{folder} holds {asked.repos.length === 1 ? "a git repository" : `${asked.repos.length} git repositories`}</h2>
         <p>
-          A project in Roer is one git repository, with its own branches, worktrees and changes. Make each of these
-          one, grouped in a workspace.
+          A project in Roer is one git repository, with its own branches, worktrees and changes.{" "}
+          {asked.forFolder && workspaceName
+            ? `Make each of these one of ${workspaceName}'s.`
+            : "Make each of these one, grouped in a workspace."}
           {asked.session ? <> The session starts in <code>{folder}</code>, where its agent can reach them all.</> : null}
         </p>
+
+        {asked.repos.length > 1 ? (
+          // Many at once, from a folder of everything, is easier picked from none.
+          <button
+            type="button"
+            className="link folder-repos-all"
+            onClick={() => setChosen(picked.length === asked.repos.length ? new Set() : new Set(asked.repos))}
+          >
+            {picked.length === asked.repos.length ? "Select none" : "Select all"}
+          </button>
+        ) : null}
 
         <div className="folder-repos">
           {asked.repos.map((repo) => (
@@ -76,16 +89,25 @@ export function FolderReposDialog({
 
         <div className="setup-actions">
           <button type="button" onClick={onClose}>
-            Cancel
+            {asked.forFolder ? "Not now" : "Cancel"}
           </button>
-          {workspaceName ? (
-            <button type="button" disabled={picked.length === 0} onClick={() => onConfirm(picked, "same")}>
+          {asked.forFolder && workspaceName ? (
+            // The folder is already this Workspace's: a new one would be a second.
+            <button type="button" className="primary" disabled={picked.length === 0} autoFocus onClick={() => onConfirm(picked, "same")}>
               Add to {workspaceName}
             </button>
-          ) : null}
-          <button type="button" className="primary" disabled={picked.length === 0} autoFocus onClick={() => onConfirm(picked, "new")}>
-            Create workspace {folder}
-          </button>
+          ) : (
+            <>
+              {workspaceName ? (
+                <button type="button" disabled={picked.length === 0} onClick={() => onConfirm(picked, "same")}>
+                  Add to {workspaceName}
+                </button>
+              ) : null}
+              <button type="button" className="primary" disabled={picked.length === 0} autoFocus onClick={() => onConfirm(picked, "new")}>
+                Create workspace {folder}
+              </button>
+            </>
+          )}
         </div>
       </div>
     </div>

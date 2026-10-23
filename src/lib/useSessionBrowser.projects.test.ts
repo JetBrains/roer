@@ -405,6 +405,24 @@ describe("a workspace's folder", () => {
     await waitFor(() => expect(result.current.visibleSessions.map((s) => s.pane)).toEqual(["%2"]));
   });
 
+  it("offers the repositories in a folder set as the workspace's, but not the ones it has", async () => {
+    vi.mocked(listProjects).mockResolvedValue([{ id: "p-api", name: "api", path: "/Users/test/work/api" }]);
+    vi.mocked(setWorkspaceFolder).mockResolvedValue(workspace({ projects: ["p-api"], folder: "/Users/test/work" }));
+    vi.mocked(gitReposIn).mockResolvedValue(["/Users/test/work/api", "/Users/test/work/web"]);
+    vi.mocked(createProject).mockResolvedValue({ id: "p-web", name: "web", path: "/Users/test/work/web" });
+    vi.mocked(attachProject).mockResolvedValue(workspace({ projects: ["p-api", "p-web"], folder: "/Users/test/work" }));
+    const { result } = setUp([workspace({ projects: ["p-api"] })]);
+    await waitFor(() => expect(result.current.projects).toHaveLength(1));
+
+    await act(async () => result.current.handleSetWorkspaceFolder("w1", "/Users/test/work"));
+    await waitFor(() => expect(result.current.folderRepos).toMatchObject({ repos: ["/Users/test/work/web"], workspaceId: "w1", forFolder: true }));
+    await act(async () => result.current.confirmFolderRepos(["/Users/test/work/web"], "same"));
+
+    expect(createWorkspace).not.toHaveBeenCalled();
+    expect(attachProject).toHaveBeenCalledWith("w1", "p-web");
+    expect(result.current.workspaces[0].projects).toEqual(["p-api", "p-web"]);
+  });
+
   it("is set and forgotten from the workspace", async () => {
     const { result } = setUp([workspace()]);
     await waitFor(() => expect(result.current.workspaces).toHaveLength(1));
