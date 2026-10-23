@@ -11,7 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "./App";
 import { defineExtension } from "./extensions/api";
-import { useActivateTab, useTabHotkey } from "./extensions/context";
+import { useActivateTab, useScope, useTabHotkey } from "./extensions/context";
 import { registry } from "./extensions/registry";
 import { fileRead, filesSearch } from "./lib/files";
 import {
@@ -999,6 +999,22 @@ describe("App", () => {
       await waitFor(() => expect(screen.getByRole("tab", { name: "Terminal" })).toHaveAttribute("aria-selected", "true"));
     } finally {
       registry.unload("asker");
+    }
+  });
+
+  it("shows an extension's section on the Workspace tab, about the workspace selected", async () => {
+    function Repos() {
+      const scope = useScope();
+      return <p>{scope?.projects.map((project) => project.path).join(", ")}</p>;
+    }
+    vi.mocked(listWorkspaces).mockResolvedValueOnce([{ id: "w1", name: "Default", projects: ["home"] }]);
+    registry.load("repos", defineExtension((roer) => void roer.workspace.registerSection({ id: "list", title: "Repositories", component: Repos })));
+    try {
+      render(<App />);
+      const section = await screen.findByRole("region", { name: "Repositories" });
+      expect(section).toHaveTextContent("/Users/test");
+    } finally {
+      registry.unload("repos");
     }
   });
 

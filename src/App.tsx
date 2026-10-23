@@ -18,7 +18,7 @@ import {
   Search,
   Sun,
 } from "lucide-react";
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { loadBundled } from "./extensions/bundled";
 import { useStageSession } from "./extensions/context";
@@ -27,6 +27,8 @@ import { useExternalExtensions } from "./extensions/loader";
 import { serveTools } from "./extensions/tools";
 import { useBadges, useStageTabs } from "./extensions/registry";
 import { TabBody } from "./extensions/TabBody";
+import { WorkspaceSections } from "./extensions/WorkspaceSections";
+import type { Scope } from "./extensions/api";
 import { FileView } from "./FileView";
 import { GenerativeUITab } from "./generative-ui/GenerativeUITab";
 import { applyAll, applyMessage } from "./generative-ui/apply";
@@ -1058,6 +1060,28 @@ export function App() {
     changed,
   });
   const agentState = onStage && runningAgent(onStage) ? onStage.state : undefined;
+  // What the Workspace tab is about, as its extension sections see it. The
+  // same answer keeps the same object, so a section's effects run again only
+  // when the Workspace or Project, its repositories or its folder change.
+  const scopeNow: Scope | null = browser.selectedProject
+    ? {
+        kind: "project",
+        id: browser.selectedProject.id,
+        name: browser.selectedProject.name,
+        projects: [{ name: browser.selectedProject.name, path: browser.selectedProject.path }],
+        folder: null,
+      }
+    : browser.selectedWorkspace
+      ? {
+          kind: "workspace",
+          id: browser.selectedWorkspace.id,
+          name: browser.selectedWorkspace.name,
+          projects: browser.selectedWorkspaceProjects.map(({ name, path }) => ({ name, path })),
+          folder: browser.selectedWorkspace.folder ?? null,
+        }
+      : null;
+  const scopeKey = JSON.stringify(scopeNow);
+  const scope = useMemo(() => scopeNow, [scopeKey]);
   // Asks the agent on stage for a tab. Here rather than in the dialog, since
   // a request made while the agent works waits after the dialog is gone.
   const askAgent = useAskAgent(session?.pane, agentState);
@@ -1491,6 +1515,17 @@ export function App() {
                 folderInView={browser.folderInView}
                 worktrees={browser.worktrees}
                 onOpen={show}
+                extensionSections={
+                  scope ? (
+                    <WorkspaceSections
+                      scope={scope}
+                      session={stageSession}
+                      active={tabs.active === "sessions"}
+                      openFile={openInTab}
+                      activateTab={activateTab}
+                    />
+                  ) : null
+                }
               />
             </div>
 

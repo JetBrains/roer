@@ -10,12 +10,14 @@ import { gitCurrentBranch, gitRoot } from "../lib/git";
 import { useHotkey } from "../lib/keys";
 import { sendToSession } from "../lib/github";
 import { resolveDir } from "../lib/session";
-import type { Session } from "./api";
+import type { Scope, Session } from "./api";
 
 interface Host {
   /** The extension whose tab this is. */
   extension: string;
   session: Session | null;
+  /** What the Workspace tab shows, for a section of it; null in a stage tab. */
+  scope: Scope | null;
   /** Shown: on top of the stage, or beside it. */
   active: boolean;
   /** Shown and taking the keyboard. Beside the stage, a tab is shown while the
@@ -28,6 +30,7 @@ interface Host {
 const HostContext = createContext<Host>({
   extension: "",
   session: null,
+  scope: null,
   active: false,
   // Outside a tab nothing competes for the keys.
   focused: true,
@@ -41,6 +44,9 @@ export function HostProvider({ value, children }: { value: Host; children: React
 
 /** The session on the stage; null while there is none. */
 export const useSession = (): Session | null => useContext(HostContext).session;
+
+/** The Workspace or Project a Workspace tab section is about; null in a stage tab. */
+export const useScope = (): Scope | null => useContext(HostContext).scope;
 
 /** Whether this tab is shown: on top of the stage, or beside it. */
 export const useActive = (): boolean => useContext(HostContext).active;

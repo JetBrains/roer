@@ -19,6 +19,20 @@ describe("Registry", () => {
     expect(registry.tabs()[1]).toMatchObject({ order: 100, needsSession: true, keepAcrossSessions: false });
   });
 
+  it("lists Workspace tab sections by order, and takes them away with their extension", () => {
+    const registry = new Registry();
+    registry.load("prs", defineExtension((roer) => void roer.workspace.registerSection({ id: "open", title: "Pull requests", component: View })));
+    registry.load(
+      "ci",
+      defineExtension((roer) => void roer.workspace.registerSection({ id: "runs", title: "CI", component: View, order: 50 })),
+    );
+
+    expect(registry.sections().map((section) => `${section.extension}/${section.id}`)).toEqual(["ci/runs", "prs/open"]);
+    expect(registry.sections()[1]).toMatchObject({ title: "Pull requests", order: 100 });
+    registry.unload("ci");
+    expect(registry.sections().map((section) => section.extension)).toEqual(["prs"]);
+  });
+
   it("shows a tab registered after activation at once", () => {
     const registry = new Registry();
     let later: (() => void) | undefined;

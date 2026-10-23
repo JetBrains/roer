@@ -7,8 +7,8 @@
  * builds as it is. `docs/extensions.md` §2 lists it.
  */
 export { defineExtension } from "./api";
-export type { Activate, Extension, Roer, Session, TabOptions, ToolContext, ToolOptions } from "./api";
-export { useActivateTab, useActive, useOpenFile, useSession } from "./context";
+export type { Activate, Extension, Roer, Scope, SectionOptions, Session, TabOptions, ToolContext, ToolOptions } from "./api";
+export { useActivateTab, useActive, useOpenFile, useScope, useSession } from "./context";
 
 // The extension's own server.ts.
 export { useCall, useRpc } from "./rpc";

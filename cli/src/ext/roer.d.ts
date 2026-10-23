@@ -24,6 +24,11 @@ declare module "roer" {
       /** Adds a tab to the stage's strip. The returned function takes it away again. */
       registerTab(tab: TabOptions): () => void;
     };
+    workspace: {
+      /** Adds a section to the Workspace tab, after its Projects, shown for a Workspace and for a
+       * Project picked on its own. Read which with `useScope()`. The returned function takes it away. */
+      registerSection(section: SectionOptions): () => void;
+    };
     badge: {
       /** A count or a word on one of this extension's tabs (by its `id`); null clears it. */
       set(tab: string, text: string | null): void;
@@ -77,6 +82,29 @@ declare module "roer" {
     keepAcrossSessions?: boolean;
   }
 
+  export interface SectionOptions {
+    /** Unique within the extension. */
+    id: string;
+    /** The section's heading. */
+    title: string;
+    /** Takes no props: read the Workspace or Project with `useScope()`. */
+    component: ComponentType;
+    /** Where among extensions' sections, all after Projects. Default 100. */
+    order?: number;
+  }
+
+  /** What the Workspace tab is showing: a Workspace, or one Project picked on its own. */
+  export interface Scope {
+    kind: "workspace" | "project";
+    id: string;
+    name: string;
+    /** Its git repositories: the Workspace's Projects, or the one Project. */
+    projects: Array<{ name: string; path: string }>;
+    /** The folder a Workspace stands for, such as the folder of repositories it was made from;
+     * null without one, and for a Project. */
+    folder: string | null;
+  }
+
   /** The session on the stage. */
   export interface Session {
     pane?: string;
@@ -98,6 +126,9 @@ declare module "roer" {
 
   /** The session on the stage; null while there is none. */
   export function useSession(): Session | null;
+  /** In a Workspace tab section, the Workspace or Project it is about; null in a stage tab. The
+   * section starts over when it changes. */
+  export function useScope(): Scope | null;
   /** Whether this tab is shown: on top of the stage, or beside it. Take the keyboard only while it is. */
   export function useActive(): boolean;
   /** Opens a file of the repository at `root` in a tab of its own. */

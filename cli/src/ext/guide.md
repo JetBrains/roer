@@ -108,6 +108,42 @@ The rules:
 - Put a `data-roer-id` on the elements that matter. Comments the person
   leaves on the tab are pinned to them.
 
+## A section of the Workspace tab
+
+A tab is about the session on the stage. Something about the work as a
+whole, such as the open pull requests of every repository the person works
+in, or CI per project, is a section of the Workspace tab instead:
+
+```tsx
+import { defineExtension, useScope } from "roer";
+
+function PullRequests() {
+  const scope = useScope();
+  if (!scope) return null;
+  return (
+    <ul>
+      {scope.projects.map((project) => (
+        <li key={project.path}>{project.name}</li>
+      ))}
+    </ul>
+  );
+}
+
+export default defineExtension((roer) => {
+  roer.workspace.registerSection({ id: "prs", title: "Pull requests", component: PullRequests });
+});
+```
+
+- It shows after Projects, for a Workspace and for a Project picked on its
+  own. `useScope()` says which, with its repositories (`projects`, each a
+  `name` and a `path`) and, for a Workspace made from a folder of them, that
+  `folder`.
+- It starts over when the person picks another Workspace or Project, so
+  fetch in an effect on `scope`.
+- Keep it short: it sits in a list with the person's sessions. Link to a tab
+  of the extension's own for more.
+- It never has the keyboard: no `useHotkey` there.
+
 ## server.ts: running programs
 
 A tab runs in a browser window, so it can't start a program. When it needs

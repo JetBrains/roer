@@ -14,7 +14,7 @@ interface CatchProps {
  * One tab's render failing stays in that tab: the card says what went wrong,
  * the extension's log gets the stack, and the rest of the app goes on.
  */
-class Catch extends Component<CatchProps, { error: Error | null }> {
+export class Catch extends Component<CatchProps, { error: Error | null }> {
   state = { error: null as Error | null };
 
   static getDerivedStateFromError(error: Error) {
@@ -57,7 +57,7 @@ export function TabBody({ entry, session, active, focused = active, openFile, ac
   // Another session is another tab, unless the tab asked to keep its state.
   const key = entry.keepAcrossSessions ? "kept" : (session?.pane ?? "none");
   return (
-    <HostProvider value={{ extension: entry.extension, session, active, focused, openFile, activateTab }}>
+    <HostProvider value={{ extension: entry.extension, session, scope: null, active, focused, openFile, activateTab }}>
       {/* A new component (a reload) starts the boundary over, and so does another session. */}
       <Catch key={`${entry.generation}:${key}`} extension={entry.extension}>
         <View />

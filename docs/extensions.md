@@ -142,6 +142,7 @@ and on reload. An `activate` may also return a cleanup function.
 | `roer.stage.registerTab({ id, title, component, order?, needsSession?, keepAcrossSessions?, pinned?, replaces? })` | A stage tab. `order` places it: Workspace is 0, Terminal 10, Changes 20, and the default is 100. The first nine tabs get ⌘1–9. `needsSession` (default true) disables it while no session is on the stage. A pinned tab is always in the strip; an unpinned one is listed in the strip's "+" menu and can be closed. `replaces: "changes" \| "terminal"` takes over that tab's place, title and ⌘ number. In the slice, every tab is pinned and `replaces` isn't there yet |
 | `roer.sidePanel.register({ id, title, component })` | A panel on the right, where Generative UI shows today, beside the terminal instead of over it |
 | `roer.sidebar.registerSection({ id, title, order?, component })` | A section in the sidebar, under the session list |
+| `roer.workspace.registerSection({ id, title, component, order? })` | A section of the Workspace tab, after Projects, for a Workspace and for a Project picked on its own. `useScope()` says which: its `kind`, `id`, `name`, `projects` (`name`, `path`) and `folder` |
 | `roer.badge.set(tabId, text \| null)` | A count or dot on one of its tabs |
 | `roer.status.set(id, text \| null)` | An item in the status bar |
 | `roer.toast(text)` | A toast |
