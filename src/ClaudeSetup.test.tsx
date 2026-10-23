@@ -114,3 +114,32 @@ describe("the setup from the menu", () => {
     await waitFor(() => expect(applyClaudeSetup).toHaveBeenCalledWith(false, true, false));
   });
 });
+
+describe("the keyboard", () => {
+  it("closes on Escape when opened from the menu with nothing to apply", () => {
+    const onClose = vi.fn();
+    render(<ClaudeSetup status={{ ...fresh, shouldPrompt: false }} firstRun={false} onClose={onClose} />);
+
+    expect(screen.getByRole("dialog")).toContainElement(document.activeElement as HTMLElement);
+    fireEvent.keyDown(document.activeElement!, { key: "Escape" });
+
+    expect(onClose).toHaveBeenCalled();
+  });
+
+  it("closes on Escape when a terminal has taken the keyboard since it opened", async () => {
+    const onClose = vi.fn();
+    render(
+      <>
+        <textarea aria-label="terminal" />
+        <ClaudeSetup status={fresh} firstRun onClose={onClose} />
+      </>,
+    );
+
+    const terminal = screen.getByRole("textbox", { name: "terminal" });
+    terminal.focus();
+    fireEvent.keyDown(terminal, { key: "Escape" });
+
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    expect(dismissClaudeSetup).toHaveBeenCalled();
+  });
+});

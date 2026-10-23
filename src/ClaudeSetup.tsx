@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { applyClaudeSetup, dismissClaudeSetup, type SetupStatus } from "./lib/claudeSetup";
-import { isMac } from "./lib/keys";
+import { isEscape, isMac, useHotkey } from "./lib/keys";
 
 export interface ClaudeSetupProps {
   status: SetupStatus;
@@ -19,6 +19,17 @@ export function ClaudeSetup({ status, firstRun, onClose }: ClaudeSetupProps) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Apply starts disabled when nothing has changed, so its autoFocus can
+  // miss, leaving the keyboard in the terminal behind.
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const back = document.activeElement;
+    if (!ref.current?.contains(document.activeElement)) ref.current?.focus();
+    return () => {
+      if (back instanceof HTMLElement) back.focus();
+    };
+  }, []);
+
   const changed = firstRun || skills !== status.skills || sharedSkills !== status.sharedSkills || mcp !== status.mcp;
 
   const apply = () => {
@@ -32,25 +43,33 @@ export function ClaudeSetup({ status, firstRun, onClose }: ClaudeSetupProps) {
       });
   };
 
-  const decline = () => {
+  const decline = useCallback(() => {
     if (!firstRun) {
       onClose();
       return;
     }
     // Nothing to undo if this fails: it only stops the question coming back.
     void dismissClaudeSetup().catch(() => undefined).finally(onClose);
-  };
+  }, [firstRun, onClose]);
+
+  // On the window rather than the dialog: on first launch it opens while the
+  // terminals are still starting, and each one takes focus as it does.
+  useHotkey(
+    isEscape,
+    useCallback(() => {
+      if (!busy) decline();
+    }, [busy, decline]),
+  );
 
   return (
     <div className="popup-scrim">
       <div
+        ref={ref}
         className="popup setup"
         role="dialog"
         aria-modal="true"
         aria-labelledby="agent-setup-title"
-        onKeyDown={(event) => {
-          if (event.key === "Escape" && !busy) decline();
-        }}
+        tabIndex={-1}
       >
         <h2 id="agent-setup-title">Agent Integrations</h2>
         <p>

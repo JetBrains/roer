@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   agentCommand,
   agentDetail,
@@ -15,6 +15,7 @@ import {
   type AgentScope,
 } from "./lib/agents";
 import { confirmAction } from "./lib/confirm";
+import { isEscape, useHotkey } from "./lib/keys";
 
 /** What the dialog opens on: a new agent, or an existing one by id. */
 export type AgentsDialogStart = { mode: "new"; cli?: string } | { mode: "edit"; id?: string };
@@ -200,6 +201,14 @@ export function AgentsDialog({ list, cwd, start, startAfterSave, onChanged, onSt
     if (dirty && !readOnly && !(await confirmAction("Discard your changes to this agent?", "Unsaved changes"))) return;
     onClose();
   };
+  // On the window rather than the dialog: opened on an existing agent,
+  // nothing in it takes focus, and the keyboard stays in the terminal.
+  const dismissRef = useRef(dismiss);
+  dismissRef.current = dismiss;
+  useHotkey(
+    isEscape,
+    useCallback(() => void dismissRef.current(), []),
+  );
 
   const remove = async () => {
     if (isNew || readOnly) return;
@@ -247,7 +256,6 @@ export function AgentsDialog({ list, cwd, start, startAfterSave, onChanged, onSt
         aria-modal="true"
         aria-labelledby="agents-title"
         onKeyDown={(event) => {
-          if (event.key === "Escape") void dismiss();
           if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && dirty && !readOnly && !busy) {
             void save(Boolean(startAfterSave));
           }
