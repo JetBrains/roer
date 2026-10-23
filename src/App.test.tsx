@@ -1334,6 +1334,49 @@ describe("App", () => {
     );
   });
 
+  it("closes the file tab on top with Cmd+W, then releases the session for the Workspace", async () => {
+    render(<App />);
+    await teleport();
+    await pick();
+    await waitFor(() => expect(spawnPty).toHaveBeenCalled());
+
+    fireEvent.keyDown(window, { code: "KeyW", key: "w", metaKey: true });
+    expect(screen.queryByRole("tab", { name: "App.tsx" })).not.toBeInTheDocument();
+    expect(screen.getByTestId("terminal")).toBeInTheDocument();
+
+    // Released, not ended: only Roer's client goes, and the session stays in tmux.
+    fireEvent.keyDown(window, { code: "KeyW", key: "w", metaKey: true });
+    await waitFor(() => expect(screen.queryByTestId("terminal")).not.toBeInTheDocument());
+    expect(closePty).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("tab", { name: "Workspace" })).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("leaves the session alone on Cmd+W from Changes", async () => {
+    render(<App />);
+    await teleport();
+    await waitFor(() => expect(spawnPty).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByRole("tab", { name: "Changes" }));
+    fireEvent.keyDown(window, { code: "KeyW", key: "w", metaKey: true });
+
+    expect(screen.getByTestId("terminal")).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Changes" })).toHaveAttribute("aria-selected", "true");
+    expect(closePty).not.toHaveBeenCalled();
+  });
+
+  it("leaves the session alone on Cmd+W while a dialog is open", async () => {
+    render(<App />);
+    await teleport();
+    await waitFor(() => expect(spawnPty).toHaveBeenCalled());
+
+    fireEvent.keyDown(window, { code: "Slash", key: "/", metaKey: true });
+    expect(await screen.findByRole("dialog", { name: "Keyboard shortcuts" })).toBeInTheDocument();
+    fireEvent.keyDown(window, { code: "KeyW", key: "w", metaKey: true });
+
+    expect(screen.getByTestId("terminal")).toBeInTheDocument();
+    expect(closePty).not.toHaveBeenCalled();
+  });
+
   it("offers the files it has open before anything is typed", async () => {
     render(<App />);
     await teleport();
