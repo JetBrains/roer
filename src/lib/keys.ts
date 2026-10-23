@@ -262,7 +262,9 @@ export function refusal(action: ActionId, chord: Chord): string | null {
   if (isMac() && chord.meta && plain && chord.shift && chord.code === "KeyW") return "That closes the window.";
   const tabMods = isMac() ? chord.meta && plain && !chord.shift : chord.ctrl && chord.shift && !chord.alt && !chord.meta;
   if (tabMods && /^Digit[1-9]$/.test(chord.code)) return `That brings up tab ${chord.code.slice(5)}.`;
-  if (tabMods && ["Equal", "Minus", "Digit0"].includes(chord.code)) return "That sets the text size.";
+  if ((isMac() ? chord.meta && !chord.ctrl : chord.ctrl && !chord.meta) && !chord.alt && chord.code in FONT_CODES) {
+    return "That sets the text size.";
+  }
   const taken = ACTIONS.find(([other]) => other !== action && sameChord(chordOf(other), chord));
   return taken ? `${taken[1]} is on it already.` : null;
 }
@@ -315,26 +317,35 @@ export const tabNumber = (event: KeyboardEvent): number | null => {
 
 export const isTabNumber = (event: KeyboardEvent): boolean => tabNumber(event) !== null;
 
+/** The character a text size key types, then its key, for one whose
+ * layout types neither: `+` is its own key on a German keyboard, and `0`
+ * is `à` on a French one. */
+const FONT_KEYS: Record<string, 1 | -1 | 0> = { "+": 1, "=": 1, "-": -1, _: -1, "0": 0 };
+const FONT_CODES: Record<string, 1 | -1 | 0> = { Equal: 1, NumpadAdd: 1, Minus: -1, NumpadSubtract: -1, Digit0: 0, Numpad0: 0 };
+
 /**
- * Text size, for whatever is in front: `Cmd+=` bigger (`Cmd+Shift+=` too,
- * which is `Cmd++`), `Cmd+-` smaller, `Cmd+0` back to the default; a
- * browser's zoom keys. `Ctrl+Shift` and the same keys off macOS, a Linux
- * terminal's, since `Ctrl+-` alone is the shell's undo. `null` for anything
- * else.
+ * Text size, for whatever is in front: `Cmd+=` or `Cmd++` bigger, `Cmd+-`
+ * smaller, `Cmd+0` back to the default; a browser's zoom keys. Plain `Ctrl`
+ * off macOS, as a Windows or GNOME terminal has it, and `Ctrl+Shift` too,
+ * the app's modifier there. With or without Shift, since `+` takes it on
+ * some layouts. `null` for anything else.
  */
 export const fontStep = (event: KeyboardEvent): 1 | -1 | 0 | null => {
-  const code = event.code || ({ "=": "Equal", "+": "Equal", "-": "Minus", _: "Minus", "0": "Digit0", ")": "Digit0" } as Record<string, string>)[event.key];
-  if (!appChord(event, false) && !(isMac() && code === "Equal" && appChord(event, true))) return null;
-  return code === "Equal" ? 1 : code === "Minus" ? -1 : code === "Digit0" ? 0 : null;
+  const held = isMac() ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
+  if (!held || event.altKey) return null;
+  return FONT_KEYS[event.key] ?? FONT_CODES[event.code] ?? null;
 };
 
 export const isFontStep = (event: KeyboardEvent): boolean => fontStep(event) !== null;
 
+/** `Cmd` on macOS, plain `Ctrl` elsewhere: see `fontStep`. */
+const sizeKey = (code: string): Chord => chord(code, isMac() ? { meta: true } : { ctrl: true });
+
 /** How the text size keys are written on this platform, for the sheet. */
 export const fontSizeShortcuts = (): Array<[string, string]> => [
-  ["Bigger text", chordLabel(app("Equal"))],
-  ["Smaller text", chordLabel(app("Minus"))],
-  ["Text back to its default size", chordLabel(app("Digit0"))],
+  ["Bigger text", chordLabel(sizeKey("Equal"))],
+  ["Smaller text", chordLabel(sizeKey("Minus"))],
+  ["Text back to its default size", chordLabel(sizeKey("Digit0"))],
 ];
 
 /** Escape, anywhere in the window: for a dialog that cannot count on holding
