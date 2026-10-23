@@ -6,6 +6,10 @@
 # (built for the host) never meet the container's; the builds are cached in
 # volumes between runs. Artifacts of the run land in e2e/artifacts.
 #
+# RUSTUP_TOOLCHAIN keeps rustup on the image's own stable: rust-toolchain.toml
+# would have it update stable whenever a newer one is out, which fails inside
+# the container ("Invalid cross-device link") on the image's layers.
+#
 # usage: e2e/docker.sh [--record]
 #   --record  also leaves e2e/artifacts/e2e-linux.mp4, the run in slow motion
 set -euo pipefail
@@ -26,6 +30,7 @@ git ls-files -z --cached --others --exclude-standard | grep -z -v '^e2e/artifact
     while IFS= read -r -d '' f; do if [ -e "$f" ]; then printf '%s\0' "$f"; fi; done |
     tar --null -T - -cf - |
     docker run --rm -i ${record[@]+"${record[@]}"} -e HOST_ID="$(id -u):$(id -g)" \
+        -e RUSTUP_TOOLCHAIN=stable \
         -v roer-e2e-src-tauri-target:/roer/src-tauri/target \
         -v roer-e2e-cli-target:/roer/cli/target \
         -v roer-e2e-node-modules:/roer/node_modules \
