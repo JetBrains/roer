@@ -179,10 +179,15 @@ jobs:
           persist-credentials: false
 
       # As in Checks, plus the WebDriver for WebKitGTK, a display for it, and
-      # ffmpeg to record that display.
+      # ffmpeg to record that display. Ubuntu 26.04 renamed the WebDriver's
+      # package, and ubuntu-latest is either release while runners move over.
       - name: Linux dependencies
         if: runner.os == 'Linux'
-        run: .github/linux/apt-install.sh libwebkit2gtk-4.1-dev libxdo-dev libssl-dev librsvg2-dev tmux webkit2gtk-driver xvfb ffmpeg
+        run: |
+          . /etc/os-release
+          driver=webkit2gtk-driver
+          if [ "${VERSION_ID%%.*}" -ge 26 ]; then driver=webkitgtk-webdriver; fi
+          .github/linux/apt-install.sh libwebkit2gtk-4.1-dev libxdo-dev libssl-dev librsvg2-dev tmux "$driver" xvfb ffmpeg
 
       - name: ffmpeg, to record the run
         if: runner.os == 'Windows'

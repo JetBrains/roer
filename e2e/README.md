@@ -34,7 +34,7 @@ cargo build --manifest-path cli/Cargo.toml   # roer, cli/target/debug/roer
 cd e2e && npm ci && npm test                 # on Linux under a display: xvfb-run -a npm test
 ```
 
-Linux needs `webkit2gtk-driver` and `tmux`. Windows needs `psmux.exe` beside
+Linux needs `webkit2gtk-driver` (`webkitgtk-webdriver` from Ubuntu 26.04) and `tmux`. Windows needs `psmux.exe` beside
 `roer.exe` (`.github/windows/fetch-psmux.sh cli/target/debug`), the fake
 `claude.exe` (`cargo build --manifest-path e2e/fake-agent/Cargo.toml`), and an
 `msedgedriver.exe` of the installed WebView2's exact version, found through
