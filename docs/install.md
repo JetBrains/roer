@@ -32,6 +32,12 @@ The `.msi` installs the same files but does not touch `PATH`: add `<install fold
 
 Shortcuts are as on Linux. Not there yet on Windows: `C-b` is taken off psmux's prefix but not yet checked with real keypresses. Between releases, the `roer-windows` artifact of a [Nightly bundles](https://github.com/JetBrains/roer/actions/workflows/nightly-bundles.yml) run has the installers and the CLI zip, unsigned, so SmartScreen warns on install.
 
+## Updating
+
+When a newer release is out, the app says so in a corner, and **Update and restart** installs it in place: it downloads the same file you would, checks it against the release's `SHA256SUMS.txt`, and on macOS and Windows installs it only if it is signed by JetBrains (and, on macOS, notarized by Apple). Then the app restarts. On macOS and Linux sessions run in tmux, not in the app, so they keep running. On Linux the .deb or .rpm is installed through `pkexec`, which asks for your password; an AppImage is replaced where it is.
+
+An app opened straight off the .dmg, an `.msi` install, and a Linux package on a system without `pkexec` offer **Download** instead, as does the notice when an install fails.
+
 ## MCP server
 
 `roer mcp` is Roer's MCP server, on stdio. Its tools show a UI in a session's Generative UI panel and read back the clicks on it:

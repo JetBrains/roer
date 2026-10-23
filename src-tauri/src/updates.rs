@@ -6,7 +6,7 @@
 //! rather than from GitHub's API, which allows 60 requests an hour to everyone
 //! behind one address, so a shared VPN or office exit soon runs out of them.
 //! It is fetched with the system's `curl`, as `bun_fetch` does.
-//! The app only tells; downloading and installing is still the person's.
+//! Installing it, where this app can, is `update_install.rs`.
 
 use serde::Serialize;
 
@@ -25,6 +25,8 @@ pub struct UpdateStatus {
     pub skipped: bool,
     /// The release's page, where its notes and downloads are.
     pub url: String,
+    /// This app can install it in its own place: see `update_install.rs`.
+    pub can_install: bool,
 }
 
 /// `$ROER_HOME/update-skipped` holds the one version the person skipped.
@@ -51,7 +53,9 @@ pub fn update_check(automatic: bool) -> Result<Option<UpdateStatus>, String> {
         return Err(format!("could not reach GitHub: {}", if why.is_empty() { "curl failed".into() } else { why }));
     }
     let skipped = std::fs::read_to_string(skipped_record()).unwrap_or_default();
-    status(env!("CARGO_PKG_VERSION"), &out.stdout, skipped.trim()).map(Some)
+    let mut found = status(env!("CARGO_PKG_VERSION"), &out.stdout, skipped.trim())?;
+    found.can_install = found.newer && crate::update_install::method().is_some();
+    Ok(Some(found))
 }
 
 /// Don't offer `version` again; a later one still is.
@@ -92,11 +96,12 @@ fn status(current: &str, headers: &[u8], skipped: &str) -> Result<UpdateStatus, 
         newer: version(current).is_some_and(|running| parsed > running),
         skipped: skipped == latest,
         url: format!("{RELEASES}/tag/{tag}"),
+        can_install: false,
     })
 }
 
 /// `1.2.3` as numbers, so 0.10.0 comes after 0.9.2. Nothing else is a version.
-fn version(text: &str) -> Option<(u64, u64, u64)> {
+pub(crate) fn version(text: &str) -> Option<(u64, u64, u64)> {
     let mut parts = text.split('.').map(|part| part.parse::<u64>().ok());
     let found = (parts.next()??, parts.next()??, parts.next()??);
     parts.next().is_none().then_some(found)
@@ -122,6 +127,7 @@ mod tests {
                 newer: true,
                 skipped: false,
                 url: "https://github.com/JetBrains/roer/releases/tag/v0.10.0".into(),
+                can_install: false,
             }
         );
     }
