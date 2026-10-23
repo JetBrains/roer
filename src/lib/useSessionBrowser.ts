@@ -3,8 +3,9 @@ import { ask } from "@tauri-apps/plugin-dialog";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { logLine } from "./log";
 
-import { gitChanges, gitRepo, type Repo } from "../lib/git";
+import { gitChanges, gitRepo, gitReposIn, gitRoot, type Repo } from "../lib/git";
 import { placesOf, type Place } from "./checkouts";
+import { pickFolder } from "./folderPicker";
 import type { PickerStart } from "../NewSessionPicker";
 import {
   createWorktree,
@@ -66,6 +67,17 @@ export interface UseSessionBrowserArgs {
   onOpen: (request: OpenRequest) => void;
 }
 
+/** A folder picked as a project that is not a repository but holds some:
+ * the question of which of them to take, and where to. */
+export interface FolderRepos {
+  path: string;
+  repos: string[];
+  /** The Workspace it was picked for, offered beside a new one. */
+  workspaceId?: string;
+  /** Set when the folder was picked to start a session in. */
+  session?: { agent?: string };
+}
+
 /** Just the directory's own name, used as a new Project's starting name. */
 function folderName(path: string): string {
   return path.replace(/\/+$/, "").split("/").pop() ?? path;
@@ -112,6 +124,7 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
   const [itemTitle, setItemTitle] = useState("");
   // The New session picker, while it is up, and the question it opened on.
   const [picker, setPicker] = useState<PickerStart | null>(null);
+  const [folderRepos, setFolderRepos] = useState<FolderRepos | null>(null);
 
   const setSelectedWorkspaceId = useCallback((id: string | null) => {
     setSelectedWorkspaceIdRaw(id);
@@ -458,6 +471,7 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
 
   /** Where a plain New session goes, as the button's tooltip says it. */
   const newSessionPlace = (): string | undefined => {
+    if (asksForFolder()) return "a folder you pick";
     const cwd = newSessionCwd();
     if (!cwd) return undefined;
     return newSessionPlaces().find((place) => place.cwd === cwd)?.label ?? shorten(cwd, status?.home);
@@ -583,15 +597,83 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
    * Workspace yet — the Projects tab's own "New project", as opposed to
    * SessionBrowser's create-and-attach flow. */
   const handleCreateProject = (name: string, path: string) => {
-    void createProject(name, path)
+    void gitRoot(path)
+      .catch(() => null)
+      .then((root) => (root ? createProject(name, path) : askAboutFolder(path, {})))
       .then((project) => {
-        setProjects((current) =>
-          current.some((existing) => existing.id === project.id)
-            ? current
-            : [...current, project],
-        );
+        if (project) known(project);
       })
       .catch((cause: unknown) => setFailure(String(cause)));
+  };
+
+  /** Puts a Project just registered (or found registered) in the list. */
+  const known = (project: Project) =>
+    setProjects((current) => (current.some((existing) => existing.id === project.id) ? current : [...current, project]));
+
+  const replaced = (updated: Workspace) =>
+    setWorkspaces((current) => (current.some((workspace) => workspace.id === updated.id)
+      ? current.map((workspace) => (workspace.id === updated.id ? updated : workspace))
+      : [...current, updated]));
+
+  /**
+   * A folder picked to be a project. A repository is one, attached to
+   * `workspaceId`; a folder of repositories is asked about, as a Workspace of
+   * its own or more of this one; and a folder with none is no project, only
+   * somewhere to start a session if that is what it was picked for.
+   */
+  const addFolder = (path: string, { workspaceId, session }: Omit<FolderRepos, "path" | "repos">) => {
+    const workspace = workspaces.find((candidate) => candidate.id === workspaceId) ?? null;
+    void gitRoot(path)
+      .catch(() => null)
+      .then(async (root) => {
+        if (!root) return askAboutFolder(path, { workspaceId, session });
+        const project = await createProject(folderName(path), path);
+        known(project);
+        const updated = workspaceId ? await attachProject(workspaceId, project.id) : null;
+        if (updated) replaced(updated);
+        if (session) startNewSession(path, updated ?? workspace, session.agent);
+      })
+      .catch((cause: unknown) => setFailure(String(cause)));
+  };
+
+  /** What a folder outside every repository leads to: see `addFolder`. */
+  const askAboutFolder = async (path: string, rest: Omit<FolderRepos, "path" | "repos">) => {
+    const repos = await gitReposIn(path).catch(() => []);
+    if (repos.length > 0) {
+      setFolderRepos({ path, repos, ...rest });
+    } else if (rest.session) {
+      startNewSession(path, workspaces.find((candidate) => candidate.id === rest.workspaceId) ?? null, rest.session.agent);
+    } else {
+      setFailure(
+        `${shorten(path, status?.home)} is not a git repository and has none in it, so it cannot be a project. A new session can still start there: New session, then "Attach a folder as a project…".`,
+      );
+    }
+    return null;
+  };
+
+  /** The folder question's answer: `repos` as Projects, of a new Workspace
+   * named after the folder or of the one it was asked for; then the session
+   * it was picked for, in the folder itself, so its agent sees them all. */
+  const confirmFolderRepos = async (repos: string[], into: "new" | "same") => {
+    const asked = folderRepos;
+    setFolderRepos(null);
+    if (!asked || repos.length === 0) return;
+    try {
+      let workspace =
+        into === "same" ? workspaces.find((candidate) => candidate.id === asked.workspaceId) : await createWorkspace(folderName(asked.path));
+      if (!workspace) return;
+      // One at a time: each write reads the registry the last one wrote.
+      for (const repo of repos) {
+        const project = await createProject(folderName(repo), repo);
+        known(project);
+        workspace = (await attachProject(workspace.id, project.id)) ?? workspace;
+      }
+      replaced(workspace);
+      setSelectedWorkspaceId(workspace.id);
+      if (asked.session) startNewSession(asked.path, workspace, asked.session.agent);
+    } catch (cause: unknown) {
+      setFailure(String(cause));
+    }
   };
 
   /** Attaches to `workspaceId`, the selected Workspace unless another is
@@ -610,25 +692,10 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
 
   /** Registers a brand new Project (deduped by path on the backend) and
    * attaches it to `workspaceId` (the selected Workspace by default) in one
-   * step. */
+   * step, or asks about a folder of them: see `addFolder`. */
   const handleAttachNewProject = (path: string, workspaceId = selectedWorkspace?.id) => {
     if (!workspaceId) return;
-    void createProject(folderName(path), path)
-      .then((project) => {
-        setProjects((current) =>
-          current.some((existing) => existing.id === project.id)
-            ? current
-            : [...current, project],
-        );
-        return attachProject(workspaceId, project.id);
-      })
-      .then((updated) => {
-        if (!updated) return;
-        setWorkspaces((current) =>
-          current.map((workspace) => (workspace.id === updated.id ? updated : workspace)),
-        );
-      })
-      .catch((cause: unknown) => setFailure(String(cause)));
+    addFolder(path, { workspaceId });
   };
 
   const handleDetachProject = (projectId: string) => {
@@ -819,12 +886,31 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
   };
 
   // `new` rather than `shell`, because `shell` reuses the session for a
-  // directory. A plain New session never asks; it starts where
-  // `newSessionCwd` says, and the picker is for anywhere else.
+  // directory. A plain New session asks only before there is any Project,
+  // for the folder that becomes the first, rather than starting in home;
+  // else it starts where `newSessionCwd` says, and the picker is for
+  // anywhere else.
   //
   // `agent` is an agent's id, or `SHELL` for just a shell; without one the
   // shim starts the default agent.
-  const openNew = (agent?: string) => startNewSession(newSessionCwd(), selectedWorkspace, agent);
+  const openNew = (agent?: string) => {
+    if (!asksForFolder()) {
+      startNewSession(newSessionCwd(), selectedWorkspace, agent);
+      return;
+    }
+    // Answered after the picker closes, by what the hook is by then.
+    void pickFolder().then((picked) => {
+      if (typeof picked === "string") attachForNewSessionRef.current(picked, agent);
+    });
+  };
+
+  /** Whether a plain New session asks for a folder: there is no Project yet,
+   * nor a session on the stage to start beside. Read, not loading. */
+  const asksForFolder = () =>
+    status !== null && selectedWorkspace !== null && projects.length === 0 && !sessions.some((session) => session.pane === activePane);
+
+  /** New session in the home folder, for the one who wants no project. */
+  const openNewInHome = () => startNewSession(status?.home, selectedWorkspace);
 
   /** Where a plain New session starts, without asking: the checkout of the
    * session on the stage, if that is among what is in view, so a second
@@ -849,27 +935,11 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
    * Project, attaches it to the Workspace the dialog was for, and starts the
    * session in it right away. */
   const attachNewProjectForNewSession = (path: string, agent?: string) => {
-    const workspace = selectedWorkspace;
     setPicker(null);
-    void createProject(folderName(path), path)
-      .then((project) => {
-        setProjects((current) =>
-          current.some((existing) => existing.id === project.id)
-            ? current
-            : [...current, project],
-        );
-        return workspace ? attachProject(workspace.id, project.id) : null;
-      })
-      .then((updated) => {
-        if (updated) {
-          setWorkspaces((current) =>
-            current.map((existing) => (existing.id === updated.id ? updated : existing)),
-          );
-        }
-        startNewSession(path, workspace, agent);
-      })
-      .catch((cause: unknown) => setFailure(String(cause)));
+    addFolder(path, { workspaceId: selectedWorkspace?.id, session: { agent } });
   };
+  const attachForNewSessionRef = useRef(attachNewProjectForNewSession);
+  attachForNewSessionRef.current = attachNewProjectForNewSession;
 
   // Resuming a past conversation goes through the shim's own `resume`, not
   // `new` — the transcript, not just the directory, is what's being
@@ -1018,6 +1088,8 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
     visibleClaudeSessions,
     activePane,
     openNew,
+    openNewInHome,
+    asksForFolder,
     newSessionCwd,
     projectsInView,
     worktrees,
@@ -1032,6 +1104,9 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
     openInWorktree,
     handleRemoveWorktree,
     attachNewProjectForNewSession,
+    folderRepos,
+    confirmFolderRepos,
+    cancelFolderRepos: () => setFolderRepos(null),
     openClaudeSession,
     refresh,
   };

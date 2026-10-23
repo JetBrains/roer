@@ -272,6 +272,50 @@ pub fn git_root(cwd: String) -> Option<String> {
     root(&cwd).ok()
 }
 
+/// How far below a folder `repos_in` looks: `~/work/<repo>` and
+/// `~/work/<team>/<repo>`, not a whole disk.
+const REPOS_DEPTH: usize = 2;
+
+/// The repositories in a folder that is not one itself, such as a folder of
+/// checkouts, by their roots in git's spelling, sorted. Hidden folders and
+/// `node_modules` are passed over, and so is what is inside a repository: a
+/// submodule or a vendored checkout is part of the one it is in.
+pub(crate) fn repos_in(dir: &str) -> Vec<String> {
+    let mut found = Vec::new();
+    let mut level = vec![std::path::PathBuf::from(dir)];
+    for _ in 0..REPOS_DEPTH {
+        let mut next = Vec::new();
+        for parent in level {
+            let Ok(entries) = std::fs::read_dir(&parent) else { continue };
+            for entry in entries.filter_map(Result::ok) {
+                let name = entry.file_name().to_string_lossy().into_owned();
+                if name.starts_with('.') || name == "node_modules" || !entry.path().is_dir() {
+                    continue;
+                }
+                let path = entry.path();
+                if path.join(".git").exists() {
+                    if let Ok(root) = root(&path.to_string_lossy()) {
+                        found.push(root);
+                    }
+                } else {
+                    next.push(path);
+                }
+            }
+        }
+        level = next;
+    }
+    found.sort();
+    found.dedup();
+    found
+}
+
+/// The repositories in a folder outside any, for offering them as a
+/// Workspace's Projects.
+#[tauri::command]
+pub fn git_repos_in(dir: String) -> Vec<String> {
+    repos_in(&dir)
+}
+
 /// Where a directory sits among a repository's worktrees.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -1102,10 +1146,30 @@ fn count_lines(path: &Path) -> (Option<u32>, bool) {
 mod tests {
     use super::{
         branch_commits, branch_diff, branches, changes, git_branch_diff, git_commit_all, commit_files, count_lines, git, git_commit_diff,
-        git_diff, git_root, numstat, parse_name_status, parse_status, push_upstream, repo, root,
+        git_diff, git_root, numstat, parse_name_status, parse_status, push_upstream, repo, repos_in, root,
         upstream_status, Stat, Upstream, MAX_DIFF_BYTES,
     };
-    use crate::testing::{commit, init, must, scratch, write};
+    use crate::testing::{canonical, commit, init, must, scratch, write};
+
+    #[test]
+    fn the_repositories_in_a_folder_are_found_two_levels_down_and_no_deeper() {
+        let dir = scratch("repos-in-a-folder");
+        for repo in ["api", "team/web", "team/deep/too-far", ".hidden", "api/vendored"] {
+            std::fs::create_dir_all(dir.join(repo)).unwrap();
+            init(&dir.join(repo).to_string_lossy());
+        }
+        std::fs::create_dir_all(dir.join("notes")).unwrap();
+        let found = repos_in(&dir.to_string_lossy());
+        assert_eq!(found, vec![canonical(&dir.join("api")), canonical(&dir.join("team/web"))]);
+    }
+
+    #[test]
+    fn a_folder_without_repositories_has_none() {
+        let dir = scratch("repos-in-an-empty-folder");
+        std::fs::create_dir_all(dir.join("notes/old")).unwrap();
+        assert!(repos_in(&dir.to_string_lossy()).is_empty());
+        assert!(repos_in(&dir.join("missing").to_string_lossy()).is_empty());
+    }
 
     #[test]
     fn a_worktree_belongs_to_the_repository_it_was_added_to() {

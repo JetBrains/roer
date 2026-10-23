@@ -47,6 +47,10 @@ export const gitRepo = (cwd: string): Promise<Repo | null> => invoke("git_repo",
 /** The repository a directory sits in, or `null` outside one. */
 export const gitRoot = (cwd: string): Promise<string | null> => invoke("git_root", { cwd });
 
+/** The repositories in a folder that is not one itself, two levels down at
+ * most: a folder of checkouts, say. */
+export const gitReposIn = (dir: string): Promise<string[]> => invoke("git_repos_in", { dir });
+
 export const gitDiff = (root: string, path: string, untracked: boolean): Promise<string> =>
   invoke("git_diff", { root, path, untracked });
 

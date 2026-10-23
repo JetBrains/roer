@@ -2618,6 +2618,33 @@ button.tree-row.selected {
   gap: 2px;
 }
 
+/* The empty stage before any project: the way to the first one. */
+.first-folder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  text-align: center;
+}
+
+.first-folder p {
+  margin: 0;
+}
+
+/* The repositories in a folder, one checkbox each; a long list scrolls
+   rather than pushing the buttons off. */
+.popup.folder-choice {
+  align-self: flex-start;
+}
+
+.folder-repos {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 40vh;
+  overflow-y: auto;
+}
+
 .setup-error {
   color: var(--roer-warn);
 }

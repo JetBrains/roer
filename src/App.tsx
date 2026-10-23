@@ -36,6 +36,7 @@ import { ClaudeSetup } from "./ClaudeSetup";
 import { UpdateNotice } from "./UpdateNotice";
 import { GoToFile, type SessionHit } from "./GoToFile";
 import { NewSessionButton } from "./NewSessionButton";
+import { FolderReposDialog } from "./FolderReposDialog";
 import { NewSessionPicker } from "./NewSessionPicker";
 import { SessionTree } from "./SessionTree";
 import {
@@ -1432,7 +1433,24 @@ export function App() {
             ) : (
               <div className="empty">
                 {notice ? <p className="notice">{notice}</p> : null}
-                <p className="muted">
+                {browser.asksForFolder() ? (
+                  // Before any project: what one is, and the way to the
+                  // first, rather than a terminal in home nobody asked for.
+                  <div className="first-folder">
+                    <p>Start with the folder you work in: a git repository, or a folder of them.</p>
+                    <button type="button" className="primary" onClick={() => browser.openNew()}>
+                      Open a folder…
+                    </button>
+                    <p className="muted">
+                      Or{" "}
+                      <button type="button" className="link" onClick={browser.openNewInHome}>
+                        start in your home folder
+                      </button>{" "}
+                      without a project.
+                    </p>
+                  </div>
+                ) : null}
+                <p className="muted" hidden={browser.asksForFolder()}>
                   Pick a session, or start a new one with {shortcutLabel.newSession()}.{" "}
                   {shortcutLabel.shortcuts()} lists every shortcut.
                 </p>
@@ -1646,6 +1664,15 @@ export function App() {
             onChanged={refreshAgents}
             onStart={(id) => browser.openNew(id)}
             onClose={() => setAgentsDialog(null)}
+          />
+        ) : null}
+
+        {browser.folderRepos ? (
+          <FolderReposDialog
+            asked={browser.folderRepos}
+            workspaceName={browser.workspaces.find((workspace) => workspace.id === browser.folderRepos?.workspaceId)?.name}
+            onConfirm={(repos, into) => void browser.confirmFolderRepos(repos, into)}
+            onClose={browser.cancelFolderRepos}
           />
         ) : null}
 

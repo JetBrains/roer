@@ -313,6 +313,7 @@ fn dispatch(state: &Arc<AppState>, cmd: &str, args: Value, cid: Option<&str>) ->
     match cmd {
         // git
         "git_root" => call!(args, crate::git::git_root, "cwd": String),
+        "git_repos_in" => call!(args, crate::git::git_repos_in, "dir": String),
         "git_repo" => call!(args, crate::git::git_repo, "cwd": String),
         "git_diff" => call_res!(args, crate::git::git_diff, "root": String, "path": String, "untracked": bool),
         "git_branches" => call_res!(args, crate::git::git_branches, "cwd": String),
