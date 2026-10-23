@@ -29,6 +29,7 @@ pub mod pty;
 mod roer;
 pub mod server;
 mod watch;
+mod update_install;
 mod updates;
 mod workspaces;
 mod worktrees;
@@ -86,6 +87,7 @@ pub fn run() {
             gh::open_url,
             updates::update_check,
             updates::update_skip,
+            update_install::update_install,
             files::files_search,
             files::file_read,
             roer::roer_sessions,
