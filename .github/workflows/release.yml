@@ -4,7 +4,7 @@ name: Release
 #   bundle-macos      macos-26        universal Roer.app.tar.gz, roer and tmux inside
 #   bundle-linux      ubuntu-22.04    .deb, .rpm and AppImage, roer inside
 #   verify-linux      ubuntu-latest   install the .deb, roer on PATH, remove it
-#   cli-linux         ubuntu-latest   the roer command for Linux, alone
+#   cli-linux         ubuntu-24.04    the roer command for Linux, alone
 #   bundle-windows    windows-latest  unsigned nsis and msi installers
 #   cli-windows       windows-latest  roer.exe with the psmux it drives
 #   package           macos-26        verify, hdiutil .dmg, plugin zip, checksums
@@ -194,7 +194,9 @@ jobs:
   cli-linux:
     name: CLI (Linux)
     needs: validate-version
-    runs-on: ubuntu-latest
+    # Not ubuntu-latest: it links the runner's glibc, and on 26.04 that would
+    # leave out every older release the CLI ran on.
+    runs-on: ubuntu-24.04
     env:
       VERSION: ${{ needs.validate-version.outputs.version }}
     steps:
