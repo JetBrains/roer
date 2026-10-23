@@ -885,7 +885,8 @@ pub async fn start_browser_server() -> Result<(), String> {
     let url = if let Some(started) = &*guard {
         started.bootstrap_url()
     } else {
-        let started = start(default_addr(), false, Auth::Token(generate_token())).await.map_err(|e| e.to_string())?;
+        let explicit = std::env::var("ROER_SERVER_PORT").is_ok_and(|p| !p.is_empty());
+        let started = start_in_app(default_addr(), explicit).await.map_err(|e| e.to_string())?;
         let _ = IN_PROCESS_BUS.set(started.bus.clone());
         let url = started.bootstrap_url();
         *guard = Some(started);
@@ -894,9 +895,42 @@ pub async fn start_browser_server() -> Result<(), String> {
     crate::gh::open_in_system_browser(&url)
 }
 
+/// The app's server on `addr`, or, when another program has that port and
+/// the person did not ask for it by `ROER_SERVER_PORT`, on one the system
+/// picks as free. 4317 comes first so a tab kept open from before still
+/// finds it; the link the app opens names whichever port it got.
+async fn start_in_app(addr: SocketAddr, explicit: bool) -> std::io::Result<Started> {
+    match start(addr, false, Auth::Token(generate_token())).await {
+        Err(e) if e.kind() == std::io::ErrorKind::AddrInUse && !explicit => {
+            eprintln!("roer: {addr} is taken by another program; the browser server takes a free port instead");
+            start(SocketAddr::new(addr.ip(), 0), false, Auth::Token(generate_token())).await
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => Err(std::io::Error::new(
+            e.kind(),
+            format!("port {} (ROER_SERVER_PORT) is already in use by another program", addr.port()),
+        )),
+        started => started,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn a_taken_port_gives_way_to_a_free_one_unless_it_was_asked_for() {
+        let taken = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = taken.local_addr().unwrap();
+
+        let started = start_in_app(addr, false).await.unwrap();
+        assert_ne!(started.addr.port(), addr.port());
+        assert!(started.addr.ip().is_loopback());
+        assert!(started.bootstrap_url().contains(&format!(":{}/", started.addr.port())));
+
+        let refused = start_in_app(addr, true).await.err().expect("an asked-for port is not swapped");
+        assert_eq!(refused.kind(), std::io::ErrorKind::AddrInUse);
+        assert!(refused.to_string().contains("ROER_SERVER_PORT"), "{refused}");
+    }
 
     fn configured_digest(token: Option<&str>, token_sha256: Option<&str>) -> Result<Option<Digest>, String> {
         configured_auth(token.map(String::from), token_sha256.map(String::from)).map(|a| a.map(|a| a.digest()))
