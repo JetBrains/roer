@@ -180,7 +180,7 @@ describe("FileView", () => {
     );
     const drawn = document.querySelectorAll(".file-line").length;
 
-    expect(spaced / 18 + drawn).toBe(1000);
+    expect(spaced / 20 + drawn).toBe(1000);
   });
 
   it("colours the code with the language's own grammar", async () => {

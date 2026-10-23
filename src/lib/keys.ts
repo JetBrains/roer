@@ -262,6 +262,7 @@ export function refusal(action: ActionId, chord: Chord): string | null {
   if (isMac() && chord.meta && plain && chord.shift && chord.code === "KeyW") return "That closes the window.";
   const tabMods = isMac() ? chord.meta && plain && !chord.shift : chord.ctrl && chord.shift && !chord.alt && !chord.meta;
   if (tabMods && /^Digit[1-9]$/.test(chord.code)) return `That brings up tab ${chord.code.slice(5)}.`;
+  if (tabMods && ["Equal", "Minus", "Digit0"].includes(chord.code)) return "That sets the text size.";
   const taken = ACTIONS.find(([other]) => other !== action && sameChord(chordOf(other), chord));
   return taken ? `${taken[1]} is on it already.` : null;
 }
@@ -280,6 +281,7 @@ export const allShortcuts = (tabs: readonly string[] = DEFAULT_TABS): Array<[str
     ...(["newSession", "pickAgent", "newWorktree", "goToFile", "nextWaiting", "previousSession"] as const).map(of),
     ...tabs.slice(0, 9).map((tab, i): [string, string] => [tab, shortcutLabel.tab(i + 1)]),
     ...(["closeTab", "agents", "prevCommit", "nextCommit", "shortcuts"] as const).map(of),
+    ...fontSizeShortcuts(),
   ];
 };
 
@@ -312,6 +314,28 @@ export const tabNumber = (event: KeyboardEvent): number | null => {
 };
 
 export const isTabNumber = (event: KeyboardEvent): boolean => tabNumber(event) !== null;
+
+/**
+ * Text size, for whatever is in front: `Cmd+=` bigger (`Cmd+Shift+=` too,
+ * which is `Cmd++`), `Cmd+-` smaller, `Cmd+0` back to the default; a
+ * browser's zoom keys. `Ctrl+Shift` and the same keys off macOS, a Linux
+ * terminal's, since `Ctrl+-` alone is the shell's undo. `null` for anything
+ * else.
+ */
+export const fontStep = (event: KeyboardEvent): 1 | -1 | 0 | null => {
+  const code = event.code || ({ "=": "Equal", "+": "Equal", "-": "Minus", _: "Minus", "0": "Digit0", ")": "Digit0" } as Record<string, string>)[event.key];
+  if (!appChord(event, false) && !(isMac() && code === "Equal" && appChord(event, true))) return null;
+  return code === "Equal" ? 1 : code === "Minus" ? -1 : code === "Digit0" ? 0 : null;
+};
+
+export const isFontStep = (event: KeyboardEvent): boolean => fontStep(event) !== null;
+
+/** How the text size keys are written on this platform, for the sheet. */
+export const fontSizeShortcuts = (): Array<[string, string]> => [
+  ["Bigger text", chordLabel(app("Equal"))],
+  ["Smaller text", chordLabel(app("Minus"))],
+  ["Text back to its default size", chordLabel(app("Digit0"))],
+];
 
 /** Escape, anywhere in the window: for a dialog that cannot count on holding
  * the keyboard, such as one that opens while the terminals are still

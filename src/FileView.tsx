@@ -11,6 +11,7 @@ import {
   ready,
   toSpans,
 } from "./lib/highlight";
+import { useFontSize } from "./lib/fontSize";
 import { langFor } from "./lib/lang";
 
 /**
@@ -32,7 +33,7 @@ const OVERSCAN = 20;
 const FIRST_SCREEN = 60;
 
 /** Line height to assume until a real row has been measured. */
-const GUESS_LINE = 18;
+const GUESS_LINE = 20;
 
 export interface FileViewProps {
   /** The worktree the path is relative to. */
@@ -70,6 +71,8 @@ export function FileView({ root, path, line, active, changed }: FileViewProps) {
   const [top, setTop] = useState(0);
   const [height, setHeight] = useState(0);
   const [lineHeight, setLineHeight] = useState(GUESS_LINE);
+  // Only for re-measuring: the size itself is in the CSS.
+  const codeSize = useFontSize("code");
 
   // Bumped when the watch names this file, which is what re-runs the read.
   const [reload, setReload] = useState(0);
@@ -183,7 +186,7 @@ export function FileView({ root, path, line, active, changed }: FileViewProps) {
     measure();
     window.addEventListener("resize", measure);
     return () => window.removeEventListener("resize", measure);
-  }, [active, lines, measure]);
+  }, [active, lines, measure, codeSize]);
 
   // A line target only means anything against the raw, numbered view — the
   // Markdown preview has nothing for it to scroll to. Switching here (rather

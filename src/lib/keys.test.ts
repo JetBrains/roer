@@ -2,6 +2,7 @@ import { renderHook } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  fontStep,
   isCloseTab,
   isGoToFile,
   isNewSession,
@@ -150,5 +151,21 @@ describe("the person's own keys", () => {
     setRecording(false);
     window.dispatchEvent(key({ code: "KeyT", metaKey: true }));
     expect(handler).toHaveBeenCalledTimes(1);
+  });
+
+  it("step the text size with a browser's zoom keys", () => {
+    expect(fontStep(key({ code: "Equal", metaKey: true }))).toBe(1);
+    expect(fontStep(key({ code: "Equal", metaKey: true, shiftKey: true }))).toBe(1);
+    expect(fontStep(key({ code: "Minus", metaKey: true }))).toBe(-1);
+    expect(fontStep(key({ code: "Digit0", metaKey: true }))).toBe(0);
+    expect(fontStep(key({ key: "=", metaKey: true }))).toBe(1);
+    expect(fontStep(key({ code: "Minus", metaKey: true, shiftKey: true }))).toBeNull();
+    expect(fontStep(key({ code: "Digit1", metaKey: true }))).toBeNull();
+    expect(refusal("newSession", cmd("Minus"))).toMatch(/text size/);
+    onPlatform("Linux x86_64");
+    // Ctrl+- alone is the shell's undo.
+    expect(fontStep(key({ code: "Minus", ctrlKey: true }))).toBeNull();
+    expect(fontStep(key({ code: "Minus", ctrlKey: true, shiftKey: true }))).toBe(-1);
+    expect(fontStep(key({ code: "Equal", ctrlKey: true, shiftKey: true }))).toBe(1);
   });
 });

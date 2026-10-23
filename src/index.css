@@ -2116,8 +2116,8 @@ button.tree-row.selected {
   background: var(--ide-editor);
   color: var(--ide-text);
   font-family: var(--ide-mono);
-  font-size: 12px;
-  line-height: 20px;
+  font-size: var(--code-font-size, 13px);
+  line-height: var(--diff-line-height, 22px);
 }
 
 /* What happened, to what, and where the keys are — 28px, as in the IDE. */
@@ -2183,7 +2183,7 @@ button.tree-row.selected {
 /* Unified: both gutters, then the sign, then the code. */
 .line {
   display: grid;
-  grid-template-columns: 34px 34px 16px minmax(0, 1fr);
+  grid-template-columns: calc(4ch + 8px) calc(4ch + 8px) 16px minmax(0, 1fr);
   align-items: start;
 }
 
@@ -2429,7 +2429,7 @@ button.tree-row.selected {
 
 .pair .diff-side {
   display: grid;
-  grid-template-columns: 38px minmax(0, 1fr);
+  grid-template-columns: calc(4ch + 10px) minmax(0, 1fr);
   align-items: start;
   min-width: 0;
 }
@@ -2575,7 +2575,6 @@ button.tree-row.selected {
   overflow: auto;
   background: var(--ide-editor);
   font-family: var(--ide-mono);
-  font-size: 12px;
 }
 
 .file-preview-more {
@@ -3003,8 +3002,8 @@ button.tab-x:hover {
   flex: 1;
   overflow: auto;
   font-family: var(--ide-mono);
-  font-size: 12px;
-  line-height: 18px;
+  font-size: var(--code-font-size, 13px);
+  line-height: var(--code-line-height, 20px);
 }
 
 .file-body:focus-visible {
@@ -3133,7 +3132,7 @@ button.tab-x:hover {
   z-index: 1;
   flex: none;
   box-sizing: border-box;
-  width: 56px;
+  width: calc(5ch + 12px);
   padding-right: 12px;
   background: var(--ide-editor);
   color: var(--ide-gutter);

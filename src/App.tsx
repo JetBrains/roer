@@ -70,14 +70,17 @@ import {
   isNewWorktree,
   isNextWaiting,
   isCloseTab,
+  isFontStep,
   isPreviousSession,
   isShortcuts,
   isTabNumber,
+  fontStep,
   shortcutLabel,
   tabNumber,
   useHotkey,
   useKeymap,
 } from "./lib/keys";
+import { stepFontSize } from "./lib/fontSize";
 import { loadKeybindings } from "./lib/keybindings";
 import { useNotificationsOn } from "./lib/notify";
 import { nextChoice, useThemeChoice } from "./lib/theme";
@@ -1052,6 +1055,19 @@ export function App() {
       if (files.some((file) => tabId(file) === active)) setTabs((current) => closeTab(current, active));
       else if (active === "terminal" && stagedRef.current) handleExit(null);
     }, [handleExit]),
+  );
+  // The text size of whichever pane has the keyboard: the Terminal's, or
+  // the code's for anything else on the stage.
+  const splitRef = useRef(split);
+  splitRef.current = split;
+  useHotkey(
+    isFontStep,
+    useCallback((event: KeyboardEvent) => {
+      const step = fontStep(event);
+      if (step === null) return;
+      const side = splitRef.current?.focus === "side" ? splitRef.current.side : null;
+      stepFontSize((side ?? tabsRef.current.active) === "terminal" ? "terminal" : "code", step);
+    }, []),
   );
   useHotkey(
     isPreviousSession,

@@ -8,6 +8,7 @@ import { closePty, decodeOutput, noteTyped, resizePty, spawnPty, writePty } from
 import { onFileDrag } from "./lib/backend";
 import { isOver, pathsAsTyped } from "./lib/fileDrop";
 import { openUrl } from "./lib/github";
+import { fontSize, onFontSizeChange } from "./lib/fontSize";
 import { logLine } from "./lib/log";
 import { isOpenGesture, linkTarget } from "./lib/terminalLinks";
 import { measureWithUnicode11 } from "./lib/unicodeWidth";
@@ -103,7 +104,7 @@ export function TerminalView({ args, cwd, onAttached, onPane, onExit, onOpenFile
       convertEol: false,
       cursorBlink: true,
       fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-      fontSize: 13,
+      fontSize: fontSize("terminal"),
       theme: terminalTheme(currentTheme()),
       // For `terminal.unicode`, which xterm still marks as proposed.
       allowProposedApi: true,
@@ -227,6 +228,13 @@ export function TerminalView({ args, cwd, onAttached, onPane, onExit, onOpenFile
     });
     const observer = new ResizeObserver(() => fitAddon.fit());
     observer.observe(container);
+    // A new size keeps the box and changes the grid, which the observer
+    // never sees: refit here, and the PTY hears of it through onResize.
+    const unfollowFontSize = onFontSizeChange(() => {
+      if (terminal.options.fontSize === fontSize("terminal")) return;
+      terminal.options.fontSize = fontSize("terminal");
+      fitAddon.fit();
+    });
 
     // Deferred by a turn of the event loop on purpose. StrictMode runs this
     // effect twice — setup, cleanup, setup — and each spawn is a real tmux
@@ -325,6 +333,7 @@ export function TerminalView({ args, cwd, onAttached, onPane, onExit, onOpenFile
       if (attaching !== null) clearTimeout(attaching);
       observer.disconnect();
       unfollowTheme();
+      unfollowFontSize();
       keySub.dispose();
       dataSub.dispose();
       resizeSub.dispose();
