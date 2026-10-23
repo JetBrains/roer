@@ -92,8 +92,9 @@ function project(dir) {
 }
 
 export class Roer {
-  /** Everything the run makes, under one temporary directory. */
-  constructor() {
+  /** Everything the run makes, under one temporary directory. `env` is
+   * more for the app, given the run's directory: `(root) => ({ ... })`. */
+  constructor({ env } = {}) {
     for (const [what, path] of [["app", APP], ["roer", ROER]]) {
       if (!existsSync(path)) throw new Error(`no ${what} at ${path}: build it first (see e2e/README.md)`);
     }
@@ -130,6 +131,7 @@ export class Roer {
       // The running app picks every handoff up; a second one must not start.
       ROER_APP: join(this.root, "no-such-app"),
     };
+    Object.assign(this.env, env?.(this.root));
     // A terminal the app was started from, or a CI step's, is no session.
     delete this.env.TMUX;
     delete this.env.TMUX_PANE;
