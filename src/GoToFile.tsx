@@ -9,7 +9,9 @@ import {
   type MouseEvent,
 } from "react";
 
+import { ConversationPreview } from "./ConversationPreview";
 import { baseName, filesSearch, parts, type Hit, type Hits } from "./lib/files";
+import type { ClaudeSession } from "./lib/pty";
 import { marked } from "./lib/marks";
 import { resolveDir } from "./lib/session";
 
@@ -31,6 +33,8 @@ const SESSIONS_IDLE = 6;
 const SESSIONS_MAX = 20;
 /** How long typing pauses before what was said in the sessions is searched. */
 const SAID_DEBOUNCE_MS = 150;
+/** Whether the preview of past conversations is shown beside the list. */
+const PREVIEW_KEY = "roer:search-preview";
 
 /**
  * A session the popup can offer: how it reads, what it is found by, and how
@@ -45,6 +49,9 @@ export interface SessionHit {
   badge?: string;
   /** Everything a query is matched against. */
   fields: Array<string | null | undefined>;
+  /** The past conversation it resumes, which the popup can show beside the
+   * list before it is; none for a live session. */
+  conversation?: ClaudeSession;
   open: () => void;
 }
 
@@ -136,6 +143,9 @@ export interface GoToFileProps {
   searchSessions?: (query: string) => Promise<ReadonlyMap<string, string | undefined>>;
   /** No session on the stage, so no repository: sessions only. */
   noFiles?: boolean;
+  /** Where past conversations are looked for, to read one for its preview. */
+  conversationCwds?: string[];
+  home?: string;
   onOpen: (root: string, path: string, line?: number) => void;
   onClose: () => void;
 }
@@ -173,10 +183,29 @@ export function GoToFile({
   sessions = [],
   searchSessions,
   noFiles = false,
+  conversationCwds = [],
+  home,
   onOpen,
   onClose,
 }: GoToFileProps) {
   const [query, setQuery] = useState("");
+  // Shown unless closed, and closed until opened again: remembered, as the
+  // Workspace tab's own preview is.
+  const [previewOn, setPreviewOnRaw] = useState(() => {
+    try {
+      return localStorage.getItem(PREVIEW_KEY) !== "off";
+    } catch {
+      return true;
+    }
+  });
+  const setPreviewOn = (on: boolean) => {
+    setPreviewOnRaw(on);
+    try {
+      localStorage.setItem(PREVIEW_KEY, on ? "on" : "off");
+    } catch {
+      /* only a convenience */
+    }
+  };
   const [dirs, setDirs] = useState<readonly string[] | null>(null);
   const [hits, setHits] = useState<Found | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -361,6 +390,15 @@ export function GoToFile({
     [hits, onClose, onOpen],
   );
 
+  // Past conversations are read beside the list, the highlighted one, as the
+  // Workspace tab reads them: told apart before one is resumed, which starts
+  // its CLI. The pane stays while any is listed, so the arrows running over a
+  // file do not make the popup jump.
+  const lists = sessionRows.some((row) => row.kind === "session" && row.session.conversation);
+  const previewing = previewOn && lists;
+  const current = rows[at];
+  const previewed = current?.kind === "session" ? current.session.conversation ?? null : null;
+
   const step = useCallback(
     (delta: number) => {
       if (rows.length === 0) return;
@@ -439,7 +477,7 @@ export function GoToFile({
   return (
     <div className="popup-scrim" onMouseDown={onClose}>
       <div
-        className="popup"
+        className={previewing ? "popup previewing" : "popup"}
         role="dialog"
         aria-modal="true"
         aria-label={noFiles ? "Search sessions" : "Search sessions and files"}
@@ -465,52 +503,82 @@ export function GoToFile({
           onKeyDown={onKeyDown}
         />
 
-        <p className={error ? "popup-status error" : "popup-status"}>{status()}</p>
-
-        <div
-          id="go-to-file-list"
-          className="popup-list"
-          role="listbox"
-          aria-label="Sessions and files"
-          ref={listRef}
-        >
-          {rows.map((row, i) => (
-            <Fragment key={row.key}>
-              {/* A heading only where the two kinds meet, so a list of one
-                  kind reads exactly as it did before. */}
-              {sessionRows.length > 0 && fileRows.length > 0 && (i === 0 || i === sessionRows.length) ? (
-                <div className="hit-group" role="presentation">
-                  {row.kind === "session" ? "Sessions" : "Files"}
-                </div>
-              ) : null}
-              <div
-                id={`go-to-file-${i}`}
-                role="option"
-                aria-selected={i === at}
-                className={i === at ? "hit on" : "hit"}
-                title={row.kind === "file" ? row.hit.path : row.session.detail}
-                // Not onClick: the input keeps the keyboard, and mousedown on a
-                // row must not take it away before the open lands.
+        <p className={error ? "popup-status error" : "popup-status"}>
+          {status()}
+          {lists && !previewOn ? (
+            <>
+              {" · "}
+              <button
+                type="button"
+                className="link"
+                // Not onClick: the input keeps the keyboard.
                 onMouseDown={(event) => {
                   event.preventDefault();
-                  open(row);
+                  setPreviewOn(true);
                 }}
-                onMouseMove={(event) => hover(event, row.key)}
               >
-                {row.kind === "file" ? (
-                  <FileRow hit={row.hit} project={projectOf(row.hit.root)} />
-                ) : (
-                  <>
-                    <span className="hit-name">{row.session.name}</span>
-                    <span className="hit-dir">
-                      {row.snippet ? marked(row.snippet, query.toLowerCase().split(/\s+/)) : row.session.detail}
-                    </span>
-                    {row.session.badge ? <span className="hit-badge">{row.session.badge}</span> : null}
-                  </>
-                )}
-              </div>
-            </Fragment>
-          ))}
+                Preview conversations
+              </button>
+            </>
+          ) : null}
+        </p>
+
+        <div className="go-to-file-body">
+          <div
+            id="go-to-file-list"
+            className="popup-list"
+            role="listbox"
+            aria-label="Sessions and files"
+            ref={listRef}
+          >
+            {rows.map((row, i) => (
+              <Fragment key={row.key}>
+                {/* A heading only where the two kinds meet, so a list of one
+                    kind reads exactly as it did before. */}
+                {sessionRows.length > 0 && fileRows.length > 0 && (i === 0 || i === sessionRows.length) ? (
+                  <div className="hit-group" role="presentation">
+                    {row.kind === "session" ? "Sessions" : "Files"}
+                  </div>
+                ) : null}
+                <div
+                  id={`go-to-file-${i}`}
+                  role="option"
+                  aria-selected={i === at}
+                  className={i === at ? "hit on" : "hit"}
+                  title={row.kind === "file" ? row.hit.path : row.session.detail}
+                  // Not onClick: the input keeps the keyboard, and mousedown on a
+                  // row must not take it away before the open lands.
+                  onMouseDown={(event) => {
+                    event.preventDefault();
+                    open(row);
+                  }}
+                  onMouseMove={(event) => hover(event, row.key)}
+                >
+                  {row.kind === "file" ? (
+                    <FileRow hit={row.hit} project={projectOf(row.hit.root)} />
+                  ) : (
+                    <>
+                      <span className="hit-name">{row.session.name}</span>
+                      <span className="hit-dir">
+                        {row.snippet ? marked(row.snippet, query.toLowerCase().split(/\s+/)) : row.session.detail}
+                      </span>
+                      {row.session.badge ? <span className="hit-badge">{row.session.badge}</span> : null}
+                    </>
+                  )}
+                </div>
+              </Fragment>
+            ))}
+          </div>
+          {previewing ? (
+            <ConversationPreview
+              conversation={previewed}
+              cwds={conversationCwds}
+              terms={query.toLowerCase().split(/\s+/).filter(Boolean)}
+              home={home}
+              onResume={() => open(current)}
+              onClose={() => setPreviewOn(false)}
+            />
+          ) : null}
         </div>
       </div>
     </div>

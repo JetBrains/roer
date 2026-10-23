@@ -2545,6 +2545,35 @@ button.tree-row.selected {
   box-shadow: 0 12px 32px var(--roer-shadow);
 }
 
+/* Search with a past conversation listed: the list, and the highlighted
+   one read beside it. As tall as it may be, so moving down the list never
+   resizes it. */
+.popup.previewing {
+  width: min(1120px, 94vw);
+  height: 60vh;
+}
+
+.go-to-file-body {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.go-to-file-body > .popup-list {
+  flex: 1 1 45%;
+  min-width: 0;
+}
+
+.popup .conversation-preview {
+  flex: 1 1 55%;
+  min-width: 0;
+  position: static;
+  max-height: none;
+  border: none;
+  border-left: 1px solid var(--ide-border);
+  border-radius: 0;
+}
+
 .popup-input {
   padding: 12px 14px;
   border: none;
@@ -2652,9 +2681,100 @@ button.tree-row.selected {
   font-weight: 600;
 }
 
-/* After the extensions' sections: what is hidden, and the way to another. */
-.workspace-sections-more {
-  margin-top: 12px;
+/* The Workspace tab: its list scrolls, and the extensions' sections are
+   docked under it, always in sight. */
+.workspace-overlay {
+  flex-direction: column;
+}
+
+.workspace-overlay > .sessions-view {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.workspace-dock {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  max-height: 42%;
+  border-top: 1px solid var(--roer-border);
+  background: var(--roer-panel);
+}
+
+.workspace-dock-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 12px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--roer-muted);
+}
+
+.workspace-dock-actions {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  text-transform: none;
+  letter-spacing: normal;
+  font-size: 12px;
+}
+
+.workspace-dock-count {
+  margin-left: 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+.workspace-dock-empty {
+  margin: 0;
+  padding: 0 12px 10px;
+  font-size: 12px;
+}
+
+/* Cards side by side, as many as fit; the dock scrolls, not the page. */
+.workspace-dock-body {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 10px;
+  padding: 0 12px 12px;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.workspace-card {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background: var(--roer-bg);
+  border: 1px solid var(--roer-border);
+  border-radius: 8px;
+}
+
+.workspace-card header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--roer-border);
+}
+
+.workspace-card h3 {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-card-body {
+  padding: 8px 10px;
+  max-height: 220px;
+  overflow-y: auto;
+  font-size: 13px;
 }
 
 .popup.folder-choice {

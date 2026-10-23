@@ -1127,6 +1127,7 @@ export function App() {
       detail: `${past.agent ?? "claude"} · ${shorten(past.cwd, home)}`,
       badge: relativeAge(past.updatedAt),
       fields: [past.title, past.agent ?? "claude", past.cwd],
+      conversation: past,
       open: () => browser.openClaudeSession(past),
     })),
   ];
@@ -1487,7 +1488,7 @@ export function App() {
             {/* Covers the terminal rather than replacing it, so picking a
               session never has to wait on a teardown, and a session left
               running behind the list keeps its PTY. */}
-            <div className="overlay" hidden={tabs.active !== "sessions"}>
+            <div className="overlay workspace-overlay" hidden={tabs.active !== "sessions"}>
               <SessionBrowser
                 status={browser.status}
                 workspaces={browser.workspaces}
@@ -1516,19 +1517,19 @@ export function App() {
                 folderInView={browser.folderInView}
                 worktrees={browser.worktrees}
                 onOpen={show}
-                extensionSections={
-                  scope ? (
-                    <WorkspaceSections
-                      scope={scope}
-                      session={stageSession}
-                      active={tabs.active === "sessions"}
-                      openFile={openInTab}
-                      activateTab={activateTab}
-                      onAddSection={() => setShowingNewSection(true)}
-                    />
-                  ) : null
-                }
               />
+              {/* Docked under the list rather than at its end, where a long
+                list of sessions would put them out of sight. */}
+              {scope ? (
+                <WorkspaceSections
+                  scope={scope}
+                  session={stageSession}
+                  active={tabs.active === "sessions"}
+                  openFile={openInTab}
+                  activateTab={activateTab}
+                  onAddSection={() => setShowingNewSection(true)}
+                />
+              ) : null}
             </div>
 
             {/* An overlay rather than a swap: unmounting the terminal would
@@ -1755,6 +1756,8 @@ export function App() {
             noFiles={!session}
             sessions={sessionHits}
             searchSessions={searchSessions}
+            conversationCwds={browser.conversationCwds}
+            home={browser.status?.home}
             roots={browser.selectedProject ? [browser.selectedProject] : browser.selectedWorkspaceProjects}
             recent={recent(tabs)}
             onOpen={openInTab}

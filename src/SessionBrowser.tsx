@@ -417,14 +417,12 @@ export type SessionBrowserProps = Pick<
   | "worktrees"
 > & {
   onOpen: (request: OpenRequest) => void;
-  /** What extensions add, after the Projects. */
-  extensionSections?: ReactNode;
 };
 
 /**
  * The right side: the sessions and Claude conversations the selected
- * Workspace (or Project) filters to, plus its attached Projects and what
- * extensions add. Which Workspace is selected lives in the sidebar; this is
+ * Workspace (or Project) filters to, plus its attached Projects. What
+ * extensions add is docked under it, in `WorkspaceSections`. Which Workspace is selected lives in the sidebar; this is
  * everything that selection changes.
  */
 export function SessionBrowser({
@@ -453,7 +451,6 @@ export function SessionBrowser({
   folderInView,
   worktrees,
   onOpen,
-  extensionSections,
 }: SessionBrowserProps) {
   const attachableProjects: Project[] = selectedWorkspace
     ? projects.filter((project) => !selectedWorkspace.projects.includes(project.id))
@@ -734,7 +731,6 @@ export function SessionBrowser({
         </>
       ) : null}
 
-      {extensionSections}
     </nav>
   );
 }

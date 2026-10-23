@@ -63,7 +63,8 @@ describe("Workspace tab sections", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Hide Repositories in this workspace" }));
     expect(screen.queryByRole("region", { name: "Repositories" })).not.toBeInTheDocument();
-    expect(screen.getByText(/1 section is hidden in this workspace/)).toBeInTheDocument();
+    expect(screen.getByText(/1 hidden in this workspace/)).toBeInTheDocument();
+    expect(screen.getByText("Every section is hidden in this workspace.")).toBeInTheDocument();
 
     // Another scope keeps it, and the choice outlives a remount.
     rerender(sections(api, add));
@@ -75,6 +76,24 @@ describe("Workspace tab sections", () => {
     expect(screen.getByRole("region", { name: "Repositories" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Add a section…" }));
     expect(add).toHaveBeenCalled();
+  });
+
+  it("folds the dock to its bar, and keeps it folded", () => {
+    localStorage.removeItem("roer:sections-folded");
+    registry.load("repos", defineExtension((roer) => void roer.workspace.registerSection({ id: "list", title: "Repositories", component: Repos })));
+    const { unmount } = render(sections(work, vi.fn()));
+
+    const dock = screen.getByRole("region", { name: "Sections" });
+    fireEvent.click(screen.getByRole("button", { name: /^Sections/ }));
+    expect(screen.queryByRole("region", { name: "Repositories" })).not.toBeInTheDocument();
+    expect(dock).toHaveTextContent("Add a section…");
+    unmount();
+
+    render(sections(work, vi.fn()));
+    expect(screen.queryByRole("region", { name: "Repositories" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /^Sections/ }));
+    expect(screen.getByRole("region", { name: "Repositories" })).toBeInTheDocument();
+    localStorage.removeItem("roer:sections-folded");
   });
 
   it("tells a section which Workspace or Project it is about, and starts it over for another", () => {
