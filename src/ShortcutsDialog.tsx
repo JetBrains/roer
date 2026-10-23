@@ -6,6 +6,7 @@ import {
   chordFrom,
   chordLabel,
   chordOf,
+  fontSizeShortcuts,
   isCustom,
   refusal,
   setRecording,
@@ -126,6 +127,14 @@ export function ShortcutsDialog({ tabs = [], onClose }: { tabs?: readonly string
             </div>
           ))}
           {after.map((action) => row(action, actions.get(action)!))}
+          {fontSizeShortcuts().map(([name, keys]) => (
+            <div key={name}>
+              <dt>{name}</dt>
+              <dd>
+                <kbd>{keys}</kbd>
+              </dd>
+            </div>
+          ))}
         </dl>
         <p className="muted shortcuts-foot">
           Kept in <code>~/.roer/keybindings.json</code>.{" "}
