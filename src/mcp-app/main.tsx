@@ -112,6 +112,8 @@ function Frame({ entry, session, canFullscreen }: { entry: StageTabEntry; sessio
         value={{
           extension: entry.extension,
           session,
+          // Only tabs open in another app: there is no Workspace tab.
+          scope: null,
           active: true,
           focused: true,
           openFile: () => undefined,

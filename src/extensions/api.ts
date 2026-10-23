@@ -40,6 +40,29 @@ export interface TabOptions {
   keepAcrossSessions?: boolean;
 }
 
+/** What the Workspace tab is showing: a Workspace, or one Project picked
+ * on its own. */
+export interface Scope {
+  kind: "workspace" | "project";
+  /** The Workspace's or the Project's id. */
+  id: string;
+  name: string;
+  /** Its git repositories: the Workspace's Projects, or the one Project. */
+  projects: Array<{ name: string; path: string }>;
+  /** The folder a Workspace stands for, such as the folder of repositories
+   * it was made from; null without one, and for a Project. */
+  folder: string | null;
+}
+
+export interface SectionOptions {
+  /** Unique within the extension. */
+  id: string;
+  title: string;
+  component: ComponentType;
+  /** Where among the extensions' sections, all after Projects. Default 100. */
+  order?: number;
+}
+
 /** Where an agent's tool call came from. */
 export interface ToolContext {
   /** The pane the calling agent runs in, when it runs in a Roer session. */
@@ -69,6 +92,11 @@ export interface Roer {
   stage: {
     /** Adds a tab to the strip. The returned function takes it away again. */
     registerTab(tab: TabOptions): () => void;
+  };
+  workspace: {
+    /** Adds a section to the Workspace tab, for a Workspace and for a
+     * Project alike. The returned function takes it away again. */
+    registerSection(section: SectionOptions): () => void;
   };
   badge: {
     /** A count or a word on one of this extension's tabs; null clears it. */

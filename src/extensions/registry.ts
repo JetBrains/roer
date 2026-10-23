@@ -9,7 +9,7 @@
  */
 import { useSyncExternalStore } from "react";
 
-import type { Extension, Roer, TabOptions, ToolOptions } from "./api";
+import type { Extension, Roer, SectionOptions, TabOptions, ToolOptions } from "./api";
 import { rpcCall } from "./rpc";
 
 export interface StageTabEntry extends Required<Omit<TabOptions, "id">> {
@@ -21,12 +21,20 @@ export interface StageTabEntry extends Required<Omit<TabOptions, "id">> {
   id: string;
 }
 
+export interface SectionEntry extends Required<Omit<SectionOptions, "id">> {
+  /** Which load registered it: a reload is a new one, and starts it over. */
+  generation: number;
+  extension: string;
+  id: string;
+}
+
 export interface ToolEntry extends ToolOptions {
   extension: string;
 }
 
 interface Loaded {
   tabs: StageTabEntry[];
+  sections: SectionEntry[];
   tools: ToolEntry[];
   /** By tab id. Kept with the load, so a reload swaps them with its tabs. */
   badges: Map<string, string>;
@@ -45,13 +53,14 @@ export class Registry {
   private loaded = new Map<string, Loaded>();
   private listeners = new Set<() => void>();
   private tabsCache: readonly StageTabEntry[] = [];
+  private sectionsCache: readonly SectionEntry[] = [];
   private badgesCache: ReadonlyMap<string, string> = new Map();
   private toolsCache: readonly ToolEntry[] = [];
   private generation = 0;
 
   /** Activates `extension` as `id`, replacing what was loaded under it. Throws what the activation threw. */
   load(id: string, extension: Extension, options: { bundled?: boolean } = {}): void {
-    const next: Loaded = { tabs: [], tools: [], badges: new Map(), disposers: [] };
+    const next: Loaded = { tabs: [], sections: [], tools: [], badges: new Map(), disposers: [] };
     const generation = ++this.generation;
     const roer: Roer = {
       id,
@@ -77,6 +86,25 @@ export class Registry {
             this.changed();
           };
           return dispose;
+        },
+      },
+      workspace: {
+        registerSection: (section) => {
+          const entry: SectionEntry = {
+            generation,
+            extension: id,
+            id: section.id,
+            title: section.title,
+            component: section.component,
+            order: section.order ?? 100,
+          };
+          next.sections.push(entry);
+          // Registered during activation, it shows with the load; later, at once.
+          if (this.loaded.get(id) === next) this.changed();
+          return () => {
+            next.sections = next.sections.filter((one) => one !== entry);
+            this.changed();
+          };
         },
       },
       badge: {
@@ -128,6 +156,11 @@ export class Registry {
     return this.tabsCache;
   }
 
+  /** Every Workspace tab section, by `order`, then by extension and id. */
+  sections(): readonly SectionEntry[] {
+    return this.sectionsCache;
+  }
+
   badgesByTab(): ReadonlyMap<string, string> {
     return this.badgesCache;
   }
@@ -163,6 +196,9 @@ export class Registry {
     this.tabsCache = [...this.loaded.values()]
       .flatMap((one) => one.tabs)
       .sort((a, b) => a.order - b.order || a.extension.localeCompare(b.extension) || a.id.localeCompare(b.id));
+    this.sectionsCache = [...this.loaded.values()]
+      .flatMap((one) => one.sections)
+      .sort((a, b) => a.order - b.order || a.extension.localeCompare(b.extension) || a.id.localeCompare(b.id));
     this.badgesCache = new Map([...this.loaded.values()].flatMap((one) => [...one.badges]));
     this.toolsCache = [...this.loaded.values()]
       .flatMap((one) => one.tools)
@@ -175,6 +211,10 @@ export const registry = new Registry();
 
 export function useStageTabs(from: Registry = registry): readonly StageTabEntry[] {
   return useSyncExternalStore(from.subscribe, () => from.tabs());
+}
+
+export function useWorkspaceSections(from: Registry = registry): readonly SectionEntry[] {
+  return useSyncExternalStore(from.subscribe, () => from.sections());
 }
 
 export function useBadges(from: Registry = registry): ReadonlyMap<string, string> {
