@@ -75,6 +75,9 @@ export interface FolderRepos {
   workspaceId?: string;
   /** Set when the folder was picked to start a session in. */
   session?: { agent?: string };
+  /** Asked because the folder was just made the Workspace's own: adding to
+   * it is all there is to offer. */
+  forFolder?: boolean;
 }
 
 /** Just the directory's own name, used as a new Project's starting name. */
@@ -560,11 +563,20 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
       .catch((cause: unknown) => setFailure(String(cause)));
   };
 
-  /** Sets the folder a Workspace stands for, or forgets it with `null`. */
+  /** Sets the folder a Workspace stands for, or forgets it with `null`. A
+   * folder of repositories the Workspace lacks offers them as its Projects,
+   * as adding the folder as a project would. */
   const handleSetWorkspaceFolder = (id: string, folder: string | null) => {
     void setWorkspaceFolder(id, folder)
-      .then((updated) => {
-        if (updated) replaced(updated);
+      .then(async (updated) => {
+        if (!updated) return;
+        replaced(updated);
+        if (!updated.folder) return;
+        const has = new Set(
+          projects.filter((project) => updated.projects.includes(project.id)).map((project) => project.path),
+        );
+        const repos = (await gitReposIn(updated.folder).catch(() => [])).filter((repo) => !has.has(repo));
+        if (repos.length > 0) setFolderRepos({ path: updated.folder, repos, workspaceId: id, forFolder: true });
       })
       .catch((cause: unknown) => setFailure(String(cause)));
   };

@@ -2637,6 +2637,10 @@ button.tree-row.selected {
   align-self: flex-start;
 }
 
+.folder-repos-all {
+  align-self: flex-start;
+}
+
 .folder-repos {
   display: flex;
   flex-direction: column;

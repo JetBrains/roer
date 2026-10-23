@@ -378,6 +378,10 @@ describe("App", () => {
       const dialog = await screen.findByRole("dialog", { name: "work holds 2 git repositories" });
       expect(dialog).toHaveTextContent("api");
       expect(screen.getByRole("button", { name: "Add to Default" })).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Select none" }));
+      expect(screen.getByRole("button", { name: "Add to Default" })).toBeDisabled();
+      fireEvent.click(screen.getByRole("button", { name: "Select all" }));
+      expect(screen.getAllByRole("checkbox").every((box) => (box as HTMLInputElement).checked)).toBe(true);
       fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
       expect(screen.queryByRole("dialog", { name: /git repositories/ })).not.toBeInTheDocument();
       expect(spawnPty).not.toHaveBeenCalled();
