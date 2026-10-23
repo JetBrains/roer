@@ -4,7 +4,7 @@
   "type": "module",
   "description": "The Roer app driven through WebDriver on Linux and Windows. See README.md.",
   "scripts": {
-    "test": "node --test --test-concurrency=1 app.test.mjs"
+    "test": "node --test --test-concurrency=1 app.test.mjs update.test.mjs"
   },
   "devDependencies": {
     "selenium-webdriver": "^4.49.0"

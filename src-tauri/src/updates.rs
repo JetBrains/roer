@@ -12,6 +12,20 @@ use serde::Serialize;
 
 const RELEASES: &str = "https://github.com/JetBrains/roer/releases";
 
+/// What the e2e tests point a debug build at instead of GitHub or this
+/// app's own place (`e2e/update.test.mjs`). A release build reads none of it.
+pub(crate) fn test_override(name: &str) -> Option<String> {
+    if !cfg!(debug_assertions) {
+        return None;
+    }
+    std::env::var(name).ok().filter(|value| !value.is_empty())
+}
+
+/// GitHub's releases of Roer, or the e2e tests' stand-in.
+pub(crate) fn releases() -> String {
+    test_override("ROER_UPDATE_RELEASES").unwrap_or_else(|| RELEASES.to_string())
+}
+
 #[derive(Debug, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateStatus {
@@ -39,13 +53,13 @@ fn skipped_record() -> std::path::PathBuf {
 /// release it shares a version number with.
 #[tauri::command(async)]
 pub fn update_check(automatic: bool) -> Result<Option<UpdateStatus>, String> {
-    if automatic && cfg!(debug_assertions) {
+    if automatic && cfg!(debug_assertions) && test_override("ROER_UPDATE_RELEASES").is_none() {
         return Ok(None);
     }
     // Only the headers of the first answer: its redirect is what's wanted.
     let out = crate::process::command("curl")
         .args(["--fail", "--silent", "--show-error", "--head", "--max-time", "15"])
-        .arg(format!("{RELEASES}/latest"))
+        .arg(format!("{}/latest", releases()))
         .output()
         .map_err(|e| format!("could not run curl: {e}"))?;
     if !out.status.success() {
@@ -53,7 +67,7 @@ pub fn update_check(automatic: bool) -> Result<Option<UpdateStatus>, String> {
         return Err(format!("could not reach GitHub: {}", if why.is_empty() { "curl failed".into() } else { why }));
     }
     let skipped = std::fs::read_to_string(skipped_record()).unwrap_or_default();
-    let mut found = status(env!("CARGO_PKG_VERSION"), &out.stdout, skipped.trim())?;
+    let mut found = status(env!("CARGO_PKG_VERSION"), &out.stdout, skipped.trim(), &releases())?;
     found.can_install = found.newer && crate::update_install::method().is_some();
     Ok(Some(found))
 }
@@ -71,7 +85,7 @@ pub fn update_skip(version: String) -> Result<(), String> {
 /// Reads GitHub's answer, the headers of a redirect to the latest release's
 /// page. The page's address is built here from the tag rather than taken
 /// from the answer, since it goes on to the opener.
-fn status(current: &str, headers: &[u8], skipped: &str) -> Result<UpdateStatus, String> {
+fn status(current: &str, headers: &[u8], skipped: &str, releases: &str) -> Result<UpdateStatus, String> {
     let headers = String::from_utf8_lossy(headers);
     let location = headers
         .lines()
@@ -95,7 +109,7 @@ fn status(current: &str, headers: &[u8], skipped: &str) -> Result<UpdateStatus, 
         latest: latest.to_string(),
         newer: version(current).is_some_and(|running| parsed > running),
         skipped: skipped == latest,
-        url: format!("{RELEASES}/tag/{tag}"),
+        url: format!("{releases}/tag/{tag}"),
         can_install: false,
     })
 }
@@ -118,7 +132,7 @@ mod tests {
 
     #[test]
     fn a_later_release_is_newer() {
-        let found = status("0.9.2", &release("v0.10.0"), "").unwrap();
+        let found = status("0.9.2", &release("v0.10.0"), "", RELEASES).unwrap();
         assert_eq!(
             found,
             UpdateStatus {
@@ -134,26 +148,26 @@ mod tests {
 
     #[test]
     fn the_same_or_an_earlier_release_is_not() {
-        assert!(!status("0.9.2", &release("v0.9.2"), "").unwrap().newer);
-        assert!(!status("0.9.2", &release("v0.9.1"), "").unwrap().newer);
+        assert!(!status("0.9.2", &release("v0.9.2"), "", RELEASES).unwrap().newer);
+        assert!(!status("0.9.2", &release("v0.9.1"), "", RELEASES).unwrap().newer);
     }
 
     #[test]
     fn a_skipped_release_says_so() {
-        assert!(status("0.9.2", &release("v0.9.3"), "0.9.3").unwrap().skipped);
-        assert!(!status("0.9.2", &release("v0.9.4"), "0.9.3").unwrap().skipped);
+        assert!(status("0.9.2", &release("v0.9.3"), "0.9.3", RELEASES).unwrap().skipped);
+        assert!(!status("0.9.2", &release("v0.9.4"), "0.9.3", RELEASES).unwrap().skipped);
     }
 
     #[test]
     fn a_tag_that_is_not_a_version_is_an_error() {
-        assert!(status("0.9.2", &release("nightly"), "").is_err());
-        assert!(status("0.9.2", &release("v1.0.0-rc.1"), "").is_err());
+        assert!(status("0.9.2", &release("nightly"), "", RELEASES).is_err());
+        assert!(status("0.9.2", &release("v1.0.0-rc.1"), "", RELEASES).is_err());
     }
 
     #[test]
     fn a_redirect_to_no_release_is_an_error() {
-        assert!(status("0.9.2", b"HTTP/2 200 \r\n\r\n", "").is_err());
+        assert!(status("0.9.2", b"HTTP/2 200 \r\n\r\n", "", RELEASES).is_err());
         let to_list = b"HTTP/2 302 \r\nlocation: https://github.com/JetBrains/roer/releases\r\n\r\n";
-        assert!(status("0.9.2", to_list, "").is_err());
+        assert!(status("0.9.2", to_list, "", RELEASES).is_err());
     }
 }

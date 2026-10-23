@@ -29,7 +29,6 @@ use tauri::{AppHandle, Emitter};
 
 use crate::process::command;
 
-const DOWNLOADS: &str = "https://github.com/JetBrains/roer/releases/download";
 /// JetBrains' Apple Developer team, the one Roer.app is signed by.
 const TEAM_ID: &str = "2ZEFAR8TH3";
 /// The subject JetBrains' Windows code-signing certificate starts with.
@@ -69,6 +68,10 @@ impl Method {
 
 /// How this app would replace itself, or None where it cannot.
 pub(crate) fn method() -> Option<Method> {
+    // The e2e tests' stand-in for an AppImage, in a debug build only.
+    if let Some(file) = crate::updates::test_override("ROER_UPDATE_TARGET") {
+        return Some(Method::AppImage(PathBuf::from(file)));
+    }
     // Only an installed app: a build from the checkout has no `roer` in it.
     crate::roer::shipped()?;
     let exe = std::env::current_exe().ok()?;
@@ -180,7 +183,7 @@ fn install(method: &Method, version: &str, dir: &Path, emit: &dyn Fn(&'static st
     let exe = std::env::current_exe().map_err(|e| format!("could not tell where Roer is: {e}"))?;
 
     let asset = method.asset(version);
-    let release = format!("{DOWNLOADS}/v{version}");
+    let release = format!("{}/download/v{version}", crate::updates::releases());
     let sums = fetch_text(&format!("{release}/SHA256SUMS.txt"))?;
     let expected = checksum_for(&sums, &asset).ok_or_else(|| format!("the release lists no checksum for {asset}"))?;
     let file = dir.join(&asset);

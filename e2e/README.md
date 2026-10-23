@@ -5,6 +5,11 @@ tmux (psmux on Windows) behind it, over WebDriver. `app.test.mjs` has the
 scenarios; `harness.mjs` starts the app with everything it touches under one
 temporary directory (a home, `$ROER_HOME`, a tmux socket, a git project).
 
+`update.test.mjs` updates the app from its notice without leaving the
+machine: a local server stands in for GitHub's releases, and the app, a debug
+build pointed at it by `ROER_UPDATE_RELEASES` and `ROER_UPDATE_TARGET`,
+replaces a stand-in AppImage, quits and starts the new one. Linux only.
+
 No agent is ever called. `fake-agent/agent.mjs` goes first on `PATH` as
 `claude` (on Windows through `fake-agent`'s tiny `claude.exe`, since psmux's
 panes call `claude.exe` by name), so Roer finds Claude Code, the New session button starts it, and roer
