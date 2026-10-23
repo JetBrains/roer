@@ -97,7 +97,7 @@ fn unpack(archive: &Path, sha: &str, into: &Path) -> Result<PathBuf, String> {
     }
     let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).map_err(|e| format!("the Bun archive: {e}"))?;
     let index = (0..zip.len())
-        .find(|&i| zip.by_index(i).is_ok_and(|entry| entry.name().rsplit('/').next() == Some(exe_name())))
+        .find(|&i| zip.by_index(i).is_ok_and(|entry| entry.name().is_ok_and(|name| name.rsplit('/').next() == Some(exe_name()))))
         .ok_or_else(|| format!("the Bun archive holds no {}", exe_name()))?;
     let mut entry = zip.by_index(index).map_err(|e| format!("the Bun archive: {e}"))?;
     let mut exe = Vec::new();
