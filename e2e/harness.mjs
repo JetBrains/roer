@@ -6,7 +6,7 @@
 // own driver: WebKitWebDriver on Linux, msedgedriver on Windows. There is
 // none for WKWebView, which is why this runs on Linux and Windows only.
 import { spawn, spawnSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -139,10 +139,15 @@ export class Roer {
   /** Writes a Claude Code transcript for a conversation had in `cwd`, where
    * Claude Code keeps it: under `~/.claude/projects`, in a folder named for
    * the directory with every character but a letter or digit made `-`. */
-  transcript(cwd, id, events) {
+  /** A Claude Code transcript, last written at `at` (a Date) when given:
+   * conversations are listed by that, and files written in one go can share
+   * it or not depending on how finely the kernel keeps time. */
+  transcript(cwd, id, events, at) {
     const dir = join(this.home, ".claude", "projects", cwd.replace(/[^A-Za-z0-9]/g, "-"));
     mkdirSync(dir, { recursive: true });
-    writeFileSync(join(dir, `${id}.jsonl`), events.map((event) => `${JSON.stringify(event)}\n`).join(""));
+    const file = join(dir, `${id}.jsonl`);
+    writeFileSync(file, events.map((event) => `${JSON.stringify(event)}\n`).join(""));
+    if (at) utimesSync(file, at, at);
   }
 
   /** `roer`, as a terminal in the project runs it. */

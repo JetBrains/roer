@@ -189,23 +189,26 @@ function conversation(cwd, { prompt, reply = "Done.", title, entrypoint = "cli",
 
 test("past conversations are all listed by name, and found by what was said", async () => {
   const id = (n) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+  // A minute apart, the first the oldest, so which ten come first never
+  // rests on a tie: 36 down to 27, the SDK run, newest, left out.
+  const at = (n) => new Date(Date.now() - (40 - n) * 60_000);
   for (let n = 1; n <= 34; n += 1) {
-    app.transcript(app.project, id(n), conversation(app.project, { prompt: `Task number ${n}`, title: `Seeded conversation ${n}` }));
+    app.transcript(app.project, id(n), conversation(app.project, { prompt: `Task number ${n}`, title: `Seeded conversation ${n}` }), at(n));
   }
   app.transcript(app.project, id(35), conversation(app.project, {
     prompt: "Look at the importer",
     reply: "The quokka migration drops every second row.",
     title: "Importer drops rows",
-  }));
+  }), at(35));
   // In a folder under the project, with its cwd only near the end.
   const sub = join(app.project, "packages", "api");
-  app.transcript(sub, id(36), conversation(sub, { prompt: "Tidy the API package", title: "API package tidy-up", cwdInHead: false }));
+  app.transcript(sub, id(36), conversation(sub, { prompt: "Tidy the API package", title: "API package tidy-up", cwdInHead: false }), at(36));
   // A pipeline's run through the Agent SDK, which nobody comes back to.
-  app.transcript(app.project, id(37), conversation(app.project, { prompt: "Summarize", title: "Automated run", entrypoint: "sdk-cli" }));
+  app.transcript(app.project, id(37), conversation(app.project, { prompt: "Summarize", title: "Automated run", entrypoint: "sdk-cli" }), at(37));
 
   await app.tab("Workspace");
   await app.click("Refresh");
-  await app.waitForText("Seeded conversation 1", ".conversations");
+  await app.waitForText("Seeded conversation 34", ".conversations");
   const count = () => app.driver.executeScript("return document.querySelector('.conversations-count')?.textContent");
   await app.until("all 36 counted", async () => (await count()) === "36");
   const listed = await app.text(".conversations");
