@@ -200,6 +200,19 @@ describe("the filter", () => {
     expect(titles()).toEqual(["Resume rounding in invoices"]);
   });
 
+  it("goes from the filter to the rows with the arrows, the preview closed too", () => {
+    const onOpen = renderList(list);
+    fireEvent.keyDown(filter(), { key: "ArrowDown" });
+    const rows = titles().map((name) => name ?? "");
+    expect(screen.getByRole("button", { name: rows[0] })).toHaveFocus();
+    fireEvent.keyDown(screen.getByRole("button", { name: rows[0] }), { key: "ArrowDown" });
+    expect(screen.getByRole("button", { name: rows[1] })).toHaveFocus();
+    fireEvent.keyDown(screen.getByRole("button", { name: rows[1] }), { key: "ArrowUp" });
+    fireEvent.keyDown(screen.getByRole("button", { name: rows[0] }), { key: "ArrowUp" });
+    expect(filter()).toHaveFocus();
+    expect(onOpen).not.toHaveBeenCalled();
+  });
+
   it("says when nothing matches, and Escape brings everything back", async () => {
     renderList(list);
 
@@ -292,6 +305,37 @@ describe("the preview", () => {
     // Off again, a click resumes as before.
     fireEvent.click(screen.getByRole("button", { name: "Resume login form loses focus" }));
     expect(onOpen).toHaveBeenLastCalledWith(list[0]);
+  });
+
+  it("shows the filter's top match at once, and the arrows go from the filter to the rows and back", async () => {
+    vi.mocked(searchClaudeSessions).mockResolvedValue([]);
+    vi.mocked(readClaudeTranscript).mockResolvedValue({ messages: [], earlier: 0 });
+    const onOpen = renderList(list);
+    fireEvent.click(toggle());
+
+    const filter = screen.getByRole("searchbox", { name: "Filter conversations" });
+    fireEvent.change(filter, { target: { value: "invoice" } });
+    // Picked for the preview, with nothing pressed.
+    await waitFor(() => expect(screen.getByRole("button", { name: "Show rounding in invoices" })).toHaveAttribute("aria-current", "true"));
+    await waitFor(() => expect(readClaudeTranscript).toHaveBeenLastCalledWith(["/work/shop"], "b"));
+
+    fireEvent.keyDown(filter, { key: "ArrowDown" });
+    expect(screen.getByRole("button", { name: "Show rounding in invoices" })).toHaveFocus();
+    fireEvent.keyDown(screen.getByRole("button", { name: "Show rounding in invoices" }), { key: "ArrowUp" });
+    expect(filter).toHaveFocus();
+    // Enter in the filter goes to the results too, and resumes nothing.
+    fireEvent.keyDown(filter, { key: "Enter" });
+    expect(screen.getByRole("button", { name: "Show rounding in invoices" })).toHaveFocus();
+    expect(onOpen).not.toHaveBeenCalled();
+
+    // Typing on a row goes on typing in the filter.
+    fireEvent.keyDown(screen.getByRole("button", { name: "Show rounding in invoices" }), { key: "s" });
+    expect(filter).toHaveFocus();
+    expect(filter).toHaveValue("invoices");
+    fireEvent.keyDown(filter, { key: "ArrowDown" });
+    fireEvent.keyDown(screen.getByRole("button", { name: "Show rounding in invoices" }), { key: "Backspace" });
+    expect(filter).toHaveValue("invoice");
+    expect(onOpen).not.toHaveBeenCalled();
   });
 
   it("goes to what the filter found, marked", async () => {

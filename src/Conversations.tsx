@@ -102,6 +102,7 @@ export function Conversations({
   const [previewing, setPreviewingRaw] = useState(previewWasOn);
   const [picked, setPicked] = useState<string | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const filterRef = useRef<HTMLInputElement>(null);
   const setPreviewing = (on: boolean) => {
     setPreviewingRaw(on);
     try {
@@ -199,19 +200,43 @@ export function Conversations({
     if (picked) listRef.current?.querySelector<HTMLButtonElement>(`[data-conversation="${CSS.escape(picked)}"]`)?.focus();
   };
 
+  // While a filter narrows the list, the preview shows its top match, unless
+  // one of the matches was picked: what was asked for is in view at once.
+  const drawnKey = drawn.map((conversation) => conversation.id).join("\n");
+  useEffect(() => {
+    if (!showing || !filtering || !drawnKey) return;
+    const ids = drawnKey.split("\n");
+    if (!picked || !ids.includes(picked)) setPicked(ids[0]);
+  }, [showing, filtering, drawnKey, picked]);
+
+  /** Takes the keyboard to a row, and shows it beside the list while the
+   * preview is open. */
   const pick = (conversation: ClaudeSession) => {
-    setPicked(conversation.id);
+    if (previewing) setPicked(conversation.id);
     listRef.current?.querySelector<HTMLButtonElement>(`[data-conversation="${CSS.escape(conversation.id)}"]`)?.focus();
   };
 
+  // The arrows go from row to row with the preview open or not, and up from
+  // the first back to the filter. Typing on a row goes on typing in the
+  // filter, as if the keyboard had never left it.
   const onRowKey = (event: KeyboardEvent, conversation: ClaudeSession) => {
-    if (!previewing) return;
+    const typed = event.key.length === 1 && event.key !== " " && !event.metaKey && !event.ctrlKey && !event.altKey;
+    if (typed || event.key === "Backspace") {
+      event.preventDefault();
+      setQuery((last) => (typed ? last + event.key : last.slice(0, -1)));
+      filterRef.current?.focus();
+      return;
+    }
     if (event.key === "ArrowDown" || event.key === "ArrowUp") {
       event.preventDefault();
       const at = drawn.findIndex((other) => other.id === conversation.id);
       const next = drawn[at + (event.key === "ArrowDown" ? 1 : -1)];
       if (next) pick(next);
-    } else if (event.key === "Enter") {
+      else if (event.key === "ArrowUp") filterRef.current?.focus();
+      return;
+    }
+    if (!previewing) return;
+    if (event.key === "Enter") {
       // Not the click Enter would make, which only shows it.
       event.preventDefault();
       onOpen(conversation);
@@ -328,6 +353,7 @@ export function Conversations({
             <div className="conversations-filter">
               <Search size={13} aria-hidden="true" />
               <input
+                ref={filterRef}
                 type="search"
                 aria-label="Filter conversations"
                 placeholder="Filter by name, folder, branch or what was said…"
@@ -335,6 +361,12 @@ export function Conversations({
                 onChange={(event) => setQuery(event.target.value)}
                 onKeyDown={(event) => {
                   if (event.key === "Escape") setQuery("");
+                  // Down, or Enter, to the results: the one shown beside, or
+                  // the first. Never a resume from here, which starts a CLI.
+                  if ((event.key === "ArrowDown" || event.key === "Enter") && drawn.length > 0) {
+                    event.preventDefault();
+                    pick(drawn.find((conversation) => conversation.id === picked) ?? drawn[0]);
+                  }
                 }}
               />
             </div>
