@@ -48,8 +48,10 @@ export interface TerminalViewProps {
   /** The pane `roer` attached, as it said in the terminal before attaching:
    * how a session started here learns its pane. */
   onPane?: (pane: string) => void;
-  /** The PTY ended. After a handoff this is a terminal taking the session back. */
-  onExit?: (code: number | null) => void;
+  /** The PTY ended. After a handoff this is a terminal taking the session back.
+   * `early` is what it printed when it ended before attaching, such as roer's
+   * reason for refusing: the terminal that showed it goes with the session. */
+  onExit?: (code: number | null, early?: string) => void;
   /** A `file:` link was Cmd+clicked (Ctrl+click elsewhere): the absolute
    * path it names, and the line when it gives one. */
   onOpenFile?: (path: string, line?: number) => void;
@@ -175,6 +177,9 @@ export function TerminalView({ args, cwd, onAttached, onPane, onExit, onOpenFile
     let disposed = false;
     let attached = false;
     let attaching: ReturnType<typeof setTimeout> | null = null;
+    // What was printed before attaching, a little of it: a refusal says why.
+    let early = "";
+    const text = new TextDecoder();
     // Keystrokes arriving between open and spawn would otherwise be lost.
     let pending = "";
     // One write at a time, each once the last has landed: every keystroke is
@@ -242,7 +247,9 @@ export function TerminalView({ args, cwd, onAttached, onPane, onExit, onOpenFile
           if (disposed) return;
 
           if (event.kind === "output") {
-            terminal.write(decodeOutput(event.data));
+            const bytes = decodeOutput(event.data);
+            terminal.write(bytes);
+            if (!attached && early.length < 2000) early += text.decode(bytes, { stream: true });
             // A failed attach also prints something — an error message —
             // before exiting, so output alone is not proof the session is up.
             // Waiting a beat matters because the caller uses this to release a
@@ -264,7 +271,7 @@ export function TerminalView({ args, cwd, onAttached, onPane, onExit, onOpenFile
             attaching = null;
           }
           logLine(`terminal ${target}: exited with ${event.code}${attached ? "" : " before it attached"}`);
-          onExitRef.current?.(event.code);
+          onExitRef.current?.(event.code, attached ? undefined : early);
         },
         hostColors(currentTheme()),
       )

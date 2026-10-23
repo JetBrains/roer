@@ -839,7 +839,7 @@ export function App() {
     }
   }, []);
 
-  const handleExit = useCallback(() => {
+  const handleExit = useCallback((code: number | null, early?: string) => {
     const gone = stagedRef.current;
     stagedRef.current = null;
     setSession(null);
@@ -854,6 +854,18 @@ export function App() {
     }
 
     if (drain()) return;
+    // Refused before it ever attached: roer said why in a terminal that has
+    // gone with it, so it is said here instead.
+    if (gone && early !== undefined && code !== 0) {
+      const said = early
+        .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07]*(\x07|\x1b\\)/g, "")
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .pop();
+      setNotice(`Could not open it: ${said ?? `roer exited with ${code ?? "a signal"}`}`);
+      return;
+    }
     if (gone) void describeExit(gone).then(setNotice);
   }, [describeExit, drain]);
 
@@ -1029,7 +1041,7 @@ export function App() {
       if (document.querySelector('[role="dialog"]')) return;
       const { active, files } = tabsRef.current;
       if (files.some((file) => tabId(file) === active)) setTabs((current) => closeTab(current, active));
-      else if (active === "terminal" && stagedRef.current) handleExit();
+      else if (active === "terminal" && stagedRef.current) handleExit(null);
     }, [handleExit]),
   );
   useHotkey(

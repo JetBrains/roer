@@ -19,6 +19,7 @@ import {
   claimHandoff,
   closePty,
   failHandoff,
+  listClaudeSessions,
   listSessions,
   pendingHandoffs,
   spawnPty,
@@ -149,6 +150,7 @@ vi.mock("./lib/pty", () => ({
   listPastSessions: vi.fn(async () => []),
   listClaudeSessions: vi.fn(async () => []),
   searchClaudeSessions: vi.fn(async () => []),
+  readClaudeTranscript: vi.fn(async () => ({ messages: [{ role: "user", text: "Look at the importer" }], earlier: 0 })),
   roerStatus: vi.fn(async () => ({
     bin: "roer",
     available: true,
@@ -696,6 +698,17 @@ describe("App", () => {
     await new Promise((resolve) => setTimeout(resolve, 400));
     expect(ackHandoff).not.toHaveBeenCalled();
     expect(failHandoff).toHaveBeenCalledWith(claimed());
+  });
+
+  it("says why roer would not open a session, when it gives up before attaching", async () => {
+    render(<App />);
+    await teleport();
+
+    // What it printed went with its terminal; the stage says it instead.
+    await emit({ kind: "output", data: "aGk=" });
+    await emit({ kind: "exit", code: 2 });
+
+    expect(await screen.findByText("Could not open it: hi")).toBeInTheDocument();
   });
 
   it("picks up a handoff that arrived while it was starting", async () => {
@@ -1276,6 +1289,35 @@ describe("App", () => {
     expect(screen.getByTestId("terminal")).toBeInTheDocument();
     expect(spawnPty).toHaveBeenCalledTimes(1);
     expect(closePty).not.toHaveBeenCalled();
+  });
+
+  describe("a past conversation found in search", () => {
+    const past = { id: "c1", cwd: "/Users/test", title: "Importer drops rows", updatedAt: 1_700_000_000 };
+    const find = async () => {
+      vi.mocked(listClaudeSessions).mockResolvedValue([past]);
+      render(<App />);
+      await teleport();
+      vi.mocked(spawnPty).mockClear();
+      goToFile(window);
+      fireEvent.change(await screen.findByRole("combobox"), { target: { value: "importer" } });
+      await screen.findByRole("option", { name: /Importer drops rows/ });
+    };
+    afterEach(() => vi.mocked(listClaudeSessions).mockResolvedValue([]));
+
+    it("is resumed from the preview's Resume", async () => {
+      await find();
+      fireEvent.click(await screen.findByRole("button", { name: "Resume" }));
+      await waitFor(() => expect(spawnPty).toHaveBeenCalled());
+      expect(vi.mocked(spawnPty).mock.calls[0]?.[0]).toEqual(["resume", "c1"]);
+      expect(screen.queryByTestId("go-to-file")).not.toBeInTheDocument();
+    });
+
+    it("is resumed on Enter", async () => {
+      await find();
+      fireEvent.keyDown(screen.getByRole("combobox"), { key: "Enter" });
+      await waitFor(() => expect(spawnPty).toHaveBeenCalled());
+      expect(vi.mocked(spawnPty).mock.calls[0]?.[0]).toEqual(["resume", "c1"]);
+    });
   });
 
   it("closes Go to File on Escape", async () => {

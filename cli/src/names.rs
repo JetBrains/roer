@@ -55,10 +55,12 @@ pub fn session_name(dir: &str) -> String {
     format!("{safe}-{}", path_hash(dir))
 }
 
-/// A Claude conversation id, which is interpolated into a shell command and a
-/// record, so it is held to the shape of one.
+/// An agent's conversation id, which is interpolated into a shell command and
+/// a record, so it is held to what the agents' ids are made of: Claude's,
+/// Codex's and Pi's are hex and dashes, Junie's `session-261019-212850-qi4v`
+/// letters too. Nothing a shell reads as more than a word.
 pub fn is_agent_id(id: &str) -> bool {
-    !id.is_empty() && id.chars().all(|c| c.is_ascii_hexdigit() || c == '-')
+    !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
 /// A pane id exactly as tmux prints one, `%` and digits, or as roer names a
@@ -140,7 +142,12 @@ mod tests {
     #[test]
     fn validates_ids() {
         assert!(is_agent_id("0f3c-4a"));
+        assert!(is_agent_id("session-261019-212850-qi4v"));
         assert!(!is_agent_id("x; rm -rf /"));
+        assert!(!is_agent_id("a b"));
+        assert!(!is_agent_id("../x"));
+        assert!(!is_agent_id("$(x)"));
+        assert!(!is_agent_id("'x'"));
         assert!(!is_agent_id(""));
         assert!(is_pane_id("%12"));
         assert!(!is_pane_id("%"));
