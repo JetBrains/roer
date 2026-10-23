@@ -2564,6 +2564,26 @@ button.tree-row.selected {
   min-width: 0;
 }
 
+/* The line asked for with name:line, in the preview. */
+.file-preview .file-line.asked {
+  background: color-mix(in srgb, var(--ide-accent) 22%, transparent);
+}
+
+.file-preview .file-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  background: var(--ide-editor);
+  font-family: var(--ide-mono);
+  font-size: 12px;
+}
+
+.file-preview-more {
+  margin: 0;
+  padding: 8px 12px;
+  font-size: 12px;
+}
+
 .popup .conversation-preview {
   flex: 1 1 55%;
   min-width: 0;

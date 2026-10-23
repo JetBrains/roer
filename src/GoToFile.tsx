@@ -10,6 +10,7 @@ import {
 } from "react";
 
 import { ConversationPreview } from "./ConversationPreview";
+import { FilePreview } from "./FilePreview";
 import { baseName, filesSearch, parts, type Hit, type Hits } from "./lib/files";
 import type { ClaudeSession } from "./lib/pty";
 import { marked } from "./lib/marks";
@@ -70,10 +71,14 @@ export function matchesQuery(fields: Array<string | null | undefined>, query: st
 /** A hit, with the repository its path is relative to. */
 type RootedHit = Hit & { root: string };
 
-/** One row of the list: a session or a file, keyed so the two never clash. */
+/** One row of the list: a session or a file, keyed so the two never clash.
+ * A session with a `snippet` was found only by what was said in it. */
 type Row =
   | { kind: "session"; key: string; session: SessionHit; snippet?: string }
   | { kind: "file"; key: string; hit: RootedHit };
+
+/** The heading a row is listed under. */
+const groupOf = (row: Row) => (row.kind === "file" ? "Files" : row.snippet !== undefined ? "Said in sessions" : "Sessions");
 
 /** A repository searched besides the session's own, and what to call it. */
 export interface SearchRoot {
@@ -342,22 +347,30 @@ export function GoToFile({
     return () => window.clearTimeout(timer);
   }, [query, searchSessions]);
 
-  // Those whose names match first, as before; then those found only in what
-  // was said, each with the words that matched. All of them, to count; the
-  // list shows the first few.
-  const sessionMatches: Row[] = useMemo(() => {
+  // Those whose names match, and apart from them those found only in what was
+  // said, each with the words that matched. All of them, to count; the list
+  // shows the first few.
+  const { named, spoken } = useMemo(() => {
     if (!query.trim()) {
-      return sessions.slice(0, SESSIONS_IDLE).map((session) => ({ kind: "session", key: `session:${session.key}`, session }));
+      return {
+        named: sessions.slice(0, SESSIONS_IDLE).map((session): Row => ({ kind: "session", key: `session:${session.key}`, session })),
+        spoken: [] as Row[],
+      };
     }
-    const named = sessions.filter((session) => matchesQuery(session.fields, query));
+    const byName = sessions.filter((session) => matchesQuery(session.fields, query));
     const hits = said?.query === query.trim() ? said.hits : null;
-    const spoken = hits ? sessions.filter((session) => hits.has(session.key) && !named.includes(session)) : [];
-    return [
-      ...named.map((session): Row => ({ kind: "session", key: `session:${session.key}`, session })),
-      ...spoken.map((session): Row => ({ kind: "session", key: `session:${session.key}`, session, snippet: hits?.get(session.key) })),
-    ];
+    const bySaid = hits ? sessions.filter((session) => hits.has(session.key) && !byName.includes(session)) : [];
+    return {
+      named: byName.map((session): Row => ({ kind: "session", key: `session:${session.key}`, session })),
+      spoken: bySaid.map(
+        (session): Row => ({ kind: "session", key: `session:${session.key}`, session, snippet: hits?.get(session.key) ?? "" }),
+      ),
+    };
   }, [query, sessions, said]);
-  const sessionRows = useMemo(() => sessionMatches.slice(0, SESSIONS_MAX), [sessionMatches]);
+  const sessionMatches = useMemo(() => [...named, ...spoken], [named, spoken]);
+  const namedRows = useMemo(() => named.slice(0, SESSIONS_MAX), [named]);
+  const spokenRows = useMemo(() => spoken.slice(0, Math.max(0, SESSIONS_MAX - namedRows.length)), [spoken, namedRows]);
+  const sessionRows = useMemo(() => [...namedRows, ...spokenRows], [namedRows, spokenRows]);
   const fileRows: Row[] = useMemo(
     () =>
       noFiles
@@ -369,7 +382,10 @@ export function GoToFile({
           })),
     [hits, noFiles, query, recent],
   );
-  const rows = useMemo(() => [...sessionRows, ...fileRows], [sessionRows, fileRows]);
+  // A file's name is often in what was said about it, so sessions found only
+  // there come after the files, not between the person and the file asked for.
+  const rows = useMemo(() => [...namedRows, ...fileRows, ...spokenRows], [namedRows, fileRows, spokenRows]);
+  const groups = new Set(rows.map(groupOf)).size;
 
   const at = useMemo(() => {
     const found = rows.findIndex((row) => row.key === chosen);
@@ -390,14 +406,15 @@ export function GoToFile({
     [hits, onClose, onOpen],
   );
 
-  // Past conversations are read beside the list, the highlighted one, as the
-  // Workspace tab reads them: told apart before one is resumed, which starts
-  // its CLI. The pane stays while any is listed, so the arrows running over a
-  // file do not make the popup jump.
-  const lists = sessionRows.some((row) => row.kind === "session" && row.session.conversation);
+  // The highlighted row is read beside the list: a past conversation as the
+  // Workspace tab reads it, told apart before it is resumed, which starts its
+  // CLI; a file before it is opened. The pane stays while any of either is
+  // listed, so the arrows running over a live session do not make it jump.
+  const lists = fileRows.length > 0 || sessionRows.some((row) => row.kind === "session" && row.session.conversation);
   const previewing = previewOn && lists;
   const current = rows[at];
   const previewed = current?.kind === "session" ? current.session.conversation ?? null : null;
+  const closePreview = () => setPreviewOn(false);
 
   const step = useCallback(
     (delta: number) => {
@@ -517,7 +534,7 @@ export function GoToFile({
                   setPreviewOn(true);
                 }}
               >
-                Preview conversations
+                Show the preview
               </button>
             </>
           ) : null}
@@ -533,11 +550,11 @@ export function GoToFile({
           >
             {rows.map((row, i) => (
               <Fragment key={row.key}>
-                {/* A heading only where the two kinds meet, so a list of one
-                    kind reads exactly as it did before. */}
-                {sessionRows.length > 0 && fileRows.length > 0 && (i === 0 || i === sessionRows.length) ? (
+                {/* A heading only where kinds meet, so a list of one kind
+                    reads exactly as it did before. */}
+                {groups > 1 && (i === 0 || groupOf(rows[i - 1]) !== groupOf(row)) ? (
                   <div className="hit-group" role="presentation">
-                    {row.kind === "session" ? "Sessions" : "Files"}
+                    {groupOf(row)}
                   </div>
                 ) : null}
                 <div
@@ -569,16 +586,28 @@ export function GoToFile({
               </Fragment>
             ))}
           </div>
-          {previewing ? (
+          {!previewing ? null : current?.kind === "file" ? (
+            <FilePreview
+              root={current.hit.root}
+              path={current.hit.path}
+              line={query.trim() ? (hits?.line ?? undefined) : undefined}
+              onOpen={() => open(current)}
+              onClose={closePreview}
+            />
+          ) : current?.kind === "session" && !previewed ? (
+            <aside className="conversation-preview" aria-label="Preview">
+              <p className="muted">A live session: Enter brings it to the stage, as it is.</p>
+            </aside>
+          ) : (
             <ConversationPreview
               conversation={previewed}
               cwds={conversationCwds}
               terms={query.toLowerCase().split(/\s+/).filter(Boolean)}
               home={home}
               onResume={() => open(current)}
-              onClose={() => setPreviewOn(false)}
+              onClose={closePreview}
             />
-          ) : null}
+          )}
         </div>
       </div>
     </div>
