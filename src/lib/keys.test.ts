@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
+  isCloseTab,
   isGoToFile,
   isNewSession,
   isNewWorktree,
@@ -79,6 +80,16 @@ describe("shortcuts", () => {
     expect(tabNumber(key({ code: "Digit2", key: "2", ctrlKey: true }))).toBeNull();
     expect(isShortcuts(key({ code: "Slash", key: "?", ctrlKey: true, shiftKey: true }))).toBe(true);
     expect(shortcutLabel.tab(2)).toBe("Ctrl+Shift+2");
+  });
+
+  it("close a tab with Cmd+W, Ctrl+Shift+W off macOS", () => {
+    expect(isCloseTab(key({ code: "KeyW", key: "w", metaKey: true }))).toBe(true);
+    // Cmd+Shift+W is the window's.
+    expect(isCloseTab(key({ code: "KeyW", key: "W", metaKey: true, shiftKey: true }))).toBe(false);
+    onPlatform("Linux x86_64");
+    // Ctrl+W deletes a word in the shell.
+    expect(isCloseTab(key({ code: "KeyW", key: "w", ctrlKey: true }))).toBe(false);
+    expect(isCloseTab(key({ code: "KeyW", key: "W", ctrlKey: true, shiftKey: true }))).toBe(true);
   });
 
   it("jump to the next waiting session and back to the previous one", () => {

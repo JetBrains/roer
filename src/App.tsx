@@ -66,6 +66,7 @@ import {
   isPickAgent,
   isNewWorktree,
   isNextWaiting,
+  isCloseTab,
   isPreviousSession,
   isShortcuts,
   isTabNumber,
@@ -1010,6 +1011,22 @@ export function App() {
       if (live) show({ args: ["attach", live.pane], cwd: live.cwd, title: live.session, pane: live.pane });
     },
     [show],
+  );
+  // Cmd+W closes the smallest thing in view: the file tab on top, and on
+  // the Terminal the session, released rather than ended, so it is still in
+  // the Workspace to come back to. Changes and an extension's tab are views
+  // of the session rather than the session, so they stay put; so does
+  // everything under a dialog, which is what the key would seem to be for.
+  const tabsRef = useRef(tabs);
+  tabsRef.current = tabs;
+  useHotkey(
+    isCloseTab,
+    useCallback(() => {
+      if (document.querySelector('[role="dialog"]')) return;
+      const { active, files } = tabsRef.current;
+      if (files.some((file) => tabId(file) === active)) setTabs((current) => closeTab(current, active));
+      else if (active === "terminal" && stagedRef.current) handleExit();
+    }, [handleExit]),
   );
   useHotkey(
     isPreviousSession,

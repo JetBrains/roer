@@ -61,6 +61,7 @@ export const shortcutLabel = {
   agents: () => (isMac() ? "⌘," : "Ctrl+,"),
   goToFile: () => (isMac() ? "⌘⇧O" : "Ctrl+Shift+O"),
   tab: (n: number) => (isMac() ? `⌘${n}` : `Ctrl+Shift+${n}`),
+  closeTab: () => (isMac() ? "⌘W" : "Ctrl+Shift+W"),
   shortcuts: () => (isMac() ? "⌘/" : "Ctrl+Shift+/"),
   nextWaiting: () => (isMac() ? "⌘⇧J" : "Ctrl+Shift+J"),
   previousSession: () => (isMac() ? "⌃Tab" : "Ctrl+Tab"),
@@ -81,6 +82,7 @@ export const allShortcuts = (tabs: readonly string[] = DEFAULT_TABS): Array<[str
   ["Next waiting session", shortcutLabel.nextWaiting()],
   ["Previous session", shortcutLabel.previousSession()],
   ...tabs.slice(0, 9).map((tab, i): [string, string] => [tab, shortcutLabel.tab(i + 1)]),
+  ["Close file tab, or release the session from Terminal", shortcutLabel.closeTab()],
   ["Agents", shortcutLabel.agents()],
   ["Previous commit", shortcutLabel.prevCommit()],
   ["Next commit", shortcutLabel.nextCommit()],
@@ -164,6 +166,14 @@ export const tabNumber = (event: KeyboardEvent): number | null => {
 };
 
 export const isTabNumber = (event: KeyboardEvent): boolean => tabNumber(event) !== null;
+
+/**
+ * Close the file tab on top, or on the Terminal release the session:
+ * `Cmd+W`, the key a browser and a terminal close a tab with (`Ctrl+Shift+W`
+ * off macOS). The window is on `Cmd+Shift+W`.
+ */
+export const isCloseTab = (event: KeyboardEvent): boolean =>
+  appChord(event, false) && (event.code === "KeyW" || (!event.code && event.key.toLowerCase() === "w"));
 
 /** Escape, anywhere in the window: for a dialog that cannot count on holding
  * the keyboard, such as one that opens while the terminals are still

@@ -163,29 +163,85 @@ pub fn run() {
 fn menu(app: &mut tauri::App) -> tauri::Result<()> {
     #[cfg(target_os = "macos")]
     {
-        use tauri::menu::{Menu, MenuItem, HELP_SUBMENU_ID};
-        use tauri::Emitter;
+        use tauri::menu::{AboutMetadata, Menu, MenuItem, PredefinedMenuItem as Predefined, Submenu, HELP_SUBMENU_ID, WINDOW_SUBMENU_ID};
+        use tauri::{Emitter, Manager};
 
         let handle = app.handle();
-        let menu = Menu::default(handle)?;
+        let info = handle.package_info();
+        let about = AboutMetadata {
+            name: Some(info.name.clone()),
+            version: Some(info.version.to_string()),
+            copyright: handle.config().bundle.copyright.clone(),
+            authors: handle.config().bundle.publisher.clone().map(|publisher| vec![publisher]),
+            ..Default::default()
+        };
         let setup = MenuItem::with_id(handle, "claude-setup", "Agent Integrations…", true, None::<&str>)?;
         let browser = MenuItem::with_id(handle, "browser-server", "Open This Session in a Browser…", true, None::<&str>)?;
         // Where a Mac app keeps its settings, and on the key every Mac app
         // opens them with.
         let agents = MenuItem::with_id(handle, "agents", "Agents…", true, Some("CmdOrCtrl+,"))?;
         let updates = MenuItem::with_id(handle, "check-updates", "Check for Updates…", true, None::<&str>)?;
-        if let Some(app_menu) = menu.items()?.first().and_then(|item| item.as_submenu().cloned()) {
-            // Right under About, where Mac apps keep it.
-            app_menu.insert(&updates, 1)?;
-            app_menu.insert(&agents, 2)?;
-            app_menu.insert(&setup, 3)?;
-            app_menu.insert(&browser, 4)?;
-        }
+        // Tauri's default menu, but with Roer's own Close Window: the default
+        // one is on ⌘W, and closing the window quits the app. That key is for
+        // closing something small, the way a tab closes in other Mac apps, so
+        // the window moves to ⇧⌘W.
+        let close = || MenuItem::with_id(handle, "close-window", "Close Window", true, Some("CmdOrCtrl+Shift+W"));
         // Where a user reporting a problem finds the log to send with it.
         let logs = MenuItem::with_id(handle, "show-logs", "Show Logs in Finder", true, None::<&str>)?;
-        if let Some(help) = menu.get(HELP_SUBMENU_ID).and_then(|item| item.as_submenu().cloned()) {
-            help.append(&logs)?;
-        }
+        let menu = Menu::with_items(
+            handle,
+            &[
+                &Submenu::with_items(
+                    handle,
+                    info.name.clone(),
+                    true,
+                    &[
+                        &Predefined::about(handle, None, Some(about))?,
+                        // Right under About, where Mac apps keep it.
+                        &updates,
+                        &agents,
+                        &setup,
+                        &browser,
+                        &Predefined::separator(handle)?,
+                        &Predefined::services(handle, None)?,
+                        &Predefined::separator(handle)?,
+                        &Predefined::hide(handle, None)?,
+                        &Predefined::hide_others(handle, None)?,
+                        &Predefined::separator(handle)?,
+                        &Predefined::quit(handle, None)?,
+                    ],
+                )?,
+                &Submenu::with_items(handle, "File", true, &[&close()?])?,
+                &Submenu::with_items(
+                    handle,
+                    "Edit",
+                    true,
+                    &[
+                        &Predefined::undo(handle, None)?,
+                        &Predefined::redo(handle, None)?,
+                        &Predefined::separator(handle)?,
+                        &Predefined::cut(handle, None)?,
+                        &Predefined::copy(handle, None)?,
+                        &Predefined::paste(handle, None)?,
+                        &Predefined::select_all(handle, None)?,
+                    ],
+                )?,
+                &Submenu::with_items(handle, "View", true, &[&Predefined::fullscreen(handle, None)?])?,
+                &Submenu::with_id_and_items(
+                    handle,
+                    WINDOW_SUBMENU_ID,
+                    "Window",
+                    true,
+                    &[
+                        &Predefined::minimize(handle, None)?,
+                        &Predefined::maximize(handle, None)?,
+                        &Predefined::separator(handle)?,
+                        &close()?,
+                    ],
+                )?,
+                &Submenu::with_id_and_items(handle, HELP_SUBMENU_ID, "Help", true, &[&logs])?,
+            ],
+        )?;
         app.set_menu(menu)?;
         app.on_menu_event(|app, event| {
             if event.id() == "claude-setup" {
@@ -196,6 +252,10 @@ fn menu(app: &mut tauri::App) -> tauri::Result<()> {
                 let _ = app.emit("roer://check-updates", ());
             } else if event.id() == "browser-server" {
                 let _ = app.emit("roer://browser-server", ());
+            } else if event.id() == "close-window" {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.close();
+                }
             } else if event.id() == "show-logs" {
                 // Runs `roer diagnose`, which is not for the menu's thread.
                 std::thread::spawn(logfile::reveal);
