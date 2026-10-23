@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { useState } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { NewTabDialog, TAB_IDEAS, newTabPrompt } from "./NewTabDialog";
+import { NewTabDialog, SECTION_IDEAS, TAB_IDEAS, newSectionPrompt, newTabPrompt } from "./NewTabDialog";
 import { resetAskAgent, useAskAgent, type AgentState } from "./lib/askAgent";
 import { sendToSession } from "./lib/github";
 
@@ -12,10 +12,10 @@ vi.mock("./lib/github", async (importOriginal) => ({
 }));
 
 /** The dialog the way App holds it: the asking outlives the dialog. */
-function Host({ agentState, pane = "%3" }: { agentState?: AgentState; pane?: string }) {
+function Host({ agentState, pane = "%3", kind }: { agentState?: AgentState; pane?: string; kind?: "tab" | "section" }) {
   const agent = useAskAgent(pane, agentState);
   const [open, setOpen] = useState(true);
-  return open ? <NewTabDialog agent={agent} agentState={agentState} onClose={() => setOpen(false)} /> : null;
+  return open ? <NewTabDialog agent={agent} agentState={agentState} kind={kind} onClose={() => setOpen(false)} /> : null;
 }
 
 describe("NewTabDialog", () => {
@@ -32,6 +32,17 @@ describe("NewTabDialog", () => {
     await waitFor(() => expect(sendToSession).toHaveBeenCalledWith("%3", newTabPrompt(TAB_IDEAS[0]!)));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(newTabPrompt("x")).toContain("roer-extension-authoring");
+  });
+
+  it("asks for a section of the Workspace tab, with ideas about all of its projects", async () => {
+    render(<Host agentState="done" kind="section" />);
+    expect(screen.getByRole("dialog", { name: "New section" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: SECTION_IDEAS[0] }));
+    expect(screen.getByRole("textbox", { name: "What the section shows" })).toHaveValue(SECTION_IDEAS[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Ask the agent" }));
+    await waitFor(() => expect(sendToSession).toHaveBeenCalledWith("%3", newSectionPrompt(SECTION_IDEAS[0]!)));
+    expect(newSectionPrompt("x")).toContain("roer.workspace.registerSection");
+    expect(newSectionPrompt("x")).toContain("useScope()");
   });
 
   it("holds the request while the agent works and sends it once it waits, after the dialog is closed", async () => {

@@ -1,6 +1,6 @@
 import { Component, type ErrorInfo, type ReactNode } from "react";
 
-import type { Session } from "./api";
+import type { Scope, Session } from "./api";
 import { HostProvider } from "./context";
 import { logExtension } from "./loader";
 import type { StageTabEntry } from "./registry";
@@ -44,6 +44,8 @@ export class Catch extends Component<CatchProps, { error: Error | null }> {
 export interface TabBodyProps {
   entry: StageTabEntry;
   session: Session | null;
+  /** What the sidebar has selected, for a tab that follows it. */
+  scope?: Scope | null;
   active: boolean;
   /** Takes the keyboard. Default: whenever it is active. */
   focused?: boolean;
@@ -52,12 +54,12 @@ export interface TabBodyProps {
 }
 
 /** An extension's tab, with the session and stage its hooks read. */
-export function TabBody({ entry, session, active, focused = active, openFile, activateTab }: TabBodyProps) {
+export function TabBody({ entry, session, scope = null, active, focused = active, openFile, activateTab }: TabBodyProps) {
   const View = entry.component;
   // Another session is another tab, unless the tab asked to keep its state.
   const key = entry.keepAcrossSessions ? "kept" : (session?.pane ?? "none");
   return (
-    <HostProvider value={{ extension: entry.extension, session, scope: null, active, focused, openFile, activateTab }}>
+    <HostProvider value={{ extension: entry.extension, session, scope, active, focused, openFile, activateTab }}>
       {/* A new component (a reload) starts the boundary over, and so does another session. */}
       <Catch key={`${entry.generation}:${key}`} extension={entry.extension}>
         <View />

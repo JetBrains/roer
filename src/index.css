@@ -2633,6 +2633,30 @@ button.tree-row.selected {
 
 /* The repositories in a folder, one checkbox each; a long list scrolls
    rather than pushing the buttons off. */
+/* The bundled Repositories section: one line to a project. */
+.repositories {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.repositories li {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 3px 0;
+  font-size: 13px;
+}
+
+.repositories-name {
+  font-weight: 600;
+}
+
+/* After the extensions' sections: what is hidden, and the way to another. */
+.workspace-sections-more {
+  margin-top: 12px;
+}
+
 .popup.folder-choice {
   align-self: flex-start;
 }

@@ -7,10 +7,13 @@
 import type { Extension } from "./api";
 import changes from "./changes/app";
 import changesManifest from "./changes/extension.json";
+import repositories from "./repositories/app";
+import repositoriesManifest from "./repositories/extension.json";
 import { registry, type Registry } from "./registry";
 
 export const BUNDLED: ReadonlyArray<{ id: string; name: string; description: string; extension: Extension }> = [
   { ...changesManifest, extension: changes },
+  { ...repositoriesManifest, extension: repositories },
 ];
 
 export function loadBundled(into: Registry = registry): void {

@@ -143,6 +143,14 @@ export default defineExtension((roer) => {
 - Keep it short: it sits in a list with the person's sessions. Link to a tab
   of the extension's own for more.
 - It never has the keyboard: no `useHotkey` there.
+- The person can hide it in one Workspace or Project and keep it in the
+  others. Don't offer a hide of your own.
+- It shows only in Roer's own window. An extension opened in another app's
+  chat has its tabs there, never its sections: there is no Workspace there.
+- A tab can follow the Workspace too: `useScope()` works in a tab, which
+  stays mounted when the Workspace changes and gets the new scope.
+- The built-in Repositories section is one: each project's branch and what
+  is not committed, re-read when the Workspace tab comes back on top.
 
 ## server.ts: running programs
 

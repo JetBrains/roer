@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { useState } from "react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { defineExtension, type Scope } from "./api";
 import { useScope } from "./context";
@@ -38,14 +38,43 @@ function Broken(): null {
   throw new Error("no data");
 }
 
-const sections = (scope: Scope) => (
-  <WorkspaceSections scope={scope} session={null} active openFile={() => undefined} activateTab={() => undefined} />
+const sections = (scope: Scope, onAddSection?: () => void) => (
+  <WorkspaceSections
+    scope={scope}
+    session={null}
+    active
+    openFile={() => undefined}
+    activateTab={() => undefined}
+    onAddSection={onAddSection}
+  />
 );
 
 describe("Workspace tab sections", () => {
   afterEach(() => {
     registry.unload("repos");
     registry.unload("broken");
+    localStorage.removeItem("roer:hidden-sections");
+  });
+
+  it("hides a section in one workspace only, and shows it there again", () => {
+    registry.load("repos", defineExtension((roer) => void roer.workspace.registerSection({ id: "list", title: "Repositories", component: Repos })));
+    const add = vi.fn();
+    const { rerender } = render(sections(work, add));
+
+    fireEvent.click(screen.getByRole("button", { name: "Hide Repositories in this workspace" }));
+    expect(screen.queryByRole("region", { name: "Repositories" })).not.toBeInTheDocument();
+    expect(screen.getByText(/1 section is hidden in this workspace/)).toBeInTheDocument();
+
+    // Another scope keeps it, and the choice outlives a remount.
+    rerender(sections(api, add));
+    expect(screen.getByRole("region", { name: "Repositories" })).toBeInTheDocument();
+    rerender(sections(work, add));
+    expect(screen.queryByRole("region", { name: "Repositories" })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Show it" }));
+    expect(screen.getByRole("region", { name: "Repositories" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Add a section…" }));
+    expect(add).toHaveBeenCalled();
   });
 
   it("tells a section which Workspace or Project it is about, and starts it over for another", () => {

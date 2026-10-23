@@ -1012,13 +1012,32 @@ describe("App", () => {
       return <p>{scope?.projects.map((project) => project.path).join(", ")}</p>;
     }
     vi.mocked(listWorkspaces).mockResolvedValueOnce([{ id: "w1", name: "Default", projects: ["home"] }]);
-    registry.load("repos", defineExtension((roer) => void roer.workspace.registerSection({ id: "list", title: "Repositories", component: Repos })));
+    registry.load("repos", defineExtension((roer) => void roer.workspace.registerSection({ id: "list", title: "Folders", component: Repos })));
     try {
       render(<App />);
-      const section = await screen.findByRole("region", { name: "Repositories" });
+      const section = await screen.findByRole("region", { name: "Folders" });
       expect(section).toHaveTextContent("/Users/test");
+      // The way to a section of one's own, from where they show.
+      fireEvent.click(screen.getByRole("button", { name: "Add a section…" }));
+      expect(await screen.findByRole("dialog", { name: "New section" })).toBeInTheDocument();
     } finally {
       registry.unload("repos");
+    }
+  });
+
+  it("tells a stage tab which workspace the sidebar has selected", async () => {
+    function Scoped() {
+      const scope = useScope();
+      return <p data-testid="scoped">{scope ? `${scope.kind} ${scope.name}` : "none"}</p>;
+    }
+    vi.mocked(listWorkspaces).mockResolvedValueOnce([{ id: "w1", name: "Default", projects: ["home"] }]);
+    registry.load("scoped", defineExtension((roer) => void roer.stage.registerTab({ id: "main", title: "Scoped", component: Scoped, needsSession: false })));
+    try {
+      render(<App />);
+      fireEvent.click(await screen.findByRole("tab", { name: "Scoped" }));
+      await waitFor(() => expect(screen.getByTestId("scoped")).toHaveTextContent("workspace Default"));
+    } finally {
+      registry.unload("scoped");
     }
   });
 
