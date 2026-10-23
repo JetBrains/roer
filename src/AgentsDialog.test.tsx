@@ -99,6 +99,27 @@ describe("AgentsDialog", () => {
     expect(confirmAction).not.toHaveBeenCalled();
   });
 
+  it("closes on Esc while the terminal behind it still has the keyboard", async () => {
+    const onClose = vi.fn();
+    render(
+      <>
+        <textarea aria-label="terminal" />
+        <AgentsDialog
+          list={list}
+          cwd="/work"
+          start={{ mode: "edit", id: "claude" }}
+          onChanged={async () => list}
+          onStart={vi.fn()}
+          onClose={onClose}
+        />
+      </>,
+    );
+    const terminal = screen.getByRole("textbox", { name: "terminal" });
+    terminal.focus();
+    fireEvent.keyDown(terminal, { key: "Escape" });
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+  });
+
   it("saves a new agent with only what its CLI takes, then starts it", async () => {
     const onStart = vi.fn();
     const onClose = vi.fn();

@@ -165,6 +165,11 @@ export const tabNumber = (event: KeyboardEvent): number | null => {
 
 export const isTabNumber = (event: KeyboardEvent): boolean => tabNumber(event) !== null;
 
+/** Escape, anywhere in the window: for a dialog that cannot count on holding
+ * the keyboard, such as one that opens while the terminals are still
+ * starting and taking focus. */
+export const isEscape = (event: KeyboardEvent): boolean => event.key === "Escape";
+
 /** The shortcut sheet: `Cmd+/` (`Ctrl+Shift+/`). */
 export const isShortcuts = (event: KeyboardEvent): boolean =>
   appChord(event, false) && (event.code === "Slash" || (!event.code && event.key === "/"));
