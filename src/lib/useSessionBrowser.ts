@@ -35,14 +35,12 @@ import {
   type Project,
 } from "../lib/projects";
 import {
-  addWorkspaceItem,
   assignSession,
   attachProject,
   createWorkspace,
   deleteWorkspace,
   detachProject,
   listWorkspaces,
-  removeWorkspaceItem,
   renameWorkspace,
   setWorkspaceFolder,
   unassignSession,
@@ -121,8 +119,6 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
   // independent. `null` is only the Project filter's turn, or before loading.
   const [selectedWorkspaceId, setSelectedWorkspaceIdRaw] = useState<string | null>(null);
   const [selectedProjectId, setSelectedProjectIdRaw] = useState<string | null>(null);
-  const [addingItem, setAddingItem] = useState(false);
-  const [itemTitle, setItemTitle] = useState("");
   // The New session picker, while it is up, and the question it opened on.
   const [picker, setPicker] = useState<PickerStart | null>(null);
   const [folderRepos, setFolderRepos] = useState<FolderRepos | null>(null);
@@ -764,33 +760,6 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
       .catch((cause: unknown) => setFailure(String(cause)));
   };
 
-  const handleAddItem = () => {
-    const trimmed = itemTitle.trim();
-    if (!selectedWorkspace || !trimmed) return;
-    void addWorkspaceItem(selectedWorkspace.id, "task", trimmed)
-      .then((updated) => {
-        if (!updated) return;
-        setWorkspaces((current) =>
-          current.map((workspace) => (workspace.id === updated.id ? updated : workspace)),
-        );
-        setItemTitle("");
-        setAddingItem(false);
-      })
-      .catch((cause: unknown) => setFailure(String(cause)));
-  };
-
-  const handleRemoveItem = (itemId: string) => {
-    if (!selectedWorkspace) return;
-    void removeWorkspaceItem(selectedWorkspace.id, itemId)
-      .then((updated) => {
-        if (!updated) return;
-        setWorkspaces((current) =>
-          current.map((workspace) => (workspace.id === updated.id ? updated : workspace)),
-        );
-      })
-      .catch((cause: unknown) => setFailure(String(cause)));
-  };
-
   // Opening or releasing a session changes what is attached to what, so the
   // badges are stale the moment the stage changes. A pane that has only just
   // become known counts too: a session started here is created by the shim
@@ -1093,12 +1062,6 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
     handleDetachProject,
     handleRenameProject,
     handleDeleteProject,
-    addingItem,
-    setAddingItem,
-    itemTitle,
-    setItemTitle,
-    handleAddItem,
-    handleRemoveItem,
     roots,
     repos,
     waiting,

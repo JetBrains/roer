@@ -1476,12 +1476,6 @@ export function App() {
                 }
                 handleAttachNewProject={browser.handleAttachNewProject}
                 handleDetachProject={browser.handleDetachProject}
-                addingItem={browser.addingItem}
-                setAddingItem={browser.setAddingItem}
-                itemTitle={browser.itemTitle}
-                setItemTitle={browser.setItemTitle}
-                handleAddItem={browser.handleAddItem}
-                handleRemoveItem={browser.handleRemoveItem}
                 roots={browser.roots}
                 repos={browser.repos}
                 waiting={browser.waiting}

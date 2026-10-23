@@ -410,13 +410,6 @@ fn dispatch(state: &Arc<AppState>, cmd: &str, args: Value, cid: Option<&str>) ->
         "workspace_detach_project" => call_res!(
             args, crate::workspaces::workspace_detach_project, "workspaceId": String, "projectId": String
         ),
-        "workspace_add_item" => call_res!(
-            args, crate::workspaces::workspace_add_item,
-            "workspaceId": String, "kind": String, "title": String, "url": Option<String>
-        ),
-        "workspace_remove_item" => call_res!(
-            args, crate::workspaces::workspace_remove_item, "workspaceId": String, "itemId": String
-        ),
         "workspace_assignments" => call!(args, crate::workspaces::workspace_assignments,),
         "workspace_assign" => {
             call_res!(args, crate::workspaces::workspace_assign, "sessionId": String, "workspaceId": String)

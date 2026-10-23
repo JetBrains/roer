@@ -174,7 +174,7 @@ describe("the session tree", () => {
     vi.mocked(gitRepo).mockReset().mockResolvedValue(null);
     vi.mocked(gitChanges).mockReset().mockRejectedValue(new Error("not a repository"));
     vi.mocked(roerStatus).mockReset().mockResolvedValue({ bin: "roer", available: true, home: "/Users/test" });
-    vi.mocked(listWorkspaces).mockReset().mockResolvedValue([{ id: "w1", name: "Roer", projects: ["p1"], items: [] }]);
+    vi.mocked(listWorkspaces).mockReset().mockResolvedValue([{ id: "w1", name: "Roer", projects: ["p1"] }]);
     vi.mocked(listProjects).mockReset().mockResolvedValue([project]);
     vi.mocked(listWorktrees).mockReset().mockResolvedValue([main, linked]);
   });
@@ -200,7 +200,7 @@ describe("the session tree", () => {
   });
 
   it("lists the Workspace's folder after its projects, and starts a session across them there", async () => {
-    vi.mocked(listWorkspaces).mockResolvedValue([{ id: "w1", name: "work", projects: ["p1"], items: [], folder: "/work" }]);
+    vi.mocked(listWorkspaces).mockResolvedValue([{ id: "w1", name: "work", projects: ["p1"], folder: "/work" }]);
     vi.mocked(listSessions).mockResolvedValue([session("%1", "/work"), session("%2", "/tmp")]);
     const onOpen = vi.fn();
     render(<Harness onOpen={onOpen} />);
@@ -377,7 +377,7 @@ describe("a plain New session", () => {
     vi.mocked(gitRepo).mockReset().mockResolvedValue(null);
     vi.mocked(gitChanges).mockReset().mockRejectedValue(new Error("not a repository"));
     vi.mocked(roerStatus).mockReset().mockResolvedValue({ bin: "roer", available: true, home: "/Users/test" });
-    vi.mocked(listWorkspaces).mockReset().mockResolvedValue([{ id: "w1", name: "Roer", projects: ["p1", "p2"], items: [] }]);
+    vi.mocked(listWorkspaces).mockReset().mockResolvedValue([{ id: "w1", name: "Roer", projects: ["p1", "p2"] }]);
     vi.mocked(listProjects).mockReset().mockResolvedValue([project, site]);
     vi.mocked(listWorktrees).mockReset().mockImplementation(async (cwd: string) => (cwd === "/work/site" ? [] : [main, linked]));
   });

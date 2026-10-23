@@ -191,8 +191,6 @@ vi.mock("./lib/workspaces", () => ({
   deleteWorkspace: vi.fn(),
   attachProject: vi.fn(),
   detachProject: vi.fn(),
-  addWorkspaceItem: vi.fn(),
-  removeWorkspaceItem: vi.fn(),
   workspaceAssignments: vi.fn(async () => ({})),
   assignSession: vi.fn(),
   unassignSession: vi.fn(),
@@ -317,12 +315,12 @@ describe("App", () => {
 
   it("tells the Workspace tab with no project yet what one is, and adds one", async () => {
     vi.mocked(listProjects).mockResolvedValueOnce([]);
-    vi.mocked(listWorkspaces).mockResolvedValue([{ id: "w1", name: "Default", projects: [], items: [] }]);
+    vi.mocked(listWorkspaces).mockResolvedValue([{ id: "w1", name: "Default", projects: [] }]);
     vi.mocked(pickFolder).mockResolvedValueOnce("/Users/test/roer");
     vi.mocked(gitRoot).mockResolvedValueOnce("/Users/test/roer");
     const project = { id: "p1", name: "roer", path: "/Users/test/roer" };
     vi.mocked(createProject).mockResolvedValueOnce(project);
-    vi.mocked(attachProject).mockResolvedValueOnce({ id: "w1", name: "Default", projects: ["p1"], items: [] });
+    vi.mocked(attachProject).mockResolvedValueOnce({ id: "w1", name: "Default", projects: ["p1"] });
     render(<App />);
 
     expect(await screen.findByText(/No project yet: add the folder you work in/)).toBeInTheDocument();
@@ -335,7 +333,7 @@ describe("App", () => {
   describe("before there is any project", () => {
     beforeEach(() => {
       vi.mocked(listProjects).mockResolvedValue([]);
-      vi.mocked(listWorkspaces).mockResolvedValue([{ id: "w1", name: "Default", projects: [], items: [] }]);
+      vi.mocked(listWorkspaces).mockResolvedValue([{ id: "w1", name: "Default", projects: [] }]);
     });
 
     afterEach(() => {
@@ -360,7 +358,7 @@ describe("App", () => {
       vi.mocked(pickFolder).mockResolvedValueOnce("/Users/test/roer");
       vi.mocked(gitRoot).mockImplementation(async (dir) => (dir.startsWith("/Users/test/roer") ? "/Users/test/roer" : null));
       vi.mocked(createProject).mockResolvedValueOnce({ id: "p1", name: "roer", path: "/Users/test/roer" });
-      vi.mocked(attachProject).mockResolvedValueOnce({ id: "w1", name: "Default", projects: ["p1"], items: [] });
+      vi.mocked(attachProject).mockResolvedValueOnce({ id: "w1", name: "Default", projects: ["p1"] });
       render(<App />);
 
       fireEvent.click(await screen.findByRole("button", { name: "Open a folder…" }));
@@ -1185,7 +1183,7 @@ describe("App", () => {
 
   it("leaves the stage alone when a Workspace is picked, its sessions being in the sidebar", async () => {
     vi.mocked(listWorkspaces).mockResolvedValueOnce([
-      { id: "w1", name: "Default", projects: [], items: [] },
+      { id: "w1", name: "Default", projects: [] },
     ]);
     render(<App />);
     await teleport();
