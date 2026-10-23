@@ -44,6 +44,7 @@ import {
   listWorkspaces,
   removeWorkspaceItem,
   renameWorkspace,
+  setWorkspaceFolder,
   unassignSession,
   workspaceAssignments,
   type Workspace,
@@ -400,6 +401,8 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
   // Their worktrees are listed under the sessions, and a new worktree is
   // made in one of them.
   const projectsInView = selectedProject ? [selectedProject] : selectedWorkspaceProjects;
+  /** The selected Workspace's own folder, unless a Project is selected. */
+  const folderInView = selectedProject ? undefined : selectedWorkspace?.folder;
   const inViewKey = projectsInView.map((project) => project.path).join("\n");
 
   // Each Project in view's worktrees, by the Project's path, read from git
@@ -467,6 +470,7 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
       repos,
       newSessionCwd(),
       (path) => shorten(path, status?.home),
+      folderInView,
     );
 
   /** Where a plain New session goes, as the button's tooltip says it. */
@@ -556,6 +560,15 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
         setWorkspaces((current) =>
           current.map((workspace) => (workspace.id === updated.id ? updated : workspace)),
         );
+      })
+      .catch((cause: unknown) => setFailure(String(cause)));
+  };
+
+  /** Sets the folder a Workspace stands for, or forgets it with `null`. */
+  const handleSetWorkspaceFolder = (id: string, folder: string | null) => {
+    void setWorkspaceFolder(id, folder)
+      .then((updated) => {
+        if (updated) replaced(updated);
       })
       .catch((cause: unknown) => setFailure(String(cause)));
   };
@@ -659,8 +672,13 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
     setFolderRepos(null);
     if (!asked || repos.length === 0) return;
     try {
+      // A new one stands for the folder; one it was added to stays as it was.
       let workspace =
-        into === "same" ? workspaces.find((candidate) => candidate.id === asked.workspaceId) : await createWorkspace(folderName(asked.path));
+        into === "same"
+          ? workspaces.find((candidate) => candidate.id === asked.workspaceId)
+          : await createWorkspace(folderName(asked.path)).then(
+              async (made) => (await setWorkspaceFolder(made.id, asked.path)) ?? made,
+            );
       if (!workspace) return;
       // One at a time: each write reads the registry the last one wrote.
       for (const repo of repos) {
@@ -922,7 +940,9 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
     // looked up by; its checkout's root is where the new one starts.
     const onStage = sessions.find((session) => session.pane === activePane);
     const inView = (cwd: string) =>
-      projectsInView.length === 0 || projectsInView.some((project) => underProject(cwd, project));
+      (projectsInView.length === 0 && !folderInView) ||
+      projectsInView.some((project) => underProject(cwd, project)) ||
+      (folderInView !== undefined && within(cwd, folderInView));
     if (onStage?.cwd && inView(onStage.cwd)) return repos[onStage.cwd]?.root ?? onStage.cwd;
     if (selectedProject) return selectedProject.path;
     if (selectedWorkspaceProjects.length > 0) {
@@ -987,6 +1007,7 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
   // same way selecting the Project itself would show it.
   const underWorkspace = (cwd: string, id: string, workspace: Workspace) =>
     assignments[id] === workspace.id ||
+    (workspace.folder !== undefined && within(cwd, workspace.folder)) ||
     selectedWorkspaceProjects.some((project) => underProject(cwd, project)) ||
     (workspace.id === workspaces[0]?.id && !coveredByAny(cwd, id));
 
@@ -996,6 +1017,7 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
   // sessions are running.
   const coveredByAny = (cwd: string, id: string) =>
     workspaces.some((workspace) => assignments[id] === workspace.id) ||
+    workspaces.some((workspace) => workspace.folder !== undefined && within(cwd, workspace.folder)) ||
     workspaces.some((workspace) =>
       workspace.projects.some((projectId) => {
         const project = projects.find((candidate) => candidate.id === projectId);
@@ -1063,6 +1085,7 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
     handleCreateWorkspace,
     handleRenameWorkspace,
     handleDeleteWorkspace,
+    handleSetWorkspaceFolder,
     handleAssign,
     handleCreateProject,
     handleAttachExistingProject,
@@ -1092,6 +1115,7 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
     asksForFolder,
     newSessionCwd,
     projectsInView,
+    folderInView,
     worktrees,
     picker,
     openNewWorktree,

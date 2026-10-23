@@ -24,6 +24,9 @@ export interface Workspace {
   /** Project ids, resolved against the global registry in `./projects`. */
   projects: string[];
   items: WorkspaceItem[];
+  /** The folder it stands for, such as the folder of repositories it was
+   * made from: what is there outside its Projects is still its own. */
+  folder?: string;
 }
 
 export const listWorkspaces = (): Promise<Workspace[]> => invoke("workspaces_list");
@@ -33,6 +36,10 @@ export const createWorkspace = (name: string): Promise<Workspace> =>
 
 export const renameWorkspace = (id: string, name: string): Promise<Workspace | null> =>
   invoke("workspace_rename", { id, name });
+
+/** Sets the folder, or clears it with `null`. */
+export const setWorkspaceFolder = (id: string, folder: string | null): Promise<Workspace | null> =>
+  invoke("workspace_set_folder", { id, folder });
 
 export const deleteWorkspace = (id: string): Promise<void> => invoke("workspace_delete", { id });
 

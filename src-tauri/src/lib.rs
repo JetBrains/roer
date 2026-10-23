@@ -108,6 +108,7 @@ pub fn run() {
             workspaces::workspace_create,
             workspaces::workspace_rename,
             workspaces::workspace_delete,
+            workspaces::workspace_set_folder,
             workspaces::workspace_attach_project,
             workspaces::workspace_detach_project,
             workspaces::workspace_add_item,

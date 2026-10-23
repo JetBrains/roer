@@ -123,6 +123,21 @@ describe("sorting sessions into checkouts", () => {
     expect(tree.projects[0].checkouts.map((checkout) => checkout.items.length)).toEqual([0, 1]);
     expect(tree.elsewhere).toEqual([]);
   });
+
+  it("keeps what the Workspace's folder holds outside its Projects apart from what is elsewhere", () => {
+    const tree = buildTree(
+      [project],
+      { [project.path]: [main] },
+      {},
+      [session("%1", "/work"), session("%2", "/work/roer/src"), session("%3", "/work/notes"), session("%4", "/tmp")],
+      (s) => s.cwd,
+      byLiveRank(new Set()),
+      "/work",
+    );
+    expect(tree.projects[0].checkouts[0].items.map((s) => s.pane)).toEqual(["%2"]);
+    expect(tree.inFolder.map((s) => s.pane)).toEqual(["%1", "%3"]);
+    expect(tree.elsewhere.map((s) => s.pane)).toEqual(["%4"]);
+  });
 });
 
 function Harness({ onOpen, token = "none" }: { onOpen: (request: OpenRequest) => void; token?: string }) {
@@ -144,6 +159,7 @@ function Harness({ onOpen, token = "none" }: { onOpen: (request: OpenRequest) =>
       openInWorktree={browser.openInWorktree}
       openPickAgent={browser.openPickAgent}
       handleRemoveWorktree={browser.handleRemoveWorktree}
+      folderInView={browser.folderInView}
       projects={browser.projectsInView}
       onOpen={onOpen}
     />
@@ -181,6 +197,22 @@ describe("the session tree", () => {
     expect(onOpen).toHaveBeenLastCalledWith(expect.objectContaining({ args: ["new"], cwd: linked.path }));
     // The main checkout is the Project itself: nothing to remove.
     expect(tree.queryByRole("button", { name: "Remove the worktree main" })).not.toBeInTheDocument();
+  });
+
+  it("lists the Workspace's folder after its projects, and starts a session across them there", async () => {
+    vi.mocked(listWorkspaces).mockResolvedValue([{ id: "w1", name: "work", projects: ["p1"], items: [], folder: "/work" }]);
+    vi.mocked(listSessions).mockResolvedValue([session("%1", "/work"), session("%2", "/tmp")]);
+    const onOpen = vi.fn();
+    render(<Harness onOpen={onOpen} />);
+
+    const tree = within(await screen.findByRole("region", { name: "Running sessions" }));
+    const folder = (await tree.findByText("all projects")).closest(".tree-project") as HTMLElement;
+    expect(within(folder).getByTitle(/^s%1 /)).toBeInTheDocument();
+    expect(within(folder).queryByTitle(/^s%2 /)).not.toBeInTheDocument();
+    expect(tree.getByText("Elsewhere")).toBeInTheDocument();
+
+    fireEvent.click(within(folder).getByRole("button", { name: "Start a session in all projects" }));
+    expect(onOpen).toHaveBeenLastCalledWith(expect.objectContaining({ args: ["new"], cwd: "/work" }));
   });
 
   it("folds a branch and a project, saying how much is hidden and that one waits", async () => {

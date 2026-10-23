@@ -48,6 +48,11 @@ pub struct Workspace {
     pub projects: Vec<String>,
     #[serde(default)]
     pub items: Vec<WorkspaceItem>,
+    /// The folder the Workspace stands for, when it has one: the folder of
+    /// repositories it was made from. A session there, outside every one of
+    /// its Projects, is still this Workspace's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub folder: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -117,6 +122,7 @@ fn list_in(path: &std::path::Path) -> Vec<Workspace> {
             name: DEFAULT_WORKSPACE_NAME.to_string(),
             projects: Vec::new(),
             items: Vec::new(),
+            folder: None,
         });
         // Best-effort: a failed save here just means the same seed runs
         // again next launch, which is harmless.
@@ -136,6 +142,7 @@ fn create_in(path: &std::path::Path, name: String) -> std::io::Result<Workspace>
         name,
         projects: Vec::new(),
         items: Vec::new(),
+        folder: None,
     };
     store.workspaces.push(workspace.clone());
     save(path, &store)?;
@@ -158,6 +165,37 @@ fn rename_in(
     workspace.name = name;
     let updated = workspace.clone();
     save(path, &store)?;
+    Ok(Some(updated))
+}
+
+/// Sets the Workspace's folder, spelled as a Project's is (symlinks
+/// resolved), or clears it with `None`.
+pub fn set_folder(id: &str, folder: Option<String>) -> Result<Option<Workspace>, String> {
+    set_folder_in(&workspaces_file(), id, folder)
+}
+
+fn set_folder_in(
+    path: &std::path::Path,
+    id: &str,
+    folder: Option<String>,
+) -> Result<Option<Workspace>, String> {
+    let folder = match folder {
+        Some(dir) => {
+            let full = dunce::canonicalize(&dir).map_err(|e| format!("could not open {dir}: {e}"))?;
+            if !full.is_dir() {
+                return Err(format!("{dir} is not a folder."));
+            }
+            Some(full.to_string_lossy().into_owned())
+        }
+        None => None,
+    };
+    let mut store = load(path);
+    let Some(workspace) = store.workspaces.iter_mut().find(|w| w.id == id) else {
+        return Ok(None);
+    };
+    workspace.folder = folder;
+    let updated = workspace.clone();
+    save(path, &store).map_err(|e| e.to_string())?;
     Ok(Some(updated))
 }
 
@@ -341,6 +379,11 @@ pub fn workspace_rename(id: String, name: String) -> Result<Option<Workspace>, S
 }
 
 #[tauri::command]
+pub fn workspace_set_folder(id: String, folder: Option<String>) -> Result<Option<Workspace>, String> {
+    set_folder(&id, folder)
+}
+
+#[tauri::command]
 pub fn workspace_delete(id: String) -> Result<(), String> {
     delete(&id).map_err(|e| e.to_string())
 }
@@ -430,6 +473,23 @@ mod tests {
         // The seed is persisted, not re-minted on every read.
         let listed_again = list_in(&file);
         assert_eq!(listed_again[0].id, listed[0].id);
+        std::fs::remove_file(&file).ok();
+    }
+
+    #[test]
+    fn a_workspace_keeps_its_folder_until_it_is_cleared() {
+        let file = temp_file();
+        let dir = crate::testing::scratch("a-workspace-keeps-its-folder");
+        let workspace = create_in(&file, "work".to_string()).unwrap();
+        assert_eq!(workspace.folder, None);
+
+        let set = set_folder_in(&file, &workspace.id, Some(dir.to_string_lossy().into_owned())).unwrap().unwrap();
+        assert_eq!(set.folder, Some(crate::testing::canonical(&dir)));
+        assert_eq!(list_in(&file)[0].folder, set.folder);
+
+        assert!(set_folder_in(&file, &workspace.id, Some(dir.join("gone").to_string_lossy().into_owned())).is_err());
+        let cleared = set_folder_in(&file, &workspace.id, None).unwrap().unwrap();
+        assert_eq!(cleared.folder, None);
         std::fs::remove_file(&file).ok();
     }
 

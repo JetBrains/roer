@@ -28,6 +28,8 @@ export interface WorkspaceSwitcherProps {
   onAttachProject: (projectId: string, workspaceId: string) => void;
   /** A folder picked from disk, registered as a Project if it is not one yet. */
   onAttachNewProject: (path: string, workspaceId: string) => void;
+  /** The folder a Workspace stands for, picked, or `null` to forget it. */
+  onSetFolder: (workspaceId: string, folder: string | null) => void;
 }
 
 /**
@@ -45,6 +47,7 @@ export function WorkspaceSwitcher({
   onDelete,
   onAttachProject,
   onAttachNewProject,
+  onSetFolder,
 }: WorkspaceSwitcherProps) {
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState("");
@@ -82,6 +85,11 @@ export function WorkspaceSwitcher({
     // A plain path, or `null` when the dialog was dismissed.
     const picked = await pickFolder();
     if (typeof picked === "string") onAttachNewProject(picked, workspace.id);
+  };
+
+  const pickWorkspaceFolder = async (workspace: Workspace) => {
+    const picked = await pickFolder();
+    if (typeof picked === "string") onSetFolder(workspace.id, picked);
   };
 
   return (
@@ -155,6 +163,7 @@ export function WorkspaceSwitcher({
                     type="button"
                     className={active ? "row active" : "row"}
                     aria-pressed={active}
+                    title={workspace.folder}
                     onClick={() => onSelect(workspace.id)}
                   >
                     <strong>{workspace.name}</strong>
@@ -188,6 +197,15 @@ export function WorkspaceSwitcher({
                       </ContextMenuItem>
                     </ContextMenuSubContent>
                   </ContextMenuSub>
+                  {/* What runs in it outside the projects, such as an agent
+                    across the repositories of a folder of them, is this
+                    Workspace's too. */}
+                  <ContextMenuItem onSelect={() => void pickWorkspaceFolder(workspace)}>
+                    {workspace.folder ? "Change folder…" : "Set folder…"}
+                  </ContextMenuItem>
+                  {workspace.folder ? (
+                    <ContextMenuItem onSelect={() => onSetFolder(workspace.id, null)}>Forget folder</ContextMenuItem>
+                  ) : null}
                   <ContextMenuSeparator />
                   <ContextMenuItem onSelect={() => startRename(workspace)}>
                     Rename

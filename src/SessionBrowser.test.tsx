@@ -109,6 +109,7 @@ function Harness({ onOpen }: { onOpen: (request: OpenRequest) => void }) {
         handleCreateWorkspace={browser.handleCreateWorkspace}
         handleRenameWorkspace={browser.handleRenameWorkspace}
         handleDeleteWorkspace={browser.handleDeleteWorkspace}
+        handleSetWorkspaceFolder={browser.handleSetWorkspaceFolder}
         handleAttachExistingProject={browser.handleAttachExistingProject}
         handleAttachNewProject={browser.handleAttachNewProject}
         handleCreateProject={browser.handleCreateProject}
@@ -145,6 +146,7 @@ function Harness({ onOpen }: { onOpen: (request: OpenRequest) => void }) {
         conversationCwds={browser.conversationCwds}
         refresh={browser.refresh}
         projectsInView={browser.projectsInView}
+        folderInView={browser.folderInView}
         worktrees={browser.worktrees}
         onOpen={onOpen}
       />

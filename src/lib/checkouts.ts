@@ -64,10 +64,11 @@ export function checkoutsOf(
  * Sorts what has a directory — live sessions, past conversations — into the
  * checkouts of the Projects in view: each goes to the checkout whose folder
  * holds it most closely, so one in a worktree is under that worktree and not
- * under the main checkout a parent folder up. What no checkout holds — an
- * assigned session, or one the first Workspace takes in from nowhere in
- * particular — is `elsewhere`. `order` puts each list in the order it is
- * shown in.
+ * under the main checkout a parent folder up. What no checkout holds but the
+ * Workspace's own `folder` does is `inFolder`: a session across its
+ * repositories. The rest — an assigned session, or one the first Workspace
+ * takes in from nowhere in particular — is `elsewhere`. `order` puts each
+ * list in the order it is shown in.
  */
 export function buildTree<T>(
   projects: Project[],
@@ -76,7 +77,8 @@ export function buildTree<T>(
   items: T[],
   cwdOf: (item: T) => string,
   order: (list: T[]) => T[],
-): { projects: TreeProject<T>[]; elsewhere: T[] } {
+  folder?: string,
+): { projects: TreeProject<T>[]; inFolder: T[]; elsewhere: T[] } {
   const tree: TreeProject<T>[] = projects.map((project) => {
     const others = new Set(projects.filter((other) => other !== project).map((other) => other.path));
     return {
@@ -84,6 +86,7 @@ export function buildTree<T>(
       checkouts: checkoutsOf(project, others, worktrees, repos).map((worktree) => ({ worktree, items: [] })),
     };
   });
+  const inFolder: T[] = [];
   const elsewhere: T[] = [];
   for (const item of items) {
     let best: TreeCheckout<T> | null = null;
@@ -93,11 +96,15 @@ export function buildTree<T>(
       }
     }
     if (best) best.items.push(item);
+    else if (folder && within(cwdOf(item), folder)) inFolder.push(item);
     else elsewhere.push(item);
   }
   for (const node of tree) for (const checkout of node.checkouts) checkout.items = order(checkout.items);
-  return { projects: tree, elsewhere: order(elsewhere) };
+  return { projects: tree, inFolder: order(inFolder), elsewhere: order(elsewhere) };
 }
+
+/** A folder's own name, the last part of its path. */
+export const folderLabel = (path: string) => path.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || path;
 
 /** A checkout's name: its branch, else its commit, else its folder. */
 export function checkoutName(worktree: Worktree): string {
@@ -108,7 +115,8 @@ export function checkoutName(worktree: Worktree): string {
 export interface Place {
   key: string;
   cwd: string;
-  /** `null` for a folder outside every Project in view. */
+  /** `null` for a folder outside every Project in view, the Workspace's own
+   * folder included. */
   project: Project | null;
   /** "roer · fix-login", or the folder's own path outside a Project. */
   label: string;
@@ -129,6 +137,7 @@ export function placesOf(
   repos: Record<string, Repo>,
   here: string | undefined,
   outside: (path: string) => string,
+  folder?: string,
 ): Place[] {
   const places: Place[] = [];
   for (const project of projects) {
@@ -143,6 +152,10 @@ export function placesOf(
         here: false,
       });
     }
+  }
+  // Last, as the Workspace's tree has it: the folder the repositories are in.
+  if (folder) {
+    places.push({ key: folder, cwd: folder, project: null, label: `${folderLabel(folder)} · all projects`, linked: false, here: false });
   }
   if (!here) return places;
   // The closest checkout that holds it, as sessions are sorted into them.

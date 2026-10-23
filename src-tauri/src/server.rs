@@ -401,6 +401,9 @@ fn dispatch(state: &Arc<AppState>, cmd: &str, args: Value, cid: Option<&str>) ->
         "workspace_create" => call_res!(args, crate::workspaces::workspace_create, "name": String),
         "workspace_rename" => call_res!(args, crate::workspaces::workspace_rename, "id": String, "name": String),
         "workspace_delete" => call_res!(args, crate::workspaces::workspace_delete, "id": String),
+        "workspace_set_folder" => {
+            call_res!(args, crate::workspaces::workspace_set_folder, "id": String, "folder": Option<String>)
+        }
         "workspace_attach_project" => call_res!(
             args, crate::workspaces::workspace_attach_project, "workspaceId": String, "projectId": String
         ),

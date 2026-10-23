@@ -17,6 +17,7 @@ export type WorkspaceSidebarProps = Pick<
   | "handleCreateWorkspace"
   | "handleRenameWorkspace"
   | "handleDeleteWorkspace"
+  | "handleSetWorkspaceFolder"
   | "handleAttachExistingProject"
   | "handleAttachNewProject"
   | "handleCreateProject"
@@ -50,6 +51,7 @@ export function WorkspaceSidebar({
   handleCreateWorkspace,
   handleRenameWorkspace,
   handleDeleteWorkspace,
+  handleSetWorkspaceFolder,
   handleAttachExistingProject,
   handleAttachNewProject,
   handleCreateProject,
@@ -132,6 +134,7 @@ export function WorkspaceSidebar({
               onDelete={handleDeleteWorkspace}
               onAttachProject={handleAttachExistingProject}
               onAttachNewProject={handleAttachNewProject}
+              onSetFolder={handleSetWorkspaceFolder}
             />
           ) : (
             <ProjectsPanel
