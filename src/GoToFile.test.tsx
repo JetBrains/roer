@@ -2,13 +2,14 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { GoToFile, matchesQuery, merge, type SessionHit } from "./GoToFile";
-import { filesSearch } from "./lib/files";
+import { fileRead, filesSearch } from "./lib/files";
 import type { Hit, Hits } from "./lib/files";
 import { readClaudeTranscript } from "./lib/pty";
 
 vi.mock("./lib/files", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./lib/files")>()),
   filesSearch: vi.fn(),
+  fileRead: vi.fn(async () => ({ text: "", lines: 0, truncated: false, binary: false, bytes: 0 })),
 }));
 
 vi.mock("./lib/pty", async (importOriginal) => ({
@@ -418,6 +419,44 @@ describe("GoToFile — sessions", () => {
     expect(screen.getByText("Files")).toBeInTheDocument();
   });
 
+  it("lists the sessions found only by what was said after the files, so a file's name finds the file first", async () => {
+    asked.mockResolvedValue(answer([hit("src/theme/dark.ts")]));
+    const searchSessions = vi.fn(async () => new Map([["Fix login", "…then edit dark.ts…"]]));
+    const { onOpen } = await open({ sessions: [session("Fix login", "/work/api"), session("Add dark.ts mode", "/work/roer")], searchSessions });
+    await type("dark.ts");
+
+    await waitFor(() =>
+      expect(screen.getAllByRole("option").map((row) => row.textContent)).toEqual([
+        "Add dark.ts modeclaude · /work/roer",
+        "dark.tssrc/theme/",
+        "Fix login…then edit dark.ts…",
+      ]),
+    );
+    expect(screen.getByText("Said in sessions")).toBeInTheDocument();
+    // Down from a session named for it, the file comes before what was said.
+    fireEvent.keyDown(screen.getByRole("combobox"), { key: "ArrowDown" });
+    fireEvent.keyDown(screen.getByRole("combobox"), { key: "Enter" });
+    expect(onOpen).toHaveBeenCalledWith("/Users/test/project", "src/theme/dark.ts", undefined);
+  });
+
+  it("reads the highlighted file beside the list, at the line asked for", async () => {
+    localStorage.removeItem("roer:search-preview");
+    const text = Array.from({ length: 80 }, (_, n) => `line ${n + 1}`).join("\n");
+    vi.mocked(fileRead).mockResolvedValue({ text, lines: 80, truncated: false, binary: false, bytes: text.length });
+    asked.mockResolvedValue(answer([hit("src/notes.txt")], { line: 50 }));
+    const { onOpen } = await open();
+    await type("notes:50");
+
+    const preview = await screen.findByRole("complementary", { name: "Preview" });
+    await waitFor(() => expect(preview).toHaveTextContent("line 50"));
+    expect(fileRead).toHaveBeenCalledWith("/Users/test/project", "src/notes.txt");
+    expect(preview.querySelector(".file-line.asked")).toHaveTextContent("line 50");
+    // A little above it, for context; not from the top.
+    expect(preview).not.toHaveTextContent(/^line 1$/m);
+    fireEvent.click(screen.getByRole("button", { name: "Open" }));
+    expect(onOpen).toHaveBeenCalledWith("/Users/test/project", "src/notes.txt", 50);
+  });
+
   it("opens a session on Enter, and closes", async () => {
     const opened = vi.fn();
     const { onClose, onOpen } = await open({ sessions: [session("Add dark mode", "/work/roer", opened)] });
@@ -490,14 +529,14 @@ describe("GoToFile — sessions", () => {
     );
     fireEvent.click(await screen.findByRole("button", { name: "Close the preview" }));
     expect(screen.queryByRole("complementary", { name: "Preview" })).not.toBeInTheDocument();
-    fireEvent.mouseDown(screen.getByRole("button", { name: "Preview conversations" }));
+    fireEvent.mouseDown(screen.getByRole("button", { name: "Show the preview" }));
     expect(await screen.findByRole("complementary", { name: "Preview" })).toBeInTheDocument();
     unmount();
 
     render(<GoToFile noFiles sessions={[session("Fix login", "/work/api")]} onOpen={vi.fn()} onClose={vi.fn()} />);
     await screen.findByRole("option");
     expect(screen.queryByRole("complementary", { name: "Preview" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Preview conversations" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Show the preview" })).not.toBeInTheDocument();
   });
 
   it("counts the sessions it found past the ones it lists", async () => {
