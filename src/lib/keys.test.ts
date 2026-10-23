@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { renderHook } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   isCloseTab,
@@ -10,8 +11,13 @@ import {
   isPreviousSession,
   isPrevCommit,
   isShortcuts,
+  refusal,
+  setCustomChords,
+  setRecording,
   shortcutLabel,
   tabNumber,
+  useHotkey,
+  type Chord,
 } from "./keys";
 
 const key = (init: KeyboardEventInit) => new KeyboardEvent("keydown", init);
@@ -57,7 +63,7 @@ describe("shortcuts", () => {
     expect(isNewWorktree(key({ code: "KeyN", ctrlKey: true, shiftKey: true }))).toBe(false);
     // A layout that reports no code still has the letter.
     expect(isNewWorktree(key({ key: "N", metaKey: true, shiftKey: true }))).toBe(true);
-    expect(shortcutLabel.newWorktree()).toBe("⌘⇧N");
+    expect(shortcutLabel.newWorktree()).toBe("⇧⌘N");
 
     onPlatform("Linux x86_64");
     expect(isNewWorktree(key({ code: "KeyN", ctrlKey: true, shiftKey: true }))).toBe(true);
@@ -101,5 +107,48 @@ describe("shortcuts", () => {
     expect(isNextWaiting(key({ code: "KeyJ", key: "J", ctrlKey: true, shiftKey: true }))).toBe(true);
     expect(isPreviousSession(key({ code: "Tab", key: "Tab", ctrlKey: true }))).toBe(true);
     expect(shortcutLabel.nextWaiting()).toBe("Ctrl+Shift+J");
+  });
+});
+
+describe("the person's own keys", () => {
+  const cmd = (code: string, more: Partial<Chord> = {}): Chord => ({ meta: true, ctrl: false, alt: false, shift: false, code, ...more });
+  afterEach(() => {
+    setCustomChords({});
+    setRecording(false);
+    onPlatform("MacIntel");
+  });
+
+  it("move an action to its new key, label and all, and off the old one", () => {
+    setCustomChords({ newSession: cmd("KeyK") });
+    expect(isNewSession(key({ code: "KeyK", metaKey: true }))).toBe(true);
+    expect(isNewSession(key({ code: "KeyT", metaKey: true }))).toBe(false);
+    expect(shortcutLabel.newSession()).toBe("⌘K");
+    // An action the app does not have is left out.
+    setCustomChords({ nonsense: cmd("KeyZ") });
+    expect(shortcutLabel.newSession()).toBe("⌘T");
+  });
+
+  it("are refused where they would be typed, taken from the system or a tab, or already another's", () => {
+    expect(refusal("newSession", { ...cmd("KeyK"), meta: false })).toMatch(/so typing never sets it off/);
+    expect(refusal("newSession", cmd("KeyQ"))).toMatch(/macOS keeps/);
+    expect(refusal("newSession", cmd("KeyW", { shift: true }))).toMatch(/closes the window/);
+    expect(refusal("newSession", cmd("Digit3"))).toMatch(/tab 3/);
+    expect(refusal("newSession", cmd("KeyO", { shift: true }))).toBe("Search sessions and files is on it already.");
+    expect(refusal("newSession", cmd("KeyK"))).toBeNull();
+    // Its own key is not someone else's.
+    expect(refusal("newSession", cmd("KeyT"))).toBeNull();
+    onPlatform("Linux x86_64");
+    expect(refusal("newSession", { meta: false, ctrl: true, alt: false, shift: true, code: "Digit2" })).toMatch(/tab 2/);
+  });
+
+  it("are not set off while one is being recorded", () => {
+    const handler = vi.fn();
+    renderHook(() => useHotkey(isNewSession, handler));
+    setRecording(true);
+    window.dispatchEvent(key({ code: "KeyT", metaKey: true }));
+    expect(handler).not.toHaveBeenCalled();
+    setRecording(false);
+    window.dispatchEvent(key({ code: "KeyT", metaKey: true }));
+    expect(handler).toHaveBeenCalledTimes(1);
   });
 });

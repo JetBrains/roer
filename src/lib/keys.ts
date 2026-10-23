@@ -1,5 +1,5 @@
 /** Application-wide keyboard shortcuts. */
-import { useEffect } from "react";
+import { useEffect, useSyncExternalStore } from "react";
 
 /**
  * Runs `handler` for every keydown `match` accepts, anywhere in the window.
@@ -16,7 +16,8 @@ export function useHotkey(
 ): void {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (!match(event)) return;
+      // While a shortcut is being recorded, its keys are the recording's.
+      if (recording || !match(event)) return;
       event.preventDefault();
       event.stopPropagation();
       handler(event);
@@ -47,111 +48,256 @@ const appChord = (event: KeyboardEvent, shift: boolean): boolean =>
     ? event.metaKey && event.shiftKey === shift && !event.ctrlKey && !event.altKey
     : event.ctrlKey && event.shiftKey && !event.metaKey && !event.altKey;
 
-/** Exactly `Cmd` on macOS, exactly `Alt` elsewhere. */
-const navChord = (event: KeyboardEvent): boolean =>
-  isMac()
-    ? event.metaKey && !event.shiftKey && !event.ctrlKey && !event.altKey
-    : event.altKey && !event.shiftKey && !event.ctrlKey && !event.metaKey;
+/** A key and exactly the modifiers held with it. `code` is the physical
+ * key, as `KeyboardEvent.code` names it: under Shift or Option `key` is not
+ * the same character on every layout. */
+export interface Chord {
+  meta: boolean;
+  ctrl: boolean;
+  alt: boolean;
+  shift: boolean;
+  code: string;
+}
+
+/** The app's actions that a key is bound to, and the person may move. */
+export type ActionId =
+  | "newSession"
+  | "pickAgent"
+  | "newWorktree"
+  | "goToFile"
+  | "nextWaiting"
+  | "previousSession"
+  | "closeTab"
+  | "agents"
+  | "prevCommit"
+  | "nextCommit"
+  | "shortcuts";
+
+const chord = (code: string, mods: Partial<Omit<Chord, "code">> = {}): Chord => ({
+  meta: false,
+  ctrl: false,
+  alt: false,
+  shift: false,
+  ...mods,
+  code,
+});
+
+/** `Cmd` on macOS; `Ctrl+Shift` elsewhere, where `Ctrl` alone is the terminal's. */
+const app = (code: string, shift = false): Chord =>
+  isMac() ? chord(code, { meta: true, shift }) : chord(code, { ctrl: true, shift: true });
+
+/** `Cmd` on macOS, `Alt` elsewhere: a browser's back and forward. */
+const nav = (code: string): Chord => (isMac() ? chord(code, { meta: true }) : chord(code, { alt: true }));
+
+/**
+ * Each action's key out of the box, and why it is that key:
+ * - New session, `Cmd+T`: a browser's new tab; this app's sessions are the
+ *   nearest thing it has to tabs. `Ctrl+Shift+T` off macOS, a Linux
+ *   terminal's.
+ * - Another agent, `Cmd+Option+T`: the same, with Option for "the other kind".
+ * - New worktree, `Cmd+Shift+N`: new as in a new place to work.
+ * - Search, `Cmd+Shift+O`: IntelliJ's Go to File.
+ * - Next waiting, `Cmd+Shift+J`. Not `U`, for "unread": `Ctrl+Shift+U` is how
+ *   GTK types a character by its code point, and the input method takes it.
+ * - Previous session, `Ctrl+Tab` everywhere: "the other one" in every tabbed
+ *   app, and a shell has no use for it.
+ * - Close, `Cmd+W`: a browser's and a terminal's close tab. The window is on
+ *   `Cmd+Shift+W`.
+ * - Agents, `Cmd+,`: where every Mac app keeps its settings.
+ * - Commits, `Cmd+Left` and `Right` (`Alt` off macOS): back and forward.
+ * - The sheet, `Cmd+/`.
+ */
+const defaults = (): Record<ActionId, Chord> => ({
+  newSession: app("KeyT"),
+  pickAgent: isMac() ? chord("KeyT", { meta: true, alt: true }) : chord("KeyT", { ctrl: true, alt: true, shift: true }),
+  newWorktree: app("KeyN", true),
+  goToFile: app("KeyO", true),
+  nextWaiting: app("KeyJ", true),
+  previousSession: chord("Tab", { ctrl: true }),
+  closeTab: app("KeyW"),
+  agents: isMac() ? chord("Comma", { meta: true }) : chord("Comma", { ctrl: true }),
+  prevCommit: nav("ArrowLeft"),
+  nextCommit: nav("ArrowRight"),
+  shortcuts: app("Slash"),
+});
+
+/** Each action as the shortcut sheet names it, in the sheet's order. */
+export const ACTIONS: ReadonlyArray<[ActionId, string]> = [
+  ["newSession", "New session"],
+  ["pickAgent", "New session with another agent"],
+  ["newWorktree", "New session somewhere else, or in a new worktree"],
+  ["goToFile", "Search sessions and files"],
+  ["nextWaiting", "Next waiting session"],
+  ["previousSession", "Previous session"],
+  ["closeTab", "Close file tab, or release the session from Terminal"],
+  ["agents", "Agents"],
+  ["prevCommit", "Previous commit"],
+  ["nextCommit", "Next commit"],
+  ["shortcuts", "Keyboard shortcuts"],
+];
+
+// The person's own keys, by action, over the defaults; and who to tell when
+// they change, so every title and hint says the key that works.
+let overrides: Partial<Record<ActionId, Chord>> = {};
+let version = 0;
+const listeners = new Set<() => void>();
+let recording = false;
+
+/** The key `action` is on out of the box. */
+export const defaultChordOf = (action: ActionId): Chord => defaults()[action];
+
+/** The key `action` is on now. */
+export const chordOf = (action: ActionId): Chord => overrides[action] ?? defaults()[action];
+
+/** Whether `action` is off its default. */
+export const isCustom = (action: ActionId): boolean => overrides[action] !== undefined;
+
+/** The person's own keys, as they are kept. */
+export const customChords = (): Partial<Record<ActionId, Chord>> => ({ ...overrides });
+
+/** Takes the person's own keys, replacing the last; an unknown action is left out. */
+export function setCustomChords(next: Partial<Record<string, Chord>>): void {
+  const known = new Set(ACTIONS.map(([id]) => id));
+  overrides = Object.fromEntries(Object.entries(next).filter(([id, one]) => known.has(id as ActionId) && one)) as Partial<
+    Record<ActionId, Chord>
+  >;
+  version += 1;
+  for (const listener of listeners) listener();
+}
+
+/** Re-renders with every change of the keys, for what shows them. */
+export const useKeymap = (): number =>
+  useSyncExternalStore(
+    (listener) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    () => version,
+  );
+
+/** Holds every shortcut off while one is being recorded. */
+export const setRecording = (on: boolean): void => {
+  recording = on;
+};
+
+/** The key a `code` types, for an event that reports no `code`: jsdom, and
+ * some remote-desktop layers. */
+const keyOf = (code: string): string =>
+  code.startsWith("Key") || code.startsWith("Digit")
+    ? code.slice(code.startsWith("Key") ? 3 : 5).toLowerCase()
+    : ({ Comma: ",", Period: ".", Slash: "/", Semicolon: ";", Quote: "'", BracketLeft: "[", BracketRight: "]", Backslash: "\\", Minus: "-", Equal: "=", Backquote: "`", Space: " " } as Record<string, string>)[code] ?? code;
+
+/** Whether `event` is exactly `chord`: its key, and no other modifier held. */
+export const matchesChord = (chord: Chord, event: KeyboardEvent): boolean =>
+  event.metaKey === chord.meta &&
+  event.ctrlKey === chord.ctrl &&
+  event.altKey === chord.alt &&
+  event.shiftKey === chord.shift &&
+  (event.code === chord.code || (!event.code && event.key.toLowerCase() === keyOf(chord.code).toLowerCase()));
+
+/** The chord a keydown makes, or null for a modifier pressed alone. */
+export function chordFrom(event: KeyboardEvent): Chord | null {
+  if (["Meta", "Control", "Alt", "Shift"].includes(event.key) || !event.code) return null;
+  return { meta: event.metaKey, ctrl: event.ctrlKey, alt: event.altKey, shift: event.shiftKey, code: event.code };
+}
+
+const KEY_NAMES: Record<string, string> = {
+  ArrowLeft: "←",
+  ArrowRight: "→",
+  ArrowUp: "↑",
+  ArrowDown: "↓",
+  Comma: ",",
+  Period: ".",
+  Slash: "/",
+  Semicolon: ";",
+  Quote: "'",
+  BracketLeft: "[",
+  BracketRight: "]",
+  Backslash: "\\",
+  Minus: "-",
+  Equal: "=",
+  Backquote: "`",
+};
+
+/** How a chord is written on this platform: `⌥⌘T`, `Ctrl+Alt+Shift+T`. */
+export function chordLabel(chord: Chord): string {
+  const key = chord.code.startsWith("Key")
+    ? chord.code.slice(3)
+    : chord.code.startsWith("Digit")
+      ? chord.code.slice(5)
+      : (KEY_NAMES[chord.code] ?? chord.code);
+  if (isMac()) return `${chord.ctrl ? "⌃" : ""}${chord.alt ? "⌥" : ""}${chord.shift ? "⇧" : ""}${chord.meta ? "⌘" : ""}${key}`;
+  return [chord.ctrl && "Ctrl", chord.alt && "Alt", chord.shift && "Shift", chord.meta && "Meta", key].filter(Boolean).join("+");
+}
+
+const label = (action: ActionId) => () => chordLabel(chordOf(action));
 
 /** How each shortcut is written on this platform, for titles and hints. */
 export const shortcutLabel = {
-  newSession: () => (isMac() ? "⌘T" : "Ctrl+Shift+T"),
-  pickAgent: () => (isMac() ? "⌥⌘T" : "Ctrl+Alt+Shift+T"),
-  newWorktree: () => (isMac() ? "⌘⇧N" : "Ctrl+Shift+N"),
-  agents: () => (isMac() ? "⌘," : "Ctrl+,"),
-  goToFile: () => (isMac() ? "⌘⇧O" : "Ctrl+Shift+O"),
+  newSession: label("newSession"),
+  pickAgent: label("pickAgent"),
+  newWorktree: label("newWorktree"),
+  agents: label("agents"),
+  goToFile: label("goToFile"),
   tab: (n: number) => (isMac() ? `⌘${n}` : `Ctrl+Shift+${n}`),
-  closeTab: () => (isMac() ? "⌘W" : "Ctrl+Shift+W"),
-  shortcuts: () => (isMac() ? "⌘/" : "Ctrl+Shift+/"),
-  nextWaiting: () => (isMac() ? "⌘⇧J" : "Ctrl+Shift+J"),
-  previousSession: () => (isMac() ? "⌃Tab" : "Ctrl+Tab"),
-  prevCommit: () => (isMac() ? "⌘←" : "Alt+←"),
-  nextCommit: () => (isMac() ? "⌘→" : "Alt+→"),
+  closeTab: label("closeTab"),
+  shortcuts: label("shortcuts"),
+  nextWaiting: label("nextWaiting"),
+  previousSession: label("previousSession"),
+  prevCommit: label("prevCommit"),
+  nextCommit: label("nextCommit"),
 };
+
+/** Why `chord` cannot be `action`'s key, or null when it can: a key needs
+ * Cmd, Ctrl or Alt with it, lest typing trigger it; and one the system, a
+ * tab number or another action has is not taken from them. */
+export function refusal(action: ActionId, chord: Chord): string | null {
+  if (!chord.meta && !chord.ctrl && !chord.alt) {
+    return `Hold ${isMac() ? "⌘, ⌃ or ⌥" : "Ctrl or Alt"} with it, so typing never sets it off.`;
+  }
+  const plain = !chord.ctrl && !chord.alt;
+  if (isMac() && chord.meta && plain && !chord.shift && ["KeyQ", "KeyH", "KeyM"].includes(chord.code)) {
+    return "macOS keeps that one.";
+  }
+  if (isMac() && chord.meta && plain && chord.shift && chord.code === "KeyW") return "That closes the window.";
+  const tabMods = isMac() ? chord.meta && plain && !chord.shift : chord.ctrl && chord.shift && !chord.alt && !chord.meta;
+  if (tabMods && /^Digit[1-9]$/.test(chord.code)) return `That brings up tab ${chord.code.slice(5)}.`;
+  const taken = ACTIONS.find(([other]) => other !== action && sameChord(chordOf(other), chord));
+  return taken ? `${taken[1]} is on it already.` : null;
+}
+
+export const sameChord = (a: Chord, b: Chord): boolean =>
+  a.meta === b.meta && a.ctrl === b.ctrl && a.alt === b.alt && a.shift === b.shift && a.code === b.code;
 
 /** The strip's tabs before any extension adds its own. */
 const DEFAULT_TABS = ["Workspace", "Terminal", "Changes"];
 
 /** Every shortcut, in the words the shortcut sheet lists them in. `tabs` are
  * the strip's, in order: the first nine have a number. */
-export const allShortcuts = (tabs: readonly string[] = DEFAULT_TABS): Array<[string, string]> => [
-  ["New session", shortcutLabel.newSession()],
-  ["New session with another agent", shortcutLabel.pickAgent()],
-  ["New session somewhere else, or in a new worktree", shortcutLabel.newWorktree()],
-  ["Search sessions and files", shortcutLabel.goToFile()],
-  ["Next waiting session", shortcutLabel.nextWaiting()],
-  ["Previous session", shortcutLabel.previousSession()],
-  ...tabs.slice(0, 9).map((tab, i): [string, string] => [tab, shortcutLabel.tab(i + 1)]),
-  ["Close file tab, or release the session from Terminal", shortcutLabel.closeTab()],
-  ["Agents", shortcutLabel.agents()],
-  ["Previous commit", shortcutLabel.prevCommit()],
-  ["Next commit", shortcutLabel.nextCommit()],
-  ["Keyboard shortcuts", shortcutLabel.shortcuts()],
-];
+export const allShortcuts = (tabs: readonly string[] = DEFAULT_TABS): Array<[string, string]> => {
+  const of = (id: ActionId): [string, string] => [ACTIONS.find(([one]) => one === id)![1], chordLabel(chordOf(id))];
+  return [
+    ...(["newSession", "pickAgent", "newWorktree", "goToFile", "nextWaiting", "previousSession"] as const).map(of),
+    ...tabs.slice(0, 9).map((tab, i): [string, string] => [tab, shortcutLabel.tab(i + 1)]),
+    ...(["closeTab", "agents", "prevCommit", "nextCommit", "shortcuts"] as const).map(of),
+  ];
+};
 
-/**
- * IntelliJ's Go to File: `Cmd+Shift+O` (`Ctrl+Shift+O` off macOS).
- *
- * Matched on `code` — the physical key — rather than `key`, which under
- * Cmd+Shift is not `"O"` on every keyboard layout. `key` is accepted as a
- * fallback for anything that reports no `code`, which is how jsdom and some
- * remote-desktop layers behave.
- */
-export const isGoToFile = (event: KeyboardEvent): boolean =>
-  appChord(event, true) &&
-  (event.code === "KeyO" || (!event.code && event.key.toLowerCase() === "o"));
-
-/**
- * New session: `Cmd+T`, the same key a browser uses for a new tab — this
- * app's sessions are the closest thing it has to tabs. `Ctrl+Shift+T` off
- * macOS, a Linux terminal's new tab.
- */
-export const isNewSession = (event: KeyboardEvent): boolean =>
-  appChord(event, false) &&
-  (event.code === "KeyT" || (!event.code && event.key.toLowerCase() === "t"));
-
-/**
- * Start a session with an agent other than the default: `Cmd+Option+T`, the
- * new-session key with Option for "the other kind".
- */
-export const isPickAgent = (event: KeyboardEvent): boolean =>
-  (isMac()
-    ? event.metaKey && event.altKey && !event.ctrlKey && !event.shiftKey
-    : event.ctrlKey && event.altKey && event.shiftKey && !event.metaKey) &&
-  (event.code === "KeyT" || (!event.code && event.key.toLowerCase() === "t"));
-
-/**
- * The New session dialog with a new worktree picked: `Cmd+Shift+N`
- * (`Ctrl+Shift+N`), new as in a new place to work, not a new tab.
- */
-export const isNewWorktree = (event: KeyboardEvent): boolean =>
-  appChord(event, true) &&
-  (event.code === "KeyN" || (!event.code && event.key.toLowerCase() === "n"));
-
-/**
- * Manage agents: `Cmd+,`, where every Mac app keeps its settings. The menu
- * item carries the key on macOS; this is for the other platforms, which have
- * no menu, and for a browser tab.
- */
-export const isManageAgents = (event: KeyboardEvent): boolean =>
-  (isMac()
-    ? event.metaKey && !event.altKey && !event.ctrlKey && !event.shiftKey
-    : event.ctrlKey && !event.altKey && !event.shiftKey && !event.metaKey) &&
-  (event.code === "Comma" || (!event.code && event.key === ","));
-
-/**
- * Step to the previous commit in a branch diff: `Cmd+Left`, the same key a
- * browser binds to "back" — moving through a list of commits is the same
- * kind of move. `Alt+Left` off macOS, for the same reason.
- */
-export const isPrevCommit = (event: KeyboardEvent): boolean =>
-  navChord(event) &&
-  (event.code === "ArrowLeft" || (!event.code && event.key === "ArrowLeft"));
-
-/** The next commit in a branch diff: `Cmd+Right` (`Alt+Right`), "forward". */
-export const isNextCommit = (event: KeyboardEvent): boolean =>
-  navChord(event) &&
-  (event.code === "ArrowRight" || (!event.code && event.key === "ArrowRight"));
+// Each action's matcher, on whichever key it is on now: see `defaults` for
+// why each is where it is out of the box. Asked on every keystroke, so a key
+// the person moves works at once, with nothing to re-register.
+export const isGoToFile = (event: KeyboardEvent): boolean => matchesChord(chordOf("goToFile"), event);
+export const isNewSession = (event: KeyboardEvent): boolean => matchesChord(chordOf("newSession"), event);
+export const isPickAgent = (event: KeyboardEvent): boolean => matchesChord(chordOf("pickAgent"), event);
+export const isNewWorktree = (event: KeyboardEvent): boolean => matchesChord(chordOf("newWorktree"), event);
+/** On macOS the menu's Agents… item has the key too, moved with it. */
+export const isManageAgents = (event: KeyboardEvent): boolean => matchesChord(chordOf("agents"), event);
+export const isPrevCommit = (event: KeyboardEvent): boolean => matchesChord(chordOf("prevCommit"), event);
+export const isNextCommit = (event: KeyboardEvent): boolean => matchesChord(chordOf("nextCommit"), event);
+export const isCloseTab = (event: KeyboardEvent): boolean => matchesChord(chordOf("closeTab"), event);
+export const isShortcuts = (event: KeyboardEvent): boolean => matchesChord(chordOf("shortcuts"), event);
+export const isNextWaiting = (event: KeyboardEvent): boolean => matchesChord(chordOf("nextWaiting"), event);
+export const isPreviousSession = (event: KeyboardEvent): boolean => matchesChord(chordOf("previousSession"), event);
 
 /**
  * Which of the strip's tabs to bring up: `Cmd+1` to `Cmd+9`, the keys a
@@ -167,33 +313,8 @@ export const tabNumber = (event: KeyboardEvent): number | null => {
 
 export const isTabNumber = (event: KeyboardEvent): boolean => tabNumber(event) !== null;
 
-/**
- * Close the file tab on top, or on the Terminal release the session:
- * `Cmd+W`, the key a browser and a terminal close a tab with (`Ctrl+Shift+W`
- * off macOS). The window is on `Cmd+Shift+W`.
- */
-export const isCloseTab = (event: KeyboardEvent): boolean =>
-  appChord(event, false) && (event.code === "KeyW" || (!event.code && event.key.toLowerCase() === "w"));
-
 /** Escape, anywhere in the window: for a dialog that cannot count on holding
  * the keyboard, such as one that opens while the terminals are still
  * starting and taking focus. */
 export const isEscape = (event: KeyboardEvent): boolean => event.key === "Escape";
 
-/** The shortcut sheet: `Cmd+/` (`Ctrl+Shift+/`). */
-export const isShortcuts = (event: KeyboardEvent): boolean =>
-  appChord(event, false) && (event.code === "Slash" || (!event.code && event.key === "/"));
-
-/**
- * Jump to the next session waiting for you: `Cmd+Shift+J` (`Ctrl+Shift+J`).
- * Not `U`, for "unread": `Ctrl+Shift+U` is how GTK types a character by its
- * code point, and the input method takes it before the window sees it.
- */
-export const isNextWaiting = (event: KeyboardEvent): boolean =>
-  appChord(event, true) && (event.code === "KeyJ" || (!event.code && event.key.toLowerCase() === "j"));
-
-/** Back to the session that was on the stage before this one: `Ctrl+Tab`,
- * everywhere — a shell has no use for it, and it is the key for "the other
- * one" in every tabbed app. */
-export const isPreviousSession = (event: KeyboardEvent): boolean =>
-  event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey && (event.code === "Tab" || event.key === "Tab");

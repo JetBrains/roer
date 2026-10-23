@@ -430,7 +430,7 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
     void refreshWorktrees();
   }, [refreshWorktrees, token, activePane]);
 
-  /** The picker from its first question, where: ⌘⇧N, and the sidebar's
+  /** The picker from its first question, where: ⇧⌘N, and the sidebar's
    * New worktree. */
   const openNewWorktree = () => setPicker({ step: "where" });
 

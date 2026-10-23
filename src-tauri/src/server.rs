@@ -313,6 +313,9 @@ fn dispatch(state: &Arc<AppState>, cmd: &str, args: Value, cid: Option<&str>) ->
     match cmd {
         // git
         "git_root" => call!(args, crate::git::git_root, "cwd": String),
+        // No menu here to move a key in: the bindings alone.
+        "keybindings_get" => call!(args, crate::keybindings::load,),
+        "keybindings_set" => call_res!(args, crate::keybindings::save, "bindings": serde_json::Map<String, serde_json::Value>),
         "git_repos_in" => call!(args, crate::git::git_repos_in, "dir": String),
         "git_repo" => call!(args, crate::git::git_repo, "cwd": String),
         "git_diff" => call_res!(args, crate::git::git_diff, "root": String, "path": String, "untracked": bool),

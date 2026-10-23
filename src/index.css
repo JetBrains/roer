@@ -5274,7 +5274,7 @@ button.danger:hover {
 /* The shortcut sheet: the Go to File popup's frame, holding a list. */
 .popup.shortcuts {
   align-self: flex-start;
-  width: min(420px, 90vw);
+  width: min(520px, 90vw);
   max-height: 70vh;
   overflow-y: auto;
   padding: 14px 16px;
@@ -5292,20 +5292,44 @@ button.danger:hover {
 
 .popup.shortcuts dl > div {
   display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
   justify-content: space-between;
-  gap: 16px;
+  gap: 4px 16px;
   padding: 5px 0;
   border-top: 1px solid var(--ide-border);
   font-size: 12px;
 }
 
 .popup.shortcuts dd {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
   margin: 0;
 }
 
 .popup.shortcuts kbd {
+  min-width: 64px;
+  text-align: right;
   font-family: inherit;
   color: var(--roer-muted);
+}
+
+/* Waiting for the keys the person presses. */
+.popup.shortcuts kbd.recording {
+  color: var(--ide-accent);
+}
+
+/* Why the keys pressed cannot be this one's, under its row. */
+.shortcut-problem {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--roer-warn);
+}
+
+.shortcuts-foot {
+  margin: 10px 0 0;
+  font-size: 11px;
 }
 
 /* The Extensions dialog: every extension, and a switch for each. */

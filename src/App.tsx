@@ -76,7 +76,9 @@ import {
   shortcutLabel,
   tabNumber,
   useHotkey,
+  useKeymap,
 } from "./lib/keys";
+import { loadKeybindings } from "./lib/keybindings";
 import { useNotificationsOn } from "./lib/notify";
 import { nextChoice, useThemeChoice } from "./lib/theme";
 import { useSessionBrowser } from "./lib/useSessionBrowser";
@@ -872,6 +874,13 @@ export function App() {
   // The Workspace sidebar and the session browser are two places on screen
   // for one piece of state — which Workspace is selected, and what it
   // filters — so one hook call feeds both rather than each keeping its own.
+  // The person's own keys, from last time; every title and hint that names
+  // a key says the one that works once they are in.
+  useKeymap();
+  useEffect(() => {
+    void loadKeybindings();
+  }, []);
+
   const browser = useSessionBrowser({
     activePane: session?.pane,
     token: target,
