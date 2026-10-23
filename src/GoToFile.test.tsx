@@ -4,10 +4,16 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { GoToFile, matchesQuery, merge, type SessionHit } from "./GoToFile";
 import { filesSearch } from "./lib/files";
 import type { Hit, Hits } from "./lib/files";
+import { readClaudeTranscript } from "./lib/pty";
 
 vi.mock("./lib/files", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./lib/files")>()),
   filesSearch: vi.fn(),
+}));
+
+vi.mock("./lib/pty", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./lib/pty")>()),
+  readClaudeTranscript: vi.fn(),
 }));
 
 vi.mock("./lib/session", () => ({
@@ -439,6 +445,59 @@ describe("GoToFile — sessions", () => {
     );
     expect(searchSessions).toHaveBeenCalledWith("quokka");
     expect(screen.getByText("quokka", { selector: "mark" })).toBeInTheDocument();
+  });
+
+  it("reads the highlighted past conversation beside the list, and resumes it from there", async () => {
+    localStorage.removeItem("roer:search-preview");
+    vi.mocked(readClaudeTranscript).mockImplementation(async (_cwds, id) => ({
+      earlier: 0,
+      messages: [
+        { role: "user", text: id === "c1" ? "Look at the importer" : "Make the logo" },
+        { role: "assistant", text: id === "c1" ? "The quokka migration drops every second row." : "Done." },
+      ],
+    }));
+    const past = (id: string, name: string): SessionHit => ({
+      ...session(name, "/work/shop"),
+      conversation: { id, cwd: "/work/shop", title: name, updatedAt: 0 },
+    });
+    const resume = vi.fn();
+    const importer = { ...past("c1", "Importer drops rows"), open: resume };
+    render(
+      <GoToFile noFiles sessions={[importer, past("c2", "Quokka logo")]} conversationCwds={["/work/shop"]} onOpen={vi.fn()} onClose={vi.fn()} />,
+    );
+
+    const preview = await screen.findByRole("complementary", { name: "Preview" });
+    expect(await screen.findByText("The quokka migration drops every second row.")).toBeInTheDocument();
+    expect(readClaudeTranscript).toHaveBeenCalledWith(["/work/shop"], "c1");
+    fireEvent.keyDown(screen.getByRole("combobox"), { key: "ArrowDown" });
+    expect(await screen.findByText("Make the logo")).toBeInTheDocument();
+    fireEvent.keyDown(screen.getByRole("combobox"), { key: "ArrowUp" });
+    fireEvent.click(await screen.findByRole("button", { name: "Resume" }));
+    expect(resume).toHaveBeenCalled();
+    expect(preview).toBeInTheDocument();
+  });
+
+  it("closes the preview until asked for it again, and offers none for live sessions", async () => {
+    localStorage.removeItem("roer:search-preview");
+    vi.mocked(readClaudeTranscript).mockResolvedValue({ earlier: 0, messages: [] });
+    const { unmount } = render(
+      <GoToFile
+        noFiles
+        sessions={[{ ...session("Importer drops rows", "/work/shop"), conversation: { id: "c1", cwd: "/work/shop", title: "Importer drops rows", updatedAt: 0 } }]}
+        onOpen={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Close the preview" }));
+    expect(screen.queryByRole("complementary", { name: "Preview" })).not.toBeInTheDocument();
+    fireEvent.mouseDown(screen.getByRole("button", { name: "Preview conversations" }));
+    expect(await screen.findByRole("complementary", { name: "Preview" })).toBeInTheDocument();
+    unmount();
+
+    render(<GoToFile noFiles sessions={[session("Fix login", "/work/api")]} onOpen={vi.fn()} onClose={vi.fn()} />);
+    await screen.findByRole("option");
+    expect(screen.queryByRole("complementary", { name: "Preview" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Preview conversations" })).not.toBeInTheDocument();
   });
 
   it("counts the sessions it found past the ones it lists", async () => {
