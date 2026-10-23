@@ -46,7 +46,8 @@ const SCOPE_TITLES: Record<Row["scope"], string> = {
 
 /**
  * Every extension, built in or not, with a switch to turn each off. Off means
- * neither built nor loaded: its tabs leave the strip and its server stops.
+ * neither built nor loaded: its tabs leave the strip, its sections the
+ * Workspace tab, and its server stops.
  * `onNewTab` asks the agent for one of the person's own.
  */
 export function ExtensionsDialog({ onClose, onNewTab }: { onClose: () => void; onNewTab?: () => void }) {
@@ -191,7 +192,7 @@ export function ExtensionsDialog({ onClose, onNewTab }: { onClose: () => void; o
       >
         <div className="ext-head">
           <h2>Extensions</h2>
-          <p className="muted ext-intro">A switched-off extension is neither built nor loaded: its tabs and tools go away until you switch it on.</p>
+          <p className="muted ext-intro">A switched-off extension is neither built nor loaded: its tabs, Workspace tab sections and tools go away until you switch it on.</p>
           {error ? <p className="error">{error}</p> : null}
         </div>
 
@@ -204,7 +205,7 @@ export function ExtensionsDialog({ onClose, onNewTab }: { onClose: () => void; o
           {found !== null && yours.length === 0 ? (
             <EmptyState
               text="No extensions of your own yet."
-              detail="Ask your agent for a tab you will keep coming back to, such as one with your open pull requests, and it writes one."
+              detail="Ask your agent for a tab you will keep coming back to, such as one with your open pull requests, or for a section of the Workspace tab about all of its projects, and it writes one."
               footer={
                 onNewTab ? (
                   <button type="button" className="gen-button" onClick={onNewTab}>

@@ -126,8 +126,9 @@ declare module "roer" {
 
   /** The session on the stage; null while there is none. */
   export function useSession(): Session | null;
-  /** In a Workspace tab section, the Workspace or Project it is about; null in a stage tab. The
-   * section starts over when it changes. */
+  /** The Workspace or Project the sidebar has selected; null before one is. A Workspace tab
+   * section starts over when it changes; a stage tab stays mounted and gets the new one, so read it
+   * in an effect on `scope`. Null in other apps' chats, which have no Workspace. */
   export function useScope(): Scope | null;
   /** Whether this tab is shown: on top of the stage, or beside it. Take the keyboard only while it is. */
   export function useActive(): boolean;

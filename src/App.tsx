@@ -202,6 +202,7 @@ export function App() {
   const [showingShortcuts, setShowingShortcuts] = useState(false);
   const [showingExtensions, setShowingExtensions] = useState(false);
   const [showingNewTab, setShowingNewTab] = useState(false);
+  const [showingNewSection, setShowingNewSection] = useState(false);
   // The agent integrations dialog on screen, if it is: put there by the app on the
   // first launch that finds Claude Code, or asked for from the menu.
   const [setup, setSetup] = useState<{ status: SetupStatus; firstRun: boolean } | null>(null);
@@ -1523,6 +1524,7 @@ export function App() {
                       active={tabs.active === "sessions"}
                       openFile={openInTab}
                       activateTab={activateTab}
+                      onAddSection={() => setShowingNewSection(true)}
                     />
                   ) : null
                 }
@@ -1540,6 +1542,7 @@ export function App() {
                   <TabBody
                     entry={tab}
                     session={stageSession}
+                    scope={scope}
                     active={tabs.active === tab.tabId}
                     focused={tabs.active === tab.tabId && mainFocused}
                     openFile={openInTab}
@@ -1613,6 +1616,7 @@ export function App() {
                     <TabBody
                       entry={sideExt}
                       session={stageSession}
+                      scope={scope}
                       active
                       focused={beside.focus === "side"}
                       openFile={openInTab}
@@ -1738,6 +1742,9 @@ export function App() {
         ) : null}
         {showingNewTab ? (
           <NewTabDialog agent={askAgent} agentState={agentState} onClose={() => setShowingNewTab(false)} />
+        ) : null}
+        {showingNewSection ? (
+          <NewTabDialog agent={askAgent} agentState={agentState} kind="section" onClose={() => setShowingNewSection(false)} />
         ) : null}
         {showingShortcuts ? <ShortcutsDialog tabs={strip.slice(0, 9).map((tab) => tab.title)} onClose={() => setShowingShortcuts(false)} /> : null}
 

@@ -10,6 +10,14 @@ export const TAB_IDEAS: readonly string[] = [
   "the GitHub issues assigned to me",
 ];
 
+/** Sections worth having on the Workspace tab, about all of its projects. */
+export const SECTION_IDEAS: readonly string[] = [
+  "each project's open pull requests and their checks",
+  "each project's branch and what is not committed",
+  "the CI status of each project's main branch",
+  "the GitHub issues assigned to me across these projects",
+];
+
 /** What "New tab…" asks the agent, for a tab that shows `what`. */
 export function newTabPrompt(what: string): string {
   return [
@@ -18,6 +26,40 @@ export function newTabPrompt(what: string): string {
     "Ask me where its data comes from if that is not clear. Load it with extension_dev for me to try, and ask me before you install it.",
   ].join(" ");
 }
+
+/** What "Add a section…" asks the agent, for a Workspace tab section that shows `what`. */
+export function newSectionPrompt(what: string): string {
+  return [
+    `Make me a Roer extension that adds a section to the Workspace tab showing ${what}.`,
+    "Register it with roer.workspace.registerSection and read the workspace's projects with useScope().",
+    "Use the roer-extension-authoring skill and build it from roer/ui; keep it short, since it sits in the list with my sessions.",
+    "Ask me where its data comes from if that is not clear. Load it with extension_dev for me to try, and ask me before you install it.",
+  ].join(" ");
+}
+
+/** What the dialog says and asks, for a tab or for a Workspace tab section. */
+const KINDS = {
+  tab: {
+    title: "New tab",
+    intro:
+      "Say what you want to keep an eye on, and the session's agent writes a tab for it: an extension, code that runs in Roer with your permissions. It stays in the strip and fetches its own data. The agent loads it for you to try, and installs it only when you say so.",
+    placeholder: "What should the tab show?",
+    field: "What the tab shows",
+    ideas: TAB_IDEAS,
+    prompt: newTabPrompt,
+    label: (what: string) => `a tab that shows ${what}`,
+  },
+  section: {
+    title: "New section",
+    intro:
+      "Say what you want to see about this workspace's projects, and the session's agent writes a section of the Workspace tab for it: an extension, code that runs in Roer with your permissions. It shows after Projects, for every workspace and project, and fetches its own data. The agent loads it for you to try, and installs it only when you say so.",
+    placeholder: "What should the section show?",
+    field: "What the section shows",
+    ideas: SECTION_IDEAS,
+    prompt: newSectionPrompt,
+    label: (what: string) => `a Workspace section that shows ${what}`,
+  },
+} as const;
 
 /**
  * Asks the session's agent for a tab of the person's own: the way to an
@@ -28,12 +70,16 @@ export function newTabPrompt(what: string): string {
 export function NewTabDialog({
   agent,
   agentState,
+  kind = "tab",
   onClose,
 }: {
   agent: AskAgent;
   agentState?: AgentState;
+  /** A tab of the stage's strip, or a section of the Workspace tab. */
+  kind?: keyof typeof KINDS;
   onClose: () => void;
 }) {
+  const asked = KINDS[kind];
   const ref = useRef<HTMLDivElement>(null);
   const [what, setWhat] = useState("");
   const [status, setStatus] = useState<string | null>(null);
@@ -51,7 +97,7 @@ export function NewTabDialog({
     const text = what.trim();
     if (!text) return;
     agent
-      .ask(newTabPrompt(text), `a tab that shows ${text}`)
+      .ask(asked.prompt(text), asked.label(text))
       .then((outcome) => {
         if (outcome === "sent") onClose();
         else {
@@ -60,8 +106,8 @@ export function NewTabDialog({
         }
       })
       .catch((e: unknown) => {
-        console.error("roer: could not ask the agent for a tab", e);
-        setStatus("Could not ask the agent for a tab.");
+        console.error(`roer: could not ask the agent for ${asked.label(text)}`, e);
+        setStatus(`Could not ask the agent for a ${kind}.`);
       });
   };
 
@@ -72,13 +118,13 @@ export function NewTabDialog({
         className="popup new-tab"
         role="dialog"
         aria-modal="true"
-        aria-label="New tab"
+        aria-label={asked.title}
         tabIndex={-1}
         onKeyDown={(event) => {
           if (event.key === "Escape") onClose();
         }}
       >
-        <h2>New tab</h2>
+        <h2>{asked.title}</h2>
         {agent.held.length > 0 ? (
           <div className="new-tab-held" role="status">
             <p className="muted">
@@ -110,11 +156,7 @@ export function NewTabDialog({
             </ul>
           </div>
         ) : null}
-        <p className="muted">
-          Say what you want to keep an eye on, and the session's agent writes a tab for it: an
-          extension, code that runs in Roer with your permissions. It stays in the strip and fetches
-          its own data. The agent loads it for you to try, and installs it only when you say so.
-        </p>
+        <p className="muted">{asked.intro}</p>
         <form
           onSubmit={(event) => {
             event.preventDefault();
@@ -123,8 +165,8 @@ export function NewTabDialog({
         >
           <textarea
             className="gen-bundles-input"
-            aria-label="What the tab shows"
-            placeholder="What should the tab show?"
+            aria-label={asked.field}
+            placeholder={asked.placeholder}
             rows={3}
             autoFocus
             disabled={held}
@@ -138,7 +180,7 @@ export function NewTabDialog({
             }}
           />
           <div className="new-tab-ideas" aria-label="Ideas">
-            {TAB_IDEAS.map((idea) => (
+            {asked.ideas.map((idea) => (
               <button key={idea} type="button" className="gen-button" disabled={held} onClick={() => setWhat(idea)}>
                 {idea}
               </button>
