@@ -6,6 +6,7 @@ mod claude;
 mod claude_setup;
 mod codex;
 mod junie;
+mod keybindings;
 mod live;
 mod cli_link;
 pub mod events;
@@ -61,6 +62,8 @@ pub fn run() {
             git::git_changes,
             git::git_diff,
             git::git_root,
+            keybindings::keybindings_get,
+            keybindings::keybindings_set,
             git::git_repos_in,
             git::git_repo,
             git::git_branches,
@@ -179,7 +182,10 @@ fn menu(app: &mut tauri::App) -> tauri::Result<()> {
         let browser = MenuItem::with_id(handle, "browser-server", "Open This Session in a Browser…", true, None::<&str>)?;
         // Where a Mac app keeps its settings, and on the key every Mac app
         // opens them with.
-        let agents = MenuItem::with_id(handle, "agents", "Agents…", true, Some("CmdOrCtrl+,"))?;
+        // On the key the person moved the Agents action to, if they did.
+        let agents_key = keybindings::agents_accelerator(keybindings::load().as_object().unwrap_or(&serde_json::Map::new()));
+        let agents = MenuItem::with_id(handle, "agents", "Agents…", true, agents_key.as_deref())?;
+        app.manage(keybindings::AgentsMenuItem(agents.clone()));
         let updates = MenuItem::with_id(handle, "check-updates", "Check for Updates…", true, None::<&str>)?;
         // Tauri's default menu, but with Roer's own Close Window: the default
         // one is on ⌘W, and closing the window quits the app. That key is for
