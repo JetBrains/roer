@@ -1248,6 +1248,7 @@ export function App() {
           handleCreateWorkspace={browser.handleCreateWorkspace}
           handleRenameWorkspace={browser.handleRenameWorkspace}
           handleDeleteWorkspace={browser.handleDeleteWorkspace}
+          handleSetWorkspaceFolder={browser.handleSetWorkspaceFolder}
           handleAttachExistingProject={browser.handleAttachExistingProject}
           handleAttachNewProject={browser.handleAttachNewProject}
           handleCreateProject={browser.handleCreateProject}
@@ -1270,6 +1271,7 @@ export function App() {
             openInWorktree={browser.openInWorktree}
             openPickAgent={browser.openPickAgent}
             handleRemoveWorktree={browser.handleRemoveWorktree}
+            folderInView={browser.folderInView}
             projects={browser.projectsInView}
             onOpen={show}
           />
@@ -1492,6 +1494,7 @@ export function App() {
                 conversationCwds={browser.conversationCwds}
                 refresh={browser.refresh}
                 projectsInView={browser.projectsInView}
+                folderInView={browser.folderInView}
                 worktrees={browser.worktrees}
                 onOpen={show}
               />

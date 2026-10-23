@@ -23,7 +23,7 @@ import type { Project } from "./lib/projects";
 import type { ClaudeSession, SessionInfo } from "./lib/pty";
 import type { DirStats, SessionBrowserState } from "./lib/useSessionBrowser";
 import type { Workspace } from "./lib/workspaces";
-import { buildTree, checkoutName } from "./lib/checkouts";
+import { buildTree, checkoutName, folderLabel } from "./lib/checkouts";
 import { Conversations } from "./Conversations";
 import { useFolded } from "./lib/folded";
 
@@ -280,8 +280,9 @@ function sessionSections(
   roots: Record<string, string>,
   entries: SessionEntry[],
   waiting: ReadonlySet<string>,
+  folder?: string,
 ): Section[] {
-  const tree = buildTree(projects, worktrees, repos, entries, (entry) => entry.session.cwd, (list) => byRank(list, waiting));
+  const tree = buildTree(projects, worktrees, repos, entries, (entry) => entry.session.cwd, (list) => byRank(list, waiting), folder);
   const sections: Section[] = tree.projects
     .map((node) => ({
       key: `project-${node.project.id}`,
@@ -298,6 +299,17 @@ function sessionSections(
         })),
     }))
     .filter((section) => section.checkouts.length > 0);
+
+  // The Workspace's own folder, after its Projects, as in the sidebar.
+  if (folder && tree.inFolder.length > 0) {
+    sections.push({
+      key: `folder-${folder}`,
+      project: true,
+      heading: folderLabel(folder),
+      path: folder,
+      checkouts: [{ key: folder, label: "all projects", linked: false, entries: tree.inFolder }],
+    });
+  }
 
   const loose = new Map<string, SessionEntry[]>();
   for (const entry of tree.elsewhere) {
@@ -408,6 +420,7 @@ export type SessionBrowserProps = Pick<
   | "conversationCwds"
   | "refresh"
   | "projectsInView"
+  | "folderInView"
   | "worktrees"
 > & {
   onOpen: (request: OpenRequest) => void;
@@ -448,6 +461,7 @@ export function SessionBrowser({
   conversationCwds,
   refresh,
   projectsInView,
+  folderInView,
   worktrees,
   onOpen,
 }: SessionBrowserProps) {
@@ -466,7 +480,7 @@ export function SessionBrowser({
   // their own below: there can be hundreds, and they are come back to by
   // what and when more than by where.
   const entries: SessionEntry[] = visibleSessions.map((session): SessionEntry => ({ kind: "live", session }));
-  const sections = sessionSections(projectsInView, worktrees, repos, roots, entries, waiting);
+  const sections = sessionSections(projectsInView, worktrees, repos, roots, entries, waiting, folderInView);
   // A Project's group is always two levels, Project then checkout, as the
   // sidebar's tree is. A repository outside the Projects in view needs a
   // heading only beside others.

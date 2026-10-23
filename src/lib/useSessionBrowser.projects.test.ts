@@ -10,6 +10,7 @@ import {
   detachProject,
   listWorkspaces,
   renameWorkspace,
+  setWorkspaceFolder,
   workspaceAssignments,
   type Workspace,
 } from "./workspaces";
@@ -31,6 +32,7 @@ vi.mock("./workspaces", () => ({
   listWorkspaces: vi.fn(async () => []),
   createWorkspace: vi.fn(),
   renameWorkspace: vi.fn(),
+  setWorkspaceFolder: vi.fn(),
   deleteWorkspace: vi.fn(),
   attachProject: vi.fn(),
   detachProject: vi.fn(),
@@ -66,6 +68,7 @@ beforeEach(() => {
   vi.mocked(workspaceAssignments).mockReset().mockResolvedValue({});
   vi.mocked(listProjects).mockReset().mockResolvedValue([]);
   vi.mocked(createWorkspace).mockReset();
+  vi.mocked(setWorkspaceFolder).mockReset().mockImplementation(async (id, folder) => workspace({ id, name: "work", folder: folder ?? undefined }));
   vi.mocked(renameWorkspace).mockReset();
   vi.mocked(attachProject).mockReset();
   vi.mocked(detachProject).mockReset();
@@ -120,7 +123,10 @@ describe("attaching a project", () => {
     vi.mocked(gitReposIn).mockResolvedValue(["/Users/test/work/api", "/Users/test/work/web"]);
     vi.mocked(createWorkspace).mockResolvedValue(workspace({ id: "w2", name: "work" }));
     vi.mocked(createProject).mockImplementation(async (name, path) => ({ id: `p-${name}`, name, path }));
-    vi.mocked(attachProject).mockImplementation(async (id, project) => workspace({ id, name: "work", projects: [project] }));
+    // The backend answers with the whole record, the folder set just before included.
+    vi.mocked(attachProject).mockImplementation(async (id, project) =>
+      workspace({ id, name: "work", projects: [project], folder: "/Users/test/work" }),
+    );
     const { result } = setUp([workspace()], onOpen);
     await waitFor(() => expect(result.current.workspaces).toHaveLength(1));
     act(() => result.current.setSelectedWorkspaceId("w1"));
@@ -133,10 +139,12 @@ describe("attaching a project", () => {
     await act(async () => result.current.confirmFolderRepos(["/Users/test/work/api"], "new"));
 
     expect(createWorkspace).toHaveBeenCalledWith("work");
+    expect(setWorkspaceFolder).toHaveBeenCalledWith("w2", "/Users/test/work");
     expect(createProject).toHaveBeenCalledTimes(1);
     expect(createProject).toHaveBeenCalledWith("api", "/Users/test/work/api");
     expect(attachProject).toHaveBeenCalledWith("w2", "p-api");
     expect(result.current.selectedWorkspace?.id).toBe("w2");
+    expect(result.current.folderInView).toBe("/Users/test/work");
     expect(result.current.folderRepos).toBeNull();
     // The session it was picked for starts in the folder, beside them all.
     expect(onOpen).toHaveBeenCalledWith(expect.objectContaining({ cwd: "/Users/test/work", args: ["new"] }));
@@ -155,6 +163,8 @@ describe("attaching a project", () => {
     await act(async () => result.current.confirmFolderRepos(["/Users/test/work/api"], "same"));
 
     expect(createWorkspace).not.toHaveBeenCalled();
+    // The Workspace it was added to stands for no folder it did not before.
+    expect(setWorkspaceFolder).not.toHaveBeenCalled();
     expect(attachProject).toHaveBeenCalledWith("w1", "p-api");
     expect(result.current.selectedWorkspace?.projects).toEqual(["p-api"]);
   });
@@ -379,5 +389,31 @@ describe("live Codex conversations", () => {
 
     await waitFor(() => expect(result.current.claudeSessions).toHaveLength(2));
     expect(result.current.claudeSessions.map((past) => past.id)).toEqual(["b", "c"]);
+  });
+});
+
+describe("a workspace's folder", () => {
+  it("takes in what runs there, and leaves it out of the first workspace", async () => {
+    vi.mocked(listSessions).mockResolvedValue([
+      { id: "s1", session: "work", pane: "%1", attached: false, cwd: "/Users/test/work", command: "zsh" },
+      { id: "s2", session: "tmp", pane: "%2", attached: false, cwd: "/tmp", command: "zsh" },
+    ]);
+    const { result } = setUp([workspace({ id: "w0", name: "Default" }), workspace({ id: "w2", name: "work", folder: "/Users/test/work" })]);
+    await waitFor(() => expect(result.current.workspaces).toHaveLength(2));
+
+    act(() => result.current.setSelectedWorkspaceId("w2"));
+    await waitFor(() => expect(result.current.visibleSessions.map((s) => s.pane)).toEqual(["%1"]));
+    act(() => result.current.setSelectedWorkspaceId("w0"));
+    await waitFor(() => expect(result.current.visibleSessions.map((s) => s.pane)).toEqual(["%2"]));
+  });
+
+  it("is set and forgotten from the workspace", async () => {
+    const { result } = setUp([workspace()]);
+    await waitFor(() => expect(result.current.workspaces).toHaveLength(1));
+
+    await act(async () => result.current.handleSetWorkspaceFolder("w1", "/Users/test/work"));
+    await waitFor(() => expect(result.current.workspaces[0].folder).toBe("/Users/test/work"));
+    await act(async () => result.current.handleSetWorkspaceFolder("w1", null));
+    await waitFor(() => expect(result.current.workspaces[0].folder).toBeUndefined());
   });
 });

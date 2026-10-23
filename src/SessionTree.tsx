@@ -1,7 +1,7 @@
 import { ChevronDown, ChevronRight, Plus } from "lucide-react";
 import type { ReactNode } from "react";
 
-import { buildTree, checkoutName, type TreeCheckout } from "./lib/checkouts";
+import { buildTree, checkoutName, folderLabel, type TreeCheckout } from "./lib/checkouts";
 import { useFolded } from "./lib/folded";
 import type { Project } from "./lib/projects";
 import type { SessionInfo } from "./lib/pty";
@@ -56,6 +56,7 @@ export type SessionTreeProps = Pick<
   | "openInWorktree"
   | "openPickAgent"
   | "handleRemoveWorktree"
+  | "folderInView"
 > & {
   /** The Projects in view, whose checkouts the tree is made of. */
   projects: Project[];
@@ -85,10 +86,11 @@ export function SessionTree({
   openInWorktree,
   openPickAgent,
   handleRemoveWorktree,
+  folderInView,
   projects,
   onOpen,
 }: SessionTreeProps) {
-  const tree = buildTree(projects, worktrees, repos, visibleSessions, (session) => session.cwd, byLiveRank(waiting));
+  const tree = buildTree(projects, worktrees, repos, visibleSessions, (session) => session.cwd, byLiveRank(waiting), folderInView);
   const home = status?.home;
   const [folded, toggleFold] = useFolded("roer:folded-tree");
 
@@ -148,8 +150,7 @@ export function SessionTree({
     );
   };
 
-  const checkout = ({ worktree, items: sessions }: TreeCheckout<SessionInfo>) => {
-    const name = checkoutName(worktree);
+  const checkout = ({ worktree, items: sessions }: TreeCheckout<SessionInfo>, name = checkoutName(worktree)) => {
     const changes = stats[worktree.path] ?? sessions.map((session) => stats[session.cwd]).find(Boolean);
     return (
       <li key={worktree.path} className={sessions.length === 0 ? "tree-checkout idle" : "tree-checkout"}>
@@ -210,16 +211,36 @@ export function SessionTree({
               "tree-project-name",
             )}
           </h3>
-          {folded.has(`project-${node.project.id}`) ? null : <ul>{node.checkouts.map(checkout)}</ul>}
+          {folded.has(`project-${node.project.id}`) ? null : <ul>{node.checkouts.map((each) => checkout(each))}</ul>}
         </div>
       ))}
+      {/* The Workspace's own folder, shaped as a Project with one checkout:
+        what runs there runs across its repositories. */}
+      {folderInView ? (
+        <div className="tree-project">
+          <h3 className="tree-project-head" title={shorten(folderInView, home)}>
+            {fold("folder", folderLabel(folderInView), tree.inFolder, "tree-project-name")}
+          </h3>
+          {folded.has("folder") ? null : (
+            <ul>
+              {checkout(
+                {
+                  worktree: { path: folderInView, branch: null, commit: "", main: true, base: null, locked: false, missing: false },
+                  items: tree.inFolder,
+                },
+                "all projects",
+              )}
+            </ul>
+          )}
+        </div>
+      ) : null}
       {tree.elsewhere.length > 0 ? (
         <div className="tree-project">
-          {tree.projects.length > 0 ? <h3>Elsewhere</h3> : null}
+          {tree.projects.length > 0 || folderInView ? <h3>Elsewhere</h3> : null}
           <ul className="tree-loose">{tree.elsewhere.map(row)}</ul>
         </div>
       ) : null}
-      {tree.projects.length === 0 && tree.elsewhere.length === 0 ? (
+      {tree.projects.length === 0 && !folderInView && tree.elsewhere.length === 0 ? (
         <p className="muted">Nothing running yet.</p>
       ) : null}
     </section>
