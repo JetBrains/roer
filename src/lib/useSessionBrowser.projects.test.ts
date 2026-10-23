@@ -1,6 +1,7 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { gitReposIn, gitRoot } from "./git";
 import { listClaudeSessions, listPastSessions, listSessions, roerStatus } from "./pty";
 import { createProject, deleteProject, listProjects, renameProject } from "./projects";
 import {
@@ -23,6 +24,7 @@ vi.mock("./pty", () => ({
 
 vi.mock("./git", () => ({
   gitRoot: vi.fn(async () => null),
+  gitReposIn: vi.fn(async () => []),
 }));
 
 vi.mock("./workspaces", () => ({
@@ -70,12 +72,14 @@ beforeEach(() => {
   vi.mocked(createProject).mockReset();
   vi.mocked(renameProject).mockReset();
   vi.mocked(deleteProject).mockReset();
+  vi.mocked(gitRoot).mockReset().mockResolvedValue(null);
+  vi.mocked(gitReposIn).mockReset().mockResolvedValue([]);
   ask.mockReset();
 });
 
-function setUp(initialWorkspaces: Workspace[]) {
+function setUp(initialWorkspaces: Workspace[], onOpen = vi.fn()) {
   vi.mocked(listWorkspaces).mockResolvedValue(initialWorkspaces);
-  return renderHook(() => useSessionBrowser({ token: "none", onOpen: vi.fn() }));
+  return renderHook(() => useSessionBrowser({ token: "none", onOpen }));
 }
 
 describe("attaching a project", () => {
@@ -96,6 +100,7 @@ describe("attaching a project", () => {
 
   it("registers a brand new project and attaches it in one step", async () => {
     const w = workspace();
+    vi.mocked(gitRoot).mockResolvedValue("/tmp/two");
     vi.mocked(createProject).mockResolvedValue({ id: "p2", path: "/tmp/two", name: "two" });
     vi.mocked(attachProject).mockResolvedValue({ ...w, projects: ["p2"] });
     const { result } = setUp([w]);
@@ -108,6 +113,74 @@ describe("attaching a project", () => {
     expect(createProject).toHaveBeenCalledWith("two", "/tmp/two");
     expect(attachProject).toHaveBeenCalledWith("w1", "p2");
     expect(result.current.projects.map((p) => p.id)).toContain("p2");
+  });
+
+  it("asks about a folder of repositories, and makes the ones kept a workspace of their own", async () => {
+    const onOpen = vi.fn();
+    vi.mocked(gitReposIn).mockResolvedValue(["/Users/test/work/api", "/Users/test/work/web"]);
+    vi.mocked(createWorkspace).mockResolvedValue(workspace({ id: "w2", name: "work" }));
+    vi.mocked(createProject).mockImplementation(async (name, path) => ({ id: `p-${name}`, name, path }));
+    vi.mocked(attachProject).mockImplementation(async (id, project) => workspace({ id, name: "work", projects: [project] }));
+    const { result } = setUp([workspace()], onOpen);
+    await waitFor(() => expect(result.current.workspaces).toHaveLength(1));
+    act(() => result.current.setSelectedWorkspaceId("w1"));
+
+    await act(async () => result.current.attachNewProjectForNewSession("/Users/test/work"));
+    await waitFor(() => expect(result.current.folderRepos?.repos).toEqual(["/Users/test/work/api", "/Users/test/work/web"]));
+    // Nothing is registered before the answer.
+    expect(createProject).not.toHaveBeenCalled();
+
+    await act(async () => result.current.confirmFolderRepos(["/Users/test/work/api"], "new"));
+
+    expect(createWorkspace).toHaveBeenCalledWith("work");
+    expect(createProject).toHaveBeenCalledTimes(1);
+    expect(createProject).toHaveBeenCalledWith("api", "/Users/test/work/api");
+    expect(attachProject).toHaveBeenCalledWith("w2", "p-api");
+    expect(result.current.selectedWorkspace?.id).toBe("w2");
+    expect(result.current.folderRepos).toBeNull();
+    // The session it was picked for starts in the folder, beside them all.
+    expect(onOpen).toHaveBeenCalledWith(expect.objectContaining({ cwd: "/Users/test/work", args: ["new"] }));
+  });
+
+  it("adds a folder's repositories to the workspace it was picked for, when asked to", async () => {
+    vi.mocked(gitReposIn).mockResolvedValue(["/Users/test/work/api"]);
+    vi.mocked(createProject).mockResolvedValue({ id: "p-api", name: "api", path: "/Users/test/work/api" });
+    vi.mocked(attachProject).mockResolvedValue(workspace({ projects: ["p-api"] }));
+    const { result } = setUp([workspace()]);
+    await waitFor(() => expect(result.current.workspaces).toHaveLength(1));
+    act(() => result.current.setSelectedWorkspaceId("w1"));
+
+    await act(async () => result.current.handleAttachNewProject("/Users/test/work"));
+    await waitFor(() => expect(result.current.folderRepos?.workspaceId).toBe("w1"));
+    await act(async () => result.current.confirmFolderRepos(["/Users/test/work/api"], "same"));
+
+    expect(createWorkspace).not.toHaveBeenCalled();
+    expect(attachProject).toHaveBeenCalledWith("w1", "p-api");
+    expect(result.current.selectedWorkspace?.projects).toEqual(["p-api"]);
+  });
+
+  it("starts a session in a folder with no repository in it without making it a project", async () => {
+    const onOpen = vi.fn();
+    const { result } = setUp([workspace()], onOpen);
+    await waitFor(() => expect(result.current.workspaces).toHaveLength(1));
+    act(() => result.current.setSelectedWorkspaceId("w1"));
+
+    await act(async () => result.current.attachNewProjectForNewSession("/Users/test/notes"));
+
+    await waitFor(() => expect(onOpen).toHaveBeenCalledWith(expect.objectContaining({ cwd: "/Users/test/notes" })));
+    expect(createProject).not.toHaveBeenCalled();
+    expect(result.current.folderRepos).toBeNull();
+  });
+
+  it("says why a folder with no repository in it cannot be a project", async () => {
+    const { result } = setUp([workspace()]);
+    await waitFor(() => expect(result.current.workspaces).toHaveLength(1));
+    act(() => result.current.setSelectedWorkspaceId("w1"));
+
+    await act(async () => result.current.handleAttachNewProject("/Users/test/notes"));
+
+    await waitFor(() => expect(result.current.failure).toMatch(/~\/notes is not a git repository and has none in it/));
+    expect(createProject).not.toHaveBeenCalled();
   });
 });
 

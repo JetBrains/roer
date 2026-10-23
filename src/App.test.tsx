@@ -30,7 +30,7 @@ import { createProject, listProjects } from "./lib/projects";
 import { pickFolder } from "./lib/folderPicker";
 import { reportPluginUiReceipt } from "./lib/pluginUi";
 import { startBrowserServer } from "./lib/browserServer";
-import { gitRoot } from "./lib/git";
+import { gitReposIn, gitRoot } from "./lib/git";
 import { openUrl } from "./lib/github";
 
 // Shared between the test body and the hoisted module mock below.
@@ -200,8 +200,10 @@ vi.mock("./lib/workspaces", () => ({
 
 vi.mock("./lib/folderPicker", () => ({ pickFolder: vi.fn(async () => null) }));
 
+// One Project, at home: with none, New session asks for a folder first,
+// which only the tests of that want.
 vi.mock("./lib/projects", () => ({
-  listProjects: vi.fn(async () => []),
+  listProjects: vi.fn(async () => [{ id: "home", name: "test", path: "/Users/test" }]),
   createProject: vi.fn(),
   renameProject: vi.fn(),
   deleteProject: vi.fn(),
@@ -243,6 +245,7 @@ vi.mock("./lib/git", async (importOriginal) => ({
   })),
   gitDiff: vi.fn(async () => ""),
   gitRoot: vi.fn(async () => null),
+  gitReposIn: vi.fn(async () => []),
 }));
 
 const handoff: Handoff = {
@@ -312,19 +315,83 @@ describe("App", () => {
     expect(screen.queryByRole("dialog", { name: /Agent Integrations/ })).not.toBeInTheDocument();
   });
 
-  it("tells the Workspace tab with no project yet where new sessions start, and adds one", async () => {
+  it("tells the Workspace tab with no project yet what one is, and adds one", async () => {
+    vi.mocked(listProjects).mockResolvedValueOnce([]);
     vi.mocked(listWorkspaces).mockResolvedValue([{ id: "w1", name: "Default", projects: [], items: [] }]);
     vi.mocked(pickFolder).mockResolvedValueOnce("/Users/test/roer");
+    vi.mocked(gitRoot).mockResolvedValueOnce("/Users/test/roer");
     const project = { id: "p1", name: "roer", path: "/Users/test/roer" };
     vi.mocked(createProject).mockResolvedValueOnce(project);
     vi.mocked(attachProject).mockResolvedValueOnce({ id: "w1", name: "Default", projects: ["p1"], items: [] });
     render(<App />);
 
-    expect(await screen.findByText(/start in your home folder until you add a project/)).toBeInTheDocument();
+    expect(await screen.findByText(/No project yet: add the folder you work in/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Add a project…" }));
     await waitFor(() => expect(attachProject).toHaveBeenCalledWith("w1", "p1"));
     expect(createProject).toHaveBeenCalledWith("roer", "/Users/test/roer");
-    await waitFor(() => expect(screen.queryByText(/until you add a project/)).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByText(/No project yet/)).not.toBeInTheDocument());
+  });
+
+  describe("before there is any project", () => {
+    beforeEach(() => {
+      vi.mocked(listProjects).mockResolvedValue([]);
+      vi.mocked(listWorkspaces).mockResolvedValue([{ id: "w1", name: "Default", projects: [], items: [] }]);
+    });
+
+    afterEach(() => {
+      vi.mocked(listProjects).mockResolvedValue([{ id: "home", name: "test", path: "/Users/test" }]);
+      vi.mocked(listWorkspaces).mockResolvedValue([]);
+      vi.mocked(gitRoot).mockResolvedValue(null);
+    });
+
+    it("asks for a folder on New session rather than starting in home", async () => {
+      render(<App />);
+      fireEvent.click(await screen.findByRole("button", { name: "Open a folder…" }));
+      await waitFor(() => expect(pickFolder).toHaveBeenCalled());
+
+      fireEvent.keyDown(window, { key: "t", code: "KeyT", metaKey: true });
+      await waitFor(() => expect(pickFolder).toHaveBeenCalledTimes(2));
+      // Both dismissed: nothing started.
+      expect(spawnPty).not.toHaveBeenCalled();
+      expect(screen.getByTitle(/^New session in a folder you pick/)).toBeInTheDocument();
+    });
+
+    it("starts in the repository picked, as the first project", async () => {
+      vi.mocked(pickFolder).mockResolvedValueOnce("/Users/test/roer");
+      vi.mocked(gitRoot).mockImplementation(async (dir) => (dir.startsWith("/Users/test/roer") ? "/Users/test/roer" : null));
+      vi.mocked(createProject).mockResolvedValueOnce({ id: "p1", name: "roer", path: "/Users/test/roer" });
+      vi.mocked(attachProject).mockResolvedValueOnce({ id: "w1", name: "Default", projects: ["p1"], items: [] });
+      render(<App />);
+
+      fireEvent.click(await screen.findByRole("button", { name: "Open a folder…" }));
+
+      await waitFor(() => expect(spawnPty).toHaveBeenCalled());
+      expect(vi.mocked(spawnPty).mock.calls[0]?.[1]).toBe("/Users/test/roer");
+      expect(attachProject).toHaveBeenCalledWith("w1", "p1");
+    });
+
+    it("offers a folder of repositories as a workspace of them", async () => {
+      vi.mocked(pickFolder).mockResolvedValueOnce("/Users/test/work");
+      vi.mocked(gitReposIn).mockResolvedValueOnce(["/Users/test/work/api", "/Users/test/work/web"]);
+      render(<App />);
+
+      fireEvent.click(await screen.findByRole("button", { name: "Open a folder…" }));
+
+      const dialog = await screen.findByRole("dialog", { name: "work holds 2 git repositories" });
+      expect(dialog).toHaveTextContent("api");
+      expect(screen.getByRole("button", { name: "Add to Default" })).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+      expect(screen.queryByRole("dialog", { name: /git repositories/ })).not.toBeInTheDocument();
+      expect(spawnPty).not.toHaveBeenCalled();
+    });
+
+    it("still starts in the home folder, without a project, for the one who asks", async () => {
+      render(<App />);
+      fireEvent.click(await screen.findByRole("button", { name: "start in your home folder" }));
+      await waitFor(() => expect(spawnPty).toHaveBeenCalled());
+      expect(vi.mocked(spawnPty).mock.calls[0]?.[1]).toBe("/Users/test");
+      expect(pickFolder).not.toHaveBeenCalled();
+    });
   });
 
   it("says nothing about projects once there is one", async () => {

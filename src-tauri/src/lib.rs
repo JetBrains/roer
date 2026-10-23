@@ -61,6 +61,7 @@ pub fn run() {
             git::git_changes,
             git::git_diff,
             git::git_root,
+            git::git_repos_in,
             git::git_repo,
             git::git_branches,
             git::git_current_branch,
