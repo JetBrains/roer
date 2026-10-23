@@ -154,18 +154,25 @@ describe("the person's own keys", () => {
   });
 
   it("step the text size with a browser's zoom keys", () => {
-    expect(fontStep(key({ code: "Equal", metaKey: true }))).toBe(1);
-    expect(fontStep(key({ code: "Equal", metaKey: true, shiftKey: true }))).toBe(1);
-    expect(fontStep(key({ code: "Minus", metaKey: true }))).toBe(-1);
-    expect(fontStep(key({ code: "Digit0", metaKey: true }))).toBe(0);
-    expect(fontStep(key({ key: "=", metaKey: true }))).toBe(1);
-    expect(fontStep(key({ code: "Minus", metaKey: true, shiftKey: true }))).toBeNull();
-    expect(fontStep(key({ code: "Digit1", metaKey: true }))).toBeNull();
+    expect(fontStep(key({ key: "=", code: "Equal", metaKey: true }))).toBe(1);
+    expect(fontStep(key({ key: "+", code: "Equal", metaKey: true, shiftKey: true }))).toBe(1);
+    expect(fontStep(key({ key: "-", code: "Minus", metaKey: true }))).toBe(-1);
+    expect(fontStep(key({ key: "0", code: "Digit0", metaKey: true }))).toBe(0);
+    expect(fontStep(key({ key: "1", code: "Digit1", metaKey: true }))).toBeNull();
+    expect(fontStep(key({ key: "-", code: "Minus", metaKey: true, altKey: true }))).toBeNull();
+    // German: + and - are keys of their own, where US has ] and /.
+    expect(fontStep(key({ key: "+", code: "BracketRight", metaKey: true }))).toBe(1);
+    expect(fontStep(key({ key: "-", code: "Slash", metaKey: true }))).toBe(-1);
+    // French: 0 is à until Shift, so the key decides.
+    expect(fontStep(key({ key: "à", code: "Digit0", metaKey: true }))).toBe(0);
+    expect(fontStep(key({ key: "+", code: "NumpadAdd", metaKey: true }))).toBe(1);
     expect(refusal("newSession", cmd("Minus"))).toMatch(/text size/);
+    expect(shortcutLabel.newSession()).toBe("⌘T");
     onPlatform("Linux x86_64");
-    // Ctrl+- alone is the shell's undo.
-    expect(fontStep(key({ code: "Minus", ctrlKey: true }))).toBeNull();
-    expect(fontStep(key({ code: "Minus", ctrlKey: true, shiftKey: true }))).toBe(-1);
-    expect(fontStep(key({ code: "Equal", ctrlKey: true, shiftKey: true }))).toBe(1);
+    expect(fontStep(key({ key: "-", code: "Minus", ctrlKey: true }))).toBe(-1);
+    expect(fontStep(key({ key: "=", code: "Equal", ctrlKey: true }))).toBe(1);
+    expect(fontStep(key({ key: "_", code: "Minus", ctrlKey: true, shiftKey: true }))).toBe(-1);
+    expect(fontStep(key({ key: "0", code: "Digit0", ctrlKey: true }))).toBe(0);
+    expect(fontStep(key({ key: "-", code: "Minus", metaKey: true }))).toBeNull();
   });
 });
