@@ -8,7 +8,6 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
-import { confirmAction } from "./lib/confirm";
 import { pickFolder } from "./lib/folderPicker";
 import {
   DropdownMenu,
@@ -402,12 +401,6 @@ export type SessionBrowserProps = Pick<
   | "handleAttachExistingProject"
   | "handleAttachNewProject"
   | "handleDetachProject"
-  | "addingItem"
-  | "setAddingItem"
-  | "itemTitle"
-  | "setItemTitle"
-  | "handleAddItem"
-  | "handleRemoveItem"
   | "roots"
   | "repos"
   | "waiting"
@@ -443,12 +436,6 @@ export function SessionBrowser({
   handleAttachExistingProject,
   handleAttachNewProject,
   handleDetachProject,
-  addingItem,
-  setAddingItem,
-  itemTitle,
-  setItemTitle,
-  handleAddItem,
-  handleRemoveItem,
   roots,
   repos,
   waiting,
@@ -744,67 +731,6 @@ export function SessionBrowser({
         </>
       ) : null}
 
-      {/* A generic slot for anything else this Workspace is about — a
-          tracker task today, other kinds later. No kind-specific UI yet. */}
-      {selectedWorkspace ? (
-        <>
-          <h2 className="muted">
-            Items
-            <button type="button" className="link" onClick={() => setAddingItem((open) => !open)}>
-              {addingItem ? "Cancel" : "Add item"}
-            </button>
-          </h2>
-
-          {addingItem ? (
-            <div className="workspace-form">
-              <input
-                type="text"
-                className="workspace-input"
-                placeholder="Title"
-                value={itemTitle}
-                onChange={(event) => setItemTitle(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") handleAddItem();
-                  if (event.key === "Escape") setAddingItem(false);
-                }}
-                autoFocus
-              />
-              <button type="button" className="primary" disabled={!itemTitle.trim()} onClick={handleAddItem}>
-                Add
-              </button>
-            </div>
-          ) : null}
-
-          {selectedWorkspace.items.length === 0 ? (
-            <p className="muted">No items yet.</p>
-          ) : (
-            <ul>
-              {selectedWorkspace.items.map((item) => (
-                <li key={item.id}>
-                  <span className="workspace-row">
-                    <span className="workspace-item">
-                      <strong>{item.title}</strong>
-                      <span className="badge resume">{item.kind}</span>
-                    </span>
-                    <button
-                      type="button"
-                      className="tab-x"
-                      aria-label={`Remove ${item.title}`}
-                      onClick={() =>
-                        void confirmAction(`Remove "${item.title}"?`, "Remove item").then(
-                          (confirmed) => confirmed && handleRemoveItem(item.id),
-                        )
-                      }
-                    >
-                      ×
-                    </button>
-                  </span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </>
-      ) : null}
     </nav>
   );
 }

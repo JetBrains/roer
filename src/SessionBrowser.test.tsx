@@ -59,8 +59,6 @@ vi.mock("./lib/workspaces", () => ({
   deleteWorkspace: vi.fn(),
   attachProject: vi.fn(),
   detachProject: vi.fn(),
-  addWorkspaceItem: vi.fn(),
-  removeWorkspaceItem: vi.fn(),
   workspaceAssignments: vi.fn(async () => ({})),
   assignSession: vi.fn(),
   unassignSession: vi.fn(),
@@ -128,12 +126,6 @@ function Harness({ onOpen }: { onOpen: (request: OpenRequest) => void }) {
         handleAttachExistingProject={browser.handleAttachExistingProject}
         handleAttachNewProject={browser.handleAttachNewProject}
         handleDetachProject={browser.handleDetachProject}
-        addingItem={browser.addingItem}
-        setAddingItem={browser.setAddingItem}
-        itemTitle={browser.itemTitle}
-        setItemTitle={browser.setItemTitle}
-        handleAddItem={browser.handleAddItem}
-        handleRemoveItem={browser.handleRemoveItem}
         roots={browser.roots}
         repos={browser.repos}
         waiting={browser.waiting}
@@ -182,8 +174,8 @@ describe("a resumed conversation", () => {
 describe("worktrees", () => {
   it("counts a session in another worktree as its Project's, and says which worktree", async () => {
     vi.mocked(listWorkspaces).mockResolvedValue([
-      { id: "w0", name: "Default", projects: [], items: [] },
-      { id: "w1", name: "Roer", projects: ["p1"], items: [] },
+      { id: "w0", name: "Default", projects: [] },
+      { id: "w1", name: "Roer", projects: ["p1"] },
     ]);
     vi.mocked(listProjects).mockResolvedValue([{ id: "p1", name: "roer", path: "/work/roer" }]);
     const repo = { main: "/work/roer", worktrees: ["/work/roer", "/work/roer-ux"] };
@@ -216,7 +208,7 @@ describe("worktrees", () => {
 
 describe("grouping by checkout", () => {
   it("puts live sessions under their checkout, and past conversations on the timeline, by their worktree", async () => {
-    vi.mocked(listWorkspaces).mockResolvedValue([{ id: "w1", name: "Roer", projects: ["p1"], items: [] }]);
+    vi.mocked(listWorkspaces).mockResolvedValue([{ id: "w1", name: "Roer", projects: ["p1"] }]);
     vi.mocked(listProjects).mockResolvedValue([{ id: "p1", name: "roer", path: "/work/roer" }]);
     const worktree = "/Users/test/.roer/worktrees/roer/fix-login";
     vi.mocked(listWorktrees).mockResolvedValue([
@@ -246,7 +238,7 @@ describe("grouping by checkout", () => {
 
   it("folds a branch, and a Project, saying how much is hidden", async () => {
     localStorage.removeItem("roer:folded-groups");
-    vi.mocked(listWorkspaces).mockResolvedValue([{ id: "w1", name: "Roer", projects: ["p1"], items: [] }]);
+    vi.mocked(listWorkspaces).mockResolvedValue([{ id: "w1", name: "Roer", projects: ["p1"] }]);
     vi.mocked(listProjects).mockResolvedValue([{ id: "p1", name: "roer", path: "/work/roer" }]);
     vi.mocked(listWorktrees).mockResolvedValue([
       { path: "/work/roer", branch: "main", commit: "abc1234", main: true, base: null, locked: false, missing: false },
@@ -792,8 +784,8 @@ describe("naming the agent", () => {
 describe("the selected workspace", () => {
   it("asks before deleting a Workspace", async () => {
     vi.mocked(listWorkspaces).mockResolvedValue([
-      { id: "w1", name: "Default", projects: [], items: [] },
-      { id: "w2", name: "Feature work", projects: [], items: [] },
+      { id: "w1", name: "Default", projects: [] },
+      { id: "w2", name: "Feature work", projects: [] },
     ]);
     vi.mocked(deleteWorkspace).mockReset().mockResolvedValue(undefined);
     vi.mocked(confirmAction).mockReset().mockResolvedValue(false);
@@ -813,8 +805,8 @@ describe("the selected workspace", () => {
 
   it("is the first one on launch, with no unfiltered All beside it", async () => {
     vi.mocked(listWorkspaces).mockResolvedValueOnce([
-      { id: "w1", name: "Default", projects: [], items: [] },
-      { id: "w2", name: "Feature work", projects: [], items: [] },
+      { id: "w1", name: "Default", projects: [] },
+      { id: "w2", name: "Feature work", projects: [] },
     ]);
     vi.mocked(listSessions).mockResolvedValue([
       { id: "1", session: "roer-a", pane: "%0", attached: true, cwd: "/Users/test/project", command: "zsh" },
@@ -831,8 +823,8 @@ describe("the selected workspace", () => {
 
   it("offers no Delete for Default, only for the ones after it", async () => {
     vi.mocked(listWorkspaces).mockResolvedValueOnce([
-      { id: "w1", name: "Default", projects: [], items: [] },
-      { id: "w2", name: "Feature work", projects: [], items: [] },
+      { id: "w1", name: "Default", projects: [] },
+      { id: "w2", name: "Feature work", projects: [] },
     ]);
     renderList();
     await openPicker();
@@ -854,12 +846,12 @@ describe("attaching a project from a workspace's menu", () => {
       { id: "p2", name: "api", path: "/work/api" },
     ]);
     vi.mocked(listWorkspaces).mockResolvedValue([
-      { id: "w1", name: "Default", projects: [], items: [] },
-      { id: "w2", name: "Feature work", projects: ["p1"], items: [] },
+      { id: "w1", name: "Default", projects: [] },
+      { id: "w2", name: "Feature work", projects: ["p1"] },
     ]);
     vi.mocked(attachProject)
       .mockReset()
-      .mockResolvedValue({ id: "w2", name: "Feature work", projects: ["p1", "p2"], items: [] });
+      .mockResolvedValue({ id: "w2", name: "Feature work", projects: ["p1", "p2"] });
     renderList();
     await openPicker();
 
@@ -883,7 +875,7 @@ describe("assigning a session to a workspace", () => {
   it("assigns a live session to a workspace via its right-click menu", async () => {
     // Listed because it is under the Workspace's Project, not yet assigned.
     vi.mocked(listProjects).mockResolvedValueOnce([{ id: "p1", path: "/Users/test/project", name: "project" }]);
-    vi.mocked(listWorkspaces).mockResolvedValue([{ id: "w1", name: "Feature work", projects: ["p1"], items: [] }]);
+    vi.mocked(listWorkspaces).mockResolvedValue([{ id: "w1", name: "Feature work", projects: ["p1"] }]);
     vi.mocked(listSessions).mockResolvedValue([
       { id: "1", session: "roer-a", pane: "%0", attached: true, cwd: "/Users/test/project", command: "zsh" },
     ]);
@@ -899,7 +891,7 @@ describe("assigning a session to a workspace", () => {
   });
 
   it("unassigns a session that is already in a workspace", async () => {
-    vi.mocked(listWorkspaces).mockResolvedValue([{ id: "w1", name: "Feature work", projects: [], items: [] }]);
+    vi.mocked(listWorkspaces).mockResolvedValue([{ id: "w1", name: "Feature work", projects: [] }]);
     vi.mocked(workspaceAssignments).mockResolvedValue({ "1": "w1" });
     vi.mocked(listSessions).mockResolvedValue([
       { id: "1", session: "roer-a", pane: "%0", attached: true, cwd: "/Users/test/project", command: "zsh" },

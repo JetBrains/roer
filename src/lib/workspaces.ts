@@ -10,20 +10,11 @@
  */
 import { invoke } from "./backend";
 
-/** A generic external item, e.g. a tracker task — no kind-specific UI yet. */
-export interface WorkspaceItem {
-  id: string;
-  kind: string;
-  title: string;
-  url?: string;
-}
-
 export interface Workspace {
   id: string;
   name: string;
   /** Project ids, resolved against the global registry in `./projects`. */
   projects: string[];
-  items: WorkspaceItem[];
   /** The folder it stands for, such as the folder of repositories it was
    * made from: what is there outside its Projects is still its own. */
   folder?: string;
@@ -48,18 +39,6 @@ export const attachProject = (workspaceId: string, projectId: string): Promise<W
 
 export const detachProject = (workspaceId: string, projectId: string): Promise<Workspace | null> =>
   invoke("workspace_detach_project", { workspaceId, projectId });
-
-export const addWorkspaceItem = (
-  workspaceId: string,
-  kind: string,
-  title: string,
-  url?: string,
-): Promise<Workspace | null> => invoke("workspace_add_item", { workspaceId, kind, title, url });
-
-export const removeWorkspaceItem = (
-  workspaceId: string,
-  itemId: string,
-): Promise<Workspace | null> => invoke("workspace_remove_item", { workspaceId, itemId });
 
 /** Session id (live session, past session, or Claude thread) → Workspace id. */
 export const workspaceAssignments = (): Promise<Record<string, string>> =>

@@ -36,8 +36,6 @@ vi.mock("./workspaces", () => ({
   deleteWorkspace: vi.fn(),
   attachProject: vi.fn(),
   detachProject: vi.fn(),
-  addWorkspaceItem: vi.fn(),
-  removeWorkspaceItem: vi.fn(),
   workspaceAssignments: vi.fn(async () => ({})),
   assignSession: vi.fn(),
   unassignSession: vi.fn(),
@@ -54,7 +52,7 @@ const ask = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/plugin-dialog", () => ({ ask }));
 
 function workspace(overrides: Partial<Workspace> = {}): Workspace {
-  return { id: "w1", name: "one", projects: [], items: [], ...overrides };
+  return { id: "w1", name: "one", projects: [], ...overrides };
 }
 
 beforeEach(() => {

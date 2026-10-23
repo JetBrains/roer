@@ -111,8 +111,6 @@ pub fn run() {
             workspaces::workspace_set_folder,
             workspaces::workspace_attach_project,
             workspaces::workspace_detach_project,
-            workspaces::workspace_add_item,
-            workspaces::workspace_remove_item,
             workspaces::workspace_assignments,
             worktrees::worktree_list,
             worktrees::worktree_create,

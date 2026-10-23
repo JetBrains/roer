@@ -1,8 +1,7 @@
 //! Workspaces: a persisted, user-named entity that everything related to one
 //! piece of work hangs off — sessions and past Claude conversations
 //! explicitly assigned to it, Projects (git repos, see `projects.rs`)
-//! attached to it, plus a generic slot for other external items such as a
-//! tracker task. A Project is a global entity that can be attached to many
+//! attached to it, and the folder it stands for, if any. A Project is a global entity that can be attached to many
 //! Workspaces, so a Workspace only holds ids here, not embedded Projects.
 //!
 //! Unlike `history.rs`, a Workspace is state the user explicitly created,
@@ -29,16 +28,6 @@ fn workspaces_file() -> PathBuf {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct WorkspaceItem {
-    pub id: String,
-    pub kind: String,
-    pub title: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub url: Option<String>,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
 pub struct Workspace {
     pub id: String,
     pub name: String,
@@ -46,8 +35,6 @@ pub struct Workspace {
     /// not embedded, since one Project can be attached to several Workspaces.
     #[serde(default)]
     pub projects: Vec<String>,
-    #[serde(default)]
-    pub items: Vec<WorkspaceItem>,
     /// The folder the Workspace stands for, when it has one: the folder of
     /// repositories it was made from. A session there, outside every one of
     /// its Projects, is still this Workspace's.
@@ -121,7 +108,6 @@ fn list_in(path: &std::path::Path) -> Vec<Workspace> {
             id: fresh_id(),
             name: DEFAULT_WORKSPACE_NAME.to_string(),
             projects: Vec::new(),
-            items: Vec::new(),
             folder: None,
         });
         // Best-effort: a failed save here just means the same seed runs
@@ -141,7 +127,6 @@ fn create_in(path: &std::path::Path, name: String) -> std::io::Result<Workspace>
         id: fresh_id(),
         name,
         projects: Vec::new(),
-        items: Vec::new(),
         folder: None,
     };
     store.workspaces.push(workspace.clone());
@@ -279,56 +264,6 @@ fn strip_project_in(path: &std::path::Path, project_id: &str) -> std::io::Result
     save(path, &store)
 }
 
-pub fn add_item(
-    workspace_id: &str,
-    kind: String,
-    title: String,
-    url: Option<String>,
-) -> std::io::Result<Option<Workspace>> {
-    add_item_in(&workspaces_file(), workspace_id, kind, title, url)
-}
-
-fn add_item_in(
-    path: &std::path::Path,
-    workspace_id: &str,
-    kind: String,
-    title: String,
-    url: Option<String>,
-) -> std::io::Result<Option<Workspace>> {
-    let mut store = load(path);
-    let Some(workspace) = store.workspaces.iter_mut().find(|w| w.id == workspace_id) else {
-        return Ok(None);
-    };
-    workspace.items.push(WorkspaceItem {
-        id: fresh_id(),
-        kind,
-        title,
-        url,
-    });
-    let updated = workspace.clone();
-    save(path, &store)?;
-    Ok(Some(updated))
-}
-
-pub fn remove_item(workspace_id: &str, item_id: &str) -> std::io::Result<Option<Workspace>> {
-    remove_item_in(&workspaces_file(), workspace_id, item_id)
-}
-
-fn remove_item_in(
-    path: &std::path::Path,
-    workspace_id: &str,
-    item_id: &str,
-) -> std::io::Result<Option<Workspace>> {
-    let mut store = load(path);
-    let Some(workspace) = store.workspaces.iter_mut().find(|w| w.id == workspace_id) else {
-        return Ok(None);
-    };
-    workspace.items.retain(|i| i.id != item_id);
-    let updated = workspace.clone();
-    save(path, &store)?;
-    Ok(Some(updated))
-}
-
 pub fn assignments() -> BTreeMap<String, String> {
     assignments_in(&workspaces_file())
 }
@@ -405,24 +340,6 @@ pub fn workspace_detach_project(
 }
 
 #[tauri::command]
-pub fn workspace_add_item(
-    workspace_id: String,
-    kind: String,
-    title: String,
-    url: Option<String>,
-) -> Result<Option<Workspace>, String> {
-    add_item(&workspace_id, kind, title, url).map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub fn workspace_remove_item(
-    workspace_id: String,
-    item_id: String,
-) -> Result<Option<Workspace>, String> {
-    remove_item(&workspace_id, &item_id).map_err(|e| e.to_string())
-}
-
-#[tauri::command]
 pub fn workspace_assignments() -> BTreeMap<String, String> {
     assignments()
 }
@@ -460,7 +377,6 @@ mod tests {
         assert_eq!(listed[0].id, workspace.id);
         assert_eq!(listed[0].name, "Roer");
         assert!(listed[0].projects.is_empty());
-        assert!(listed[0].items.is_empty());
         std::fs::remove_file(&file).ok();
     }
 
@@ -622,39 +538,6 @@ mod tests {
             .unwrap()
             .expect("workspace exists");
         assert_eq!(updated.name, "two");
-        std::fs::remove_file(&file).ok();
-    }
-
-    #[test]
-    fn an_item_can_be_added_and_removed() {
-        let file = temp_file();
-        let workspace = create_in(&file, "one".to_string()).unwrap();
-
-        let updated = add_item_in(
-            &file,
-            &workspace.id,
-            "task".to_string(),
-            "Fix the thing".to_string(),
-            Some("https://example.com/ISSUE-1".to_string()),
-        )
-        .unwrap()
-        .expect("workspace exists");
-        assert_eq!(updated.items.len(), 1);
-        let item_id = updated.items[0].id.clone();
-
-        let updated = remove_item_in(&file, &workspace.id, &item_id)
-            .unwrap()
-            .expect("workspace exists");
-        assert!(updated.items.is_empty());
-        std::fs::remove_file(&file).ok();
-    }
-
-    #[test]
-    fn adding_an_item_to_an_unknown_workspace_is_none() {
-        let file = temp_file();
-        let result = add_item_in(&file, "missing", "task".to_string(), "x".to_string(), None)
-            .unwrap();
-        assert!(result.is_none());
         std::fs::remove_file(&file).ok();
     }
 
