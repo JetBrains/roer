@@ -89,7 +89,8 @@ pub const CLIS: &[Cli] = &[
         instructions: &["-c", "developer_instructions={toml}"],
         resume: &["resume", "{}"],
         status: &[],
-        models: &["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex"],
+        // Only for a codex that cannot list its own: see `models`.
+        models: &["gpt-6.1-sol", "gpt-6-astra", "gpt-6-sol", "gpt-6-luna", "gpt-5.6-sol", "gpt-5.5"],
         procs: &["codex"],
     },
     Cli {
@@ -1046,25 +1047,21 @@ fn on_path(name: &str) -> bool {
 }
 
 /// The models a CLI knows of, as it lists them itself where it can: pi
-/// prints them, codex keeps a cache of the ones the account has.
+/// prints them, and codex renders its catalog, the one it refreshes for the
+/// account, with `codex debug models`. A codex from before that command
+/// still has the cache it kept, which newer ones no longer write.
 pub fn models(id: &str) -> Vec<String> {
     let fixed = || cli(id).map(|cli| cli.models.iter().map(|m| m.to_string()).collect()).unwrap_or_default();
     let listed = match id {
         "codex" => {
-            let path = records::user_home().join(".codex/models_cache.json");
-            std::fs::read_to_string(path)
-                .ok()
-                .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
-                .and_then(|value| value.get("models").and_then(Value::as_array).cloned())
-                .map(|models| {
-                    models
-                        .iter()
-                        .filter_map(|m| m.get("slug").or_else(|| m.get("id")).and_then(Value::as_str))
-                        .filter(|slug| !slug.contains("auto-review"))
-                        .map(str::to_string)
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or_default()
+            let live = codex_catalog(&login_shell_lines("codex debug models").join("\n"));
+            if live.is_empty() {
+                std::fs::read_to_string(records::user_home().join(".codex/models_cache.json"))
+                    .map(|raw| codex_catalog(&raw))
+                    .unwrap_or_default()
+            } else {
+                live
+            }
         }
         "pi" => login_shell_lines("pi --list-models")
             .iter()
@@ -1077,6 +1074,30 @@ pub fn models(id: &str) -> Vec<String> {
         _ => Vec::new(),
     };
     if listed.is_empty() { fixed() } else { listed }
+}
+
+/// The models in a codex catalog (`{"models": [{"slug", "visibility",
+/// "priority"}, …]}`) that its own picker lists, in its own order. What it
+/// hides, such as the model its auto review runs, is left out. Anything a
+/// login shell printed before the JSON is passed over.
+fn codex_catalog(raw: &str) -> Vec<String> {
+    let Some(value) = raw.find('{').and_then(|at| serde_json::from_str::<Value>(&raw[at..]).ok()) else {
+        return Vec::new();
+    };
+    let Some(models) = value.get("models").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    let mut shown: Vec<(i64, String)> = models
+        .iter()
+        .filter(|m| m.get("visibility").and_then(Value::as_str) != Some("hide"))
+        .filter_map(|m| {
+            let slug = m.get("slug").or_else(|| m.get("id")).and_then(Value::as_str)?;
+            (!slug.contains("auto-review")).then(|| (m.get("priority").and_then(Value::as_i64).unwrap_or(i64::MAX), slug.to_string()))
+        })
+        .collect();
+    // Stable, so models of one priority keep the catalog's order.
+    shown.sort_by_key(|(priority, _)| *priority);
+    shown.into_iter().map(|(_, slug)| slug).collect()
 }
 
 fn login_shell_lines(command: &str) -> Vec<String> {
@@ -1220,6 +1241,28 @@ fn stdin_json() -> Result<Value, Fail> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn codex_lists_the_models_its_picker_shows_in_its_own_order() {
+        let catalog = r#"Last login: Thu Oct 23 on ttys001
+{"models":[
+  {"slug":"gpt-6-astra","visibility":"list","priority":2},
+  {"slug":"gpt-6.1-sol","visibility":"list","priority":1},
+  {"slug":"gpt-daybreak-blue-latest","visibility":"hide","priority":11},
+  {"slug":"gpt-5.5","visibility":"list","priority":13},
+  {"slug":"codex-auto-review","visibility":"list","priority":43}
+]}"#;
+        assert_eq!(codex_catalog(catalog), ["gpt-6.1-sol", "gpt-6-astra", "gpt-5.5"]);
+    }
+
+    #[test]
+    fn a_codex_catalog_that_says_nothing_lists_nothing() {
+        assert!(codex_catalog("").is_empty());
+        assert!(codex_catalog("error: unrecognized subcommand 'debug'").is_empty());
+        assert!(codex_catalog(r#"{"other":[]}"#).is_empty());
+        // The cache older codex kept, without priorities: as it lists them.
+        assert_eq!(codex_catalog(r#"{"models":[{"slug":"gpt-5.5"},{"id":"gpt-5.4"}]}"#), ["gpt-5.5", "gpt-5.4"]);
+    }
 
     fn agent(cli: &str) -> Agent {
         Agent { id: "a".into(), name: "A".into(), cli: cli.into(), ..Agent::default() }
