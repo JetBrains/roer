@@ -170,7 +170,9 @@ fn set_folder_in(
             if !full.is_dir() {
                 return Err(format!("{dir} is not a folder."));
             }
-            Some(full.to_string_lossy().into_owned())
+            let full = full.to_string_lossy();
+            // Forward slashes on Windows too, as git writes a Project's path.
+            Some(if cfg!(windows) { full.replace('\\', "/") } else { full.into_owned() })
         }
         None => None,
     };

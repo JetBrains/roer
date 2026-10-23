@@ -39,14 +39,17 @@ test("the first launch asks about Claude Code, and Not now is remembered", async
   assert.ok(existsSync(join(app.roerHome, "claude-setup-asked")), "the answer is recorded");
 });
 
-test("opens on the session list, with nothing running", async () => {
+test("opens on the session list, with nothing running, and says what a project is", async () => {
   await app.waitForText("Nothing running in this Workspace's projects yet.", ".sessions-view");
+  await app.waitForText("No project yet: add the folder you work in", ".sessions-view");
   await app.tab("Terminal");
-  await app.waitForText("Pick a session, or start a new one with");
+  await app.waitForText("Start with the folder you work in");
 });
 
 test("New session starts the default agent in a terminal", async () => {
-  await app.click("New session");
+  // With no project New session asks for a folder, in the system's own
+  // picker, which a test cannot drive; the empty stage starts in home too.
+  await app.click("start in your home folder");
   try {
     await app.waitForTerminal("fake-claude ready");
   } catch (e) {
