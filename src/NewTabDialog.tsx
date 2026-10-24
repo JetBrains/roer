@@ -42,7 +42,7 @@ const KINDS = {
   tab: {
     title: "New tab",
     intro:
-      "Say what you want to keep an eye on, and the session's agent writes a tab for it: an extension, code that runs in Roer with your permissions. It stays in the strip and fetches its own data. The agent loads it for you to try, and installs it only when you say so.",
+      "Say what you want to keep an eye on, and an agent writes a tab for it: an extension, code that runs in Roer with your permissions. It stays in the strip of every session and fetches its own data. The agent loads it for you to try, and installs it only when you say so.",
     placeholder: "What should the tab show?",
     field: "What the tab shows",
     ideas: TAB_IDEAS,
@@ -52,7 +52,7 @@ const KINDS = {
   section: {
     title: "New section",
     intro:
-      "Say what you want to see about this workspace's projects, and the session's agent writes a section of the Workspace tab for it: an extension, code that runs in Roer with your permissions. It shows after Projects, for every workspace and project, and fetches its own data. The agent loads it for you to try, and installs it only when you say so.",
+      "Say what you want to see about this workspace's projects, and an agent writes a section of the Workspace tab for it: an extension, code that runs in Roer with your permissions. It shows after Projects, for every workspace and project, and fetches its own data. The agent loads it for you to try, and installs it only when you say so.",
     placeholder: "What should the section show?",
     field: "What the section shows",
     ideas: SECTION_IDEAS,
@@ -61,22 +61,42 @@ const KINDS = {
   },
 } as const;
 
+/** Where a new session for the tab would start, and whether one can. */
+export interface NewSessionOffer {
+  /** The folder, as the New session button names it. */
+  place?: string;
+  /** Whether the agent a new session starts takes a first prompt. */
+  ready: boolean;
+}
+
 /**
- * Asks the session's agent for a tab of the person's own: the way to an
- * extension for someone who never saw a view worth keeping. The agent may be
- * busy; then the request waits for it, held by `agent`, which outlives the
- * dialog.
+ * Asks an agent for a tab of the person's own: the way to an extension for
+ * someone who never saw a view worth keeping.
+ *
+ * A tab is Roer's, in every session's strip, so by default a new session
+ * writes it and the conversation on the stage is left as it was. The
+ * session on the stage can be asked instead, said by its name; its agent may
+ * be busy, and then the request waits for it, held by `agent`, which
+ * outlives the dialog.
  */
 export function NewTabDialog({
   agent,
   agentState,
   kind = "tab",
+  stageName,
+  newSession,
+  onNewSession,
   onClose,
 }: {
   agent: AskAgent;
   agentState?: AgentState;
   /** A tab of the stage's strip, or a section of the Workspace tab. */
   kind?: keyof typeof KINDS;
+  /** The session on the stage, as its row names it. */
+  stageName?: string;
+  /** Offered when there is somewhere to start one. */
+  newSession?: NewSessionOffer;
+  onNewSession?: (prompt: string) => void;
   onClose: () => void;
 }) {
   const asked = KINDS[kind];
@@ -84,6 +104,12 @@ export function NewTabDialog({
   const [what, setWhat] = useState("");
   const [status, setStatus] = useState<string | null>(null);
   const [held, setHeld] = useState(false);
+  const canStart = !!newSession?.ready && !!onNewSession;
+  // A new session by default, once it can start: the agents are listed
+  // after the dialog may already be open. The person's own pick stays.
+  const [picked, setTarget] = useState<"new" | "stage" | null>(null);
+  const target = picked ?? (canStart ? "new" : "stage");
+  const inNew = target === "new";
 
   useEffect(() => {
     const back = document.activeElement;
@@ -96,6 +122,12 @@ export function NewTabDialog({
   const handleAsk = () => {
     const text = what.trim();
     if (!text) return;
+    if (inNew) {
+      if (!canStart) return;
+      onNewSession?.(asked.prompt(text));
+      onClose();
+      return;
+    }
     agent
       .ask(asked.prompt(text), asked.label(text))
       .then((outcome) => {
@@ -157,6 +189,39 @@ export function NewTabDialog({
           </div>
         ) : null}
         <p className="muted">{asked.intro}</p>
+        {newSession ? (
+          <fieldset className="new-tab-target" disabled={held}>
+            <legend>Who writes it</legend>
+            <label>
+              <input
+                type="radio"
+                name="new-tab-target"
+                checked={inNew}
+                disabled={!canStart}
+                onChange={() => setTarget("new")}
+              />
+              <span>
+                A new session{newSession.place ? ` in ${newSession.place}` : ""}
+                {canStart ? null : (
+                  <span className="muted"> — its agent takes no first prompt; pick another in Agents…</span>
+                )}
+              </span>
+            </label>
+            <label>
+              <input
+                type="radio"
+                name="new-tab-target"
+                checked={!inNew}
+                disabled={!agent.canAsk}
+                onChange={() => setTarget("stage")}
+              />
+              <span>
+                {stageName ? `This session, ${stageName}` : "This session"}
+                {agent.canAsk ? null : <span className="muted"> — no agent running in it</span>}
+              </span>
+            </label>
+          </fieldset>
+        ) : null}
         <form
           onSubmit={(event) => {
             event.preventDefault();
@@ -190,7 +255,7 @@ export function NewTabDialog({
             <p className="muted" role="status">
               {status}
             </p>
-          ) : !agent.canAsk ? (
+          ) : inNew ? null : !agent.canAsk ? (
             <p className="muted">No agent here to ask: start one in this session first.</p>
           ) : !agent.ready ? (
             <p className="muted">
@@ -209,8 +274,12 @@ export function NewTabDialog({
                 <button type="button" className="gen-button borderless" onClick={onClose}>
                   Cancel
                 </button>
-                <button type="submit" className="gen-button primary" disabled={!agent.canAsk || !what.trim()}>
-                  {agent.canAsk && !agent.ready ? "Ask when it is ready" : "Ask the agent"}
+                <button
+                  type="submit"
+                  className="gen-button primary"
+                  disabled={(inNew ? !canStart : !agent.canAsk) || !what.trim()}
+                >
+                  {inNew ? "Start the session" : agent.canAsk && !agent.ready ? "Ask when it is ready" : "Ask the agent"}
                 </button>
               </>
             )}

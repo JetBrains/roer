@@ -32,6 +32,7 @@ const cli = (id: string, efforts: string[], instructions: boolean) => ({
   efforts,
   permissions: ["ask", "auto", "full"],
   instructions,
+  firstPrompt: true,
   resume: true,
 });
 

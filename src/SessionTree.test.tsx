@@ -1,6 +1,7 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, renderHook, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { resetAskAgent, useAskAgent } from "./lib/askAgent";
 import { confirmAction } from "./lib/confirm";
 import { gitChanges, gitRepo } from "./lib/git";
 import { listProjects } from "./lib/projects";
@@ -281,6 +282,23 @@ describe("the session tree", () => {
     fireEvent.keyDown(search, { key: "Escape" });
     expect(search).toHaveValue("");
     localStorage.removeItem("roer:folded-tree");
+  });
+
+  it("says a request waits for a session's agent, whichever session is on the stage", async () => {
+    resetAskAgent();
+    vi.mocked(listSessions).mockResolvedValue([
+      session("%3", `${linked.path}/src`, { command: "claude", state: "working" }),
+      session("%4", linked.path),
+    ]);
+    const { result } = renderHook(() => useAskAgent("%3", "working"));
+    await act(() => result.current.ask("Make me a tab", "a tab that shows the weather"));
+    render(<Harness onOpen={vi.fn()} />);
+
+    const tree = within(await screen.findByRole("region", { name: "Running sessions" }));
+    const row = await tree.findByTitle(/^s%3 /);
+    expect(within(row).getByText("1 queued")).toHaveAttribute("title", expect.stringContaining("a tab that shows the weather"));
+    expect(within(await tree.findByTitle(/^s%4 /)).queryByText(/queued/)).not.toBeInTheDocument();
+    resetAskAgent();
   });
 
   it("folds a branch and a project, saying how much is hidden and that one waits", async () => {

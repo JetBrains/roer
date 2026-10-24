@@ -807,6 +807,31 @@ fn typed_into(env: &Env, name: &str, expected: &str) -> String {
     typed
 }
 
+/// `--prompt` starts the agent on it, through a file its shell reads, and an
+/// agent that takes no first prompt is refused before any session exists.
+#[test]
+fn new_starts_the_agent_on_a_first_prompt() {
+    let env = Env::new("first-prompt");
+    in_a_terminal(&env, &["new", "--agent", "codex", "--prompt", "'Make me a tab.'", "tab"], "tab");
+    let expected = "codex \"$(cat ";
+    let typed = typed_into(&env, "tab", expected);
+    assert!(typed.contains(expected), "typed into the shell: {typed}");
+    let prompts = env.home.join("agents/.prompts");
+    let written = std::fs::read_dir(&prompts)
+        .unwrap()
+        .flatten()
+        .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "md"))
+        .map(|entry| std::fs::read_to_string(entry.path()).unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(written, vec!["Make me a tab.\n"]);
+    kill_outer(&env);
+
+    let before = env.tmux(&["list-sessions", "-F", "#{session_name}"]);
+    assert_eq!(code(&env.run(&["new", "--agent", "junie", "--prompt", "x", "nope"])), 2);
+    assert_eq!(code(&env.run(&["new", "--shell", "--prompt", "x", "nope"])), 2);
+    assert_eq!(env.tmux(&["list-sessions", "-F", "#{session_name}"]), before);
+}
+
 /// A saved agent is started with its own flags, and the session is named by
 /// it in `list`, whether or not the agent ever titles its pane.
 #[test]

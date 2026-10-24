@@ -59,7 +59,7 @@ import { WorkspaceSidebar } from "./WorkspaceSidebar";
 import { claudeSetupStatus, onClaudeSetupMenu, type SetupStatus } from "./lib/claudeSetup";
 import { onBrowserServerMenu, startBrowserServer } from "./lib/browserServer";
 import { onFilesChanged, type FilesChanged } from "./lib/files";
-import { listAgents, onAgentsMenu, type AgentList } from "./lib/agents";
+import { defaultTakesPrompt, listAgents, onAgentsMenu, type AgentList } from "./lib/agents";
 import { checkForUpdate, onCheckUpdatesMenu, type UpdateStatus } from "./lib/updates";
 import {
   isGoToFile,
@@ -1779,10 +1779,25 @@ export function App() {
           />
         ) : null}
         {showingNewTab ? (
-          <NewTabDialog agent={askAgent} agentState={agentState} onClose={() => setShowingNewTab(false)} />
+          <NewTabDialog
+            agent={askAgent}
+            agentState={agentState}
+            stageName={stageName}
+            newSession={{ place: browser.newSessionPlace(), ready: defaultTakesPrompt(agents) }}
+            onNewSession={(prompt) => browser.openNew(undefined, prompt)}
+            onClose={() => setShowingNewTab(false)}
+          />
         ) : null}
         {showingNewSection ? (
-          <NewTabDialog agent={askAgent} agentState={agentState} kind="section" onClose={() => setShowingNewSection(false)} />
+          <NewTabDialog
+            agent={askAgent}
+            agentState={agentState}
+            kind="section"
+            stageName={stageName}
+            newSession={{ place: browser.newSessionPlace(), ready: defaultTakesPrompt(agents) }}
+            onNewSession={(prompt) => browser.openNew(undefined, prompt)}
+            onClose={() => setShowingNewSection(false)}
+          />
         ) : null}
         {showingShortcuts ? <ShortcutsDialog tabs={strip.slice(0, 9).map((tab) => tab.title)} onClose={() => setShowingShortcuts(false)} /> : null}
 
