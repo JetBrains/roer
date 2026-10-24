@@ -62,6 +62,9 @@ usage:
                         (`roer agents default`) started in its shell
   roer new --agent <id> [--model <m>] [--effort <e>] [name]
                         same, with that agent: a saved one or a CLI's name
+  roer new [--agent <id>] --prompt <text> [name]
+                        same, with the agent starting on <text> as its
+                        first prompt; an error for an agent that takes none
   roer new --shell [name]
                         same, with just the shell
   roer attach [name]    take a session back, detaching whoever holds it;
@@ -394,10 +397,14 @@ impl Roer {
         let (agent_id, args) = agents::take_flag(args, "--agent")?;
         let (model, args) = agents::take_flag(&args, "--model")?;
         let (effort, args) = agents::take_flag(&args, "--effort")?;
+        let (first, args) = agents::take_flag(&args, "--prompt")?;
         let (shell, args): (bool, Vec<&str>) = match args.first() {
             Some(&"--shell") => (true, args[1..].to_vec()),
             _ => (false, args),
         };
+        if shell && first.is_some() {
+            return Err(Fail::new(2, "a shell takes no --prompt"));
+        }
         let agent = if shell {
             None
         } else {
@@ -415,6 +422,11 @@ impl Roer {
                 agent.effort = effort.to_string();
             }
             agent.check().map_err(|why| Fail::new(2, why))?;
+            // Before the session exists, so an agent that cannot take the
+            // prompt leaves no empty session behind.
+            if first.is_some() {
+                agent.command_line_starting(None, false, None, first)?;
+            }
             Some(agent)
         };
         let base = args.first().map_or_else(|| session_name(&self.cwd), |name| (*name).to_string());
@@ -425,15 +437,15 @@ impl Roer {
         // a new session, never a surprise attach to an old one.
         self.create_detached(&name)?;
         if let Some(agent) = agent {
-            self.start_agent(&name, &agent, None)?;
+            self.start_agent(&name, &agent, None, first)?;
         }
         self.attach_session(&name, false)
     }
 
     /// Types `agent`'s command into the session's shell, and remembers which
     /// agent it was: not every agent titles its pane, and the app names a
-    /// session by the agent it runs.
-    fn start_agent(&self, name: &str, agent: &agents::Agent, resume: Option<&str>) -> Outcome {
+    /// session by the agent it runs. `first` is a prompt for it to start on.
+    fn start_agent(&self, name: &str, agent: &agents::Agent, resume: Option<&str>, first: Option<&str>) -> Outcome {
         // The hooks that tell the app what the agent is doing, for a CLI that
         // takes them; a session without them is still told apart by its
         // title and its output, so a file that cannot be written is no reason
@@ -442,7 +454,7 @@ impl Roer {
             .takes_status()
             .then(|| status_hooks::write(&agent.cli, &self_path().to_string_lossy()).ok())
             .flatten();
-        let command = agent.command_line_with(resume, true, status.as_deref())?;
+        let command = agent.command_line_starting(resume, true, status.as_deref(), first)?;
         let target = format!("={name}:");
         self.tmux.ok(&["set-option", "-t", &target, "@roer_agent", &agent.name]);
         self.tmux.ok(&["set-option", "-t", &target, "@roer_agent_procs", &agent.procs()]);
@@ -687,7 +699,7 @@ impl Roer {
         // nothing behind.
         agent.command_line(Some(id), false)?;
         self.create_detached(&name)?;
-        self.start_agent(&name, &agent, Some(id))?;
+        self.start_agent(&name, &agent, Some(id), None)?;
         self.attach_session(&name, false)
     }
 

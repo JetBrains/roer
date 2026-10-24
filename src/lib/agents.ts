@@ -41,6 +41,8 @@ export interface AgentCli {
   /** The permission levels it takes; empty when it has no setting. */
   permissions: string[];
   instructions: boolean;
+  /** Whether a new session's agent can be started on a first prompt. */
+  firstPrompt: boolean;
   resume: boolean;
 }
 
@@ -109,3 +111,9 @@ export const blankAgent = (cli: string): Agent => ({
   source: "user",
   path: "",
 });
+
+/** Whether the agent a plain New session starts can be handed a first prompt. */
+export const defaultTakesPrompt = (list: AgentList | null): boolean => {
+  const agent = list?.agents.find((one) => one.id === list.default);
+  return !!agent && canStart(list, agent) && cliOf(list, agent)?.firstPrompt === true;
+};

@@ -49,6 +49,7 @@ const cli = (id: string, installed = true) => ({
   efforts: [],
   permissions: [],
   instructions: false,
+  firstPrompt: true,
   resume: true,
 });
 const agents: AgentList = {

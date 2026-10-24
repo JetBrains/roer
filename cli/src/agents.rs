@@ -43,6 +43,10 @@ pub struct Cli {
     /// TOML string, both read by the session's shell. Never the text itself:
     /// typed, it would submit the line at its first newline.
     instructions: &'static [&'static str],
+    /// How a new session's first prompt is passed, for its agent to start
+    /// on at once: `{text}` is read by the session's shell, as for
+    /// `instructions`. Empty for a CLI that takes none.
+    first_prompt: &'static [&'static str],
     /// Goes first, since for codex it is a subcommand.
     resume: &'static [&'static str],
     /// How to hand the CLI a settings file of roer's own, for the hooks that
@@ -69,6 +73,7 @@ pub const CLIS: &[Cli] = &[
         auto: Some(&["--permission-mode", "auto"]),
         full: Some(&["--dangerously-skip-permissions"]),
         instructions: &["--append-system-prompt-file", "{}"],
+        first_prompt: &["{text}"],
         resume: &["--resume", "{}"],
         status: &["--settings", "{}"],
         models: &["opus", "sonnet", "haiku", "claude-opus-5-5", "claude-sonnet-5-5", "claude-fable-5-1"],
@@ -87,6 +92,7 @@ pub const CLIS: &[Cli] = &[
         // Added to Codex's own instructions, where model_instructions_file
         // would replace them.
         instructions: &["-c", "developer_instructions={toml}"],
+        first_prompt: &["{text}"],
         resume: &["resume", "{}"],
         status: &[],
         // Only for a codex that cannot list its own: see `models`.
@@ -104,6 +110,7 @@ pub const CLIS: &[Cli] = &[
         auto: None,
         full: None,
         instructions: &["--append-system-prompt", "{}"],
+        first_prompt: &["{text}"],
         resume: &["--session", "{}"],
         status: &[],
         models: &[],
@@ -120,6 +127,7 @@ pub const CLIS: &[Cli] = &[
         auto: None,
         full: Some(&["--brave"]),
         instructions: &["--system-prompt={text}"],
+        first_prompt: &[],
         resume: &["--resume", "--session-id={}"],
         status: &["--config-location={}"],
         models: &[],
@@ -149,6 +157,7 @@ impl Cli {
             "efforts": self.efforts,
             "permissions": if self.auto.is_none() && self.full.is_none() { vec![] } else { self.permissions() },
             "instructions": !self.instructions.is_empty(),
+            "firstPrompt": !self.first_prompt.is_empty(),
             "resume": !self.resume.is_empty(),
         })
     }
@@ -328,9 +337,18 @@ impl Agent {
 
     /// The words that start this agent, program first. `prompt` is where the
     /// instructions are, when there are any; `status` is roer's settings file
-    /// for the CLI, when it takes one.
-    fn words(&self, resume: Option<&str>, prompt: Option<&Prompt>, status: Option<&Path>) -> Result<Vec<Word>, Fail> {
+    /// for the CLI, when it takes one; `first` is where the first prompt is.
+    fn words(
+        &self,
+        resume: Option<&str>,
+        prompt: Option<&Prompt>,
+        status: Option<&Path>,
+        first: Option<&Prompt>,
+    ) -> Result<Vec<Word>, Fail> {
         if self.cli == "custom" {
+            if first.is_some() {
+                return Err(Fail::new(2, format!("{} takes no first prompt", self.name)));
+            }
             if resume.is_some() {
                 return Err(Fail::new(2, format!("{} cannot resume a conversation", self.name)));
             }
@@ -374,6 +392,14 @@ impl Agent {
         if let Some(status) = status {
             words.extend(fill(cli.status, &status.to_string_lossy()).into_iter().map(Word::Plain));
         }
+        // Before the agent's own arguments, which may end in a flag that takes
+        // every word after it (Claude Code's `--add-dir a b`).
+        if let Some(first) = first {
+            if cli.first_prompt.is_empty() {
+                return Err(Fail::new(2, format!("{} takes no first prompt", cli.label)));
+            }
+            words.extend(cli.first_prompt.iter().map(|template| first.word(template)));
+        }
         let args = if resume.is_some() { without_permission_flags(&self.args) } else { self.args.clone() };
         words.extend(args.into_iter().map(Word::Plain));
         Ok(words)
@@ -393,6 +419,29 @@ impl Agent {
     /// `command_line`, with roer's status settings file handed to a CLI that
     /// takes one.
     pub fn command_line_with(&self, resume: Option<&str>, write_prompt: bool, status: Option<&Path>) -> Result<String, Fail> {
+        self.command_line_starting(resume, write_prompt, status, None)
+    }
+
+    /// `command_line_with`, for an agent that starts on `first` as its first
+    /// prompt. Like the instructions it goes through a file, written when
+    /// `write_prompt` is.
+    pub fn command_line_starting(
+        &self,
+        resume: Option<&str>,
+        write_prompt: bool,
+        status: Option<&Path>,
+        first: Option<&str>,
+    ) -> Result<String, Fail> {
+        let first = match first {
+            Some(text) => {
+                let prompt = Prompt::for_text(text);
+                if write_prompt {
+                    prompt.write(text)?;
+                }
+                Some(prompt)
+            }
+            None => None,
+        };
         let prompt = if self.instructions.is_empty() {
             None
         } else {
@@ -405,7 +454,7 @@ impl Agent {
         if let Some(key) = self.env.keys().find(|key| !is_env_name(key)) {
             return Err(Fail::new(2, format!("not an environment variable name: {key:?}")));
         }
-        let words = self.words(resume, prompt.as_ref(), status)?;
+        let words = self.words(resume, prompt.as_ref(), status, first.as_ref())?;
         let mut line = String::new();
         for (key, value) in &self.env {
             if cfg!(windows) {
@@ -1365,6 +1414,35 @@ mod tests {
             "claude --resume abc-123 --permission-mode manual"
         );
         assert_eq!(agent("codex").command_line(Some("abc"), false).unwrap(), "codex resume abc -a untrusted");
+    }
+
+    /// The first prompt goes before the agent's own arguments, read by the
+    /// shell like the instructions,
+    /// and a CLI with no way to take one says so rather than start without it.
+    #[test]
+    fn starts_on_a_first_prompt_where_the_cli_takes_one() {
+        let text = "Make me a tab that shows \"it's\" $HOME.";
+        let prompt = Prompt::for_text(text);
+        let read = |path: &Path| {
+            let path = quote(&path.to_string_lossy());
+            if cfg!(windows) { format!("\"$(Get-Content -Raw {path})\"") } else { format!("\"$(cat {path})\"") }
+        };
+        let mut claude = agent("claude");
+        claude.args = vec!["--add-dir".into(), "/other".into()];
+        assert_eq!(
+            claude.command_line_starting(None, false, None, Some(text)).unwrap(),
+            format!("claude {} --add-dir /other", read(&prompt.text))
+        );
+        let codex = agent("codex");
+        assert_eq!(
+            codex.command_line_starting(None, false, None, Some(text)).unwrap(),
+            format!("codex {}", read(&prompt.text))
+        );
+        assert!(agent("junie").command_line_starting(None, false, None, Some(text)).is_err());
+        let mut custom = agent("claude");
+        custom.cli = "custom".into();
+        custom.command = "my-agent".into();
+        assert!(custom.command_line_starting(None, false, None, Some(text)).is_err());
     }
 
     #[test]

@@ -74,7 +74,7 @@ export interface FolderRepos {
   /** The Workspace it was picked for, offered beside a new one. */
   workspaceId?: string;
   /** Set when the folder was picked to start a session in. */
-  session?: { agent?: string };
+  session?: { agent?: string; prompt?: string };
   /** Asked because the folder was just made the Workspace's own: adding to
    * it is all there is to offer. */
   forFolder?: boolean;
@@ -652,7 +652,7 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
         known(project);
         const updated = workspaceId ? await attachProject(workspaceId, project.id) : null;
         if (updated) replaced(updated);
-        if (session) startNewSession(path, updated ?? workspace, session.agent);
+        if (session) startNewSession(path, updated ?? workspace, session.agent, session.prompt);
       })
       .catch((cause: unknown) => setFailure(String(cause)));
   };
@@ -663,7 +663,7 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
     if (repos.length > 0) {
       setFolderRepos({ path, repos, ...rest });
     } else if (rest.session) {
-      startNewSession(path, workspaces.find((candidate) => candidate.id === rest.workspaceId) ?? null, rest.session.agent);
+      startNewSession(path, workspaces.find((candidate) => candidate.id === rest.workspaceId) ?? null, rest.session.agent, rest.session.prompt);
     } else {
       setFailure(
         `${shorten(path, status?.home)} is not a git repository and has none in it, so it cannot be a project. A new session can still start there: New session, then "Attach a folder as a project…".`,
@@ -696,7 +696,7 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
       }
       replaced(workspace);
       setSelectedWorkspaceId(workspace.id);
-      if (asked.session) startNewSession(asked.path, workspace, asked.session.agent);
+      if (asked.session) startNewSession(asked.path, workspace, asked.session.agent, asked.session.prompt);
     } catch (cause: unknown) {
       setFailure(String(cause));
     }
@@ -857,7 +857,7 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
   // terminal mounted.
   const openedRef = useRef(0);
 
-  const startNewSession = (cwd: string | undefined, workspace: Workspace | null, agent?: string) => {
+  const startNewSession = (cwd: string | undefined, workspace: Workspace | null, agent?: string, prompt?: string) => {
     openedRef.current += 1;
     const known = sessions.map((session) => session.pane);
     pendingAssignRef.current = workspace ? { known, workspaceId: workspace.id } : null;
@@ -875,8 +875,9 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
         /* only a convenience */
       }
     }
+    const args = agent === SHELL ? ["new", "--shell"] : agent ? ["new", "--agent", agent] : ["new"];
     onOpen({
-      args: agent === SHELL ? ["new", "--shell"] : agent ? ["new", "--agent", agent] : ["new"],
+      args: prompt && agent !== SHELL ? [...args, "--prompt", prompt] : args,
       cwd,
       title: "new session",
       nonce: `new-${openedRef.current}`,
@@ -891,15 +892,15 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
   // anywhere else.
   //
   // `agent` is an agent's id, or `SHELL` for just a shell; without one the
-  // shim starts the default agent.
-  const openNew = (agent?: string) => {
+  // shim starts the default agent. `prompt` is what that agent starts on.
+  const openNew = (agent?: string, prompt?: string) => {
     if (!asksForFolder()) {
-      startNewSession(newSessionCwd(), selectedWorkspace, agent);
+      startNewSession(newSessionCwd(), selectedWorkspace, agent, prompt);
       return;
     }
     // Answered after the picker closes, by what the hook is by then.
     void pickFolder().then((picked) => {
-      if (typeof picked === "string") attachForNewSessionRef.current(picked, agent);
+      if (typeof picked === "string") attachForNewSessionRef.current(picked, agent, prompt);
     });
   };
 
@@ -935,9 +936,9 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
   /** The dialog's "Attach a new project…": registers the folder as a
    * Project, attaches it to the Workspace the dialog was for, and starts the
    * session in it right away. */
-  const attachNewProjectForNewSession = (path: string, agent?: string) => {
+  const attachNewProjectForNewSession = (path: string, agent?: string, prompt?: string) => {
     setPicker(null);
-    addFolder(path, { workspaceId: selectedWorkspace?.id, session: { agent } });
+    addFolder(path, { workspaceId: selectedWorkspace?.id, session: { agent, prompt } });
   };
   const attachForNewSessionRef = useRef(attachNewProjectForNewSession);
   attachForNewSessionRef.current = attachNewProjectForNewSession;

@@ -1005,6 +1005,15 @@ button.tree-session .muted {
   color: var(--roer-plus);
 }
 
+/* A request held for the session's agent, which may not be on the stage. */
+.tree-state.held {
+  color: var(--roer-accent);
+}
+
+.tree-state + .tree-state.held {
+  margin-left: 6px;
+}
+
 /* Workspaces: the switcher in the sidebar that filters the session browser */
 
 .workspace-switcher {
@@ -5642,6 +5651,34 @@ button.danger:hover {
 .tabs button.tab-add:hover {
   color: var(--roer-fg);
   background: var(--roer-row-hover);
+}
+
+/* Which session's agent writes the tab, in the New tab dialog. */
+.new-tab-target {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0 0 10px;
+  padding: 0;
+  border: 0;
+}
+
+.new-tab-target legend {
+  margin-bottom: 6px;
+  padding: 0;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.new-tab-target label {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.new-tab-target input:disabled + span {
+  opacity: 0.6;
 }
 
 /* What is waiting for the agent, in the New tab dialog. */

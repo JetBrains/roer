@@ -23,12 +23,14 @@ export interface HeldRequest {
 
 /** Held requests, oldest first, per pane. Replaced, never changed in place,
  * so a list handed to a render stays as it was. */
-const held = new Map<string, readonly HeldRequest[]>();
+let held: ReadonlyMap<string, readonly HeldRequest[]> = new Map();
 const NONE: readonly HeldRequest[] = [];
 
 const setHeld = (pane: string, list: readonly HeldRequest[]) => {
-  if (list.length) held.set(pane, list);
-  else held.delete(pane);
+  const next = new Map(held);
+  if (list.length) next.set(pane, list);
+  else next.delete(pane);
+  held = next;
   changed();
 };
 /** Panes sent a request that have not started on it yet: the next one waits
@@ -43,9 +45,15 @@ const subscribe = (listener: () => void) => {
 
 /** For tests: forgets every held request. */
 export function resetAskAgent(): void {
-  held.clear();
+  held = new Map();
   answering.clear();
   changed();
+}
+
+/** Every pane's held requests, for the screens that list sessions: a request
+ * waits for its own session, which need not be the one on the stage. */
+export function useHeldRequests(): ReadonlyMap<string, readonly HeldRequest[]> {
+  return useSyncExternalStore(subscribe, () => held);
 }
 
 export interface AskAgent {

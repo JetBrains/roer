@@ -2,6 +2,7 @@ import { ChevronDown, ChevronRight, Plus } from "lucide-react";
 import { useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 
 import { buildTree, checkoutName, folderLabel, type TreeCheckout, type TreeProject } from "./lib/checkouts";
+import { useHeldRequests } from "./lib/askAgent";
 import { useFolded } from "./lib/folded";
 import type { Repo } from "./lib/git";
 import type { Project } from "./lib/projects";
@@ -195,6 +196,7 @@ export function SessionTree({
   // A search looks inside folded Projects and branches too, and leaves the
   // folds as they were for when it is cleared.
   const folded: ReadonlySet<string> = searching ? new Set() : savedFolds;
+  const heldByPane = useHeldRequests();
   const toggleFold = (key: string) => {
     if (!searching) toggleSavedFold(key);
   };
@@ -278,6 +280,7 @@ export function SessionTree({
     const state = statusOf(session, waiting);
     const here = session.pane === activePane;
     const classes = ["tree-session", here ? "active" : "", session.pane === pickedPane ? "picked" : ""].filter(Boolean);
+    const held = heldByPane.get(session.pane) ?? [];
     return (
       <li key={session.pane}>
         <AssignMenu
@@ -297,6 +300,14 @@ export function SessionTree({
             <span className={`tree-dot ${state}`} aria-hidden="true" />
             <LiveName session={session} />
             {STATUS_WORDS[state] && !here ? <span className={`tree-state ${state}`}>{STATUS_WORDS[state]}</span> : null}
+            {held.length > 0 ? (
+              <span
+                className="tree-state held"
+                title={`Waiting to be sent to its agent: ${held.map((request) => request.label).join("; ")}. Open the session, then + in the tab strip to send or cancel.`}
+              >
+                {held.length === 1 ? "1 queued" : `${held.length} queued`}
+              </span>
+            ) : null}
           </button>
         </AssignMenu>
       </li>
