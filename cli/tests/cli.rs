@@ -743,7 +743,8 @@ fn new_tells_the_app_its_pane_and_no_one_else() {
     let out = env.roer(&["new", "--shell", "probe"]).env("ROER_REPORT_PANE", "1").output().unwrap();
     let pane = env.tmux(&["list-panes", "-t", "=probe", "-F", "#{pane_id}"]);
     assert!(pane.starts_with('%'), "probe was made: {pane}");
-    assert_eq!(String::from_utf8_lossy(&out.stdout), format!("\x1b]7717;pane={pane}\x07"));
+    // Then that tmux scrolls a line per wheel report from Roer's terminal.
+    assert_eq!(String::from_utf8_lossy(&out.stdout), format!("\x1b]7717;pane={pane}\x07\x1b]7717;wheel=lines\x07"));
     let leaked = env.tmux(&["show-environment", "-g"]);
     assert!(!leaked.contains("ROER_REPORT_PANE"), "the server this started never has it: {leaked}");
 
@@ -770,6 +771,17 @@ fn new_always_makes_another_session_and_starts_claude_in_it() {
     kill_outer(&env);
 
     in_a_terminal(&env, &["new", "--shell", "scratch"], "scratch");
+    // The wheel in copy mode: a line per report from Roer's own terminal.
+    for table in ["copy-mode", "copy-mode-vi"] {
+        let keys = env.tmux(&["list-keys", "-T", table]);
+        for (key, scroll) in [("WheelUpPane", "scroll-up"), ("WheelDownPane", "scroll-down")] {
+            let bound = keys.lines().find(|line| line.contains(&format!(" {key} "))).unwrap_or_default();
+            assert!(
+                bound.contains("#{m:Roer*,#{client_termtype}}") && bound.contains(&format!("send-keys -X {scroll}\"")),
+                "{table} {key}: {bound}"
+            );
+        }
+    }
     kill_outer(&env);
 }
 
