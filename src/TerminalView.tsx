@@ -13,6 +13,7 @@ import { logLine } from "./lib/log";
 import { isOpenGesture, linkTarget } from "./lib/terminalLinks";
 import { measureWithUnicode11 } from "./lib/unicodeWidth";
 import { currentTheme, hostColors, onThemeChange, terminalTheme } from "./lib/theme";
+import { cellAt, nextEncoding, wheelLines, wheelReports, xtversionReply, type MouseEncoding, type WheelCarry } from "./lib/wheel";
 
 /**
  * How long output has to keep flowing before the session counts as attached.
@@ -25,6 +26,10 @@ const ATTACH_GRACE_MS = 250;
  * `ESC ] 7717 ; pane=%N BEL`, or `pane==session:.%N` on psmux, where a pane id
  * alone does not say which session's pane it is. */
 const PANE_OSC = 7717;
+
+/** What `roer` says in the same OSC when tmux scrolls a line per wheel
+ * report from Roer's terminal: `ESC ] 7717 ; wheel=lines BEL`. */
+const WHEEL_LINES = "wheel=lines";
 
 /** How far the pointer may move between press and release for a click on a
  * link to count as one, in CSS pixels. */
@@ -156,7 +161,14 @@ export function TerminalView({ args, cwd, onAttached, onPane, onExit, onOpenFile
     // attaching, and from roer's report when it starts a session.
     let pane = argsRef.current[0] === "attach" ? argsRef.current[1] : undefined;
     // Handled, so never drawn, whatever it says; only a pane id is passed on.
+    // Whether tmux scrolls a line per wheel report from this terminal, as
+    // roer says in the same OSC just before attaching.
+    let wheelPerLine = false;
     const paneSub = terminal.parser.registerOscHandler(PANE_OSC, (data) => {
+      if (data === WHEEL_LINES) {
+        wheelPerLine = true;
+        return true;
+      }
       // The session part as roer's is_pane_id holds it: no `:`, quotes or
       // control characters.
       const reported = /^pane=((?:=[^:'"`\x00-\x1f]+:\.)?%\d+)$/.exec(data)?.[1];
@@ -222,6 +234,51 @@ export function TerminalView({ args, cwd, onAttached, onPane, onExit, onOpenFile
         pending += data;
       }
     });
+    // The wheel, while tmux takes the mouse: one report per line the pixels
+    // make, so a trackpad's swipe and momentum scroll as far as they move
+    // (see lib/wheel.ts). Only once roer has said tmux scrolls a line per
+    // report for this terminal (`wheelPerLine`, from its OSC); until then,
+    // and with psmux or an older tmux, xterm's own reports stay.
+    let encoding: MouseEncoding = "default";
+    const encodingSubs = (["h", "l"] as const).map((final) =>
+      terminal.parser.registerCsiHandler({ prefix: "?", final }, (params) => {
+        encoding = nextEncoding(encoding, params, final === "h");
+        return false; // xterm still sets the mode itself
+      }),
+    );
+    // A full reset (RIS) clears the mouse modes, the encoding with them.
+    const resetSub = terminal.parser.registerEscHandler({ final: "c" }, () => {
+      encoding = "default";
+      return false;
+    });
+    // tmux asks which terminal this is; xterm.js has no answer of its own.
+    const versionSub = terminal.parser.registerCsiHandler({ prefix: ">", final: "q" }, () => {
+      // Asked as the client attaches, maybe before the PTY's id is back.
+      if (ptyId) write(ptyId, xtversionReply());
+      else pending += xtversionReply();
+      return true;
+    });
+    const screen = container.querySelector(".xterm-screen");
+    const carry: WheelCarry = { pixels: 0 };
+    terminal.attachCustomWheelEventHandler((event) => {
+      // xterm reports no wheel in X10 mode; a modifier is a pinch or a
+      // binding of its own, and an encoding other than SGR or the original
+      // is xterm's to write.
+      const mode = terminal.modes.mouseTrackingMode;
+      if (!wheelPerLine || mode === "none" || mode === "x10" || encoding === "other") return true;
+      if (event.shiftKey || event.ctrlKey || event.altKey || event.metaKey) return true;
+      const box = screen?.getBoundingClientRect();
+      if (!box || box.height === 0) return true;
+      event.preventDefault();
+      const lines = wheelLines(carry, event, box.height / terminal.rows, terminal.rows);
+      if (lines !== 0 && ptyId) {
+        const col = cellAt(event.clientX - box.left, box.width, terminal.cols);
+        const row = cellAt(event.clientY - box.top, box.height, terminal.rows);
+        write(ptyId, wheelReports(lines, col, row, encoding === "sgr"));
+      }
+      return false;
+    });
+
     // Driven by fit(), so this only fires when the geometry actually changed.
     const resizeSub = terminal.onResize(({ cols, rows }) => {
       if (ptyId) void resizePty(ptyId, cols, rows).catch(ignoreClosed);
@@ -338,6 +395,9 @@ export function TerminalView({ args, cwd, onAttached, onPane, onExit, onOpenFile
       dataSub.dispose();
       resizeSub.dispose();
       paneSub.dispose();
+      for (const sub of encodingSubs) sub.dispose();
+      resetSub.dispose();
+      versionSub.dispose();
       // Ends Roer's client only. The session behind it keeps running with no
       // client, which is what makes it reattachable from a terminal.
       if (ptyId) void closePty(ptyId);

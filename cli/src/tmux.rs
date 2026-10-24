@@ -46,6 +46,16 @@ pub fn program(bin: &Path) -> String {
 }
 
 /// Whether the engine is psmux, which needs the few workarounds below.
+/// Whether tmux `version` (`3.7c`, `next-3.6`, `3.2a`) is 3.3 or later, the
+/// first to ask a terminal for its name. One that cannot be read is not.
+fn knows_termtype(version: &str) -> bool {
+    let version = version.trim().trim_start_matches("next-");
+    let mut parts = version.split(|c: char| !c.is_ascii_digit()).filter(|part| !part.is_empty());
+    let major = parts.next().and_then(|part| part.parse::<u32>().ok());
+    let minor = parts.next().and_then(|part| part.parse::<u32>().ok()).unwrap_or(0);
+    major.is_some_and(|major| major > 3 || (major == 3 && minor >= 3))
+}
+
 fn is_psmux(program: &str) -> bool {
     Path::new(program).file_stem().is_some_and(|stem| stem.eq_ignore_ascii_case("psmux"))
 }
@@ -164,6 +174,39 @@ impl Tmux {
         if is_psmux(&self.program) {
             self.ok(&["set-option", "-g", "prefix", "M-F12"]);
             self.ok(&["unbind-key", "C-b"]);
+        } else if self.wheel_lines() {
+            self.bind_wheel();
+        }
+    }
+
+    /// Whether the wheel in copy mode goes a line per report for Roer's own
+    /// terminal: tmux from 3.3, which asks a terminal its name (XTVERSION)
+    /// and keeps it as `client_termtype`. Not psmux, nor an older tmux, where
+    /// the terminal keeps sending xterm's own reports. The app hears which
+    /// from `report_wheel` in main.rs.
+    pub fn wheel_lines(&self) -> bool {
+        !is_psmux(&self.program) && knows_termtype(&self.read(&["display-message", "-p", "#{version}"]))
+    }
+
+    /// The wheel in copy mode: a line per report from Roer's own terminal,
+    /// which sends one for every line a trackpad moves, and tmux's own 5 for
+    /// any other terminal, which sends one per notch. Roer's terminal is the
+    /// client whose XTVERSION answer says so (`src/lib/wheel.ts`).
+    fn bind_wheel(&self) {
+        for table in ["copy-mode", "copy-mode-vi"] {
+            for (key, scroll) in [("WheelUpPane", "scroll-up"), ("WheelDownPane", "scroll-down")] {
+                self.ok(&[
+                    "bind-key",
+                    "-T",
+                    table,
+                    key,
+                    "if-shell",
+                    "-F",
+                    "#{m:Roer*,#{client_termtype}}",
+                    &format!("select-pane ; send-keys -X {scroll}"),
+                    &format!("select-pane ; send-keys -X -N 5 {scroll}"),
+                ]);
+            }
         }
     }
 
@@ -331,7 +374,17 @@ fn sh_word(word: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_console_title, lines, sh_word};
+    use super::{is_console_title, knows_termtype, lines, sh_word};
+
+    #[test]
+    fn tmux_knows_a_terminal_by_name_from_3_3() {
+        for version in ["3.3", "3.3a", "3.7c", "next-3.6", "4.0"] {
+            assert!(knows_termtype(version), "{version}");
+        }
+        for version in ["3.2a", "3.0", "2.9", "", "master"] {
+            assert!(!knows_termtype(version), "{version}");
+        }
+    }
 
     #[test]
     fn a_console_left_untitled_has_no_title() {

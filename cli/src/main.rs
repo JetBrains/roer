@@ -363,6 +363,16 @@ impl Roer {
     /// terminal reads and never draws: a session the app started has no pane
     /// it could know in advance, and guessing it from what `list` shows
     /// afterwards goes wrong whenever two sessions appear at once.
+    /// Tells the app's terminal, in the same private OSC as the pane, that
+    /// the wheel in copy mode goes a line per report (`Tmux::wheel_lines`),
+    /// so it sends one per line. Without it the terminal sends xterm's own.
+    fn report_wheel(&self) {
+        if self.report_pane && self.tmux.wheel_lines() {
+            print!("\x1b]7717;wheel=lines\x07");
+            let _ = std::io::Write::flush(&mut std::io::stdout());
+        }
+    }
+
     fn attach_session(&self, name: &str, evict: bool) -> Outcome {
         self.tmux.announce();
         if self.report_pane {
@@ -372,6 +382,7 @@ impl Roer {
                 let _ = std::io::Write::flush(&mut std::io::stdout());
             }
         }
+        self.report_wheel();
         let target = format!("={name}");
         let mut args = vec!["attach"];
         if evict {
@@ -637,6 +648,7 @@ impl Roer {
             None => self.list(false),
             Some(name) => {
                 self.tmux.announce();
+                self.report_wheel();
                 Err(Fail::new(1, self.tmux.exec(&["attach", "-d", "-t", name])))
             }
         }

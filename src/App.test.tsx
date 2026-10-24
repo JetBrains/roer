@@ -90,7 +90,11 @@ vi.mock("@xterm/xterm", () => ({
     onData = vi.fn(() => ({ dispose: vi.fn() }));
     onKey = vi.fn(() => ({ dispose: vi.fn() }));
     onResize = vi.fn(() => ({ dispose: vi.fn() }));
+    attachCustomWheelEventHandler = vi.fn();
+    modes = { mouseTrackingMode: "none" };
     parser = {
+      registerCsiHandler: vi.fn(() => ({ dispose: vi.fn() })),
+      registerEscHandler: vi.fn(() => ({ dispose: vi.fn() })),
       registerOscHandler: vi.fn((ident: number, handler: (data: string) => boolean) => {
         mocks.osc.set(ident, handler);
         return { dispose: vi.fn() };
