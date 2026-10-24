@@ -16,7 +16,7 @@ import {
 } from "./lib/worktrees";
 import type { OpenRequest } from "./SessionBrowser";
 import { buildTree } from "./lib/checkouts";
-import { byLiveRank, SessionTree } from "./SessionTree";
+import { byLiveRank, filterTree, orderTree, SessionTree } from "./SessionTree";
 
 vi.mock("./lib/pty", () => ({
   killSession: vi.fn(),
@@ -140,6 +140,39 @@ describe("sorting sessions into checkouts", () => {
   });
 });
 
+describe("ordering worktrees and finding sessions", () => {
+  const wt = (branch: string): Worktree => ({ ...linked, path: `/work/wt/${branch}`, branch });
+  const worktrees = [main, wt("old-idle"), wt("busy"), wt("empty"), wt("waits")];
+  const sessions = [
+    session("%1", "/work/wt/old-idle", { opened: 100 }),
+    session("%2", "/work/wt/busy", { command: "claude", state: "working", opened: 50, title: "✳ Login fix" }),
+    session("%3", "/work/wt/waits", { command: "claude", state: "waiting", opened: 10 }),
+  ];
+  const waiting = new Set(["%3"]);
+  const tree = () => orderTree([project], { [project.path]: worktrees }, {}, sessions, waiting);
+
+  it("puts the main checkout first, then worktrees waiting on you, then by the session opened last, then the empty ones", () => {
+    expect(tree().projects[0].checkouts.map((c) => c.worktree.branch)).toEqual(["main", "waits", "old-idle", "busy", "empty"]);
+    // An agent starting work moves nothing.
+    const working = orderTree([project], { [project.path]: worktrees }, {}, sessions.map((s) => (s.pane === "%1" ? { ...s, state: "working" } : s)), waiting);
+    expect(working.projects[0].checkouts.map((c) => c.worktree.branch)).toEqual(["main", "waits", "old-idle", "busy", "empty"]);
+  });
+
+  it("finds sessions by their name, their branch or their project, and empty worktrees by their branch", () => {
+    const branches = (query: string) =>
+      filterTree(tree(), query).projects.flatMap((node) => node.checkouts.map((c) => `${c.worktree.branch}:${c.items.map((s) => s.pane).join(",")}`));
+    expect(branches("login")).toEqual(["busy:%2"]);
+    expect(branches("EMP")).toEqual(["empty:"]);
+    expect(branches("roer wait")).toEqual(["waits:%3"]);
+    expect(branches("nothing-like-it")).toEqual([]);
+    expect(filterTree(tree(), "  ")).toEqual(tree());
+    // What runs in the Workspace's folder is found by the folder's name too.
+    const withFolder = { ...tree(), inFolder: [session("%9", "/work", { title: "✳ Upgrade deps" })] };
+    expect(filterTree(withFolder, "work upgrade", "work").inFolder.map((s) => s.pane)).toEqual(["%9"]);
+    expect(filterTree(withFolder, "login", "work").inFolder).toEqual([]);
+  });
+});
+
 function Harness({ onOpen, token = "none" }: { onOpen: (request: OpenRequest) => void; token?: string }) {
   const browser = useSessionBrowser({ token, onOpen });
   return (
@@ -213,6 +246,41 @@ describe("the session tree", () => {
 
     fireEvent.click(within(folder).getByRole("button", { name: "Start a session in all projects" }));
     expect(onOpen).toHaveBeenLastCalledWith(expect.objectContaining({ args: ["new"], cwd: "/work" }));
+  });
+
+  it("filters the tree as you type, through folds, and opens the picked session on Enter", async () => {
+    localStorage.setItem("roer:folded-tree", JSON.stringify([`checkout-${linked.path}`]));
+    vi.mocked(listSessions).mockResolvedValue([
+      session("%3", `${linked.path}/src`, { command: "claude", title: "✳ Login fix" }),
+      session("%4", "/work/roer", { command: "claude", title: "✳ Release notes" }),
+    ]);
+    const onOpen = vi.fn();
+    render(<Harness onOpen={onOpen} />);
+    const tree = within(await screen.findByRole("region", { name: "Running sessions" }));
+    await tree.findByTitle(/^s%4 /);
+    expect(tree.queryByTitle(/^s%3 /)).not.toBeInTheDocument();
+
+    // Enter with nothing typed opens nothing.
+    fireEvent.keyDown(tree.getByRole("searchbox", { name: "Find a session" }), { key: "Enter" });
+    expect(onOpen).not.toHaveBeenCalled();
+
+    // Typing on a row is a speed search.
+    fireEvent.keyDown(tree.getByTitle(/^s%4 /), { key: "l" });
+    const search = tree.getByRole("searchbox", { name: "Find a session" });
+    expect(search).toHaveValue("l");
+    expect(search).toHaveFocus();
+    fireEvent.change(search, { target: { value: "login" } });
+    expect(tree.getByTitle(/^s%3 /)).toBeInTheDocument();
+    expect(tree.queryByTitle(/^s%4 /)).not.toBeInTheDocument();
+    fireEvent.keyDown(search, { key: "Enter" });
+    expect(onOpen).toHaveBeenCalledWith(expect.objectContaining({ args: ["attach", "%3"] }));
+    expect(search).toHaveValue("");
+
+    fireEvent.change(search, { target: { value: "zzz" } });
+    expect(tree.getByText("Nothing matches “zzz”.")).toBeInTheDocument();
+    fireEvent.keyDown(search, { key: "Escape" });
+    expect(search).toHaveValue("");
+    localStorage.removeItem("roer:folded-tree");
   });
 
   it("folds a branch and a project, saying how much is hidden and that one waits", async () => {

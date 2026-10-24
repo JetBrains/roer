@@ -1,17 +1,21 @@
 import { ChevronDown, ChevronRight, Plus } from "lucide-react";
-import type { ReactNode } from "react";
+import { useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 
-import { buildTree, checkoutName, folderLabel, type TreeCheckout } from "./lib/checkouts";
+import { buildTree, checkoutName, folderLabel, type TreeCheckout, type TreeProject } from "./lib/checkouts";
 import { useFolded } from "./lib/folded";
+import type { Repo } from "./lib/git";
 import type { Project } from "./lib/projects";
 import type { SessionInfo } from "./lib/pty";
 import type { SessionBrowserState } from "./lib/useSessionBrowser";
+import type { Worktree } from "./lib/worktrees";
 import {
   AssignMenu,
   isWorking,
   LiveName,
   liveRank,
   needsYou,
+  paneLabel,
+  runningAgent,
   shorten,
   type OpenRequest,
 } from "./SessionBrowser";
@@ -30,6 +34,98 @@ export const byLiveRank =
           a.index - b.index,
       )
       .map(({ session }) => session);
+
+/**
+ * A Project's checkouts in the order they matter: the main one first, then
+ * the worktrees with sessions, those with one waiting on you first, each
+ * group by the session opened most recently, then the worktrees with none
+ * in git's order. An agent starting or finishing work moves nothing: rows
+ * that jumped on every turn would move under the pointer.
+ */
+export const busiestFirst =
+  (waiting: ReadonlySet<string>) =>
+  (checkouts: TreeCheckout<SessionInfo>[]): TreeCheckout<SessionInfo>[] => {
+    const waits = (checkout: TreeCheckout<SessionInfo>) => checkout.items.some((session) => waiting.has(session.pane));
+    const opened = (checkout: TreeCheckout<SessionInfo>) => Math.max(0, ...checkout.items.map((session) => session.opened ?? 0));
+    return checkouts
+      .map((checkout, index) => ({ checkout, index }))
+      .sort((a, b) => {
+        if (a.checkout.worktree.main !== b.checkout.worktree.main) return a.checkout.worktree.main ? -1 : 1;
+        const used = (a.checkout.items.length > 0 ? 0 : 1) - (b.checkout.items.length > 0 ? 0 : 1);
+        if (used !== 0 || a.checkout.items.length === 0) return used || a.index - b.index;
+        return (
+          Number(waits(b.checkout)) - Number(waits(a.checkout)) ||
+          opened(b.checkout) - opened(a.checkout) ||
+          a.index - b.index
+        );
+      })
+      .map(({ checkout }) => checkout);
+  };
+
+/** The tree as the sidebar shows it: sessions by `byLiveRank`, checkouts by
+ * `busiestFirst`. */
+export function orderTree(
+  projects: Project[],
+  worktrees: Record<string, Worktree[]>,
+  repos: Record<string, Repo>,
+  sessions: SessionInfo[],
+  waiting: ReadonlySet<string>,
+  folder?: string,
+) {
+  const built = buildTree(projects, worktrees, repos, sessions, (session) => session.cwd, byLiveRank(waiting), folder);
+  return { ...built, projects: built.projects.map((node) => ({ ...node, checkouts: busiestFirst(waiting)(node.checkouts) })) };
+}
+
+/** Whether every word of `query` is in `text`, ignoring case: "roer fix"
+ * finds the fix-login worktree of roer. */
+export function matches(query: string, ...text: string[]): boolean {
+  const hay = text.join(" ").toLowerCase();
+  return query
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(Boolean)
+    .every((word) => hay.includes(word));
+}
+
+/** What a session row is found by: what it is called, who runs in it, and
+ * its tmux session's name. */
+const sessionText = (session: SessionInfo): string =>
+  [paneLabel(session.title, session.command), runningAgent(session) ?? session.command, session.session].join(" ");
+
+/**
+ * The tree cut down to what `query` finds, each session by its own text with
+ * its Project's and checkout's names, so a Project's or a branch's name finds
+ * every session in it. A checkout with no sessions stays when its own names
+ * match, so a worktree can be found to start one in.
+ */
+export function filterTree<Tree extends { projects: TreeProject<SessionInfo>[]; inFolder: SessionInfo[]; elsewhere: SessionInfo[] }>(
+  tree: Tree,
+  query: string,
+  /** The Workspace's folder, as its group is headed, when it has one. */
+  folderName?: string | false,
+): Tree {
+  if (!query.trim()) return tree;
+  const projects = tree.projects
+    .map((node) => ({
+      ...node,
+      checkouts: node.checkouts
+        .map((checkout) => {
+          const names = [node.project.name, checkoutName(checkout.worktree)];
+          const items = checkout.items.filter((session) => matches(query, ...names, sessionText(session)));
+          return items.length > 0 || (checkout.items.length === 0 && matches(query, ...names))
+            ? { ...checkout, items }
+            : null;
+        })
+        .filter((checkout): checkout is TreeCheckout<SessionInfo> => checkout !== null),
+    }))
+    .filter((node) => node.checkouts.length > 0);
+  return {
+    ...tree,
+    projects,
+    inFolder: tree.inFolder.filter((session) => matches(query, folderName || "", sessionText(session))),
+    elsewhere: tree.elsewhere.filter((session) => matches(query, sessionText(session))),
+  };
+}
 
 /** What a session is up to, as the dot before its name says it. */
 function statusOf(session: SessionInfo, waiting: ReadonlySet<string>): "needs" | "waiting" | "working" | "idle" {
@@ -90,9 +186,67 @@ export function SessionTree({
   projects,
   onOpen,
 }: SessionTreeProps) {
-  const tree = buildTree(projects, worktrees, repos, visibleSessions, (session) => session.cwd, byLiveRank(waiting), folderInView);
+  const ordered = orderTree(projects, worktrees, repos, visibleSessions, waiting, folderInView);
+  const [query, setQuery] = useState("");
+  const searching = query.trim() !== "";
+  const tree = filterTree(ordered, query, folderInView && folderLabel(folderInView));
   const home = status?.home;
-  const [folded, toggleFold] = useFolded("roer:folded-tree");
+  const [savedFolds, toggleSavedFold] = useFolded("roer:folded-tree");
+  // A search looks inside folded Projects and branches too, and leaves the
+  // folds as they were for when it is cleared.
+  const folded: ReadonlySet<string> = searching ? new Set() : savedFolds;
+  const toggleFold = (key: string) => {
+    if (!searching) toggleSavedFold(key);
+  };
+
+  // The rows a search can step through, in the order they are shown.
+  const found = [
+    ...tree.projects.flatMap((node) => node.checkouts.flatMap((checkout) => checkout.items)),
+    ...tree.inFolder,
+    ...tree.elsewhere,
+  ];
+  // A search hides the Workspace's folder when nothing in it matches.
+  const showFolder = !!folderInView && (!searching || tree.inFolder.length > 0);
+  // The match Enter opens, by its pane, so a poll that reorders the list
+  // keeps it: the first match until the arrows pick another.
+  const [picked, setPicked] = useState<string | null>(null);
+  const pickedAt = Math.max(0, found.findIndex((session) => session.pane === picked));
+  const pickedPane = searching ? found[pickedAt]?.pane : undefined;
+  const searchRef = useRef<HTMLInputElement>(null);
+
+  const openSession = (session: SessionInfo) =>
+    onOpen({ args: ["attach", session.pane], cwd: session.cwd, title: session.session, pane: session.pane });
+
+  const onSearchKey = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      const step = event.key === "ArrowDown" ? 1 : -1;
+      if (found.length > 0) setPicked(found[(pickedAt + step + found.length) % found.length].pane);
+    } else if (event.key === "Enter") {
+      const session = searching ? found[pickedAt] : undefined;
+      if (session) {
+        event.preventDefault();
+        setQuery("");
+        openSession(session);
+      }
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      setQuery("");
+      event.currentTarget.blur();
+    }
+  };
+
+  // Speed search: typing while a row has the keyboard goes to the search.
+  // Not from a menu a row opened: it is in a portal, outside the tree's
+  // own elements, and its typeahead is its own.
+  const onTreeKey = (event: KeyboardEvent<HTMLElement>) => {
+    if (event.target === searchRef.current || !event.currentTarget.contains(event.target as Node)) return;
+    if (event.key.length !== 1 || event.metaKey || event.ctrlKey || event.altKey || event.key === " ") return;
+    event.preventDefault();
+    setQuery((current) => current + event.key);
+    setPicked(null);
+    searchRef.current?.focus();
+  };
 
   /** A fold toggle for a project or branch, and what it hides once folded:
    * how many sessions, and whether one of them waits on you. */
@@ -123,6 +277,7 @@ export function SessionTree({
   const row = (session: SessionInfo) => {
     const state = statusOf(session, waiting);
     const here = session.pane === activePane;
+    const classes = ["tree-session", here ? "active" : "", session.pane === pickedPane ? "picked" : ""].filter(Boolean);
     return (
       <li key={session.pane}>
         <AssignMenu
@@ -134,12 +289,10 @@ export function SessionTree({
         >
           <button
             type="button"
-            className={here ? "tree-session active" : "tree-session"}
+            className={classes.join(" ")}
             aria-current={here ? "true" : undefined}
             title={`${session.session} — ${shorten(session.cwd, home)}`}
-            onClick={() =>
-              onOpen({ args: ["attach", session.pane], cwd: session.cwd, title: session.session, pane: session.pane })
-            }
+            onClick={() => openSession(session)}
           >
             <span className={`tree-dot ${state}`} aria-hidden="true" />
             <LiveName session={session} />
@@ -192,7 +345,7 @@ export function SessionTree({
   };
 
   return (
-    <section className="session-tree" aria-label="Running sessions">
+    <section className="session-tree" aria-label="Running sessions" onKeyDown={onTreeKey}>
       <h2>
         Sessions
         {projects.length > 0 ? (
@@ -201,6 +354,21 @@ export function SessionTree({
           </button>
         ) : null}
       </h2>
+      {visibleSessions.length > 0 || projects.length > 0 || folderInView || query ? (
+        <input
+          ref={searchRef}
+          type="search"
+          className="tree-search"
+          aria-label="Find a session"
+          placeholder="Find a session, branch or project"
+          value={query}
+          onChange={(event) => {
+            setQuery(event.target.value);
+            setPicked(null);
+          }}
+          onKeyDown={onSearchKey}
+        />
+      ) : null}
       {tree.projects.map((node) => (
         <div key={node.project.id} className="tree-project">
           <h3 className="tree-project-head" title={shorten(node.project.path, home)}>
@@ -216,7 +384,7 @@ export function SessionTree({
       ))}
       {/* The Workspace's own folder, shaped as a Project with one checkout:
         what runs there runs across its repositories. */}
-      {folderInView ? (
+      {folderInView && showFolder ? (
         <div className="tree-project">
           <h3 className="tree-project-head" title={shorten(folderInView, home)}>
             {fold("folder", folderLabel(folderInView), tree.inFolder, "tree-project-name")}
@@ -236,12 +404,12 @@ export function SessionTree({
       ) : null}
       {tree.elsewhere.length > 0 ? (
         <div className="tree-project">
-          {tree.projects.length > 0 || folderInView ? <h3>Elsewhere</h3> : null}
+          {tree.projects.length > 0 || showFolder ? <h3>Elsewhere</h3> : null}
           <ul className="tree-loose">{tree.elsewhere.map(row)}</ul>
         </div>
       ) : null}
-      {tree.projects.length === 0 && !folderInView && tree.elsewhere.length === 0 ? (
-        <p className="muted">Nothing running yet.</p>
+      {tree.projects.length === 0 && !showFolder && tree.elsewhere.length === 0 ? (
+        <p className="muted">{searching ? `Nothing matches “${query.trim()}”.` : "Nothing running yet."}</p>
       ) : null}
     </section>
   );
