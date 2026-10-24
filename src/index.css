@@ -916,6 +916,28 @@ button.tree-session.active {
   background: var(--roer-selected);
 }
 
+/* The row Enter opens while searching the tree. */
+button.tree-session.picked {
+  box-shadow: inset 0 0 0 1px var(--roer-accent);
+}
+
+.session-tree input.tree-search {
+  width: 100%;
+  box-sizing: border-box;
+  margin: 0 0 6px;
+  padding: 4px 8px;
+  border: 1px solid var(--roer-border);
+  border-radius: 6px;
+  background: var(--roer-bg);
+  color: var(--roer-fg);
+  font-size: 12px;
+}
+
+.session-tree input.tree-search:focus {
+  outline: none;
+  border-color: var(--roer-accent);
+}
+
 button.tree-session strong {
   flex: 0 1 auto;
   min-width: 0;
