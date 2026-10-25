@@ -6,12 +6,15 @@ import { DiffBrowserView } from "./DiffBrowserView";
 import { canAsk, localReviewPrompt, onBranch, ready, storedBase, useBranchComments } from "./local";
 import { ReviewView } from "./ReviewView";
 
-/** What the tab shows: the edits and commits one at a time, the whole branch at once, or its pull request. */
-export type Scope = "commits" | "local" | "pr";
+/** What the tab shows: the branch, all of it and then step by step, or its pull request. */
+export type Scope = "branch" | "pr";
 
 const SCOPES: { scope: Scope; label: string; title: string }[] = [
-  { scope: "commits", label: "By commit", title: "What is not committed, then each of the branch's commits" },
-  { scope: "local", label: "Whole branch", title: "Everything since the branch left its base, to comment on and send to the agent" },
+  {
+    scope: "branch",
+    label: "Branch",
+    title: "Everything since the branch left its base, then what is not committed and each commit on its own",
+  },
   { scope: "pr", label: "Pull request", title: "The pull request as GitHub has it, with its review threads, or the form that opens one" },
 ];
 
@@ -30,12 +33,12 @@ function agentName(session: Session | null): string {
 }
 
 /**
- * The branch's work in one tab, at whichever stage it is: uncommitted edits and
- * commits stepped through one at a time, the whole branch with comments on its
- * lines, or the pull request with its review threads, from opening it to
- * merging it. Each view stays mounted while another is shown, so coming back
- * finds it where it was. Comments left by commit and on the whole branch are
- * one list, sent with one button.
+ * The branch's work in one tab, at whichever stage it is: the whole branch,
+ * then its uncommitted edits and commits stepped through one at a time, all
+ * taking comments on their lines; or the pull request with its review
+ * threads, from opening it to merging it. Each view stays mounted while the
+ * other is shown, so coming back finds it where it was. Comments left on any
+ * step are one list, sent with one button.
  *
  * All three show one branch, picked in the bar above them: the one checked
  * out in the session until another is picked, and again after a session
@@ -43,13 +46,13 @@ function agentName(session: Session | null): string {
  * checked-out one's.
  */
 export function ChangesView({ session, active, onSent, onOpenCount }: ChangesViewProps) {
-  const [scope, setScope] = useState<Scope>("commits");
+  const [scope, setScope] = useState<Scope>("branch");
   const [where, setWhere] = useState<{ root: string; branch: string | null; branches: string[] } | null>(null);
   /** Picked by hand; null follows the branch checked out in the session. */
   const [picked, setPicked] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [said, setSaid] = useState<string | null>(null);
-  /** Where By commit puts its own controls, so the tab has one bar rather than two. */
+  /** Where Branch puts its own controls, so the tab has one bar rather than two. */
   const [slot, setSlot] = useState<HTMLDivElement | null>(null);
   const checkedOut = where?.branch ?? null;
   const branch = picked ?? checkedOut;
@@ -159,9 +162,9 @@ export function ChangesView({ session, active, onSent, onOpenCount }: ChangesVie
             not checked out
           </span>
         ) : null}
-        <div className="changes-slot" ref={setSlot} hidden={scope !== "commits"} />
+        <div className="changes-slot" ref={setSlot} hidden={scope !== "branch"} />
         {said ? <span className="muted changes-said">{said}</span> : null}
-        {scope !== "commits" ? <span className="review-spacer" /> : null}
+        {scope !== "branch" ? <span className="review-spacer" /> : null}
         {/* Only once there is something to send; the agent's name is in its accessible name. */}
         {scope !== "pr" && toSend.length > 0 ? (
           <Button
@@ -174,7 +177,7 @@ export function ChangesView({ session, active, onSent, onOpenCount }: ChangesVie
           </Button>
         ) : null}
       </div>
-      <div className="changes-scope" hidden={scope !== "commits"}>
+      <div className="changes-scope" hidden={scope !== "branch"}>
         <DiffBrowserView
           // Another repository or branch is another history: started over, rather than leaving the old one's
           // commits on screen (and taking comments on them) until the new one's arrive.
@@ -183,7 +186,7 @@ export function ChangesView({ session, active, onSent, onOpenCount }: ChangesVie
           branch={branch ?? (where ? "HEAD" : undefined)}
           cwd={session?.cwd}
           pane={session?.pane}
-          active={active && scope === "commits"}
+          active={active && scope === "branch"}
           changed={session?.changed}
           comments={comments}
           onComments={where ? update : undefined}
@@ -193,16 +196,17 @@ export function ChangesView({ session, active, onSent, onOpenCount }: ChangesVie
           onCommitted={(short) => setSaid(`Committed ${short}.`)}
         />
       </div>
-      <div className="changes-scope" hidden={scope === "commits"}>
+      <div className="changes-scope" hidden={scope !== "pr"}>
         <ReviewView
           // Started over for the same reason: the old branch's diff and comments must not stay answerable under
           // the new one's name.
           key={`${root ?? ""}\0${branch ?? ""}`}
           session={session}
           branch={elsewhere}
-          active={active && scope !== "commits"}
-          scope={scope === "pr" ? "pr" : "local"}
-          onScope={setScope}
+          active={active && scope === "pr"}
+          scope="pr"
+          // Its own comments are the branch's: asking for them shows the branch.
+          onScope={(next) => setScope(next === "pr" ? "pr" : "branch")}
           onSent={onSent}
           onOpenCount={onOpenCount}
         />

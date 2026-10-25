@@ -40,6 +40,8 @@ import {
   type FileChange,
 } from "./lib/git";
 import { ancestors, buildTree, fileOrder, rows } from "./lib/tree";
+import { isImage } from "./lib/blob";
+import { ImageDiff, MarkdownDiff, type LoadFile } from "./RenderedDiff";
 
 export interface DiffPaneProps {
   /** `null` while the file list itself is still loading. */
@@ -81,6 +83,9 @@ export interface DiffPaneProps {
    * a field under it, and what is written comes here. Drawing it is up to
    * the owner, as one of `notes`. */
   onAddNote?: (note: NewNote) => void;
+  /** Reads a file whole on either side of the diff, base64: what lets a picture be shown as one and a Markdown
+   * file be read rendered, with its pictures. Without it both are diffs of their source. */
+  loadFile?: LoadFile;
 }
 
 /** A comment written on a line of the diff. */
@@ -325,6 +330,17 @@ function storedLayout(): Layout | null {
   }
 }
 
+const MARKDOWN_KEY = "roer:diff-markdown";
+
+/** How a Markdown file's change is shown until the viewer picks: rendered, the way it is read. */
+function storedMarkdown(): "rendered" | "source" {
+  try {
+    return localStorage.getItem(MARKDOWN_KEY) === "source" ? "source" : "rendered";
+  } catch {
+    return "rendered";
+  }
+}
+
 const TREE_KEY = "roer:diff-tree-hidden";
 
 function storedTreeHidden(): boolean {
@@ -363,6 +379,7 @@ export function DiffPane({
   onNoteAnswer,
   reveal,
   onAddNote,
+  loadFile,
 }: DiffPaneProps) {
   const [selection, setSelection] = useState<Selection | null>(null);
   const [composing, setComposing] = useState<(Spot & { path: string }) | null>(null);
@@ -376,6 +393,17 @@ export function DiffPane({
     setLayoutRaw(next);
     try {
       localStorage.setItem(LAYOUT_KEY, next);
+    } catch {
+      /* not kept, still shown */
+    }
+  };
+
+  // Kept like the layout: someone reviewing prose keeps reading it rendered.
+  const [markdown, setMarkdownRaw] = useState(storedMarkdown);
+  const setMarkdown = (next: "rendered" | "source") => {
+    setMarkdownRaw(next);
+    try {
+      localStorage.setItem(MARKDOWN_KEY, next);
     } catch {
       /* not kept, still shown */
     }
@@ -470,6 +498,8 @@ export function DiffPane({
   );
 
   const lang = useMemo(() => (path ? langFor(path) : undefined), [path]);
+  const picture = !!loadFile && !!path && isImage(path);
+  const rendered = !!loadFile && lang === "markdown" && markdown === "rendered";
 
   const [grammars, setGrammars] = useState(0);
   useEffect(() => {
@@ -775,7 +805,29 @@ export function DiffPane({
                     renamed from {selected.renamedFrom}
                   </span>
                 ) : null}
-                {parsed && parsed.hunks.length > 0 ? (
+                {loadFile && lang === "markdown" ? (
+                  <div className="seg" role="group" aria-label="Markdown view">
+                    <button
+                      type="button"
+                      className={markdown === "rendered" ? "on" : undefined}
+                      aria-pressed={markdown === "rendered"}
+                      title="Both versions rendered, what was taken out in red and what came in in green"
+                      onClick={() => setMarkdown("rendered")}
+                    >
+                      Rendered
+                    </button>
+                    <button
+                      type="button"
+                      className={markdown === "source" ? "on" : undefined}
+                      aria-pressed={markdown === "source"}
+                      title="The Markdown source, line by line, where lines take comments"
+                      onClick={() => setMarkdown("source")}
+                    >
+                      Source
+                    </button>
+                  </div>
+                ) : null}
+                {parsed && parsed.hunks.length > 0 && !rendered && !picture ? (
                   <span className="muted at">
                     change {index + 1} of {parsed.hunks.length}
                   </span>
@@ -789,11 +841,29 @@ export function DiffPane({
               <p className="muted pad">Loading diff…</p>
             ) : null}
 
-            {parsed?.binary ? (
+            {selected && picture && loadFile ? (
+              <ImageDiff path={selected.path} oldPath={selected.renamedFrom ?? selected.path} load={loadFile} />
+            ) : null}
+
+            {parsed?.binary && !picture ? (
               <p className="muted pad">Binary file — nothing to show.</p>
             ) : null}
 
-            {parsed && !parsed.binary && parsed.hunks.length === 0 ? (
+            {selected && rendered && loadFile ? (
+              <>
+                {lineNotes.size > 0 ? (
+                  <p className="notice">
+                    Comments sit on lines of the source.{" "}
+                    <button type="button" className="link" onClick={() => setMarkdown("source")}>
+                      Show the source
+                    </button>
+                  </p>
+                ) : null}
+                <MarkdownDiff path={selected.path} oldPath={selected.renamedFrom ?? selected.path} load={loadFile} />
+              </>
+            ) : null}
+
+            {parsed && !parsed.binary && parsed.hunks.length === 0 && !rendered && !picture ? (
               <p className="muted pad">
                 No textual change — a mode or an empty file.
               </p>
@@ -805,7 +875,7 @@ export function DiffPane({
 
             <Notes.Provider value={noteContext}>
               <Coloured.Provider value={coloured}>
-                {parsed?.hunks.map((hunk, i) => (
+                {(rendered || picture ? [] : parsed?.hunks ?? []).map((hunk, i) => (
                   <div
                     key={`${selected?.path}:${i}`}
                     ref={(node) => {

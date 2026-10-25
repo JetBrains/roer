@@ -368,7 +368,7 @@ export function ReviewView({ session, active, branch: other, onSent, onOpenCount
   // diff altogether.
   const { localNotes, strays } = useMemo(() => {
     const patch = localReady?.diff ?? "";
-    // A comment on a commit counts its lines in that commit: By commit shows it there.
+    // A comment on a commit counts its lines in that commit: Branch shows it there, at that commit.
     const now = comments.filter((c) => !c.commit);
     const files = new Set(splitPatch(patch).map((file) => file.path));
     const drawn = diffSpots(patch);

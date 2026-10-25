@@ -325,6 +325,7 @@ fn dispatch(state: &Arc<AppState>, cmd: &str, args: Value, cid: Option<&str>) ->
             call_res!(args, crate::git::git_branch_commits, "root": String, "branch": String, "base": String)
         }
         "git_commit_files" => call_res!(args, crate::git::git_commit_files, "root": String, "commit": String),
+        "git_blob" => call_res!(args, crate::git::git_blob, "root": String, "path": String, "rev": Option<String>),
         "git_commit_diff" => {
             call_res!(args, crate::git::git_commit_diff, "root": String, "commit": String, "path": String)
         }

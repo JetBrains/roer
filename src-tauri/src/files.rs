@@ -1116,7 +1116,7 @@ pub struct FileText {
 /// pointing out of the repository can be used to read elsewhere: a viewer is
 /// handed a path by a fuzzy search, and that path is only trustworthy to the
 /// extent it is checked.
-fn resolve(root: &str, path: &str) -> Result<PathBuf, String> {
+pub(crate) fn resolve(root: &str, path: &str) -> Result<PathBuf, String> {
     let base = Path::new(root)
         .canonicalize()
         .map_err(|e| format!("could not read {root}: {e}"))?;

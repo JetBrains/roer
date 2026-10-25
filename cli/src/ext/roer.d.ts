@@ -248,6 +248,8 @@ declare module "roer" {
     /** Commits the branch has over its base. */
     commits: number;
     diff: string;
+    /** What the patch is from: the fork point's commit, `HEAD`, or the empty tree. Its files are the old side. */
+    from: string;
     /** Why the patch is less than asked for: no commit in common with the base, so only what is uncommitted. */
     note?: string;
   }
@@ -261,6 +263,9 @@ declare module "roer" {
   export function gitCommitAll(cwd: string, message: string): Promise<string>;
   export function gitCommitFiles(root: string, commit: string): Promise<FileChange[]>;
   export function gitCommitDiff(root: string, commit: string, path: string): Promise<string>;
+  /** A file's bytes, base64, as `rev` has it (`HEAD`, a commit, `abc123^`), or as the worktree has it without one.
+   * null when there is no such file there. Up to 20 MB. */
+  export function gitBlob(root: string, path: string, rev?: string): Promise<string | null>;
   export function isUntracked(file: FileChange): boolean;
   /** One letter for a change: M, A, D, R, ? … */
   export function statusLetter(file: FileChange): string;
@@ -384,7 +389,13 @@ declare module "roer" {
   /** Markdown as GitHub writes it, with raw HTML cleaned by GitHub's schema; links open in the browser.
    * It always has the `file-markdown` class, Roer's Markdown styles, which fill a pane with padding and a
    * scroll of their own; `className` goes beside it. Pass `md-inline` for text in a card, a row or a list item. */
-  export function Markdown(props: { children: string; className?: string }): ReactNode;
+  /** With `image`, a picture's src is turned into a URL for it (null: missing), and one on the web is a link,
+   * not fetched. */
+  export function Markdown(props: {
+    children: string;
+    className?: string;
+    image?: (src: string) => Promise<string | null>;
+  }): ReactNode;
 
   export interface DiffLine {
     kind: "context" | "add" | "del" | "meta";
@@ -470,6 +481,9 @@ declare module "roer" {
     onNoteAnswer?: (answer: import("roer/ui").NoteAnswer) => void;
     /** Selects `path` at the change holding `line`, each time `seq` changes. */
     reveal?: { path: string; line: number; side?: "old" | "new"; seq: number };
+    /** A file whole on either side, base64 (`gitBlob`), null where it does not exist: with it a picture is shown as
+     * one, and a Markdown file can be read rendered, its pictures included. */
+    loadFile?: (path: string, side: "old" | "new") => Promise<string | null>;
   }): ReactNode;
 
   // ---------------------------------------------------------------- keys

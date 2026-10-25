@@ -13,7 +13,9 @@ import type { LocalComment } from "./local";
 import { parseDiff } from "../../lib/diff";
 import { type FilesChanged } from "../../lib/files";
 import {
+  gitBlob,
   gitBranchCommits,
+  gitBranchDiff,
   gitBranches,
   gitChanges,
   gitCommitDiff,
@@ -39,6 +41,8 @@ vi.mock("../../lib/git", async (importOriginal) => ({
   gitBranchCommits: vi.fn(),
   gitCommitFiles: vi.fn(),
   gitCommitDiff: vi.fn(),
+  gitBranchDiff: vi.fn(),
+  gitBlob: vi.fn(),
 }));
 
 vi.mock("../../lib/pty", () => ({ listSessions: vi.fn() }));
@@ -127,6 +131,10 @@ beforeEach(() => {
   vi.mocked(gitBranchCommits).mockReset().mockResolvedValue([]);
   vi.mocked(gitCommitFiles).mockReset().mockResolvedValue([]);
   vi.mocked(gitCommitDiff).mockReset().mockResolvedValue("");
+  vi.mocked(gitBranchDiff)
+    .mockReset()
+    .mockResolvedValue({ root: "/work/roer", base: "main", from: "fork", commits: 0, diff: "" });
+  vi.mocked(gitBlob).mockReset().mockResolvedValue(null);
 });
 
 const view = () => render(<DiffBrowserView cwd="/work/roer/src" active />);
@@ -203,11 +211,11 @@ describe("DiffBrowserView — local changes (the merged tab's default view)", ()
     vi.mocked(gitChanges).mockResolvedValue({
       ...changes,
       files: [
-        file("icon.png", { binary: true, added: 0, deleted: 0, counted: false }),
+        file("data.bin", { binary: true, added: 0, deleted: 0, counted: false }),
       ],
     });
     vi.mocked(gitDiff).mockResolvedValue(
-      "Binary files a/icon.png and b/icon.png differ\n",
+      "Binary files a/data.bin and b/data.bin differ\n",
     );
 
     view();
@@ -215,6 +223,44 @@ describe("DiffBrowserView — local changes (the merged tab's default view)", ()
     await waitFor(() =>
       expect(screen.getByText(/Binary file/)).toBeInTheDocument(),
     );
+  });
+
+  it("shows a changed picture as it was and as it is, read from HEAD and the worktree", async () => {
+    vi.mocked(gitChanges).mockResolvedValue({
+      ...changes,
+      files: [file("icon.png", { binary: true, added: 0, deleted: 0, counted: false })],
+    });
+    vi.mocked(gitDiff).mockResolvedValue("Binary files a/icon.png and b/icon.png differ\n");
+    vi.mocked(gitBlob).mockImplementation(async (_root, _path, rev) => (rev === "HEAD" ? "b2xk" : "bmV3"));
+
+    view();
+
+    expect(await screen.findByRole("img", { name: "icon.png, before" })).toHaveAttribute(
+      "src",
+      "data:image/png;base64,b2xk",
+    );
+    expect(screen.getByRole("img", { name: "icon.png, after" })).toHaveAttribute("src", "data:image/png;base64,bmV3");
+    expect(screen.queryByText(/Binary file/)).toBeNull();
+    expect(gitBlob).toHaveBeenCalledWith("/work/roer", "icon.png", "HEAD");
+    expect(gitBlob).toHaveBeenCalledWith("/work/roer", "icon.png", undefined);
+  });
+
+  it("reads a changed Markdown file rendered, what was taken out apart from what came in", async () => {
+    localStorage.clear();
+    vi.mocked(gitChanges).mockResolvedValue({ ...changes, files: [file("README.md")] });
+    vi.mocked(gitBlob).mockImplementation(async (_root, _path, rev) =>
+      btoa(rev === "HEAD" ? "# Title\n\nOld words." : "# Title\n\nNew words."),
+    );
+
+    view();
+
+    const gone = await screen.findByText("Old words.");
+    expect(gone.closest(".md-block")).toHaveAttribute("data-kind", "del");
+    expect(screen.getByText("New words.").closest(".md-block")).toHaveAttribute("data-kind", "add");
+    expect(screen.getByRole("heading", { name: "Title" }).closest(".md-block")).toHaveAttribute("data-kind", "same");
+
+    fireEvent.click(screen.getByRole("button", { name: "Source" }));
+    expect(await screen.findByText("change 1 of 1")).toBeInTheDocument();
   });
 
   it("re-reads the diff of the file it is on when Refresh is clicked", async () => {
@@ -361,19 +407,29 @@ describe("DiffBrowserView — commits and the local-changes slot together", () =
     );
   });
 
-  it("puts local changes before the branch's own commits, and selects it by default", async () => {
+  it("opens on the whole branch, then steps to local changes and each of its commits", async () => {
     vi.mocked(gitBranches).mockResolvedValue(["main", "feature"]);
     vi.mocked(gitBranchCommits).mockResolvedValue([commit("first"), commit("second")]);
     vi.mocked(gitCommitFiles).mockResolvedValue([file("committed.txt")]);
+    vi.mocked(gitBranchDiff).mockResolvedValue({
+      root: "/work/roer",
+      base: "main",
+      from: "fork",
+      commits: 2,
+      diff: `diff --git a/whole.txt b/whole.txt\n--- a/whole.txt\n+++ b/whole.txt\n${oneHunk}`,
+    });
 
     view();
 
-    await waitFor(() => expect(screen.getByText("Local changes")).toBeInTheDocument());
+    expect(await screen.findByText("All changes")).toBeInTheDocument();
+    await waitFor(() => expect(selectedFile()).toBe("whole.txt"));
+    expect(gitBranchDiff).toHaveBeenCalledWith("/work/roer", "main", undefined);
+    expect(await screen.findByText("A")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /Next/ }));
+    expect(await screen.findByText("Local changes")).toBeInTheDocument();
     expect(screen.getByText("git.ts")).toBeInTheDocument();
 
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: /Next/ })).not.toBeDisabled(),
-    );
     fireEvent.click(screen.getByRole("button", { name: /Next/ }));
     await waitFor(() => expect(screen.getByText("commit 1 of 2")).toBeInTheDocument());
     await waitFor(() => expect(selectedFile()).toBe("committed.txt"));
@@ -389,15 +445,19 @@ describe("DiffBrowserView — commits and the local-changes slot together", () =
 
     view();
 
-    // feature has one commit plus local changes: two slots, local selected.
+    // feature has one commit plus local changes: the whole branch, local changes and the commit.
+    await waitFor(() => expect(screen.getByText("All changes")).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: /Next/ }));
     await waitFor(() => expect(screen.getByText("Local changes")).toBeInTheDocument());
 
     fireEvent.change(screen.getByLabelText("Branch"), { target: { value: "main" } });
 
-    // main is not checked out, so only its own two commits show — no
-    // local-changes slot, and the default lands on the first of them.
+    // main is not checked out, so the whole of it and its own two commits show — no local-changes slot.
+    await waitFor(() => expect(screen.getByText("All changes")).toBeInTheDocument());
+    await waitFor(() => expect(gitBranchDiff).toHaveBeenLastCalledWith("/work/roer", "main", "main"));
+    fireEvent.click(screen.getByRole("button", { name: /Next/ }));
     await waitFor(() => expect(screen.getByText("commit 1 of 2")).toBeInTheDocument());
-    expect(screen.queryByText(/No local changes/)).not.toBeInTheDocument();
+    expect(screen.queryByText("Local changes")).not.toBeInTheDocument();
   });
 
   it("falls back to another branch as the base when the repository has no main", async () => {
@@ -434,6 +494,8 @@ describe("DiffBrowserView — commits and the local-changes slot together", () =
     ]);
     // Another branch than the one checked out: its commits alone, the first one on screen.
     render(<DiffBrowserView cwd="/work/roer/src" active branch="feature" />);
+    await screen.findByText("All changes");
+    fireEvent.click(screen.getByRole("button", { name: /Next/ }));
     expect(await screen.findByText(/runs on well past what one line/)).toBeInTheDocument();
     expect(screen.getByText(/Four\.…$/)).toBeInTheDocument();
     expect(screen.queryByText(/Six\./)).toBeNull();
@@ -461,9 +523,9 @@ describe("DiffBrowserView — commits and the local-changes slot together", () =
 
     view();
 
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: /Next/ })).not.toBeDisabled(),
-    );
+    await screen.findByText("All changes");
+    fireEvent.click(screen.getByRole("button", { name: /Next/ }));
+    await screen.findByText("Local changes");
     fireEvent.click(screen.getByRole("button", { name: /Next/ }));
 
     await screen.findByText("a.txt");
@@ -498,7 +560,9 @@ describe("DiffBrowserView — commits and the local-changes slot together", () =
     // Outside act, as in the app: React renders the commit's arrival and runs its effects in separate turns.
     arrive([commit("only change")]);
     await pressed;
-    expect(await screen.findAllByText("a.txt")).not.toHaveLength(0);
+    // From the whole branch, where the view opens once there are commits, to the local changes after it.
+    await waitFor(() => expect(screen.queryByText("All changes")).toBeNull());
+    expect(screen.getByText("Local changes")).toBeInTheDocument();
   });
 
   it("steps across commits and local changes with Cmd+Left and Cmd+Right", async () => {
@@ -508,14 +572,13 @@ describe("DiffBrowserView — commits and the local-changes slot together", () =
 
     view();
 
-    await waitFor(() => expect(screen.getByText("git.ts")).toBeInTheDocument());
     // Waits for the commit to be counted, not just the local-changes slot —
     // otherwise the key below can race a render that still thinks there is
     // nothing to step forward into.
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: /Next/ })).not.toBeDisabled(),
-    );
+    await screen.findByText("All changes");
 
+    fireEvent.keyDown(window, { key: "ArrowRight", code: "ArrowRight", metaKey: true });
+    expect(await screen.findByText("git.ts")).toBeInTheDocument();
     fireEvent.keyDown(window, { key: "ArrowRight", code: "ArrowRight", metaKey: true });
     expect(await screen.findByText("a.txt")).toBeInTheDocument();
 
@@ -554,12 +617,23 @@ describe("DiffBrowserView — comments", () => {
     vi.mocked(gitBranchCommits).mockResolvedValue([commit("only change")]);
     vi.mocked(gitCommitFiles).mockResolvedValue([file("a.txt")]);
     vi.mocked(gitCommitDiff).mockResolvedValue("@@ -1,1 +1,1 @@ h\n-old\n+new\n");
+    // The whole branch changes the same file as the worktree does, so its comments show there too.
+    vi.mocked(gitBranchDiff).mockResolvedValue({
+      root: "/work/roer",
+      base: "main",
+      from: "fork",
+      commits: 1,
+      diff: `diff --git a/src/lib/git.ts b/src/lib/git.ts\n--- a/src/lib/git.ts\n+++ b/src/lib/git.ts\n${twoHunks}`,
+    });
   });
 
   async function toCommit() {
-    await waitFor(() => expect(screen.getByRole("button", { name: /Next/ })).not.toBeDisabled());
-    fireEvent.click(screen.getByRole("button", { name: /Next/ }));
-    await screen.findByText("a.txt");
+    await screen.findByText("All changes");
+    while (!screen.queryByText("commit 1 of 1")) {
+      fireEvent.click(screen.getByRole("button", { name: /Next/ }));
+      await act(async () => {});
+    }
+    await screen.findAllByText("a.txt");
     await waitFor(() => expect(screen.getAllByRole("button", { name: "Comment on line 1" })).toHaveLength(2));
   }
 
@@ -584,8 +658,9 @@ describe("DiffBrowserView — comments", () => {
     expect(screen.queryByText("Why new?")).toBeNull();
   });
 
-  it("leaves a comment on what is not committed without a commit, and keeps it off the commits", async () => {
+  it("leaves a comment on the whole branch without a commit, and keeps it off the commits", async () => {
     render(<Commented />);
+    await screen.findByText("All changes");
     await waitFor(() => expect(screen.getAllByRole("button", { name: "Comment on line 1" })).toHaveLength(2));
     await write(0, 1, "Keep one?");
     expect(kept).toEqual([expect.objectContaining({ path: "src/lib/git.ts", side: "old", code: "one" })]);

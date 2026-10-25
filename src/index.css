@@ -1949,7 +1949,7 @@ button.link.show-more {
   flex-wrap: wrap;
 }
 
-/* By commit's own controls, put in the bar beside the branch. Neither box
+/* Branch's own controls, put in the bar beside the branch picker. Neither box
    is a box: each control is an item of the bar itself, so "vs main" stays
    next to the branch and the bar wraps one control at a time. */
 .changes-slot,
@@ -5763,4 +5763,102 @@ button.danger:hover {
 
 .update-notice-close:hover {
   color: var(--roer-fg);
+}
+
+/* A picture in the diff: before and after side by side, or the one side
+   there is. Drawn over a checkerboard so a transparent one shows its edges. */
+.image-diff {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  padding: 16px;
+}
+
+.image-side {
+  flex: 1 1 280px;
+  min-width: 0;
+  margin: 0;
+  padding: 8px;
+  border-radius: 6px;
+  border: 1px solid var(--ide-border);
+}
+
+.image-side.del {
+  background: var(--ide-del);
+}
+
+.image-side.add {
+  background: var(--ide-add);
+}
+
+.image-side figcaption {
+  margin-bottom: 6px;
+  font-size: 11px;
+}
+
+.image-side img,
+.file-picture img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  background: repeating-conic-gradient(var(--ide-border) 0% 25%, transparent 0% 50%) 50% / 16px 16px;
+}
+
+.file-picture {
+  flex: 1;
+  overflow: auto;
+  padding: 16px 20px;
+}
+
+/* A Markdown file's change, rendered block by block: what was taken out
+   and what came in, each marked down its left edge as the diff's lines are. */
+.md-diff {
+  padding: 8px 0 16px;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  line-height: 1.6;
+}
+
+.md-diff code,
+.md-diff pre {
+  font-family: var(--ide-mono);
+}
+
+.md-block {
+  border-left: 3px solid transparent;
+}
+
+.md-block.add {
+  background: var(--ide-add);
+  border-left-color: var(--ide-add-sign);
+}
+
+.md-block.del {
+  background: var(--ide-del);
+  border-left-color: var(--ide-del-sign);
+}
+
+.md-block.del .file-markdown {
+  opacity: 0.75;
+}
+
+.md-block > .file-markdown {
+  flex: none;
+  overflow: visible;
+  padding: 2px 20px;
+}
+
+.md-block > .file-markdown > :first-child {
+  margin-top: 0.4em;
+}
+
+.md-block > .file-markdown > :last-child {
+  margin-bottom: 0.4em;
+}
+
+.file-markdown img {
+  max-width: 100%;
+}
+
+.changes-since {
+  font-weight: 400;
 }

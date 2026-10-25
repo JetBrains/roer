@@ -575,6 +575,45 @@ pub fn git_commit_diff(root: String, commit: String, path: String) -> Result<Str
     Ok(cap(text, out.truncated))
 }
 
+/// The most a file is read for a view to draw: an image, or a Markdown file
+/// rendered with its pictures.
+const MAX_BLOB_BYTES: usize = 20 * 1024 * 1024;
+
+/// A file's bytes, base64: as `rev` has it, or as the worktree has it when
+/// there is no `rev`. `None` when it has no such file, which is the side of a
+/// diff where the file was added or deleted.
+#[tauri::command(async)]
+pub fn git_blob(root: String, path: String, rev: Option<String>) -> Result<Option<String>, String> {
+    use base64::Engine as _;
+    blob(&root, &path, rev.as_deref().filter(|r| !r.is_empty()))
+        .map(|bytes| bytes.map(|b| base64::engine::general_purpose::STANDARD.encode(b)))
+}
+
+fn blob(root: &str, path: &str, rev: Option<&str>) -> Result<Option<Vec<u8>>, String> {
+    let Some(rev) = rev else {
+        if !Path::new(root).join(path).is_file() {
+            return Ok(None);
+        }
+        let full = crate::files::resolve(root, path)?;
+        let size = std::fs::metadata(&full).map_err(|e| format!("could not read {path}: {e}"))?.len();
+        if size > MAX_BLOB_BYTES as u64 {
+            return Err(format!("{path} is too large to show"));
+        }
+        return std::fs::read(&full).map(Some).map_err(|e| format!("could not read {path}: {e}"));
+    };
+    // Read as an option otherwise, `-p` say; a revision never starts with one.
+    if rev.starts_with('-') {
+        return Err(format!("not a revision: {rev}"));
+    }
+    let spec = format!("{rev}:{path}");
+    let out = run_bounded(root, &["cat-file", "blob", &spec], MAX_BLOB_BYTES)?;
+    if out.truncated {
+        return Err(format!("{path} is too large to show"));
+    }
+    // Not in that revision: added after it, or deleted before.
+    Ok(out.success.then_some(out.stdout))
+}
+
 /// Everything a branch has changed since it left its base, as one patch: its
 /// commits and whatever is not committed yet, untracked files included. What
 /// its pull request will show once it is pushed, before there is one.
@@ -588,6 +627,9 @@ pub struct BranchDiff {
     /// Commits the branch has over its base.
     pub commits: u32,
     pub diff: String,
+    /// What the patch is from: the fork point's commit, `HEAD` when only what
+    /// is uncommitted is shown, or the empty tree. Its files are the old side.
+    pub from: String,
     /// Why the patch is less than asked for, for the tab to say: no common
     /// ancestor with the base (a shallow clone, an orphan branch), so it is
     /// only what is uncommitted.
@@ -659,6 +701,7 @@ fn other_branch_diff(root: &str, base: Option<&str>, head: &str) -> Result<Branc
         base: base.unwrap_or_default(),
         commits,
         diff: cap(text, out.truncated),
+        from,
         note,
     })
 }
@@ -722,6 +765,7 @@ fn branch_diff(root: &str, base: Option<&str>) -> Result<BranchDiff, String> {
         base: base.unwrap_or_default(),
         commits,
         diff: cap(text, truncated),
+        from,
         note,
     })
 }
@@ -1145,11 +1189,30 @@ fn count_lines(path: &Path) -> (Option<u32>, bool) {
 #[cfg(test)]
 mod tests {
     use super::{
-        branch_commits, branch_diff, branches, changes, git_branch_diff, git_commit_all, commit_files, count_lines, git, git_commit_diff,
+        blob, branch_commits, branch_diff, branches, changes, git_branch_diff, git_commit_all, commit_files, count_lines, git, git_commit_diff,
         git_diff, git_root, numstat, parse_name_status, parse_status, push_upstream, repo, repos_in, root,
         upstream_status, Stat, Upstream, MAX_DIFF_BYTES,
     };
     use crate::testing::{canonical, commit, init, must, scratch, write};
+
+    #[test]
+    fn a_file_is_read_as_a_revision_has_it_or_as_the_worktree_does() {
+        let dir = scratch("git-blob");
+        let s = dir.to_string_lossy().to_string();
+        init(&s);
+        write(&dir, "pic.png", "old");
+        must(&s, &["add", "pic.png"]);
+        commit(&s, "first");
+        write(&dir, "pic.png", "new");
+        write(&dir, "added.png", "added");
+
+        assert_eq!(blob(&s, "pic.png", Some("HEAD")).unwrap(), Some(b"old".to_vec()));
+        assert_eq!(blob(&s, "pic.png", None).unwrap(), Some(b"new".to_vec()));
+        assert_eq!(blob(&s, "added.png", Some("HEAD")).unwrap(), None, "not in that commit");
+        assert_eq!(blob(&s, "gone.png", None).unwrap(), None, "not in the worktree");
+        assert!(blob(&s, "pic.png", Some("--output=/tmp/x")).is_err(), "never an option");
+        assert_eq!(blob(&s, "../outside.png", None).unwrap(), None, "outside the worktree");
+    }
 
     #[test]
     fn the_repositories_in_a_folder_are_found_two_levels_down_and_no_deeper() {

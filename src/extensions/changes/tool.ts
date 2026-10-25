@@ -86,7 +86,7 @@ export function addCommentsTool(onAdded: (pending: number) => void): ToolOptions
 
       const outside = added.filter((c) => !drawn.has(spot(c.path, c.side, c.line))).length;
       return [
-        `Added ${added.length} ${added.length === 1 ? "comment" : "comments"} to Roer's Changes tab, under Whole branch.`,
+        `Added ${added.length} ${added.length === 1 ? "comment" : "comments"} to Roer's Changes tab, under Branch.`,
         ...(outside > 0 ? [`${outside} of them are on lines outside the diff, so they head their file.`] : []),
         ...(skipped.length > 0 ? [`Skipped: ${skipped.join("; ")}.`] : []),
         "The user will decide on each and send the decisions back to you; do not change code for them before then.",

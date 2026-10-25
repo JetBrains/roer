@@ -133,7 +133,7 @@ beforeEach(() => {
   vi.mocked(ghMergeMethods).mockResolvedValue({ merge: true, squash: true, rebase: true });
   vi.mocked(gitBranches).mockResolvedValue(["feat", "main"]);
   vi.mocked(gitCurrentBranch).mockResolvedValue("feat");
-  vi.mocked(gitBranchDiff).mockResolvedValue({ root: "/work/r", base: "origin/main", commits: 1, diff: patch });
+  vi.mocked(gitBranchDiff).mockResolvedValue({ root: "/work/r", base: "origin/main", from: "f0f0f0f", commits: 1, diff: patch });
   vi.mocked(onPrDraft).mockImplementation(async (handler) => {
     draftListener = handler;
     return () => {
