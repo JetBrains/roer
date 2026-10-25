@@ -338,6 +338,7 @@ mod tests {
             updated_at: created_at.unwrap_or(0),
             branch: None,
             open_elsewhere: false,
+            gone: false,
             created_at,
         }
     }

@@ -40,6 +40,10 @@ export const listWorktrees = (cwd: string): Promise<Worktree[]> => invoke("workt
 export const createWorktree = (cwd: string, name: string, base?: string): Promise<CreatedWorktree> =>
   invoke("worktree_create", { cwd, name, base: base?.trim() || null });
 
+/** Puts back a removed worktree of the repository `cwd` is in, at `path` and on `branch`, as it was. */
+export const restoreWorktree = (cwd: string, path: string, branch: string): Promise<CreatedWorktree> =>
+  invoke("worktree_restore", { cwd, path, branch });
+
 /** Removes a linked worktree. Without `force`, one with work in it is kept
  * and its files are handed back instead. */
 export const removeWorktree = (path: string, force = false): Promise<WorktreeRemoval> =>

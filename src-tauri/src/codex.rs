@@ -82,8 +82,17 @@ fn rollouts_in(home: &Path, cwds: &[String]) -> Vec<(ClaudeThread, PathBuf)> {
             .map_or_else(|| id.clone(), |title| truncate(&title));
         // The first event's, `session_meta`'s: when Codex began it.
         let created_at = string_field(&head, "timestamp").as_deref().and_then(live::rfc3339_epoch);
-        let thread =
-            ClaudeThread { id, agent: "codex".to_string(), cwd, title, updated_at, branch: None, open_elsewhere: false, created_at };
+        let thread = ClaudeThread {
+            id,
+            agent: "codex".to_string(),
+            cwd,
+            title,
+            updated_at,
+            branch: None,
+            open_elsewhere: false,
+            gone: false,
+            created_at,
+        };
         threads.push((thread, path));
     }
     threads

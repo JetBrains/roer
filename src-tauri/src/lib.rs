@@ -119,6 +119,7 @@ pub fn run() {
             workspaces::workspace_assignments,
             worktrees::worktree_list,
             worktrees::worktree_create,
+            worktrees::worktree_restore,
             worktrees::worktree_remove,
             worktrees::worktree_uncommitted,
             worktrees::worktree_delete_branch,

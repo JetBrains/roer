@@ -112,6 +112,7 @@ fn thread_of(dir: &Path, cwds: &[String]) -> Option<(ClaudeThread, PathBuf)> {
         updated_at: modified.or_else(|| secs("updatedAt")).unwrap_or(0),
         branch: None,
         open_elsewhere: false,
+        gone: false,
         created_at: secs("createdAt"),
     };
     Some((thread, events))

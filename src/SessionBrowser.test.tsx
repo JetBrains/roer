@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { gitChanges, gitRepo } from "./lib/git";
+import { gitBranches, gitChanges, gitRepo } from "./lib/git";
 import { notify } from "./lib/notify";
 import {
   killSession,
@@ -13,7 +13,7 @@ import {
 } from "./lib/pty";
 import { useSessionBrowser } from "./lib/useSessionBrowser";
 import { listProjects } from "./lib/projects";
-import { listWorktrees } from "./lib/worktrees";
+import { listWorktrees, restoreWorktree } from "./lib/worktrees";
 import { confirmAction } from "./lib/confirm";
 import {
   assignSession,
@@ -41,6 +41,7 @@ vi.mock("./lib/confirm", () => ({ confirmAction: vi.fn() }));
 vi.mock("./lib/git", () => ({
   gitRepo: vi.fn(),
   gitChanges: vi.fn(),
+  gitBranches: vi.fn(async () => []),
 }));
 
 vi.mock("./lib/worktrees", () => ({
@@ -48,6 +49,7 @@ vi.mock("./lib/worktrees", () => ({
   createWorktree: vi.fn(),
   removeWorktree: vi.fn(),
   deleteWorktreeBranch: vi.fn(),
+  restoreWorktree: vi.fn(),
 }));
 
 vi.mock("./lib/notify", () => ({ notify: vi.fn(async () => undefined) }));
@@ -408,6 +410,53 @@ describe("past Claude conversations", () => {
 
     fireEvent.click(row);
     await waitFor(() => expect(onOpen).toHaveBeenCalledWith(expect.objectContaining({ args: ["resume", "abc-123"] })));
+  });
+
+  it("puts a removed worktree back, once asked, before resuming a conversation that ran in it", async () => {
+    vi.mocked(listClaudeSessions).mockResolvedValue([
+      {
+        id: "abc-123",
+        cwd: "/Users/test/project-scroll",
+        title: "smooth scrolling",
+        updatedAt: Math.floor(Date.now() / 1000),
+        branch: "scroll",
+        gone: true,
+      },
+    ]);
+    vi.mocked(listProjects).mockResolvedValue([{ id: "p1", name: "project", path: "/Users/test/project" }]);
+    vi.mocked(gitBranches).mockResolvedValue(["main", "scroll"]);
+    vi.mocked(confirmAction).mockResolvedValueOnce(true);
+    vi.mocked(restoreWorktree).mockResolvedValue({
+      worktree: { path: "/Users/test/project-scroll", branch: "scroll", commit: "abc", main: false, base: null, locked: false, missing: false },
+      existingBranch: true,
+      warnings: [],
+    });
+    const onOpen = vi.fn();
+    renderList(onOpen);
+    expect(await screen.findByText("folder gone")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Resume smooth scrolling" }));
+    await waitFor(() => expect(confirmAction).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(confirmAction).mock.calls[0][0]).toMatch(/not there any more.*scroll, is still in project/);
+    await waitFor(() =>
+      expect(onOpen).toHaveBeenCalledWith(expect.objectContaining({ args: ["resume", "abc-123"], cwd: "/Users/test/project-scroll" })),
+    );
+    expect(restoreWorktree).toHaveBeenCalledWith("/Users/test/project", "/Users/test/project-scroll", "scroll");
+  });
+
+  it("says why a conversation whose folder is gone cannot be resumed, rather than starting it elsewhere", async () => {
+    vi.mocked(listClaudeSessions).mockResolvedValue([
+      { id: "abc-123", cwd: "/Users/test/project-old", title: "old idea", updatedAt: Math.floor(Date.now() / 1000), branch: "deleted", gone: true },
+    ]);
+    vi.mocked(listProjects).mockResolvedValue([{ id: "p1", name: "project", path: "/Users/test/project" }]);
+    vi.mocked(gitBranches).mockResolvedValue(["main"]);
+    const onOpen = vi.fn();
+    renderList(onOpen);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Resume old idea" }));
+    expect(await screen.findByText(/which is not there any more, and no project here has its branch, deleted,/)).toBeInTheDocument();
+    expect(onOpen).not.toHaveBeenCalled();
+    expect(confirmAction).not.toHaveBeenCalled();
   });
 
 });

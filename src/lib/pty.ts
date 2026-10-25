@@ -74,6 +74,10 @@ export interface ClaudeSession {
   /** Open in a CLI still running outside Roer: resuming it here as well
    * would have two of them writing one conversation. */
   openElsewhere?: boolean;
+  /** Its folder is not there any more: a worktree since removed, most often.
+   * Its CLI finds a conversation by the folder it ran in, so it resumes only
+   * there. */
+  gone?: boolean;
 }
 
 /** A conversation a search found, and the words of it that matched when

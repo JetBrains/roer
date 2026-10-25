@@ -217,6 +217,65 @@ fn create(main: &str, home: &Path, name: &str, base: Option<&str>) -> Result<Cre
     })
 }
 
+/// Puts back a worktree that was removed, at the path it had and on
+/// `branch`: a conversation that ran in it can only be resumed there, since
+/// its CLI finds a conversation by the folder it ran in. Refused when the
+/// folder is there, the branch is not, or another worktree has the branch.
+#[tauri::command(async)]
+pub fn worktree_restore(cwd: String, path: String, branch: String) -> Result<Created, String> {
+    let repo = git::repo(&cwd)?;
+    restore(&repo.main, &path, &branch)
+}
+
+fn restore(main: &str, path: &str, branch: &str) -> Result<Created, String> {
+    if branch.starts_with('-') || git(main, &["check-ref-format", "--branch", branch]).is_err() {
+        return Err(format!("\"{branch}\" is not a branch name."));
+    }
+    if Path::new(path).exists() {
+        return Err(format!("{path} is there already."));
+    }
+    let there = git::run(main, &["rev-parse", "--verify", "--quiet", &format!("refs/heads/{branch}")])
+        .is_ok_and(|out| out.status.success());
+    if !there {
+        return Err(format!("There is no branch {branch} here any more."));
+    }
+    // Git may still list the worktree whose folder went: that one is what is
+    // being put back. Any other that has the branch keeps it.
+    let listed = list(main)?;
+    let stale = listed.iter().any(|w| w.missing && w.path == path);
+    if let Some(holder) = listed.iter().find(|w| w.branch.as_deref() == Some(branch) && !(w.missing && w.path == path)) {
+        return Err(format!("{branch} is checked out in {}.", holder.path));
+    }
+
+    if let Some(parent) = Path::new(path).parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("could not make {}: {e}", parent.display()))?;
+    }
+    let mut args = vec!["worktree", "add", "--quiet"];
+    // Past git's "missing but already registered", which is this very worktree.
+    if stale {
+        args.push("--force");
+    }
+    args.extend([path, branch]);
+    git(main, &args)?;
+
+    let warnings = copy_included(Path::new(main), Path::new(path));
+    let made = git::root(path)?;
+    let commit = git(&made, &["rev-parse", "--short", "HEAD"]).map(|c| c.trim().to_string()).unwrap_or_default();
+    Ok(Created {
+        worktree: Worktree {
+            path: made,
+            branch: Some(branch.to_string()),
+            commit,
+            main: false,
+            base: bases(main).remove(branch),
+            locked: false,
+            missing: false,
+        },
+        existing_branch: true,
+        warnings,
+    })
+}
+
 /// Brings a remote base up to date before branching from it, so a new
 /// branch does not start from wherever the last fetch left it. Best effort:
 /// offline, or slower than [`FETCH_TIMEOUT`], it starts from what is here.
@@ -539,6 +598,34 @@ mod tests {
         assert_eq!(std::fs::read_to_string(at.join("README.md")).unwrap(), "hello\n");
         assert_eq!(created.warnings.len(), 1, "{:?}", created.warnings);
         assert!(created.warnings[0].contains("*.local"));
+    }
+
+    #[test]
+    fn a_removed_worktree_is_put_back_where_it_was_on_its_branch() {
+        let (main, home) = setup("a-removed-worktree-is-put-back-where-it-was");
+        let created = create(&main, &home, "scroll", None).unwrap();
+        let path = created.worktree.path.clone();
+        // Deleted by hand: git still lists it, as missing.
+        std::fs::remove_dir_all(&path).unwrap();
+        assert!(list(&main).unwrap().iter().any(|w| w.missing && w.path == path));
+
+        let back = restore(&main, &path, "scroll").unwrap();
+        assert_eq!(back.worktree.path, path);
+        assert_eq!(back.worktree.branch.as_deref(), Some("scroll"));
+        assert!(Path::new(&path).join("README.md").is_file());
+        assert!(!list(&main).unwrap().iter().any(|w| w.missing));
+
+        // Removed the proper way, its registration gone too.
+        must(&main, &["worktree", "remove", &path]);
+        restore(&main, &path, "scroll").unwrap();
+
+        let there = restore(&main, &path, "scroll").unwrap_err();
+        assert!(there.contains("there already"), "{there}");
+        let elsewhere = restore(&main, &format!("{path}-2"), "scroll").unwrap_err();
+        assert!(elsewhere.contains("checked out in"), "{elsewhere}");
+        let gone = restore(&main, &format!("{path}-3"), "no-such-branch").unwrap_err();
+        assert!(gone.contains("no branch"), "{gone}");
+        assert!(restore(&main, &format!("{path}-4"), "--orphan").is_err());
     }
 
     #[test]
