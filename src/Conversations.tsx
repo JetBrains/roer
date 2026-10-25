@@ -256,7 +256,10 @@ export function Conversations({
     const snippet = found?.get(conversation.id);
     const badge = `${ids}-${conversation.id}-badge`;
     const said = `${ids}-${conversation.id}-said`;
-    const described = [conversation.openElsewhere ? badge : null, snippet ? said : null].filter(Boolean).join(" ");
+    const gone = `${ids}-${conversation.id}-gone`;
+    const described = [conversation.openElsewhere ? badge : null, conversation.gone ? gone : null, snippet ? said : null]
+      .filter(Boolean)
+      .join(" ");
     return (
       <li key={`resume-${conversation.id}`}>
         <AssignMenu
@@ -294,6 +297,15 @@ export function Conversations({
                 {conversation.openElsewhere ? (
                   <span id={badge} className="badge held" title="A claude started outside Roer, in a terminal or an editor, has this conversation open">
                     running outside Roer
+                  </span>
+                ) : null}
+                {conversation.gone ? (
+                  <span
+                    id={gone}
+                    className="badge held"
+                    title={`${shorten(conversation.cwd, home)} is not there any more: resuming offers to put its worktree back`}
+                  >
+                    folder gone
                   </span>
                 ) : null}
                 <span className="badge resume">{relativeAge(conversation.updatedAt)}</span>

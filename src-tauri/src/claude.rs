@@ -48,6 +48,10 @@ pub struct ClaudeThread {
     /// Owned by a `claude` process still running, in another terminal or
     /// window: resuming it here would make two writers of one transcript.
     pub open_elsewhere: bool,
+    /// Its folder is not there any more: a worktree since removed, most
+    /// often. Resumed anywhere else its CLI would not find it.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub gone: bool,
     /// When it began, in seconds since the epoch, where its CLI says: which
     /// is how one a pane's agent began is told, for a CLI that keeps no
     /// registry of what it has open.
@@ -228,6 +232,7 @@ fn transcripts_in(home: &Path, cwds: &[String], live: &HashMap<String, Owner>) -
                     updated_at,
                     branch: meta.branch,
                     open_elsewhere: owner == Some(Owner::Elsewhere),
+                    gone: false,
                     created_at: None,
                 };
                 threads.push((thread, path));
@@ -446,8 +451,18 @@ pub fn roer_claude_threads(cwds: Vec<String>, panes: Option<Vec<u64>>) -> Vec<Cl
     threads.extend(crate::codex::threads_for(&cwds, panes, &table));
     threads.extend(crate::pi::threads_for(&cwds, panes, &table));
     threads.extend(crate::junie::threads_for(&cwds, panes, &table));
+    mark_gone(&mut threads);
     threads.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
     threads
+}
+
+/// Marks the conversations whose folder is gone, looking at each folder once.
+fn mark_gone(threads: &mut [ClaudeThread]) {
+    let mut there: HashMap<String, bool> = HashMap::new();
+    for thread in threads {
+        let is = *there.entry(thread.cwd.clone()).or_insert_with(|| Path::new(&thread.cwd).is_dir());
+        thread.gone = !is;
+    }
 }
 
 /// A conversation a search found, and the words of it that matched, when
@@ -1415,6 +1430,28 @@ mod tests {
         std::fs::remove_dir_all(&home).ok();
     }
 
+    #[test]
+    fn a_conversation_whose_folder_went_is_marked_gone() {
+        let home = temp_home();
+        std::fs::create_dir_all(&home).unwrap();
+        let at = |cwd: &Path| ClaudeThread {
+            id: "x".to_string(),
+            agent: "claude".to_string(),
+            cwd: cwd.to_string_lossy().into_owned(),
+            title: "t".to_string(),
+            updated_at: 0,
+            branch: None,
+            open_elsewhere: false,
+            gone: false,
+            created_at: None,
+        };
+        let mut threads = vec![at(&home), at(&home.join("removed-worktree"))];
+        mark_gone(&mut threads);
+        assert!(!threads[0].gone);
+        assert!(threads[1].gone);
+        std::fs::remove_dir_all(&home).ok();
+    }
+
     /// Another CLI's transcript is read in its own format, by its own reader.
     #[test]
     fn search_and_preview_read_each_agent_in_its_own_format() {
@@ -1434,6 +1471,7 @@ mod tests {
             updated_at: 0,
             branch: None,
             open_elsewhere: false,
+            gone: false,
             created_at: None,
         };
         let index = TextIndex::default();

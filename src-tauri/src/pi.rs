@@ -104,6 +104,7 @@ fn thread_of(path: &Path, cwds: &[String]) -> Option<ClaudeThread> {
         updated_at,
         branch: None,
         open_elsewhere: false,
+        gone: false,
         created_at: header.get("timestamp").and_then(Value::as_str).and_then(live::rfc3339_epoch),
     })
 }
