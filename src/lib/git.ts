@@ -64,6 +64,9 @@ export interface BranchDiff {
   /** Commits the branch has over its base. */
   commits: number;
   diff: string;
+  /** What the patch is from: the fork point's commit, `HEAD` when only what is uncommitted is shown, or the
+   * empty tree. Its files are the old side. */
+  from: string;
   /** Why the patch is less than asked for: no commit in common with the base, so only what is uncommitted. */
   note?: string;
 }
@@ -73,6 +76,11 @@ export interface BranchDiff {
  * diff than the one checked out: its commits alone, nothing uncommitted. */
 export const gitBranchDiff = (cwd: string, base?: string, head?: string): Promise<BranchDiff> =>
   invoke("git_branch_diff", { cwd, base: base ?? null, head: head ?? null });
+
+/** A file's bytes, base64: as `rev` has it (`HEAD`, a commit, `abc123^`), or as the worktree has it without one.
+ * Null when there is no such file there: the side of a diff it was added or deleted on. Up to 20 MB. */
+export const gitBlob = (root: string, path: string, rev?: string): Promise<string | null> =>
+  invoke("git_blob", { root, path, rev: rev ?? null });
 
 /** One commit, as much as the branch-diff view names it by. */
 export interface Commit {

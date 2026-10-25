@@ -115,7 +115,7 @@ beforeEach(() => {
   vi.mocked(ghPrForBranch).mockResolvedValue(pr);
   vi.mocked(ghPrDiff).mockResolvedValue(patch);
   vi.mocked(ghPrReview).mockResolvedValue(review);
-  vi.mocked(gitBranchDiff).mockResolvedValue({ root: "/repo", base: "origin/main", commits: 2, diff: patch });
+  vi.mocked(gitBranchDiff).mockResolvedValue({ root: "/repo", base: "origin/main", from: "f0f0f0f", commits: 2, diff: patch });
 });
 
 describe("ReviewView", () => {
@@ -368,13 +368,13 @@ describe("ReviewView", () => {
 
       // The file still changes, but no longer at line 2.
       const moved = patch.replace("@@ -1,2 +1,2 @@\n keep\n-let i = 0\n+let i = 1", "@@ -9 +9 @@\n-a\n+b");
-      vi.mocked(gitBranchDiff).mockResolvedValue({ root: "/repo", base: "origin/main", commits: 2, diff: moved });
+      vi.mocked(gitBranchDiff).mockResolvedValue({ root: "/repo", base: "origin/main", from: "f0f0f0f", commits: 2, diff: moved });
       rerender(<ReviewView session={{ ...staged, changed: { root: "/repo", paths: ["src/a.ts"], broad: false } }} active />);
       expect(await screen.findByText("line 2")).toBeInTheDocument();
       expect(screen.getByText("Mind this line.")).toBeInTheDocument();
 
       // And once the file leaves the diff, the tab says so instead of losing it.
-      vi.mocked(gitBranchDiff).mockResolvedValue({ root: "/repo", base: "origin/main", commits: 2, diff: "" });
+      vi.mocked(gitBranchDiff).mockResolvedValue({ root: "/repo", base: "origin/main", from: "f0f0f0f", commits: 2, diff: "" });
       rerender(<ReviewView session={{ ...staged, changed: { root: "/repo", paths: ["src/a.ts"], broad: false } }} active />);
       expect(await screen.findByText(/A comment is on src\/a\.ts:2, which this diff no longer changes/)).toBeInTheDocument();
       fireEvent.click(screen.getByRole("button", { name: "Delete them" }));
@@ -410,11 +410,11 @@ describe("ReviewView", () => {
       let slow: (diff: Awaited<ReturnType<typeof gitBranchDiff>>) => void = () => {};
       vi.mocked(gitBranchDiff).mockImplementationOnce(() => new Promise((done) => (slow = done)));
       rerender(<ReviewView session={{ ...staged, changed: { root: "/repo", paths: ["src/a.ts"], broad: false } }} active />);
-      vi.mocked(gitBranchDiff).mockResolvedValueOnce({ root: "/repo", base: "origin/main", commits: 3, diff: patch });
+      vi.mocked(gitBranchDiff).mockResolvedValueOnce({ root: "/repo", base: "origin/main", from: "f0f0f0f", commits: 3, diff: patch });
       rerender(<ReviewView session={{ ...staged, changed: { root: "/repo", paths: ["src/b.ts"], broad: false } }} active />);
       await screen.findByText("3 commits since origin/main, and what is not committed");
 
-      await act(async () => slow({ root: "/repo", base: "origin/main", commits: 2, diff: patch }));
+      await act(async () => slow({ root: "/repo", base: "origin/main", from: "f0f0f0f", commits: 2, diff: patch }));
       expect(screen.getByText("3 commits since origin/main, and what is not committed")).toBeInTheDocument();
     });
 

@@ -2,7 +2,9 @@ import { X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { Spans } from "./CodeLine";
+import { byteSize, imageUrl, isImage } from "./lib/blob";
 import { baseName, fileRead, type FileText } from "./lib/files";
+import { gitBlob } from "./lib/git";
 import { highlightText, loadLang, paint, ready, toSpans } from "./lib/highlight";
 import { langFor } from "./lib/lang";
 
@@ -32,7 +34,13 @@ export interface FilePreviewProps {
  * the line asked for, when one was.
  */
 export function FilePreview({ root, path, line, onOpen, onClose }: FilePreviewProps) {
-  const [read, setRead] = useState<{ key: string; file: FileText | null; error: string | null } | null>(null);
+  const [read, setRead] = useState<{
+    key: string;
+    file: FileText | null;
+    error: string | null;
+    /** A picture's bytes, base64, read in place of its text. */
+    picture?: string | null;
+  } | null>(null);
   const [grammar, setGrammar] = useState(0);
   const target = useRef<HTMLDivElement>(null);
   const key = `${root}\0${path}`;
@@ -40,6 +48,12 @@ export function FilePreview({ root, path, line, onOpen, onClose }: FilePreviewPr
   useEffect(() => {
     let current = true;
     const timer = window.setTimeout(() => {
+      if (isImage(path)) {
+        gitBlob(root, path)
+          .then((picture) => current && setRead({ key, file: null, error: null, picture }))
+          .catch((cause: unknown) => current && setRead({ key, file: null, error: String(cause) }));
+        return;
+      }
       fileRead(root, path)
         .then((file) => current && setRead({ key, file, error: null }))
         .catch((cause: unknown) => current && setRead({ key, file: null, error: String(cause) }));
@@ -89,11 +103,14 @@ export function FilePreview({ root, path, line, onOpen, onClose }: FilePreviewPr
   }, [file, line]);
 
   const dir = path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
+  const picture = shown?.picture;
   const message = !shown
     ? "Reading…"
     : shown.error
       ? `Could not read it: ${shown.error}`
-      : !file
+      : picture
+        ? null
+        : !file
         ? "Could not read it."
         : file.binary
           ? "A binary file: nothing to show here."
@@ -107,7 +124,9 @@ export function FilePreview({ root, path, line, onOpen, onClose }: FilePreviewPr
         <div className="conversation-preview-title">
           <h3>{baseName(path)}</h3>
           <span className="muted">
-            {[dir, lines.length ? `${lines.length} ${lines.length === 1 ? "line" : "lines"}` : ""].filter(Boolean).join(" · ")}
+            {[dir, lines.length ? `${lines.length} ${lines.length === 1 ? "line" : "lines"}` : "", picture ? byteSize(picture) : ""]
+              .filter(Boolean)
+              .join(" · ")}
           </span>
         </div>
         <button type="button" className="primary" onClick={onOpen}>
@@ -119,6 +138,10 @@ export function FilePreview({ root, path, line, onOpen, onClose }: FilePreviewPr
       </header>
       {message ? (
         <p className="muted">{message}</p>
+      ) : picture ? (
+        <div className="file-picture">
+          <img src={imageUrl(path, picture)} alt={path} />
+        </div>
       ) : (
         <div className="file-body">
           <div className="file-lines">

@@ -48,17 +48,15 @@ beforeEach(() => {
 const session = { pane: "%1", cwd: "/repo", root: "/repo", branch: "feat", busy: false, changed: null } as unknown as Session;
 
 describe("ChangesView", () => {
-  it("opens by commit, and hands the keyboard only to the view on screen", () => {
+  it("opens on the branch, and hands the keyboard only to the view on screen", () => {
     render(<ChangesView session={session} active />);
-    expect(screen.getByRole("button", { name: "By commit", pressed: true })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Branch", pressed: true })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "By commit" })).toBeNull();
     expect(screen.getByText(/by commit active/)).toBeVisible();
-    expect(screen.getByText("review local idle")).not.toBeVisible();
-
-    fireEvent.click(screen.getByRole("button", { name: "Whole branch" }));
-    expect(screen.getByText(/by commit idle/)).not.toBeVisible();
-    expect(screen.getByText("review local active")).toBeVisible();
+    expect(screen.getByText("review pr idle")).not.toBeVisible();
 
     fireEvent.click(screen.getByRole("button", { name: "Pull request" }));
+    expect(screen.getByText(/by commit idle/)).not.toBeVisible();
     expect(screen.getByText("review pr active")).toBeVisible();
   });
 
@@ -66,7 +64,7 @@ describe("ChangesView", () => {
     render(<ChangesView session={session} active />);
     fireEvent.click(screen.getByRole("button", { name: "Pull request" }));
     fireEvent.click(screen.getByRole("button", { name: "Show them" }));
-    expect(screen.getByRole("button", { name: "Whole branch", pressed: true })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Branch", pressed: true })).toBeInTheDocument();
   });
 
   it("takes no keyboard while the tab is not on top", () => {

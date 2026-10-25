@@ -2,7 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { createPortal } from "react-dom";
 import {
   DiffPane,
+  gitBlob,
   gitBranchCommits,
+  gitBranchDiff,
   gitBranches,
   gitChanges,
   gitCommitDiff,
@@ -15,15 +17,18 @@ import {
   isUntracked,
   resolveDir,
   shortcutLabel,
+  splitPatch,
   useHotkey,
+  type BranchDiff,
   type Changes,
   type Commit,
+  type FileChange,
   type FilesChanged,
 } from "roer";
 import type { NewNote, NoteAnswer } from "roer/ui";
 
 import { CommitBox } from "./CommitBox";
-import { answered, commentNote, lineInFile, newCommentId, type LocalComment } from "./local";
+import { answered, commentNote, lineInFile, newCommentId, reviewRequestPrompt, type LocalComment } from "./local";
 
 export interface DiffBrowserViewProps {
   /** Where to put the base picker, Refresh and the commit stepper: the bar of the tab around it. Without it they
@@ -63,13 +68,21 @@ function when(seconds: number): string {
   });
 }
 
+/** One step of the browser: the branch's whole change, what is not committed, or one commit. */
+type Slot = { kind: "all" } | { kind: "local" } | { kind: "commit"; commit: Commit; n: number };
+
+const slotKey = (slot: Slot): string => (slot.kind === "commit" ? slot.commit.hash : slot.kind);
+
 /**
- * One browser for everything a repository's history can show: the worktree's
- * own uncommitted edits as the first slot, followed by the branch's own
- * commits against a base, oldest first — rather than a separate tab for
- * each. The local-changes slot only exists while `branch` is the one
- * actually checked out: uncommitted edits are relative to `HEAD`, so they
- * mean nothing next to some other branch's history you're just browsing.
+ * One browser for everything a branch has changed: all of it at once since it
+ * left its base (what its pull request will show), then the worktree's own
+ * uncommitted edits, then each of its commits, oldest first — rather than a
+ * separate view for each. The branch as a whole comes first so the view
+ * never opens on an empty slot when the work is all committed; it is left out
+ * when there are no commits, since then it would be the uncommitted edits
+ * twice. Those only show while `branch` is the one actually checked out:
+ * they are relative to `HEAD`, so they mean nothing next to some other
+ * branch's history you're just browsing, and only once there are some.
  */
 export function DiffBrowserView({
   toolbar,
@@ -96,7 +109,11 @@ export function DiffBrowserView({
   const [currentBranch, setCurrentBranch] = useState("");
   const [commits, setCommits] = useState<Commit[] | null>(null);
   const [commitsError, setCommitsError] = useState<string | null>(null);
-  const [index, setIndex] = useState(0);
+  /** The slot picked, by its key; null is the first one. A key rather than a place, so a slot coming or going
+   * (the edits being committed, say) does not move the view onto another. */
+  const [picked, setPicked] = useState<string | null>(null);
+  const [whole, setWhole] = useState<BranchDiff | null>(null);
+  const [wholeError, setWholeError] = useState<string | null>(null);
   const [commitFiles, setCommitFiles] = useState<Changes["files"] | null>(null);
   const [commitFilesError, setCommitFilesError] = useState<string | null>(null);
   const [token, setToken] = useState(0);
@@ -121,7 +138,8 @@ export function DiffBrowserView({
     setCurrentBranch("");
     setCommits(null);
     setCommitsError(null);
-    setIndex(0);
+    setPicked(null);
+    setWhole(null);
   }, [cwd, pane]);
 
   // Discovers the repository once, along with its branches and the one the
@@ -190,9 +208,8 @@ export function DiffBrowserView({
         if (cancelled) return;
         setCommits(next);
         setCommitsError(null);
-        // Index 0 is always the right default: it's the local-changes slot
-        // when there is one, and otherwise the oldest commit shown.
-        setIndex(0);
+        // Back to the first slot, which is the branch as a whole once there are commits.
+        setPicked(null);
       })
       .catch((cause: unknown) => {
         if (cancelled) return;
@@ -205,10 +222,47 @@ export function DiffBrowserView({
     };
   }, [root, branch, base, currentBranch, token]);
 
-  const count = (commits?.length ?? 0) + (hasLocal ? 1 : 0);
-  const isLocalSelected = hasLocal && index === 0;
-  const commitIndex = hasLocal ? index - 1 : index;
-  const commit = !isLocalSelected ? commits?.[commitIndex] : undefined;
+  // Another branch than the one checked out is diffed as its commits alone.
+  const head = currentBranch && branch && branch !== currentBranch ? branch : undefined;
+
+  // The branch's whole change since its base, uncommitted edits included, read again after every edit: what
+  // the first slot shows.
+  useEffect(() => {
+    if (!active || !root || !branch || !base) return;
+    let cancelled = false;
+    void gitBranchDiff(root, base, head)
+      .then((next) => {
+        if (cancelled) return;
+        setWhole(next);
+        setWholeError(null);
+      })
+      .catch((cause: unknown) => {
+        if (cancelled) return;
+        setWhole(null);
+        setWholeError(String(cause));
+      });
+    return () => {
+      cancelled = true;
+    };
+    // `localToken` too: an edit changes the whole as much as the uncommitted part.
+  }, [active, root, branch, base, head, token, localToken]);
+
+  const localCount = localChanges?.files.length ?? 0;
+  const slots = useMemo((): Slot[] => {
+    const list: Slot[] = [];
+    const n = commits?.length ?? 0;
+    if (n > 0) list.push({ kind: "all" });
+    if (hasLocal && (localCount > 0 || n === 0)) list.push({ kind: "local" });
+    (commits ?? []).forEach((one, i) => list.push({ kind: "commit", commit: one, n: i }));
+    return list;
+  }, [commits, hasLocal, localCount]);
+  const count = slots.length;
+  const at = Math.max(0, slots.findIndex((one) => slotKey(one) === picked));
+  const slot: Slot | undefined = slots[at];
+  const isLocalSelected = slot?.kind === "local";
+  const isAll = slot?.kind === "all";
+  const commit = slot?.kind === "commit" ? slot.commit : undefined;
+  const commitIndex = slot?.kind === "commit" ? slot.n : 0;
 
   // The files one commit touched, against its own parent. Skipped for the
   // local-changes slot, which already has its own files from the load below.
@@ -298,8 +352,29 @@ export function DiffBrowserView({
     setLocalToken((one) => one + 1);
   }, [active, changed]);
 
+  const wholeFiles = useMemo(() => (whole ? splitPatch(whole.diff) : null), [whole]);
+  // As the file tree wants them: what git did to each file, and how much.
+  const wholeChanges = useMemo(
+    (): FileChange[] | null =>
+      wholeFiles?.map((file) => ({
+        path: file.path,
+        staged: ".",
+        unstaged: file.status,
+        added: file.added,
+        deleted: file.deleted,
+        renamedFrom: file.renamedFrom ?? null,
+        binary: file.binary,
+        counted: !file.binary,
+      })) ?? null,
+    [wholeFiles],
+  );
+
   const loadDiff = useCallback(
     (path: string, untracked: boolean) => {
+      if (isAll) {
+        const file = wholeFiles?.find((one) => one.path === path);
+        return file ? Promise.resolve(file.text) : Promise.reject(new Error(`${path} is not in the branch's diff`));
+      }
       if (isLocalSelected) {
         const at = localChanges?.root;
         if (!at) return Promise.reject(new Error("no repository loaded yet"));
@@ -308,7 +383,22 @@ export function DiffBrowserView({
       if (!root || !commit) return Promise.reject(new Error("no commit selected"));
       return gitCommitDiff(root, commit.hash, path);
     },
-    [isLocalSelected, root, localChanges, commit],
+    [isAll, wholeFiles, isLocalSelected, root, localChanges, commit],
+  );
+
+  // A file whole, on either side of the slot's diff: for a picture, and for Markdown read rendered.
+  const loadFile = useCallback(
+    (path: string, side: "old" | "new"): Promise<string | null> => {
+      if (isLocalSelected) {
+        const at = localChanges?.root;
+        return at ? gitBlob(at, path, side === "old" ? "HEAD" : undefined) : Promise.resolve(null);
+      }
+      if (!root) return Promise.resolve(null);
+      if (isAll) return whole ? gitBlob(root, path, side === "old" ? whole.from : head) : Promise.resolve(null);
+      if (!commit) return Promise.resolve(null);
+      return gitBlob(root, path, side === "old" ? `${commit.hash}^` : commit.hash);
+    },
+    [isLocalSelected, localChanges, root, isAll, whole, head, commit],
   );
 
   // The comments of the slot on screen. Lines are counted where the slot counts them: a commit's as it left the
@@ -316,12 +406,12 @@ export function DiffBrowserView({
   const notes = useMemo(
     () =>
       (comments ?? [])
-        .filter((c) => (isLocalSelected ? !c.commit : !!commit && c.commit?.hash === commit.hash))
+        .filter((c) => (isLocalSelected || isAll ? !c.commit : !!commit && c.commit?.hash === commit.hash))
         .map((c) => commentNote(c, agent, true)),
-    [comments, isLocalSelected, commit, agent],
+    [comments, isLocalSelected, isAll, commit, agent],
   );
 
-  const files = isLocalSelected ? localChanges?.files ?? null : commitFiles;
+  const files = isAll ? wholeChanges : isLocalSelected ? localChanges?.files ?? null : commitFiles;
   const addComment = useCallback(
     (note: NewNote) => {
       if (!onComments) return;
@@ -341,6 +431,18 @@ export function DiffBrowserView({
   );
 
   const title = useMemo((): ReactNode => {
+    if (isAll) {
+      return (
+        <>
+          <span className="badge here">All</span> {branch}
+          <span className="muted changes-since">
+            {" "}
+            since {whole?.base || base}
+            {head ? "" : ", uncommitted included"}
+          </span>
+        </>
+      );
+    }
     if (isLocalSelected) {
       return (
         <>
@@ -350,26 +452,47 @@ export function DiffBrowserView({
     }
     if (!commit) return "Branch diff";
     return <code>{commit.short}</code>;
-  }, [isLocalSelected, localChanges, commit]);
+  }, [isAll, branch, whole, base, head, isLocalSelected, localChanges, commit]);
 
-  // `Cmd+Left`/`Cmd+Right` (`Alt` off macOS) step through the whole list — local changes, when
-  // it's there, followed by commits — the same way the Prev/Next buttons do.
+  // The slots are read when the key lands, not when the handler was made: a handler only takes over in an
+  // effect, after the render that changed them, and a key pressed in between (the list of commits just arrived,
+  // Next already enabled on screen) would otherwise step against the old list and go nowhere.
+  const slotsRef = useRef(slots);
+  slotsRef.current = slots;
+  const pickedRef = useRef(picked);
+  pickedRef.current = picked;
+  const step = useCallback((delta: 1 | -1) => {
+    const list = slotsRef.current;
+    const from = Math.max(0, list.findIndex((one) => slotKey(one) === pickedRef.current));
+    const next = list[Math.min(list.length - 1, Math.max(0, from + delta))];
+    if (next) setPicked(slotKey(next));
+  }, []);
+
+  const [asked, setAsked] = useState<string | null>(null);
+  const askForReview = () => {
+    if (!send || !whole) return;
+    setAsked(null);
+    void send(reviewRequestPrompt(whole.base))
+      .then(() => {
+        setAsked(`Asked ${agent} for a review: its comments will show here.`);
+        onSent?.();
+      })
+      .catch((cause: unknown) => setAsked(String(cause)));
+  };
+
+  // `Cmd+Left`/`Cmd+Right` (`Alt` off macOS) step through the whole list — the branch as a whole, local
+  // changes when there are some, then the commits — the same way the Prev/Next buttons do.
   // Gated on `active` in the match itself, not just the handler:
   // this view stays mounted on other tabs, and a match that ignored `active`
   // would still swallow the keystroke there (Cmd+Left/Right moves a cursor to
   // the start/end of a line in a native text field).
   useHotkey(
     useCallback((event: KeyboardEvent) => active && isPrevCommit(event), [active]),
-    useCallback(() => setIndex((i) => Math.max(0, i - 1)), []),
+    useCallback(() => step(-1), [step]),
   );
-  // The count is read when the key lands, not when the handler was made: a handler only takes over in an effect,
-  // after the render that changed the count, and a key pressed in between (the list of commits just arrived,
-  // Next already enabled on screen) would otherwise step against the old count and go nowhere.
-  const countRef = useRef(count);
-  countRef.current = count;
   useHotkey(
     useCallback((event: KeyboardEvent) => active && isNextCommit(event), [active]),
-    useCallback(() => setIndex((i) => Math.min(countRef.current - 1, i + 1)), []),
+    useCallback(() => step(1), [step]),
   );
 
   if (notRepo) {
@@ -425,12 +548,16 @@ export function DiffBrowserView({
             type="button"
             aria-label="Previous commit"
             title={`Previous commit (${shortcutLabel.prevCommit()})`}
-            disabled={index <= 0}
-            onClick={() => setIndex((i) => Math.max(0, i - 1))}
+            disabled={at <= 0}
+            onClick={() => step(-1)}
           >
             {shortcutLabel.prevCommit()}
           </button>
-          {isLocalSelected ? (
+          {isAll ? (
+            <span className="badge here" title="Everything the branch has changed since it left its base">
+              All changes
+            </span>
+          ) : isLocalSelected ? (
             <span className="badge here">Local changes</span>
           ) : (
             <span className="muted">
@@ -441,8 +568,8 @@ export function DiffBrowserView({
             type="button"
             aria-label="Next commit"
             title={`Next commit (${shortcutLabel.nextCommit()})`}
-            disabled={index >= count - 1}
-            onClick={() => setIndex((i) => Math.min(count - 1, i + 1))}
+            disabled={at >= count - 1}
+            onClick={() => step(1)}
           >
             {shortcutLabel.nextCommit()}
           </button>
@@ -466,14 +593,35 @@ export function DiffBrowserView({
       {count > 0 ? (
         <DiffPane
           files={files}
-          error={isLocalSelected ? localError : commitFilesError}
+          error={isAll ? wholeError : isLocalSelected ? localError : commitFilesError}
           active={active}
           loadDiff={loadDiff}
-          resetKey={isLocalSelected ? `local:${localChanges?.root ?? ""}` : (commit?.hash ?? "")}
+          loadFile={loadFile}
+          resetKey={isAll ? `all:${root ?? ""}` : isLocalSelected ? `local:${localChanges?.root ?? ""}` : (commit?.hash ?? "")}
           refreshToken={isLocalSelected ? localToken : undefined}
           title={title}
+          headerExtra={
+            isAll && send && !head ? (
+              <button
+                type="button"
+                className="link"
+                title={`Ask ${agent} to review the branch and leave its comments here`}
+                onClick={askForReview}
+                disabled={!whole || !whole.diff}
+              >
+                Review with {agent}
+              </button>
+            ) : undefined
+          }
           banner={
-            isLocalSelected ? (
+            isAll ? (
+              whole?.note || asked ? (
+                <>
+                  {whole?.note ? <p className="notice">{whole.note}</p> : null}
+                  {asked ? <p className="notice">{asked}</p> : null}
+                </>
+              ) : undefined
+            ) : isLocalSelected ? (
               localChanges && localChanges.files.length > 0 ? (
                 <CommitBox
                   root={localChanges.root}
@@ -495,7 +643,9 @@ export function DiffBrowserView({
             ) : undefined
           }
           emptyMessage={
-            isLocalSelected
+            isAll
+              ? "Nothing has changed on this branch yet."
+              : isLocalSelected
               ? "No local changes. The worktree matches HEAD."
               : "This commit touched no files."
           }

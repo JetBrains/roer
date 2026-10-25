@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
-
 import { Spans } from "./CodeLine";
+import { Markdown } from "./Markdown";
+import { byteSize, imageUrl, isImage, resolvePath } from "./lib/blob";
 import { fileRead, type FilesChanged, type FileText } from "./lib/files";
+import { gitBlob } from "./lib/git";
 import {
   highlightText,
   loadLang,
@@ -64,6 +64,9 @@ interface Line {
  */
 export function FileView({ root, path, line, active, changed }: FileViewProps) {
   const [file, setFile] = useState<FileText | null>(null);
+  /** A picture's bytes, base64, read instead of its text: null when it is gone. */
+  const [picture, setPicture] = useState<string | null | undefined>(undefined);
+  const asPicture = isImage(path);
   const [error, setError] = useState<string | null>(null);
   // Bumped when a grammar arrives, which is what makes the first paint —
   // drawn through `paint` — redraw itself properly.
@@ -96,6 +99,7 @@ export function FileView({ root, path, line, active, changed }: FileViewProps) {
   // does not blink through "Reading…" and lose its place.
   useEffect(() => {
     setFile(null);
+    setPicture(undefined);
     setError(null);
     setTop(0);
     if (boxRef.current) boxRef.current.scrollTop = 0;
@@ -107,6 +111,23 @@ export function FileView({ root, path, line, active, changed }: FileViewProps) {
   useEffect(() => {
     if (!active) return;
     let cancelled = false;
+
+    if (asPicture) {
+      void gitBlob(root, path)
+        .then((next) => {
+          if (cancelled) return;
+          setPicture(next);
+          setError(next === null ? `${path} is not there any more.` : null);
+        })
+        .catch((cause: unknown) => {
+          if (cancelled) return;
+          setPicture(null);
+          setError(String(cause));
+        });
+      return () => {
+        cancelled = true;
+      };
+    }
 
     void fileRead(root, path)
       .then((next) => {
@@ -123,7 +144,7 @@ export function FileView({ root, path, line, active, changed }: FileViewProps) {
     return () => {
       cancelled = true;
     };
-  }, [active, path, reload, root]);
+  }, [active, asPicture, path, reload, root]);
 
   // The watch saw this file change. `broad` is a batch that gave up naming
   // paths, and then everything on screen is suspect — including this.
@@ -227,8 +248,20 @@ export function FileView({ root, path, line, active, changed }: FileViewProps) {
   );
   const window_ = lines.slice(first, last);
 
+  // The pictures a Markdown file shows, from the worktree it is in.
+  const markdownImage = useCallback(
+    async (src: string) => {
+      const at = resolvePath(path, src);
+      if (!at || !isImage(at)) return null;
+      const base64 = await gitBlob(root, at);
+      return base64 === null ? null : imageUrl(at, base64);
+    },
+    [path, root],
+  );
+
   const note = () => {
     if (error) return error;
+    if (asPicture) return picture === undefined ? "Reading…" : null;
     if (!file) return "Reading…";
     if (file.binary) return "Binary file — nothing to show.";
     if (lines.length === 0) return "Empty file.";
@@ -260,6 +293,7 @@ export function FileView({ root, path, line, active, changed }: FileViewProps) {
             </button>
           </div>
         ) : null}
+        {asPicture && picture ? <span className="muted">{byteSize(picture)}</span> : null}
         {file && !file.binary && lines.length > 0 ? (
           <span className="muted">
             {lines.length} {lines.length === 1 ? "line" : "lines"}
@@ -272,12 +306,12 @@ export function FileView({ root, path, line, active, changed }: FileViewProps) {
 
       {message ? (
         <p className={error ? "file-note error" : "file-note"}>{message}</p>
-      ) : isMarkdown && mode === "preview" ? (
-        <div className="file-markdown">
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>
-            {file?.text ?? ""}
-          </ReactMarkdown>
+      ) : asPicture && picture ? (
+        <div className="file-picture">
+          <img src={imageUrl(path, picture)} alt={path} />
         </div>
+      ) : isMarkdown && mode === "preview" ? (
+        <Markdown image={markdownImage}>{file?.text ?? ""}</Markdown>
       ) : (
         <div
           className="file-body"

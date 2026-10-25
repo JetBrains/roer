@@ -9,10 +9,15 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { FileView } from "./FileView";
 import { fileRead, type FilesChanged, type FileText } from "./lib/files";
+import { gitBlob } from "./lib/git";
 
 vi.mock("./lib/files", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./lib/files")>()),
   fileRead: vi.fn(),
+}));
+vi.mock("./lib/git", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./lib/git")>()),
+  gitBlob: vi.fn(),
 }));
 
 const read = vi.mocked(fileRead);
@@ -56,6 +61,27 @@ beforeEach(() => {
 });
 
 describe("FileView", () => {
+  it("shows a picture as one, read from the worktree", async () => {
+    vi.mocked(gitBlob).mockResolvedValue("iVBORw0K");
+    show({ path: "docs/shot.png" });
+    expect(await screen.findByRole("img", { name: "docs/shot.png" })).toHaveAttribute(
+      "src",
+      "data:image/png;base64,iVBORw0K",
+    );
+    expect(gitBlob).toHaveBeenCalledWith("/Users/test/project", "docs/shot.png");
+    expect(read).not.toHaveBeenCalled();
+  });
+
+  it("shows the pictures a Markdown file names, from beside it, and links the ones on the web", async () => {
+    read.mockResolvedValue(text({ text: "![Shot](shots/a.png)\n\n![Badge](https://example.com/b.svg)\n", lines: 3 }));
+    vi.mocked(gitBlob).mockResolvedValue("iVBORw0K");
+    show({ path: "docs/guide.md" });
+    expect(await screen.findByRole("img", { name: "Shot" })).toHaveAttribute("src", "data:image/png;base64,iVBORw0K");
+    expect(gitBlob).toHaveBeenCalledWith("/Users/test/project", "docs/shots/a.png");
+    expect(screen.getByRole("link", { name: "[image: Badge]" })).toBeInTheDocument();
+    expect(screen.queryByRole("img", { name: "Badge" })).toBeNull();
+  });
+
   it("reads the file the tab is about", async () => {
     show();
     await waitFor(() =>
