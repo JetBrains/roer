@@ -209,11 +209,16 @@ export function Conversations({
     if (!picked || !ids.includes(picked)) setPicked(ids[0]);
   }, [showing, filtering, drawnKey, picked]);
 
+  /** Puts the keyboard on a row. Said outright for a click too: WebKit leaves
+   * a clicked button unfocused, and Enter would then resume nothing. */
+  const focusRow = (conversation: ClaudeSession) =>
+    listRef.current?.querySelector<HTMLButtonElement>(`[data-conversation="${CSS.escape(conversation.id)}"]`)?.focus();
+
   /** Takes the keyboard to a row, and shows it beside the list while the
    * preview is open. */
   const pick = (conversation: ClaudeSession) => {
     if (previewing) setPicked(conversation.id);
-    listRef.current?.querySelector<HTMLButtonElement>(`[data-conversation="${CSS.escape(conversation.id)}"]`)?.focus();
+    focusRow(conversation);
   };
 
   // The arrows go from row to row with the preview open or not, and up from
@@ -269,7 +274,7 @@ export function Conversations({
               aria-describedby={described || undefined}
               aria-current={current?.id === conversation.id ? "true" : undefined}
               title={previewing ? "Shown beside; double-click or Enter to resume" : shorten(conversation.cwd, home)}
-              onClick={() => (previewing ? setPicked(conversation.id) : onOpen(conversation))}
+              onClick={() => (previewing ? pick(conversation) : onOpen(conversation))}
               onDoubleClick={() => previewing && onOpen(conversation)}
               onKeyDown={(event) => onRowKey(event, conversation)}
             >
@@ -308,6 +313,8 @@ export function Conversations({
                 onClick={() => {
                   setPreviewing(true);
                   setPicked(conversation.id);
+                  // Its row, not this button, so Enter resumes what is shown.
+                  focusRow(conversation);
                 }}
               >
                 <Eye size={13} aria-hidden="true" />
