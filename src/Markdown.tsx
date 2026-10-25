@@ -5,6 +5,7 @@ import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import remarkGfm from "remark-gfm";
 
 import { isRemote } from "./lib/blob";
+import { Picture } from "./Picture";
 import { openUrl } from "./lib/github";
 import { termPattern } from "./lib/marks";
 
@@ -79,7 +80,7 @@ function SourcedImage({
   }, [src, source]);
   if (!src || url === null) return <span className="muted">[missing image{alt ? `: ${alt}` : ""}]</span>;
   if (url === undefined) return <span className="muted">[image{alt ? `: ${alt}` : ""}]</span>;
-  return <img src={url} alt={alt ?? ""} width={width} height={height} />;
+  return <Picture src={url} alt={alt ?? ""} width={width} height={height} />;
 }
 
 /**

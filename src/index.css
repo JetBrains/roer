@@ -3158,13 +3158,6 @@ button.tab-x:hover {
   font-size: var(--code-font-size, 13px);
 }
 
-.file-view > .file-markdown img,
-.md-block > .file-markdown img,
-.image-side img,
-.file-picture img {
-  zoom: var(--code-zoom, 1);
-}
-
 .image-side {
   overflow: auto;
 }
@@ -5784,17 +5777,16 @@ button.danger:hover {
   color: var(--roer-fg);
 }
 
-/* A picture in the diff: before and after side by side, or the one side
+/* A picture in the diff: before above after, or the one side
    there is. Drawn over a checkerboard so a transparent one shows its edges. */
 .image-diff {
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: column;
   gap: 16px;
   padding: 16px;
 }
 
 .image-side {
-  flex: 1 1 280px;
   min-width: 0;
   margin: 0;
   padding: 8px;
@@ -5818,8 +5810,6 @@ button.danger:hover {
 .image-side img,
 .file-picture img {
   display: block;
-  max-width: 100%;
-  height: auto;
   background: repeating-conic-gradient(var(--ide-border) 0% 25%, transparent 0% 50%) 50% / 16px 16px;
 }
 

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { Markdown } from "./Markdown";
+import { Picture } from "./Picture";
 import { byteSize, decodeText, imageUrl, isImage, resolvePath } from "./lib/blob";
 import { definitions, diffBlocks } from "./lib/mdDiff";
 
@@ -25,7 +26,8 @@ function useSides(load: LoadFile, path: string, oldPath: string) {
   return { sides, error };
 }
 
-/** A picture before and after, side by side: one of the two when it was added or deleted. */
+/** A picture before and after, one above the other so each has the whole width: one of the two when it was
+ * added or deleted. */
 export function ImageDiff({ path, oldPath, load }: { path: string; oldPath: string; load: LoadFile }) {
   const { sides, error } = useSides(load, path, oldPath);
   if (error) return <p className="error">{error}</p>;
@@ -37,7 +39,7 @@ export function ImageDiff({ path, oldPath, load }: { path: string; oldPath: stri
         <figcaption className="muted">
           {label} · {byteSize(base64)}
         </figcaption>
-        <img src={imageUrl(at, base64)} alt={`${at}, ${label.toLowerCase()}`} />
+        <Picture src={imageUrl(at, base64)} alt={`${at}, ${label.toLowerCase()}`} />
       </figure>
     );
   return (
