@@ -287,6 +287,22 @@ describe("the preview", () => {
     expect(within(panel()!).getByRole("heading", { name: "rounding in invoices" })).toBeInTheDocument();
   });
 
+  it("resumes on Enter the row a click shows, and the one its preview button shows", async () => {
+    const onOpen = renderList(list);
+    fireEvent.click(screen.getByRole("button", { name: "Preview rounding in invoices" }));
+    // The row has the keyboard, not the button that was clicked: Enter lands on what is shown.
+    expect(screen.getByRole("button", { name: "Show rounding in invoices" })).toHaveFocus();
+    fireEvent.keyDown(document.activeElement!, { key: "Enter" });
+    expect(onOpen).toHaveBeenCalledWith(list[1]);
+
+    // A click does not focus a button in WebKit, nor here: the row is focused by hand.
+    (document.activeElement as HTMLElement).blur();
+    fireEvent.click(screen.getByRole("button", { name: "Show login form loses focus" }));
+    expect(screen.getByRole("button", { name: "Show login form loses focus" })).toHaveFocus();
+    fireEvent.keyDown(document.activeElement!, { key: "Enter" });
+    expect(onOpen).toHaveBeenLastCalledWith(list[0]);
+  });
+
   it("steps through the rows with the arrows, and Escape closes it", async () => {
     const onOpen = renderList(list);
     fireEvent.click(toggle());
