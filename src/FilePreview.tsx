@@ -2,6 +2,7 @@ import { X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { Spans } from "./CodeLine";
+import { Picture } from "./Picture";
 import { byteSize, imageUrl, isImage } from "./lib/blob";
 import { baseName, fileRead, type FileText } from "./lib/files";
 import { gitBlob } from "./lib/git";
@@ -140,7 +141,7 @@ export function FilePreview({ root, path, line, onOpen, onClose }: FilePreviewPr
         <p className="muted">{message}</p>
       ) : picture ? (
         <div className="file-picture">
-          <img src={imageUrl(path, picture)} alt={path} />
+          <Picture src={imageUrl(path, picture)} alt={path} />
         </div>
       ) : (
         <div className="file-body">

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Spans } from "./CodeLine";
 import { Markdown } from "./Markdown";
+import { Picture } from "./Picture";
 import { byteSize, imageUrl, isImage, resolvePath } from "./lib/blob";
 import { fileRead, type FilesChanged, type FileText } from "./lib/files";
 import { gitBlob } from "./lib/git";
@@ -308,7 +309,7 @@ export function FileView({ root, path, line, active, changed }: FileViewProps) {
         <p className={error ? "file-note error" : "file-note"}>{message}</p>
       ) : asPicture && picture ? (
         <div className="file-picture">
-          <img src={imageUrl(path, picture)} alt={path} />
+          <Picture src={imageUrl(path, picture)} alt={path} />
         </div>
       ) : isMarkdown && mode === "preview" ? (
         <Markdown image={markdownImage}>{file?.text ?? ""}</Markdown>
