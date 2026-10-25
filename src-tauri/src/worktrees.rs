@@ -217,10 +217,38 @@ fn create(main: &str, home: &Path, name: &str, base: Option<&str>) -> Result<Cre
     })
 }
 
+/// Where `branch` can be checked out from in the repository `cwd` is in, to
+/// put a removed worktree back: the branch itself, or a remote's of that
+/// name (`origin/scroll`) when it was deleted here with its worktree. `None`
+/// when neither is left.
+#[tauri::command(async)]
+pub fn worktree_restorable(cwd: String, branch: String) -> Result<Option<String>, String> {
+    let repo = git::repo(&cwd)?;
+    Ok(source_of(&repo.main, &branch))
+}
+
+fn source_of(main: &str, branch: &str) -> Option<String> {
+    if branch.starts_with('-') || git(main, &["check-ref-format", "--branch", branch]).is_err() {
+        return None;
+    }
+    let local = git::run(main, &["rev-parse", "--verify", "--quiet", &format!("refs/heads/{branch}")])
+        .is_ok_and(|out| out.status.success());
+    if local {
+        return Some(branch.to_string());
+    }
+    let remotes = git(main, &["remote"]).unwrap_or_default();
+    remotes.lines().map(str::trim).filter(|r| !r.is_empty()).map(|r| format!("{r}/{branch}")).find(|candidate| {
+        git::run(main, &["rev-parse", "--verify", "--quiet", &format!("refs/remotes/{candidate}")])
+            .is_ok_and(|out| out.status.success())
+    })
+}
+
 /// Puts back a worktree that was removed, at the path it had and on
 /// `branch`: a conversation that ran in it can only be resumed there, since
-/// its CLI finds a conversation by the folder it ran in. Refused when the
-/// folder is there, the branch is not, or another worktree has the branch.
+/// its CLI finds a conversation by the folder it ran in. A branch deleted
+/// here with its worktree is made again from a remote's of that name.
+/// Refused when the folder is there, the branch is nowhere, or another
+/// worktree has it.
 #[tauri::command(async)]
 pub fn worktree_restore(cwd: String, path: String, branch: String) -> Result<Created, String> {
     let repo = git::repo(&cwd)?;
@@ -234,11 +262,9 @@ fn restore(main: &str, path: &str, branch: &str) -> Result<Created, String> {
     if Path::new(path).exists() {
         return Err(format!("{path} is there already."));
     }
-    let there = git::run(main, &["rev-parse", "--verify", "--quiet", &format!("refs/heads/{branch}")])
-        .is_ok_and(|out| out.status.success());
-    if !there {
-        return Err(format!("There is no branch {branch} here any more."));
-    }
+    let Some(source) = source_of(main, branch) else {
+        return Err(format!("There is no branch {branch} here any more, nor on a remote."));
+    };
     // Git may still list the worktree whose folder went: that one is what is
     // being put back. Any other that has the branch keeps it.
     let listed = list(main)?;
@@ -255,7 +281,12 @@ fn restore(main: &str, path: &str, branch: &str) -> Result<Created, String> {
     if stale {
         args.push("--force");
     }
-    args.extend([path, branch]);
+    if source == branch {
+        args.extend([path, branch]);
+    } else {
+        // Its own upstream again, as it was before it was deleted here.
+        args.extend(["--track", "-b", branch, path, source.as_str()]);
+    }
     git(main, &args)?;
 
     let warnings = copy_included(Path::new(main), Path::new(path));
@@ -625,7 +656,26 @@ mod tests {
         assert!(elsewhere.contains("checked out in"), "{elsewhere}");
         let gone = restore(&main, &format!("{path}-3"), "no-such-branch").unwrap_err();
         assert!(gone.contains("no branch"), "{gone}");
+        assert_eq!(source_of(&main, "no-such-branch"), None);
         assert!(restore(&main, &format!("{path}-4"), "--orphan").is_err());
+    }
+
+    #[test]
+    fn a_branch_deleted_with_its_worktree_is_made_again_from_the_remote() {
+        let (main, home) = setup("a-branch-deleted-with-its-worktree-is-made-again");
+        let created = create(&main, &home, "scroll", None).unwrap();
+        let path = created.worktree.path.clone();
+        // Pushed, then removed with its branch, as a merged one is.
+        must(&main, &["update-ref", "refs/remotes/origin/scroll", "scroll"]);
+        must(&main, &["remote", "add", "origin", "https://example.invalid/repo.git"]);
+        must(&main, &["worktree", "remove", &path]);
+        must(&main, &["branch", "-D", "scroll"]);
+        assert_eq!(source_of(&main, "scroll").as_deref(), Some("origin/scroll"));
+
+        let back = restore(&main, &path, "scroll").unwrap();
+        assert_eq!(back.worktree.branch.as_deref(), Some("scroll"));
+        assert_eq!(git(&path, &["rev-parse", "--abbrev-ref", "scroll@{upstream}"]).unwrap().trim(), "origin/scroll");
+        assert_eq!(source_of(&main, "scroll").as_deref(), Some("scroll"));
     }
 
     #[test]

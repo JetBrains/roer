@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { gitBranches, gitChanges, gitRepo } from "./lib/git";
+import { gitChanges, gitRepo } from "./lib/git";
 import { notify } from "./lib/notify";
 import {
   killSession,
@@ -13,7 +13,7 @@ import {
 } from "./lib/pty";
 import { useSessionBrowser } from "./lib/useSessionBrowser";
 import { listProjects } from "./lib/projects";
-import { listWorktrees, restoreWorktree } from "./lib/worktrees";
+import { listWorktrees, restorableWorktree, restoreWorktree } from "./lib/worktrees";
 import { confirmAction } from "./lib/confirm";
 import {
   assignSession,
@@ -41,7 +41,6 @@ vi.mock("./lib/confirm", () => ({ confirmAction: vi.fn() }));
 vi.mock("./lib/git", () => ({
   gitRepo: vi.fn(),
   gitChanges: vi.fn(),
-  gitBranches: vi.fn(async () => []),
 }));
 
 vi.mock("./lib/worktrees", () => ({
@@ -50,6 +49,7 @@ vi.mock("./lib/worktrees", () => ({
   removeWorktree: vi.fn(),
   deleteWorktreeBranch: vi.fn(),
   restoreWorktree: vi.fn(),
+  restorableWorktree: vi.fn(async () => null),
 }));
 
 vi.mock("./lib/notify", () => ({ notify: vi.fn(async () => undefined) }));
@@ -424,7 +424,8 @@ describe("past Claude conversations", () => {
       },
     ]);
     vi.mocked(listProjects).mockResolvedValue([{ id: "p1", name: "project", path: "/Users/test/project" }]);
-    vi.mocked(gitBranches).mockResolvedValue(["main", "scroll"]);
+    // Deleted here with its worktree, still pushed.
+    vi.mocked(restorableWorktree).mockResolvedValue("origin/scroll");
     vi.mocked(confirmAction).mockResolvedValueOnce(true);
     vi.mocked(restoreWorktree).mockResolvedValue({
       worktree: { path: "/Users/test/project-scroll", branch: "scroll", commit: "abc", main: false, base: null, locked: false, missing: false },
@@ -437,7 +438,7 @@ describe("past Claude conversations", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Resume smooth scrolling" }));
     await waitFor(() => expect(confirmAction).toHaveBeenCalledTimes(1));
-    expect(vi.mocked(confirmAction).mock.calls[0][0]).toMatch(/not there any more.*scroll, is still in project/);
+    expect(vi.mocked(confirmAction).mock.calls[0][0]).toMatch(/not there any more.*scroll, is still in project as origin\/scroll/);
     await waitFor(() =>
       expect(onOpen).toHaveBeenCalledWith(expect.objectContaining({ args: ["resume", "abc-123"], cwd: "/Users/test/project-scroll" })),
     );
@@ -449,7 +450,7 @@ describe("past Claude conversations", () => {
       { id: "abc-123", cwd: "/Users/test/project-old", title: "old idea", updatedAt: Math.floor(Date.now() / 1000), branch: "deleted", gone: true },
     ]);
     vi.mocked(listProjects).mockResolvedValue([{ id: "p1", name: "project", path: "/Users/test/project" }]);
-    vi.mocked(gitBranches).mockResolvedValue(["main"]);
+    vi.mocked(restorableWorktree).mockResolvedValue(null);
     const onOpen = vi.fn();
     renderList(onOpen);
 

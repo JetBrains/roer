@@ -428,6 +428,7 @@ fn dispatch(state: &Arc<AppState>, cmd: &str, args: Value, cid: Option<&str>) ->
 
         // worktrees
         "worktree_list" => call_res!(args, crate::worktrees::worktree_list, "cwd": String),
+        "worktree_restorable" => call_res!(args, crate::worktrees::worktree_restorable, "cwd": String, "branch": String),
         "worktree_restore" => {
             call_res!(args, crate::worktrees::worktree_restore, "cwd": String, "path": String, "branch": String)
         }
