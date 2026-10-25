@@ -120,6 +120,7 @@ pub fn run() {
             worktrees::worktree_list,
             worktrees::worktree_create,
             worktrees::worktree_restore,
+            worktrees::worktree_restorable,
             worktrees::worktree_remove,
             worktrees::worktree_uncommitted,
             worktrees::worktree_delete_branch,

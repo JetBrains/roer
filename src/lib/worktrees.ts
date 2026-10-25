@@ -40,6 +40,11 @@ export const listWorktrees = (cwd: string): Promise<Worktree[]> => invoke("workt
 export const createWorktree = (cwd: string, name: string, base?: string): Promise<CreatedWorktree> =>
   invoke("worktree_create", { cwd, name, base: base?.trim() || null });
 
+/** Where `branch` can be checked out from to put a removed worktree back: itself, or a remote's of that name
+ * (`origin/scroll`) when it was deleted with its worktree. Null when neither is left. */
+export const restorableWorktree = (cwd: string, branch: string): Promise<string | null> =>
+  invoke("worktree_restorable", { cwd, branch });
+
 /** Puts back a removed worktree of the repository `cwd` is in, at `path` and on `branch`, as it was. */
 export const restoreWorktree = (cwd: string, path: string, branch: string): Promise<CreatedWorktree> =>
   invoke("worktree_restore", { cwd, path, branch });

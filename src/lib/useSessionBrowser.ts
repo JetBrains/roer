@@ -4,7 +4,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { logLine } from "./log";
 
 import { baseName } from "./files";
-import { gitBranches, gitChanges, gitRepo, gitReposIn, gitRoot, type Repo } from "../lib/git";
+import { gitChanges, gitRepo, gitReposIn, gitRoot, type Repo } from "../lib/git";
 import { placesOf, type Place } from "./checkouts";
 import { pickFolder } from "./folderPicker";
 import type { PickerStart } from "../NewSessionPicker";
@@ -13,6 +13,7 @@ import {
   deleteWorktreeBranch,
   listWorktrees,
   removeWorktree,
+  restorableWorktree,
   restoreWorktree,
   uncommittedInWorktree,
   type Worktree,
@@ -967,21 +968,23 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
   };
 
   /** The Project a gone conversation's worktree was of: the one git still
-   * lists it under, or else one that has its branch, the likeliest by name
-   * first (`roer-scroll` is `roer`'s). With the branch to put it back on. */
-  const homeOfGone = async (session: ClaudeSession): Promise<{ project: Project; branch: string } | null> => {
-    for (const project of projects) {
-      const listed = (worktrees[project.path] ?? []).find((worktree) => worktree.path === session.cwd);
-      const branch = listed?.branch ?? session.branch;
-      if (listed && branch) return { project, branch };
-    }
-    const branch = session.branch;
+   * lists it under, or else one that can still check its branch out (itself,
+   * or a remote's of that name), the likeliest by name first (`roer-scroll`
+   * is `roer`'s). With the branch, and where it comes from. */
+  const homeOfGone = async (
+    session: ClaudeSession,
+  ): Promise<{ project: Project; branch: string; source: string } | null> => {
+    const listed = projects.flatMap((project) =>
+      (worktrees[project.path] ?? []).filter((one) => one.path === session.cwd && one.branch).map((one) => ({ project, branch: one.branch! })),
+    );
+    const branch = listed[0]?.branch ?? session.branch;
     if (!branch) return null;
     const folder = baseName(session.cwd);
     const named = (project: Project) => Number(folder.startsWith(baseName(project.path)));
-    for (const project of [...projects].sort((a, b) => named(b) - named(a))) {
-      const branches = await gitBranches(project.path).catch((): string[] => []);
-      if (branches.includes(branch)) return { project, branch };
+    const order = listed.length > 0 ? [listed[0].project] : [...projects].sort((a, b) => named(b) - named(a));
+    for (const project of order) {
+      const source = await restorableWorktree(project.path, branch).catch(() => null);
+      if (source) return { project, branch, source };
     }
     return null;
   };
@@ -997,12 +1000,14 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
       setFailure(
         `"${session.title}" ran in ${where}, which is not there any more, and no project here has ${
           session.branch ? `its branch, ${session.branch},` : "the branch it was on"
-        } to put it back from. Its CLI finds a conversation by its folder, so it cannot be resumed; it can still be read in the preview.`,
+        } to put it back from, nor a remote. Its CLI finds a conversation by its folder, so it cannot be resumed; it can still be read in the preview.`,
       );
       return;
     }
     const agreed = await confirmAction(
-      `"${session.title}" ran in ${where}, which is not there any more: a worktree that was removed? Its branch, ${home.branch}, is still in ${home.project.name}. Put the worktree back there on that branch, and resume the conversation in it?`,
+      `"${session.title}" ran in ${where}, which is not there any more: a worktree that was removed? Its branch, ${home.branch}, is still in ${home.project.name}${
+        home.source === home.branch ? "" : ` as ${home.source}`
+      }. Put the worktree back there on that branch, and resume the conversation in it?`,
       "Restore and resume",
     );
     if (!agreed) return;
