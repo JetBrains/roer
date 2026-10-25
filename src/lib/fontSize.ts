@@ -27,10 +27,13 @@ const sizes: Record<FontArea, number> = { terminal: stored("terminal"), code: st
 const listeners = new Set<() => void>();
 
 /** The code's size as CSS variables, with line heights rounded to whole
- * pixels so rows stay crisp: a file's at 1.5, a diff's a little looser. */
+ * pixels so rows stay crisp: a file's at 1.5, a diff's a little looser.
+ * `--code-zoom` is the same step as a factor, for what is not text: a
+ * picture, which is drawn to fit at the default and grows from there. */
 function applyCode(): void {
   const style = document.documentElement.style;
   style.setProperty("--code-font-size", `${sizes.code}px`);
+  style.setProperty("--code-zoom", String(sizes.code / DEFAULT_FONT_SIZE.code));
   style.setProperty("--code-line-height", `${Math.round(sizes.code * 1.5)}px`);
   style.setProperty("--diff-line-height", `${Math.round(sizes.code * (5 / 3))}px`);
 }

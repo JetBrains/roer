@@ -3150,6 +3150,25 @@ button.tab-x:hover {
   max-width: 100%;
 }
 
+/* A file read rendered, on its own or in a diff, is sized with the code:
+   Cmd+= and Cmd+- step it, and its pictures with it. A picture fits the
+   width at the default size and grows past it, the box scrolling. */
+.file-view > .file-markdown,
+.md-block > .file-markdown {
+  font-size: var(--code-font-size, 13px);
+}
+
+.file-view > .file-markdown img,
+.md-block > .file-markdown img,
+.image-side img,
+.file-picture img {
+  zoom: var(--code-zoom, 1);
+}
+
+.image-side {
+  overflow: auto;
+}
+
 /* A row is one line: it must not wrap, or the window's arithmetic — every
    line the same height — stops being true. */
 .file-line {
