@@ -785,6 +785,25 @@ fn new_always_makes_another_session_and_starts_claude_in_it() {
     kill_outer(&env);
 }
 
+/// A server started before the config asked for hyperlinks gets them from
+/// the next roer that announces itself to it, and only once.
+#[test]
+fn a_server_older_than_the_config_gets_its_hyperlinks() {
+    let env = Env::new("hyperlinks");
+    let name = shim_name(&env.dir);
+    env.tmux(&["new-session", "-d", "-s", &name]);
+    // tmux's defaults, as a server started from an older config has them.
+    env.tmux(&["set-option", "-su", "terminal-features"]);
+    assert!(!env.tmux(&["show-options", "-s", "terminal-features"]).contains("hyperlinks"));
+
+    for session in ["first", "second"] {
+        in_a_terminal(&env, &["new", "--shell", session], session);
+        kill_outer(&env);
+    }
+    let features = env.tmux(&["show-options", "-s", "terminal-features"]);
+    assert_eq!(features.matches("xterm*:hyperlinks").count(), 1, "{features}");
+}
+
 /// With a PATH that has no `claude` on it, as a server the app starts from
 /// Finder has: the session must still be there to attach, with the command
 /// typed into its shell rather than run as a pane that dies at once.
