@@ -16,6 +16,7 @@ import {
   Plus,
   Puzzle,
   Search,
+  Settings,
   Sun,
 } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -1277,6 +1278,17 @@ export function App() {
           onClick={() => setNotificationsOn(!notificationsOn)}
         >
           {notificationsOn ? <Bell size={15} /> : <BellOff size={15} />}
+        </button>
+
+        <button
+          type="button"
+          className="shortcuts-toggle"
+          aria-label="Keyboard shortcuts"
+          title={`Keyboard shortcuts (${shortcutLabel.shortcuts()})`}
+          aria-pressed={showingShortcuts}
+          onClick={() => setShowingShortcuts((open) => !open)}
+        >
+          <Settings size={15} />
         </button>
 
         <button
