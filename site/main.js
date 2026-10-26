@@ -1,9 +1,9 @@
 "use strict";
 
-/* ---- Review screenshots: the feature list is the tab strip ------------------ */
-(function reviewTabs() {
-  const img = document.getElementById("shot");
-  const tabs = [...document.querySelectorAll('.shots [role="tab"]')];
+/* ---- Screenshot tabs: each feature list is the tab strip of its shot -------- */
+document.querySelectorAll(".shots[data-shot]").forEach((list) => {
+  const img = document.getElementById(list.dataset.shot);
+  const tabs = [...list.querySelectorAll('[role="tab"]')];
   tabs.forEach((tab) =>
     tab.addEventListener("click", () => {
       tabs.forEach((t) => t.setAttribute("aria-selected", String(t === tab)));
@@ -13,7 +13,7 @@
   );
   // Warm the cache so switching is instant.
   window.addEventListener("load", () => tabs.forEach((t) => { new Image().src = t.dataset.src; }));
-})();
+});
 
 /* ---- Install: OS tabs, preselected from the visitor's platform -------------- */
 (function osTabs() {

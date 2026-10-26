@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Roer · Stay in the loop</title>
-<meta name="description" content="Stay in the loop with your terminal agents. Roer draws the UI your agent asks for live beside the session, shows every change before it ships, and moves the session between terminal and app without restarting.">
+<meta name="description" content="One workspace for terminal coding agents. Run Claude Code, Codex, Pi or Junie in a real terminal, answer in the UI your agent draws beside it, search every past conversation, review every change to the merged PR, and ask for tabs of your own.">
 <meta name="color-scheme" content="light dark">
 <link rel="icon" type="image/png" href="assets/favicon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -22,8 +22,9 @@
       <span class="pill pill-preview">Preview</span>
     </a>
     <nav class="nav" aria-label="Sections">
+      <a href="#ui">Generative UI</a>
       <a href="#review">Review</a>
-      <a href="#teleport">Teleport</a>
+      <a href="#extensions">Extensions</a>
       <a href="#install">Install</a>
       <a href="#changelog">Changelog</a>
       <a href="{{blogUrl}}">Blog</a>
@@ -38,95 +39,120 @@
   <section class="hero">
     <div class="beam" aria-hidden="true"></div>
     <div class="wrap hero-copy">
-      <p class="eyebrow">Generative UI for terminal agents</p>
+      <p class="eyebrow">One workspace for terminal coding agents</p>
       <h1>Stay in <span class="lit">the loop.</span></h1>
-      <p class="lede">Your agent does the work in the terminal. When it needs you, Roer draws the panel it asks for, live beside the session. Read every change, ship the pull request, and take the running session between terminal and app.</p>
+      <p class="lede">Run Claude Code, Codex, Pi or Junie in a real terminal, every project in one window. See who is working and who needs you, answer in the panel the agent draws, and review every change before it merges.</p>
       <div class="cta-row">
         <a class="btn btn-primary" href="{{release.url}}">Download Roer {{release.version}}</a>
-        <a class="btn btn-ghost" href="{{blogUrl}}">Read the blog</a>
+        <a class="btn btn-ghost" href="https://github.com/JetBrains/roer">View on GitHub</a>
       </div>
-      <p class="meta">macOS 14+ &nbsp;·&nbsp; Linux &nbsp;·&nbsp; Windows preview &nbsp;·&nbsp; released {{release.date}}</p>
+      <p class="meta">Free and open source &nbsp;·&nbsp; macOS 14+ &nbsp;·&nbsp; Linux &nbsp;·&nbsp; Windows preview &nbsp;·&nbsp; any web browser &nbsp;·&nbsp; released {{release.date}}</p>
+    </div>
+
+    <div class="wrap">
+      <figure class="shot-frame hero-shot">
+        <img src="screenshots/workspace.jpg" alt="Roer's Workspace tab: sessions in three repositories, one working and one that needs you, and yesterday's conversations below" width="2880" height="1800">
+      </figure>
     </div>
 
     <div class="wrap points">
       <div class="point">
-        <h3>Ask in plain words</h3>
-        <p>Describe the panel you want. The agent drafts it and Roer opens it next to the terminal while the work keeps going.</p>
+        <h3>All your agents, one window</h3>
+        <p>Every project, branch and worktree in one sidebar. Start any agent CLI, or a saved one with its model, effort and instructions, in a worktree of its own if you like.</p>
       </div>
       <div class="point">
-        <h3>Trusted by design</h3>
-        <p>Panels are assembled from a fixed set of Roer components: text, checkboxes, buttons, rows. The agent never ships markup or scripts.</p>
+        <h3>See who needs you</h3>
+        <p>Each session says whether it is working or waiting on you, and Roer tells you when one stops. Jump straight to it from the list.</p>
       </div>
       <div class="point">
-        <h3>Keep the good ones</h3>
-        <p>Save a panel with the project and reopen it next time, so a one-off dashboard can become part of how the repo works.</p>
+        <h3>Sessions outlive the app</h3>
+        <p>Sessions live in tmux on a private socket. Close Roer, update it, reopen it: the agent never noticed.</p>
       </div>
     </div>
   </section>
 
-  <!-- Dashboards: Generative UI beyond a single prompt -->
-  <section class="section section-alt" id="dashboards">
+  <!-- Generative UI -->
+  <section class="section section-alt" id="ui">
     <div class="wrap split split-rev">
       <div class="split-copy">
         <p class="eyebrow">Generative UI</p>
-        <h2>Ask for a dashboard. Get one.</h2>
-        <p class="body">&ldquo;Put CI, deploys and test health on one screen.&rdquo; The agent gathers the numbers and Roer lays them out beside the session: stat tiles, run cards with live progress, and buttons that report back to the agent when you click them.</p>
-        <p class="body dim">Tiles, status cards, work-item boards and full diffs, all from Roer&rsquo;s own component catalog.</p>
+        <h2>Your agent draws the UI you need.</h2>
+        <p class="body">A plan to approve, the flow it just built, a dashboard of your CI. The agent draws it right beside the terminal, and when you click, it gets your answer at its next step.</p>
+        <p class="body dim">Views are put together from Roer&rsquo;s own components (diagrams, charts, tiles, boards and diffs), never from markup the agent writes. Keep a good one with the project, or as a tab. The same views open in the Claude app and Codex through <code>roer mcp</code>.</p>
       </div>
       <figure class="shot-frame">
-        <img src="screenshots/gen-ui-dashboard.png" alt="A Generative UI dashboard in Roer: test, coverage, PR and deploy tiles, CI run cards and a production deploy awaiting approval" width="1302" height="1048" loading="lazy">
+        <img src="screenshots/genui.jpg" alt="A checkout flow diagram the agent drew beside its terminal, with Approve and Revise buttons" width="2398" height="1800" loading="lazy">
       </figure>
-    </div>
-
-    <div class="wrap"><p class="eyebrow new-in" id="new-in">New in 0.8</p></div>
-    <div class="wrap points points-new" role="group" aria-labelledby="new-in">
-      <div class="point">
-        <h3>Tabs your agent builds</h3>
-        <p>&ldquo;Make me a tab that lists the TODOs in this repo.&rdquo; The agent writes it, Roer builds it and puts it in the strip, and every save reloads it. Keep the ones you like; switch any of them off from the Extensions dialog.</p>
-      </div>
-      <div class="point">
-        <h3>One tab for the branch</h3>
-        <p>Changes walks a branch commit by commit, as a whole, or as its pull request, for any branch you pick. Comment on any line, then commit the local changes right there: leave the message empty and the agent writes one for you to read first.</p>
-      </div>
-      <div class="point">
-        <h3>Review with your agent</h3>
-        <p>Ask the agent for a review and its comments land on the lines they are about. Accept, decline or answer each one, and Send hands every decision back in one prompt.</p>
-      </div>
     </div>
   </section>
 
-  <!-- Review: diff, search, Markdown, PR -->
-  <section class="section" id="review">
+  <!-- Search and resume -->
+  <section class="section" id="search">
     <div class="wrap split">
       <div class="split-copy">
-        <p class="eyebrow">Review</p>
-        <h2>Read every change before it ships.</h2>
-        <p class="body">The agent works on a branch. Roer shows you that branch as a reviewer would see it, one commit at a time.</p>
-        <ul class="shots" role="tablist" aria-label="Review features">
-          <li><button type="button" role="tab" id="tab-diff" aria-selected="true" aria-controls="shot" data-src="screenshots/diff.png" data-alt="Branch diff view stepping through commits">
-            <strong>Commit by commit</strong><span>Step through the branch against its base with the arrow keys.</span></button></li>
-          <li><button type="button" role="tab" id="tab-search" aria-selected="false" aria-controls="shot" data-src="screenshots/search.png" data-alt="Search with a file preview">
-            <strong>Search <kbd>⇧⌘O</kbd></strong><span>One fuzzy search for sessions, files and past conversations.</span></button></li>
-          <li><button type="button" role="tab" id="tab-md" aria-selected="false" aria-controls="shot" data-src="screenshots/markdown.png" data-alt="Rendered Markdown preview of a changed file">
-            <strong>Markdown, rendered</strong><span>Read docs the way they will look, right from the diff.</span></button></li>
+        <p class="eyebrow">Search</p>
+        <h2>Find anything. Even what was said.</h2>
+        <p class="body">One search for files, sessions and every past conversation with Claude Code, Codex, Pi and Junie.</p>
+        <ul class="shots" role="tablist" aria-label="Search features" data-shot="shot-search">
+          <li><button type="button" role="tab" aria-selected="true" aria-controls="shot-search" data-src="screenshots/search.jpg" data-alt="Search finding a file and a past conversation by what was said, with a preview of it">
+            <strong>Search <kbd>⇧⌘O</kbd></strong><span>Files, sessions and conversations, with a read-only preview that starts nothing.</span></button></li>
+          <li><button type="button" role="tab" aria-selected="false" aria-controls="shot-search" data-src="screenshots/resume.jpg" data-alt="Yesterday's conversation resumed in the terminal">
+            <strong>Pick up where it left off</strong><span>Resume yesterday&rsquo;s conversation in one keystroke, its worktree put back if it was removed.</span></button></li>
         </ul>
       </div>
       <figure class="shot-frame">
-        <img id="shot" role="tabpanel" src="screenshots/diff.png" alt="Branch diff view stepping through commits" width="3024" height="1840" loading="lazy">
+        <img id="shot-search" role="tabpanel" src="screenshots/search.jpg" alt="Search finding a file and a past conversation by what was said, with a preview of it" width="2398" height="1520" loading="lazy">
+      </figure>
+    </div>
+  </section>
+
+  <!-- Review: Changes and the PR -->
+  <section class="section section-alt" id="review">
+    <div class="wrap split split-rev">
+      <div class="split-copy">
+        <p class="eyebrow">Review</p>
+        <h2>Every change, from diff to merged PR.</h2>
+        <p class="body">Changes shows the agent&rsquo;s branch the way a reviewer sees it: commit by commit, as a whole, or as its pull request. Comment on any line, see Markdown and pictures rendered, and commit what is left with a message the agent drafts.</p>
+        <p class="body dim">Ask your agent for a review and its comments land on the lines they are about.</p>
+      </div>
+      <figure class="shot-frame">
+        <img src="screenshots/changes.jpg" alt="Changes showing a whole branch against main: the changed files and a unified diff" width="2398" height="1520" loading="lazy">
       </figure>
     </div>
 
     <div class="wrap pr">
       <div class="pr-copy">
         <h3>Then open the pull request. Same tab.</h3>
-        <p>Changes uses your own GitHub login, from the first draft to the merge. Review comments go straight back into the running session.</p>
+        <p>Changes uses your own GitHub login, from the first draft to the merge. Your decisions on review threads go straight back into the running session.</p>
       </div>
       <ol class="flow">
         <li><b>Draft</b><span>Your agent writes the title and description.</span></li>
         <li><b>Push</b><span>Roer pushes the branch, checked out or not, and opens the PR.</span></li>
-        <li><b>Review</b><span>Ask Copilot for a review. Accept, decline or instruct on each thread, right on the diff.</span></li>
+        <li><b>Review</b><span>Ask your agent or Copilot. Accept, decline or answer each thread, right on the diff.</span></li>
         <li><b>Merge</b><span>Pick the method and merge without leaving the tab.</span></li>
       </ol>
+    </div>
+  </section>
+
+  <!-- Extensions -->
+  <section class="section" id="extensions">
+    <div class="wrap split">
+      <div class="split-copy">
+        <p class="eyebrow">Extensions</p>
+        <h2>Got a pain point? Ask for a tab.</h2>
+        <p class="body">Say what you want to keep an eye on. An agent writes the tab from Roer&rsquo;s own components, Roer loads it live and rebuilds it on every save, and it is installed only when you say so.</p>
+        <ul class="shots" role="tablist" aria-label="Making a tab" data-shot="shot-ext">
+          <li><button type="button" role="tab" aria-selected="true" aria-controls="shot-ext" data-src="screenshots/ext-ask.jpg" data-alt="The New tab dialog, asking for a tab of what agents leave behind before a merge">
+            <strong>1 &nbsp;Ask in plain words</strong><span>&ldquo;What agents leave behind before I merge: debug logs, .only tests, TODOs and secrets.&rdquo;</span></button></li>
+          <li><button type="button" role="tab" aria-selected="false" aria-controls="shot-ext" data-src="screenshots/ext-found.jpg" data-alt="The Before merge tab listing a focused test, a TODO and a debug log the branch adds">
+            <strong>2 &nbsp;It catches what was left</strong><span>A new session writes the tab while yours keeps its turn. It lands in the strip of every session.</span></button></li>
+          <li><button type="button" role="tab" aria-selected="false" aria-controls="shot-ext" data-src="screenshots/ext-fixed.jpg" data-alt="The Before merge tab after the fix: nothing left behind, ready to merge">
+            <strong>3 &nbsp;One click to fix it</strong><span>&ldquo;Ask the agent to fix them&rdquo;, and the tab updates live as it does.</span></button></li>
+        </ul>
+      </div>
+      <figure class="shot-frame">
+        <img id="shot-ext" role="tabpanel" src="screenshots/ext-ask.jpg" alt="The New tab dialog, asking for a tab of what agents leave behind before a merge" width="2398" height="1520" loading="lazy">
+      </figure>
     </div>
   </section>
 
@@ -138,6 +164,8 @@
         <h2>Leave the terminal. Keep the session.</h2>
         <p class="body">Start in any terminal with <code>roer shell</code>. Press <kbd>M-h</kbd> and the live session moves into Roer, mid-thought. Same process, same scrollback, nothing restarts. Press it again to take it back.</p>
         <p class="body dim">Works for anything that runs in a terminal: Claude Code, Codex, vim, a dev server.</p>
+        <h3 class="sub">Or open it in a web browser.</h3>
+        <p class="body">The globe in the title bar opens the same live session in a browser tab, terminal, Changes and tabs included. Want Roer on a machine of your own? <a href="https://github.com/JetBrains/roer/blob/main/docs/self-hosting.md"><code>roer-server</code></a> serves all of it to any browser.</p>
       </div>
       <div class="hop" aria-label="Animation: a running session moves from a terminal window into the Roer app and back">
         <div class="hop-win hop-term"><span class="hop-label">Terminal</span></div>
@@ -239,7 +267,7 @@
       <a href="{{blogUrl}}">Blog</a>
       <a href="https://github.com/JetBrains/roer/issues">Issues</a>
     </nav>
-    <span class="foot-note">An internal JetBrains preview</span>
+    <span class="foot-note">Free and open source · Apache 2.0</span>
   </div>
 </footer>
 
