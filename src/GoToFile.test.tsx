@@ -490,6 +490,8 @@ describe("GoToFile — sessions", () => {
     localStorage.removeItem("roer:search-preview");
     vi.mocked(readClaudeTranscript).mockImplementation(async (_cwds, id) => ({
       earlier: 0,
+      read: 1,
+      unchanged: false,
       messages: [
         { role: "user", text: id === "c1" ? "Look at the importer" : "Make the logo" },
         { role: "assistant", text: id === "c1" ? "The quokka migration drops every second row." : "Done." },
@@ -507,7 +509,7 @@ describe("GoToFile — sessions", () => {
 
     const preview = await screen.findByRole("complementary", { name: "Preview" });
     expect(await screen.findByText("The quokka migration drops every second row.")).toBeInTheDocument();
-    expect(readClaudeTranscript).toHaveBeenCalledWith(["/work/shop"], "c1");
+    expect(readClaudeTranscript).toHaveBeenCalledWith(["/work/shop"], "c1", undefined);
     fireEvent.keyDown(screen.getByRole("combobox"), { key: "ArrowDown" });
     expect(await screen.findByText("Make the logo")).toBeInTheDocument();
     fireEvent.keyDown(screen.getByRole("combobox"), { key: "ArrowUp" });
@@ -516,9 +518,34 @@ describe("GoToFile — sessions", () => {
     expect(preview).toBeInTheDocument();
   });
 
+  it("reads what a live session's agent has open, and opens the session from there", async () => {
+    localStorage.removeItem("roer:search-preview");
+    vi.mocked(readClaudeTranscript).mockResolvedValue({
+      earlier: 0,
+      read: 1,
+      unchanged: false,
+      messages: [{ role: "user", text: "Rerun the app" }],
+    });
+    const show = vi.fn();
+    const live: SessionHit = {
+      ...session("Changes view", "/work/roer"),
+      live: true,
+      conversation: { id: "c9", cwd: "/work/roer", title: "Changes view", updatedAt: 0, pane: 4242 },
+      open: show,
+    };
+    render(<GoToFile noFiles sessions={[live]} conversationCwds={["/work/roer"]} onOpen={vi.fn()} onClose={vi.fn()} />);
+
+    expect(await screen.findByText("Rerun the app")).toBeInTheDocument();
+    expect(readClaudeTranscript).toHaveBeenCalledWith(["/work/roer"], "c9", undefined);
+    expect(screen.getByText(/^Running in Roer/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Resume" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Open" }));
+    expect(show).toHaveBeenCalled();
+  });
+
   it("closes the preview until asked for it again, and offers none for live sessions", async () => {
     localStorage.removeItem("roer:search-preview");
-    vi.mocked(readClaudeTranscript).mockResolvedValue({ earlier: 0, messages: [] });
+    vi.mocked(readClaudeTranscript).mockResolvedValue({ earlier: 0, read: 1, unchanged: false, messages: [] });
     const { unmount } = render(
       <GoToFile
         noFiles

@@ -28,9 +28,9 @@ fn codex_home() -> PathBuf {
     }
 }
 
-/// Past Codex conversations under `cwds`, but for those a Codex in one of
-/// Roer's panes (`panes`, their processes) has open, which its live row
-/// stands for. Codex keeps no registry of what it has open, so that is told
+/// Past Codex conversations under `cwds`, those a Codex in one of Roer's
+/// panes (`panes`, their processes) has open marked with that pane, as its
+/// live row stands for them. Codex keeps no registry of what it has open, so that is told
 /// from what each was started with and when: see [`live::open_in`].
 pub fn threads_for(cwds: &[String], panes: Option<&[u64]>, table: &Table) -> Vec<ClaudeThread> {
     let threads: Vec<ClaudeThread> = transcripts_for(cwds).into_iter().map(|(thread, _)| thread).collect();
@@ -39,7 +39,7 @@ pub fn threads_for(cwds: &[String], panes: Option<&[u64]>, table: &Table) -> Vec
     };
     let agents = table.get().in_panes(panes, |words| live::runs(words, "codex"));
     let open = live::open_in(&threads, &agents, resumed_with);
-    threads.into_iter().filter(|thread| !open.contains(&thread.id)).collect()
+    threads.into_iter().map(|thread| ClaudeThread { pane: open.get(&thread.id).copied(), ..thread }).collect()
 }
 
 /// The conversation `codex resume <id>` was started with.
@@ -91,6 +91,7 @@ fn rollouts_in(home: &Path, cwds: &[String]) -> Vec<(ClaudeThread, PathBuf)> {
             branch: None,
             open_elsewhere: false,
             gone: false,
+            pane: None,
             created_at,
         };
         threads.push((thread, path));

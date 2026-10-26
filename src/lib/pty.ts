@@ -78,6 +78,10 @@ export interface ClaudeSession {
    * Its CLI finds a conversation by the folder it ran in, so it resumes only
    * there. */
   gone?: boolean;
+  /** Open in one of Roer's panes, this one's process (`SessionInfo.pid`):
+   * its live row stands for it, so it is not one to resume. 0 when which
+   * pane is not known. */
+  pane?: number;
 }
 
 /** A conversation a search found, and the words of it that matched when
@@ -206,7 +210,7 @@ export const listPastSessions = (): Promise<PastSession[]> => invoke("roer_past_
  * Junie's, most recently updated first. Scoped to cwds roer already knows
  * about — never a global scan.
  * `panes` are the processes of Roer's panes, so a conversation running in
- * one is left to its live row.
+ * one comes with its `pane`, for its live row.
  */
 export const listClaudeSessions = (cwds: string[], panes?: number[]): Promise<ClaudeSession[]> =>
   invoke("roer_claude_threads", { cwds, panes });
@@ -231,15 +235,20 @@ export interface ClaudeMessage {
 export interface ClaudeTranscript {
   messages: ClaudeMessage[];
   earlier: number;
+  /** How far into the transcript it was read, to ask again with. */
+  read: number;
+  /** Nothing was added since the `seen` asked with: `messages` is empty. */
+  unchanged: boolean;
 }
 
 /**
  * What a past conversation said, read from its transcript alone: nothing
  * is started to show it, as resuming starts the CLI and its hooks. `null`
- * when it is not among the conversations under `cwds`.
+ * when it is not among the conversations under `cwds`. With `seen`, the
+ * `read` of the answer before, an answer with nothing new is `unchanged`.
  */
-export const readClaudeTranscript = (cwds: string[], id: string): Promise<ClaudeTranscript | null> =>
-  invoke("roer_claude_transcript", { cwds, id });
+export const readClaudeTranscript = (cwds: string[], id: string, seen?: number): Promise<ClaudeTranscript | null> =>
+  invoke("roer_claude_transcript", { cwds, id, seen: seen ?? null });
 
 export const roerStatus = (): Promise<RoerStatus> => invoke("roer_status");
 

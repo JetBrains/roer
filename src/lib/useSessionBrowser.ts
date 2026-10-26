@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ask } from "@tauri-apps/plugin-dialog";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { logLine } from "./log";
@@ -341,7 +341,7 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
         ...new Set([...cwds, ...[...found.values()].flatMap((repo) => repo?.worktrees ?? [])]),
       ];
       // Roer's own panes, so a conversation running in one is left to its
-      // live row rather than listed again as running outside Roer. A shim too old
+      // live row (it comes back with its `pane`) rather than listed again as running outside Roer. A shim too old
       // to say them leaves it unknown, and then any could be in one.
       const pids = live.map((session) => session.pid ?? 0);
       const panes = pids.every((pid) => pid > 0) ? pids : undefined;
@@ -1098,8 +1098,15 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
       .map((session) => `${session.cwd}\0${clipped(paneLabel(session.title, session.command))}`),
   );
   const claudeSessions = pastSessions.filter(
-    (past) => past.agent !== "codex" || !liveThreads.has(`${past.cwd}\0${past.title}`),
+    (past) => past.pane === undefined && (past.agent !== "codex" || !liveThreads.has(`${past.cwd}\0${past.title}`)),
   );
+  // The conversation each of Roer's panes has open, by the pane's process: what its live row can show. The
+  // latest, should two say the same pane; the list comes newest first.
+  const paneConversations = useMemo(() => {
+    const byPane = new Map<number, ClaudeSession>();
+    for (const past of pastSessions) if (past.pane && !byPane.has(past.pane)) byPane.set(past.pane, past);
+    return byPane;
+  }, [pastSessions]);
 
   const visibleClaudeSessions = selectedProject
     ? claudeSessions.filter((session) => underProject(session.cwd, selectedProject))
@@ -1138,6 +1145,7 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
     handleEndSession,
     allSessions,
     claudeSessions,
+    paneConversations,
     conversationCwds,
     visibleSessions,
     visibleClaudeSessions,

@@ -25,9 +25,9 @@ fn sessions_dir() -> PathBuf {
         .unwrap_or_else(|| crate::roer::home().unwrap_or_default().join(".pi").join("agent").join("sessions"))
 }
 
-/// Past Pi conversations under `cwds`, but for those a Pi in one of Roer's
-/// panes (`panes`, their processes) has open, which its live row stands
-/// for: told from what each was started with and when, see
+/// Past Pi conversations under `cwds`, those a Pi in one of Roer's panes
+/// (`panes`, their processes) has open marked with that pane, as its live
+/// row stands for them: told from what each was started with and when, see
 /// [`live::open_in`].
 pub fn threads_for(cwds: &[String], panes: Option<&[u64]>, table: &Table) -> Vec<ClaudeThread> {
     let threads: Vec<ClaudeThread> = transcripts_for(cwds).into_iter().map(|(thread, _)| thread).collect();
@@ -36,7 +36,7 @@ pub fn threads_for(cwds: &[String], panes: Option<&[u64]>, table: &Table) -> Vec
     };
     let agents = table.get().in_panes(panes, |words| live::runs(words, "pi"));
     let open = live::open_in(&threads, &agents, resumed_with);
-    threads.into_iter().filter(|thread| !open.contains(&thread.id)).collect()
+    threads.into_iter().map(|thread| ClaudeThread { pane: open.get(&thread.id).copied(), ..thread }).collect()
 }
 
 /// The conversation `pi --session <id or file>` was started with.
@@ -105,6 +105,7 @@ fn thread_of(path: &Path, cwds: &[String]) -> Option<ClaudeThread> {
         branch: None,
         open_elsewhere: false,
         gone: false,
+        pane: None,
         created_at: header.get("timestamp").and_then(Value::as_str).and_then(live::rfc3339_epoch),
     })
 }

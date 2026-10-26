@@ -1154,6 +1154,8 @@ export function App() {
                   : "waiting"
                 : undefined,
         fields: [paneLabel(live.title, live.command), who, live.command, live.session, live.cwd],
+        conversation: live.pid ? browser.paneConversations.get(live.pid) : undefined,
+        live: true,
         open: () =>
           show({ args: ["attach", live.pane], cwd: live.cwd, title: live.session, pane: live.pane }),
       };
