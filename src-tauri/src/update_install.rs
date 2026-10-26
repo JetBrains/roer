@@ -690,6 +690,35 @@ nothex  Roer_0.9.10_amd64.AppImage
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// The Windows install up to running the setup, from the real release
+    /// `ROER_UPDATE_CHECK_VERSION` names (0.9.10 when unset): its checksum
+    /// and JetBrains' signature, as the updater checks them. What the setup
+    /// then does over a running install is `windows-update.yml`'s.
+    /// `cargo test --lib -- --ignored checks_a_real_windows_setup`
+    #[cfg(windows)]
+    #[test]
+    #[ignore]
+    fn checks_a_real_windows_setup() {
+        let version = std::env::var("ROER_UPDATE_CHECK_VERSION").unwrap_or_else(|_| "0.9.10".into());
+        let dir = scratch("real");
+        let stages = std::sync::Mutex::new(Vec::new());
+        let emit = |stage: &'static str, _: u64, _: Option<u64>| {
+            let mut stages = stages.lock().unwrap();
+            if stages.last() != Some(&stage) {
+                stages.push(stage);
+            }
+        };
+        let setup = install(&Method::WindowsSetup, &version, &dir.join("update"), &emit).unwrap();
+        assert_eq!(*stages.lock().unwrap(), ["download", "verify", "install"]);
+        assert_eq!(Path::new(setup.get_program()), dir.join("update").join(format!("Roer_{version}_x64-setup.exe")));
+        assert_eq!(setup.get_args().collect::<Vec<_>>(), ["/P", "/UPDATE", "/R"]);
+        // Signed, and validly, but not by JetBrains.
+        let windows = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".into());
+        let powershell = Path::new(&windows).join(r"System32\WindowsPowerShell\v1.0\powershell.exe");
+        assert!(check_windows(&powershell).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[cfg(unix)]
     #[test]
     fn starts_the_program_once_this_process_is_gone() {

@@ -1,0 +1,112 @@
+name: Windows update
+
+# "Update and restart" on Windows, against real, signed releases: the
+# updater's own download and checks, then the new setup run over an install
+# that is running, with a psmux server out of its folder. Docker cannot do
+# this, and the e2e update test covers Linux only.
+#
+# Run by hand once a release is out (From the oldest version people update
+# from, To the new one), and on pull requests that touch the update path.
+on:
+  workflow_dispatch:
+    inputs:
+      from:
+        description: Version installed and running (0.9.11 is the first that updates itself)
+        default: 0.9.11
+      to:
+        description: Version updated to; the latest release when empty
+        default: ""
+  pull_request:
+    paths:
+      - .github/workflows/windows-update.yml
+      - .github/windows/update-over-running.ps1
+      - src-tauri/src/update_install.rs
+      - src-tauri/src/updates.rs
+      - src-tauri/windows/installer-hooks.nsh
+      - src-tauri/tauri.windows-cli.conf.json
+
+concurrency:
+  group: windows-update-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  versions:
+    name: Versions
+    runs-on: ubuntu-latest
+    outputs:
+      from: ${{ steps.pick.outputs.from }}
+      to: ${{ steps.pick.outputs.to }}
+    steps:
+      - id: pick
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FROM: ${{ inputs.from || '0.9.11' }}
+          TO: ${{ inputs.to }}
+        run: |
+          set -euo pipefail
+          if [ -z "$TO" ]; then
+            TO=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq '.tagName | ltrimstr("v")')
+          fi
+          echo "Roer $FROM -> $TO"
+          echo "from=$FROM" >> "$GITHUB_OUTPUT"
+          echo "to=$TO" >> "$GITHUB_OUTPUT"
+
+  checks:
+    name: Download and checks (${{ needs.versions.outputs.to }})
+    needs: versions
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: src-tauri -> target
+          key: windows-update
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+
+      # tauri::generate_context!() embeds dist/ at compile time.
+      - run: npm ci
+      - run: npm run build
+
+      - name: The updater's checks on the real setup
+        env:
+          ROER_UPDATE_CHECK_VERSION: ${{ needs.versions.outputs.to }}
+        run: cargo test --manifest-path src-tauri/Cargo.toml --lib -- --ignored --exact update_install::tests::checks_a_real_windows_setup
+
+  over-running:
+    name: Setup over a running ${{ needs.versions.outputs.from }}
+    needs: versions
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Update a running install
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FROM: ${{ needs.versions.outputs.from }}
+          TO: ${{ needs.versions.outputs.to }}
+        run: .github/windows/update-over-running.ps1 -From $env:FROM -To $env:TO -Out "$env:RUNNER_TEMP\update-shots"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: windows-update-screens
+          path: ${{ runner.temp }}/update-shots
+          if-no-files-found: ignore
