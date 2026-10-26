@@ -464,6 +464,16 @@ describe("App", () => {
     expect(localStorage.getItem("roer:theme")).toBe("system");
   });
 
+  it("opens the keyboard shortcuts from the title bar's gear, and closes them again", async () => {
+    render(<App />);
+    const gear = await screen.findByRole("button", { name: "Keyboard shortcuts" });
+    fireEvent.click(gear);
+    expect(screen.getByRole("dialog", { name: "Keyboard shortcuts" })).toBeInTheDocument();
+    expect(gear).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(gear);
+    expect(screen.queryByRole("dialog", { name: "Keyboard shortcuts" })).not.toBeInTheDocument();
+  });
+
   it("turns notifications off and on from the title bar, remembering it", async () => {
     render(<App />);
     const toggle = await screen.findByRole("button", { name: "Notifications" });

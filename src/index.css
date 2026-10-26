@@ -372,6 +372,7 @@ code {
 .browser-toggle,
 .theme-toggle,
 .notifications-toggle,
+.shortcuts-toggle,
 .generative-toggle {
   margin-right: 8px;
   padding: 4px;
@@ -387,6 +388,7 @@ code {
 .browser-toggle:hover,
 .theme-toggle:hover,
 .notifications-toggle:hover,
+.shortcuts-toggle:hover,
 .generative-toggle:hover {
   color: var(--roer-fg);
   background: var(--roer-row-hover);
