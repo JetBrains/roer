@@ -1,18 +1,21 @@
-# What "Update and restart" does on Windows, against the real releases: an
-# installed Roer $From is running, with a psmux server out of its folder (as
-# sessions keep one), when $To's setup runs as the updater runs it,
-# `/P /UPDATE /R`. The setup must finish on its own, leave every file it
-# ships as the new release has it, the running psmux.exe included, start the
-# app again, and leave the session alive.
+# What "Update and restart" does on Windows: an installed Roer $From, a real
+# release, is running, with a psmux server out of its folder (as sessions
+# keep one), when $To's setup runs as the updater runs it, `/P /UPDATE /R`.
+# The setup must finish on its own, leave every file it ships as it ships
+# it, the running psmux.exe included, start the app again, and leave the
+# session alive. Then once more, while the first update's moved-aside
+# psmux.exe still runs that session.
 #
 # Here the setup is started beside the running app; the updater starts it and
 # quits. Either way the setup finds the app running and closes it.
 #
-# usage: update-over-running.ps1 -From 0.9.11 -To 0.9.15 -Out <folder>
-# with GH_TOKEN set, for `gh release download`.
+# usage: update-over-running.ps1 -From 0.9.11 -To 0.9.15 [-Setup <setup.exe>] -Out <folder>
+# with GH_TOKEN set, for `gh release download`. -Setup is $To's setup built
+# from the checkout; without it, release $To's.
 param(
     [Parameter(Mandatory)] [string] $From,
     [Parameter(Mandatory)] [string] $To,
+    [string] $Setup,
     [Parameter(Mandatory)] [string] $Out
 )
 $ErrorActionPreference = 'Stop'
@@ -65,7 +68,7 @@ function Installed {
 }
 
 $old = Setup $From
-$new = Setup $To
+$new = if ($Setup) { $Setup } else { Setup $To }
 
 # The new setup's files, to hold the install to afterwards. 7-Zip reads NSIS.
 $shipped = Join-Path $work 'shipped'
@@ -95,42 +98,61 @@ Start-Sleep 10
 Check "Roer $From is running" ([bool] (Get-Process | Where-Object { $_.Path -eq $app }))
 Shot 'before'
 
-Write-Host "== Roer $To's setup, as the updater runs it"
-$started = Get-Date
-$setup = Start-Process $new -ArgumentList '/P', '/UPDATE', '/R' -PassThru
-if (-not $setup.WaitForExit(300000)) {
-    Shot 'stuck'
-    Fail "the setup finishes on its own" "still running after 5 minutes: see stuck.png, likely a dialog"
-    Stop-Process -Id $setup.Id -Force
-} else {
-    Check "the setup finishes on its own" ($setup.ExitCode -eq 0) "exit code $($setup.ExitCode)"
+# $To's setup, as the updater runs it, and what it must leave.
+function Update($pass) {
+    Write-Host "== Roer $To's setup, as the updater runs it ($pass)"
+    $started = Get-Date
+    $run = Start-Process $new -ArgumentList '/P', '/UPDATE', '/R' -PassThru
+    if (-not $run.WaitForExit(300000)) {
+        Shot "stuck-$pass"
+        Fail "the setup finishes on its own" "still running after 5 minutes: see stuck-$pass.png, likely a dialog"
+        Stop-Process -Id $run.Id -Force
+    } else {
+        Check "the setup finishes on its own" ($run.ExitCode -eq 0) "exit code $($run.ExitCode)"
+    }
+
+    $entry = Installed
+    Check "Windows lists Roer $To" ($entry.DisplayVersion -eq $To) "DisplayVersion $($entry.DisplayVersion)"
+    $version = (Get-Item $app).VersionInfo.ProductVersion
+    Check "the app is $To" ($version -like "$To*") "ProductVersion $version"
+
+    # Every file the setup ships, as it ships it: one left as it was because
+    # it was in use fails here, unless both releases have it the same.
+    foreach ($name in 'roer.exe', 'psmux.exe', (Split-Path $app -Leaf)) {
+        $installed = if ($name -eq (Split-Path $app -Leaf)) { $app } else { Join-Path $dir "roer\$name" }
+        $hash = (Get-FileHash $installed).Hash
+        $candidates = Get-ChildItem $shipped -Recurse -File -Filter $name | ForEach-Object { (Get-FileHash $_.FullName).Hash }
+        Check "$name is the new setup's" ($candidates -contains $hash) "installed $hash; setup has $($candidates -join ', ')"
+    }
+
+    # The server runs on from the file moved aside, which stays until it exits.
+    Write-Host "      psmux runs from: $((Get-Process psmux -ErrorAction SilentlyContinue).Path -join ', ')"
+    Write-Host "      left aside: $((Get-ChildItem (Join-Path $dir 'roer') -Filter *.old).Name -join ', ')"
+
+    # /R: the app again, started by the setup.
+    $deadline = (Get-Date).AddSeconds(60)
+    do {
+        $again = Get-Process | Where-Object { $_.Path -eq $app -and $_.StartTime -gt $started }
+        if ($again) { break }
+        Start-Sleep 2
+    } while ((Get-Date) -lt $deadline)
+    Check "the setup started the app again" ([bool] $again)
+    & $psmux -L roer-update-check has-session -t held 2>$null
+    Check "the session outlived the update" ($LASTEXITCODE -eq 0)
+    Shot "after-$pass"
 }
 
-$entry = Installed
-Check "Windows lists Roer $To" ($entry.DisplayVersion -eq $To) "DisplayVersion $($entry.DisplayVersion)"
-$version = (Get-Item $app).VersionInfo.ProductVersion
-Check "the app is $To" ($version -like "$To*") "ProductVersion $version"
+Update 'first'
+# The first update's psmux.exe, moved aside, still runs the session: the
+# next setup cannot delete it, and must not trip over it either.
+Update 'again'
 
-# Every file the setup ships, as it ships it: a file left as it was because
-# it was in use, the running psmux.exe most of all, fails here.
-foreach ($name in 'roer.exe', 'psmux.exe', (Split-Path $app -Leaf)) {
-    $installed = if ($name -eq (Split-Path $app -Leaf)) { $app } else { Join-Path $dir "roer\$name" }
-    $hash = (Get-FileHash $installed).Hash
-    $candidates = Get-ChildItem $shipped -Recurse -File -Filter $name | ForEach-Object { (Get-FileHash $_.FullName).Hash }
-    Check "$name is the new release's" ($candidates -contains $hash) "installed $hash; setup has $($candidates -join ', ')"
-}
-
-# /R: the app again, started by the setup.
-$deadline = (Get-Date).AddSeconds(60)
-do {
-    $again = Get-Process | Where-Object { $_.Path -eq $app -and $_.StartTime -gt $started }
-    if ($again) { break }
-    Start-Sleep 2
-} while ((Get-Date) -lt $deadline)
-Check "the setup started the app again" ([bool] $again)
-& $psmux -L roer-update-check has-session -t held 2>$null
-Check "the session outlived the update" ($LASTEXITCODE -eq 0)
-Shot 'after'
+# Once that server is gone, the next install clears what it ran from.
+& $psmux -L roer-update-check kill-server 2>$null
+Start-Sleep 2
+Start-Process $new -ArgumentList '/S' -Wait
+$left = Get-ChildItem (Join-Path $dir 'roer') -Filter *.old
+Check "nothing is left aside once nothing runs from it" (-not $left) ($left.Name -join ', ')
 
 & $psmux -L roer-update-check kill-server 2>$null
 Get-Process | Where-Object { $_.Path -eq $app } | Stop-Process -Force -ErrorAction SilentlyContinue

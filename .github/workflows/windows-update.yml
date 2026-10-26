@@ -1,12 +1,13 @@
 name: Windows update
 
-# "Update and restart" on Windows, against real, signed releases: the
-# updater's own download and checks, then the new setup run over an install
-# that is running, with a psmux server out of its folder. Docker cannot do
-# this, and the e2e update test covers Linux only.
+# "Update and restart" on Windows: the updater's own download and checks on
+# a real, signed release, then a new setup run as the updater runs it over
+# an install that is running, with a psmux server out of its folder. Docker
+# cannot do this, and the e2e update test covers Linux only.
 #
-# Run by hand once a release is out (From the oldest version people update
-# from, To the new one), and on pull requests that touch the update path.
+# The setup run over the install is this branch's, built here, unless `to`
+# names a release: on pull requests that touch the update path, and by hand
+# before a release (From the oldest version people update from).
 on:
   workflow_dispatch:
     inputs:
@@ -14,7 +15,7 @@ on:
         description: Version installed and running (0.9.11 is the first that updates itself)
         default: 0.9.11
       to:
-        description: Version updated to; the latest release when empty
+        description: Release updated to; this branch's setup, built here, when empty
         default: ""
   pull_request:
     paths:
@@ -39,7 +40,16 @@ jobs:
     outputs:
       from: ${{ steps.pick.outputs.from }}
       to: ${{ steps.pick.outputs.to }}
+      build: ${{ steps.pick.outputs.build }}
+      signed: ${{ steps.pick.outputs.signed }}
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # `to`: the version the setup run over the install says it is.
+      # `signed`: the release whose setup the updater's checks run on, which
+      # a setup built here, unsigned, cannot stand in for.
       - id: pick
         env:
           GH_TOKEN: ${{ github.token }}
@@ -47,15 +57,39 @@ jobs:
           TO: ${{ inputs.to }}
         run: |
           set -euo pipefail
-          if [ -z "$TO" ]; then
-            TO=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq '.tagName | ltrimstr("v")')
+          if [ -n "$TO" ]; then
+            BUILD=false SIGNED=$TO
+          else
+            BUILD=true TO=$(jq -r .version src-tauri/tauri.conf.json)
+            SIGNED=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq '.tagName | ltrimstr("v")')
           fi
-          echo "Roer $FROM -> $TO"
-          echo "from=$FROM" >> "$GITHUB_OUTPUT"
-          echo "to=$TO" >> "$GITHUB_OUTPUT"
+          echo "Roer $FROM -> $TO (built here: $BUILD); checks on $SIGNED"
+          {
+            echo "from=$FROM"
+            echo "to=$TO"
+            echo "build=$BUILD"
+            echo "signed=$SIGNED"
+          } >> "$GITHUB_OUTPUT"
+
+  bundle:
+    name: Setup from this branch
+    needs: versions
+    if: needs.versions.outputs.build == 'true'
+    uses: ./.github/workflows/tauri-bundle.yml
+    with:
+      runner: windows-latest
+      rust_targets: x86_64-pc-windows-msvc
+      prepare_script: .github/windows/prepare-installer.sh
+      tauri_args: --bundles nsis --config src-tauri/tauri.windows-cli.conf.json
+      bundle_dir: src-tauri/target/release/bundle
+      artifact_name: windows-update-setup
+      # The release's own cache: the same build.
+      cache_key: windows
+      artifact_paths: src-tauri/target/release/bundle/nsis/*.exe
+      retention_days: 1
 
   checks:
-    name: Download and checks (${{ needs.versions.outputs.to }})
+    name: Download and checks (${{ needs.versions.outputs.signed }})
     needs: versions
     runs-on: windows-latest
     defaults:
@@ -84,17 +118,25 @@ jobs:
 
       - name: The updater's checks on the real setup
         env:
-          ROER_UPDATE_CHECK_VERSION: ${{ needs.versions.outputs.to }}
+          ROER_UPDATE_CHECK_VERSION: ${{ needs.versions.outputs.signed }}
         run: cargo test --manifest-path src-tauri/Cargo.toml --lib -- --ignored --exact update_install::tests::checks_a_real_windows_setup
 
   over-running:
     name: Setup over a running ${{ needs.versions.outputs.from }}
-    needs: versions
+    needs: [versions, bundle]
+    # The bundle is skipped when `to` names a release.
+    if: ${{ !cancelled() && needs.versions.result == 'success' && needs.bundle.result != 'failure' }}
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        if: needs.versions.outputs.build == 'true'
+        with:
+          name: windows-update-setup
+          path: ${{ runner.temp }}/built
 
       - name: Update a running install
         shell: pwsh
@@ -102,7 +144,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           FROM: ${{ needs.versions.outputs.from }}
           TO: ${{ needs.versions.outputs.to }}
-        run: .github/windows/update-over-running.ps1 -From $env:FROM -To $env:TO -Out "$env:RUNNER_TEMP\update-shots"
+          BUILD: ${{ needs.versions.outputs.build }}
+        run: |
+          $built = if ($env:BUILD -eq 'true') { (Get-ChildItem "$env:RUNNER_TEMP\built\*-setup.exe").FullName } else { '' }
+          .github/windows/update-over-running.ps1 -From $env:FROM -To $env:TO -Setup $built -Out "$env:RUNNER_TEMP\update-shots"
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
