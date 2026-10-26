@@ -224,7 +224,7 @@ h3 { font-size: 1.125rem; font-weight: 700; line-height: 1.3; letter-spacing: -0
 .section { padding-block: clamp(72px, 10vw, 128px); border-top: 1px solid var(--line); }
 .section-alt { background: var(--bg-alt); }
 .split { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: clamp(32px, 5vw, 72px); align-items: center; }
-.split-rev { grid-template-columns: minmax(0, 6fr) minmax(0, 6fr); }
+.split-rev { grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); }
 @media (max-width: 900px) { .split, .split-rev { grid-template-columns: 1fr; } }
 
 .shots { list-style: none; margin: 32px 0 0; padding: 0; display: grid; gap: 4px; }
@@ -386,6 +386,8 @@ h3 { font-size: 1.125rem; font-weight: 700; line-height: 1.3; letter-spacing: -0
   .gc { transition: none; }
 }
 
-/* "New in 0.5" strip under the dashboard shot. */
-.new-in { margin: 56px 0 0; color: var(--lit-a); }
-.points-new { padding-top: 20px; }
+/* A second point inside a split's copy. */
+.split-copy .sub { margin-top: 40px; padding-top: 24px; border-top: 1px solid var(--line-strong); }
+
+/* The Workspace shot under the hero copy. */
+.hero-shot { position: relative; margin-top: clamp(48px, 7vw, 80px); }

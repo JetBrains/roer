@@ -20,7 +20,8 @@ const BLOG_URL = "blog/";
 const CHANGELOG_RELEASES = 4;
 const CHANGELOG_ITEMS = 7;
 // Commits that say nothing to a user reading the changelog.
-const NOISE = /^(Release \d|Bump version|Update README|Nightly:|Test |Address .*review|Fix Copilot review)/;
+const NOISE =
+  /^(Release \d|Bump |Update README|Nightly:|Test |e2e:|Address .*review|Fix Copilot review|Fix what review found|Harden .*from review|Revert |Override |Move \S+ to \d)/;
 
 const SITE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(SITE, "..");
@@ -141,17 +142,14 @@ async function main() {
 
   rmSync(OUT, { recursive: true, force: true });
   mkdirSync(join(OUT, "assets"), { recursive: true });
-  mkdirSync(join(OUT, "screenshots"), { recursive: true });
   writeFileSync(join(OUT, "index.html"), html);
   for (const f of ["styles.css", "main.js"]) cpSync(join(SITE, f), join(OUT, f));
   // Placeholder until the first articles land; plain HTML, no template values.
   cpSync(join(SITE, "blog"), join(OUT, "blog"), { recursive: true });
+  // Stills from the demo video, kept with the site rather than the README's.
+  cpSync(join(SITE, "screenshots"), join(OUT, "screenshots"), { recursive: true });
   cpSync(join(ROOT, "src-tauri/icons/128x128@2x.png"), join(OUT, "assets/roer.png"));
   cpSync(join(ROOT, "src-tauri/icons/64x64.png"), join(OUT, "assets/favicon.png"));
-  const shots = { "diff.png": "diff.png", "search.png": "search.png", "markdown.png": "markdown.png", "gen-ui-dashboard-panel.png": "gen-ui-dashboard.png" };
-  for (const [from, to] of Object.entries(shots)) {
-    cpSync(join(ROOT, "docs/screenshots", from), join(OUT, "screenshots", to));
-  }
   writeFileSync(join(OUT, ".nojekyll"), "");
 
   console.log(`Built _site/ for Roer ${values["release.version"]}${offline ? " (offline)" : ""}`);
