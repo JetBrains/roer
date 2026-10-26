@@ -15,8 +15,9 @@ use crate::claude::ClaudeThread;
 /// Where a live agent has a conversation open.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum Owner {
-    /// In one of Roer's own panes, whose live row stands for it.
-    Pane,
+    /// In one of Roer's own panes, whose live row stands for it: that pane's
+    /// process, or 0 when which pane is not known.
+    Pane(u64),
     /// Anywhere else: another terminal, an editor, another Roer.
     Elsewhere,
 }
@@ -37,6 +38,8 @@ pub(crate) enum Started<'a> {
 /// An agent running in one of Roer's panes.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct PaneAgent {
+    /// The pane's process, which its live row is known by.
+    pub pane: u64,
     /// Seconds since the epoch.
     pub started: u64,
     /// The folder it runs in, where that can be read.
@@ -119,12 +122,12 @@ impl Processes {
             return None;
         }
         let Some(panes) = panes else {
-            return Some(Owner::Pane);
+            return Some(Owner::Pane(0));
         };
         let mut at = pid;
         for _ in 0..64 {
             if panes.contains(&at) {
-                return Some(Owner::Pane);
+                return Some(Owner::Pane(at));
             }
             match self.table.get(&at) {
                 Some(proc) if proc.parent != at && proc.parent != 0 => at = proc.parent,
@@ -154,6 +157,7 @@ impl Processes {
                 let words: Vec<&str> = proc.args.split_whitespace().collect();
                 if is_agent(&words) {
                     found.push(PaneAgent {
+                        pane,
                         started: lstart_epoch(&proc.since).unwrap_or(0),
                         cwd: cwd_of(pid),
                         args: words.iter().map(|word| word.to_string()).collect(),
@@ -197,7 +201,7 @@ impl Processes {
             .args(["/FI", &format!("PID eq {pid}"), "/NH", "/FO", "CSV"])
             .output()
             .is_ok_and(|out| String::from_utf8_lossy(&out.stdout).contains(&format!("\"{pid}\"")))
-            .then_some(Owner::Pane)
+            .then_some(Owner::Pane(0))
     }
 
     pub(crate) fn in_panes(&self, _panes: &[u64], _is_agent: impl Fn(&[&str]) -> bool) -> Vec<PaneAgent> {
@@ -219,7 +223,8 @@ pub(crate) fn runs(words: &[&str], bin: &str) -> bool {
 /// began: the two clocks are read apart.
 const BEGUN_SLACK: u64 = 5;
 
-/// The ids of `threads` open in `agents`, panes' agents of the one CLI:
+/// The ids of `threads` open in `agents`, panes' agents of the one CLI, each
+/// with the pane it is open in:
 /// the one each was resumed with, by `resumed`, and else the latest begun in
 /// its folder since it started. Two started in one folder each take one, the
 /// later agent the later conversation, so which is whose may be swapped;
@@ -228,13 +233,13 @@ pub(crate) fn open_in(
     threads: &[ClaudeThread],
     agents: &[PaneAgent],
     resumed: impl Fn(&[String]) -> Option<String>,
-) -> HashSet<String> {
-    let mut open = HashSet::new();
+) -> HashMap<String, u64> {
+    let mut open = HashMap::new();
     let mut fresh = Vec::new();
     for agent in agents {
         match resumed(&agent.args) {
             Some(id) => {
-                open.insert(id);
+                open.insert(id, agent.pane);
             }
             None => fresh.push(agent),
         }
@@ -244,11 +249,11 @@ pub(crate) fn open_in(
         let Some(cwd) = &agent.cwd else { continue };
         let latest = threads
             .iter()
-            .filter(|thread| &thread.cwd == cwd && !open.contains(&thread.id))
+            .filter(|thread| &thread.cwd == cwd && !open.contains_key(&thread.id))
             .filter(|thread| thread.created_at.is_some_and(|at| at + BEGUN_SLACK >= agent.started))
             .max_by_key(|thread| thread.created_at);
         if let Some(thread) = latest {
-            open.insert(thread.id.clone());
+            open.insert(thread.id.clone(), agent.pane);
         }
     }
     open
@@ -339,12 +344,13 @@ mod tests {
             branch: None,
             open_elsewhere: false,
             gone: false,
+            pane: None,
             created_at,
         }
     }
 
     fn agent(started: u64, cwd: &str, args: &[&str]) -> PaneAgent {
-        PaneAgent { started, cwd: Some(cwd.to_string()), args: args.iter().map(|word| word.to_string()).collect() }
+        PaneAgent { pane: started, started, cwd: Some(cwd.to_string()), args: args.iter().map(|word| word.to_string()).collect() }
     }
 
     fn resumed(args: &[String]) -> Option<String> {
@@ -366,7 +372,7 @@ mod tests {
     fn a_resumed_agent_has_the_conversation_it_was_resumed_with() {
         let threads = [thread("old", "/w", Some(100)), thread("new", "/w", Some(5_000))];
         let open = open_in(&threads, &[agent(4_000, "/w", &["codex", "resume", "old"])], resumed);
-        assert_eq!(open, HashSet::from(["old".to_string()]));
+        assert_eq!(open, HashMap::from([("old".to_string(), 4_000)]));
     }
 
     #[test]
@@ -379,7 +385,7 @@ mod tests {
             thread("unknown", "/w", None),
         ];
         let open = open_in(&threads, &[agent(4_000, "/w", &["codex"])], resumed);
-        assert_eq!(open, HashSet::from(["then".to_string()]));
+        assert_eq!(open, HashMap::from([("then".to_string(), 4_000)]));
     }
 
     #[test]
@@ -387,7 +393,7 @@ mod tests {
         let threads = [thread("a", "/w", Some(1_010)), thread("b", "/w", Some(2_010)), thread("older", "/w", Some(10))];
         let agents = [agent(1_000, "/w", &["codex"]), agent(2_000, "/w", &["codex"])];
         let open = open_in(&threads, &agents, resumed);
-        assert_eq!(open, HashSet::from(["a".to_string(), "b".to_string()]));
+        assert_eq!(open, HashMap::from([("a".to_string(), 1_000), ("b".to_string(), 2_000)]));
     }
 
     #[test]

@@ -154,7 +154,7 @@ vi.mock("./lib/pty", () => ({
   listPastSessions: vi.fn(async () => []),
   listClaudeSessions: vi.fn(async () => []),
   searchClaudeSessions: vi.fn(async () => []),
-  readClaudeTranscript: vi.fn(async () => ({ messages: [{ role: "user", text: "Look at the importer" }], earlier: 0 })),
+  readClaudeTranscript: vi.fn(async () => ({ messages: [{ role: "user", text: "Look at the importer" }], earlier: 0, read: 1, unchanged: false })),
   roerStatus: vi.fn(async () => ({
     bin: "roer",
     available: true,

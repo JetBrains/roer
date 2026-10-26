@@ -52,6 +52,11 @@ pub struct ClaudeThread {
     /// often. Resumed anywhere else its CLI would not find it.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub gone: bool,
+    /// Open in one of Roer's panes, this one's process: its live row stands
+    /// for it, so the lists of past conversations leave it out, and the row
+    /// can show what it says. 0 when which pane is not known.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pane: Option<u64>,
     /// When it began, in seconds since the epoch, where its CLI says: which
     /// is how one a pane's agent began is told, for a CLI that keeps no
     /// registry of what it has open.
@@ -119,7 +124,7 @@ fn live_sessions(home: &Path, panes: Option<&[u64]>, table: &Table) -> HashMap<S
 /// Past Claude conversations across the given cwds, most recently updated
 /// first. Scoped to those cwds and their descendant directories — never a
 /// scan of every Claude project on the machine. `panes` are the processes of
-/// Roer's panes, so a conversation running in one is left to its live row.
+/// Roer's panes, so a conversation running in one is marked with it.
 pub fn threads_for(cwds: &[String], panes: Option<&[u64]>, table: &Table) -> Vec<ClaudeThread> {
     threads_with(&claude_home(), cwds, panes, table)
 }
@@ -190,9 +195,6 @@ fn transcripts_in(home: &Path, cwds: &[String], live: &HashMap<String, Owner>) -
                     continue;
                 };
                 let owner = live.get(id).copied();
-                if owner == Some(Owner::Pane) {
-                    continue;
-                }
                 let Ok(metadata) = entry.metadata() else {
                     continue;
                 };
@@ -233,6 +235,10 @@ fn transcripts_in(home: &Path, cwds: &[String], live: &HashMap<String, Owner>) -
                     branch: meta.branch,
                     open_elsewhere: owner == Some(Owner::Elsewhere),
                     gone: false,
+                    pane: match owner {
+                        Some(Owner::Pane(pane)) => Some(pane),
+                        _ => None,
+                    },
                     created_at: None,
                 };
                 threads.push((thread, path));
@@ -443,6 +449,8 @@ pub(crate) fn truncate(title: &str) -> String {
 /// and Junie's, most recently updated first. `panes` are the processes of Roer's own
 /// panes (`roer list`'s `pid`); absent from an older frontend, or one whose
 /// shim does not say them, and then any live conversation may be in one.
+/// One open in a pane comes with its `pane`, for its live row: it is not
+/// one to resume.
 #[tauri::command(async)]
 pub fn roer_claude_threads(cwds: Vec<String>, panes: Option<Vec<u64>>) -> Vec<ClaudeThread> {
     let table = Table::default();
@@ -676,6 +684,11 @@ pub struct Transcript {
     pub messages: Vec<Message>,
     /// How many before those were left out.
     pub earlier: usize,
+    /// How far into the transcript it was read: asked again with it, an
+    /// answer with nothing added since leaves `messages` empty.
+    pub read: u64,
+    /// Nothing was added since `read` was asked with, so `messages` is left out.
+    pub unchanged: bool,
 }
 
 #[cfg(test)]
@@ -702,12 +715,23 @@ fn readable_transcripts(cwds: &[String]) -> Vec<(ClaudeThread, PathBuf)> {
 /// `id`'s conversation among `transcripts`, read through the same index a
 /// search reads, so stepping from row to row reads each transcript once, and
 /// after that only what was added to it.
+#[cfg(test)]
 fn transcript_of(transcripts: Vec<(ClaudeThread, PathBuf)>, id: &str, index: &TextIndex) -> Option<Transcript> {
     let (thread, path) = transcripts.into_iter().find(|(thread, _)| thread.id == id)?;
-    let entry = index.entry(&path);
+    Some(transcript_at(&thread.agent, &path, index, None))
+}
+
+/// The latest of what `agent`'s transcript at `path` says, read through
+/// `index`; none of it when nothing was added since `seen`.
+fn transcript_at(agent: &str, path: &Path, index: &TextIndex, seen: Option<u64>) -> Transcript {
+    let entry = index.entry(path);
     let mut indexed = lock(&entry);
-    read_appended(&mut indexed, &path, reader(&thread.agent));
+    read_appended(&mut indexed, path, reader(agent));
+    let read = indexed.parsed_to;
     let earlier = indexed.messages.len().saturating_sub(PREVIEW_MESSAGES);
+    if seen == Some(read) {
+        return Transcript { messages: Vec::new(), earlier, read, unchanged: true };
+    }
     let messages = indexed.messages[earlier..]
         .iter()
         .map(|said| {
@@ -719,15 +743,32 @@ fn transcript_of(transcripts: Vec<(ClaudeThread, PathBuf)>, id: &str, index: &Te
             Message { role: said.role.clone(), text, at: said.at.clone() }
         })
         .collect();
-    Some(Transcript { messages, earlier })
+    Transcript { messages, earlier, read, unchanged: false }
 }
+
+/// Where each conversation's transcript was found, by the folders it was
+/// asked under and its id, with its agent: a preview open on a conversation
+/// still going reads it again every second or two, and finding it means
+/// listing every project folder, and Codex's every rollout's head.
+static FOUND: OnceLock<Mutex<HashMap<(Vec<String>, String), (String, PathBuf)>>> = OnceLock::new();
 
 /// A past conversation's prompts and replies, read from its transcript and
 /// nothing else: no agent is started to show them. `None` when it is not
-/// among those under `cwds`.
+/// among those under `cwds`. `seen` is the `read` of the answer before,
+/// for a preview reading a conversation still going again.
 #[tauri::command(async)]
-pub fn roer_claude_transcript(cwds: Vec<String>, id: String) -> Option<Transcript> {
-    transcript_of(readable_transcripts(&cwds), &id, TEXT.get_or_init(TextIndex::default))
+pub fn roer_claude_transcript(cwds: Vec<String>, id: String, seen: Option<u64>) -> Option<Transcript> {
+    let index = TEXT.get_or_init(TextIndex::default);
+    let found = FOUND.get_or_init(Default::default);
+    let key = (cwds, id);
+    let known = lock(found).get(&key).cloned();
+    if let Some((agent, path)) = known.filter(|(_, path)| path.is_file()) {
+        return Some(transcript_at(&agent, &path, index, seen));
+    }
+    let (thread, path) = readable_transcripts(&key.0).into_iter().find(|(thread, _)| thread.id == key.1)?;
+    let transcript = transcript_at(&thread.agent, &path, index, seen);
+    lock(found).insert(key, (thread.agent, path));
+    Some(transcript)
 }
 
 /// The text around the first of `terms` it holds, on one line.
@@ -1046,26 +1087,28 @@ mod tests {
     /// process is its parent.
     #[cfg(unix)]
     #[test]
-    fn a_thread_open_in_a_roer_pane_is_left_to_its_live_row() {
+    fn a_thread_open_in_a_roer_pane_is_marked_with_it() {
         let home = temp_home();
         write_transcript(&home, "/tmp/x", "abc", &[r#"{"type":"summary","summary":"in a pane"}"#]);
         write_session(&home, std::process::id() as u64, "abc");
 
         let pane = std::os::unix::process::parent_id() as u64;
-        assert!(threads_in(&home, &["/tmp/x".to_string()], Some(&[pane])).is_empty());
+        let threads = threads_in(&home, &["/tmp/x".to_string()], Some(&[pane]));
+        assert_eq!(threads[0].pane, Some(pane));
+        assert!(!threads[0].open_elsewhere);
 
         std::fs::remove_dir_all(&home).ok();
     }
 
     /// An older shim says nothing of its panes' processes, so any live
-    /// conversation could be in one: left to its live row, as before.
+    /// conversation could be in one: in an unknown one, left to its live row.
     #[test]
-    fn without_knowing_the_panes_a_live_thread_is_left_to_its_row() {
+    fn without_knowing_the_panes_a_live_thread_is_in_some_pane() {
         let home = temp_home();
         write_transcript(&home, "/tmp/x", "abc", &[r#"{"type":"summary","summary":"somewhere"}"#]);
         write_session(&home, std::process::id() as u64, "abc");
 
-        assert!(threads_in(&home, &["/tmp/x".to_string()], None).is_empty());
+        assert_eq!(threads_in(&home, &["/tmp/x".to_string()], None)[0].pane, Some(0));
 
         std::fs::remove_dir_all(&home).ok();
     }
@@ -1271,6 +1314,37 @@ mod tests {
     }
 
     #[test]
+    fn a_transcript_read_again_sends_only_once_something_is_added() {
+        let home = temp_home();
+        let mut lines = current_transcript("/tmp/x", &[user("look at the importer")]);
+        write_lines(&home, "/tmp/x", "abc", &lines);
+        let path = home.join("projects").join(encode_project_path("/tmp/x")).join("abc.jsonl");
+        let index = TextIndex::default();
+
+        let first = transcript_at("claude", &path, &index, None);
+        assert!(!first.unchanged);
+        assert_eq!(first.messages.len(), 1);
+        let again = transcript_at("claude", &path, &index, Some(first.read));
+        assert!(again.unchanged);
+        assert!(again.messages.is_empty());
+
+        // A reply still being written is not there yet; once its line ends, it is.
+        lines.push(assistant("It drops every second row."));
+        let mut text = lines.iter().map(|line| format!("{line}\n")).collect::<String>();
+        text.pop();
+        std::fs::write(&path, &text).unwrap();
+        assert!(transcript_at("claude", &path, &index, Some(first.read)).unchanged);
+        text.push('\n');
+        std::fs::write(&path, &text).unwrap();
+        let added = transcript_at("claude", &path, &index, Some(first.read));
+        assert!(!added.unchanged);
+        assert!(added.read > first.read);
+        assert_eq!(added.messages.iter().map(|m| m.text.as_str()).collect::<Vec<_>>(), ["look at the importer", "It drops every second row."]);
+
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
     fn a_transcript_reads_as_its_prompts_and_replies() {
         let home = temp_home();
         let tool_use = serde_json::json!({
@@ -1411,8 +1485,8 @@ mod tests {
         std::fs::remove_dir_all(&home).ok();
     }
 
-    /// A conversation a live `claude` has open is left out of the list, but
-    /// a search and a preview still go to it, on every platform: where who
+    /// A conversation a live `claude` has open is its live row's, but a
+    /// search and a preview still go to it, on every platform: where who
     /// started whom cannot be told (Windows), it was taken for one in a pane
     /// and skipped.
     #[test]
@@ -1421,7 +1495,7 @@ mod tests {
         write_lines(&home, "/tmp/x", "abc", &current_transcript("/tmp/x", &[user("about narwhals")]));
         write_session(&home, std::process::id() as u64, "abc");
         let roots = ["/tmp/x".to_string()];
-        assert!(threads_in(&home, &roots, None).is_empty(), "left to its live row");
+        assert!(threads_in(&home, &roots, None)[0].pane.is_some(), "its live row's");
 
         assert_eq!(ids(&search_in(&home, &roots, "narwhals", &TextIndex::default())), ["abc"]);
         let transcript = transcript_in(&home, &roots, "abc").expect("a transcript");
@@ -1443,6 +1517,7 @@ mod tests {
             branch: None,
             open_elsewhere: false,
             gone: false,
+            pane: None,
             created_at: None,
         };
         let mut threads = vec![at(&home), at(&home.join("removed-worktree"))];
@@ -1472,6 +1547,7 @@ mod tests {
             branch: None,
             open_elsewhere: false,
             gone: false,
+            pane: None,
             created_at: None,
         };
         let index = TextIndex::default();

@@ -50,9 +50,11 @@ export interface SessionHit {
   badge?: string;
   /** Everything a query is matched against. */
   fields: Array<string | null | undefined>;
-  /** The past conversation it resumes, which the popup can show beside the
-   * list before it is; none for a live session. */
+  /** The conversation it resumes, or a live session's agent has open, which
+   * the popup can show beside the list before it is opened. */
   conversation?: ClaudeSession;
+  /** Running in one of Roer's panes: opening it brings it to the stage. */
+  live?: boolean;
   open: () => void;
 }
 
@@ -604,6 +606,7 @@ export function GoToFile({
               cwds={conversationCwds}
               terms={query.toLowerCase().split(/\s+/).filter(Boolean)}
               home={home}
+              live={current?.kind === "session" && current.session.live}
               onResume={() => open(current)}
               onClose={closePreview}
             />

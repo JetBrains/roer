@@ -43,7 +43,7 @@ beforeEach(() => {
   vi.useFakeTimers({ shouldAdvanceTime: true, toFake: ["Date"] });
   vi.setSystemTime(NOW * 1000);
   vi.mocked(searchClaudeSessions).mockReset().mockResolvedValue([]);
-  vi.mocked(readClaudeTranscript).mockReset().mockResolvedValue({ messages: [], earlier: 0 });
+  vi.mocked(readClaudeTranscript).mockReset().mockResolvedValue({ messages: [], earlier: 0, read: 1, unchanged: false });
   localStorage.removeItem("roer:conversation-preview");
   Element.prototype.scrollIntoView = vi.fn();
   Element.prototype.scrollTo = vi.fn();
@@ -256,6 +256,8 @@ describe("the preview", () => {
         { role: "assistant", text: "| before | after |\n|---|---|\n| **lost** | kept |" },
       ],
       earlier: 0,
+      read: 1,
+      unchanged: false,
     });
     const onOpen = renderList(list);
     fireEvent.click(toggle());
@@ -263,7 +265,7 @@ describe("the preview", () => {
     fireEvent.click(screen.getByRole("button", { name: "Show login form loses focus" }));
 
     expect(await within(panel()!).findByText("It re-renders the form; fixed by keeping its key.")).toBeInTheDocument();
-    expect(readClaudeTranscript).toHaveBeenCalledWith(["/work/shop"], "a");
+    expect(readClaudeTranscript).toHaveBeenCalledWith(["/work/shop"], "a", undefined);
     // Who said what, named as the rows name the agent that will run.
     expect(within(panel()!).getByText("You")).toBeInTheDocument();
     expect(within(panel()!).getAllByText("claude")).toHaveLength(2);
@@ -283,7 +285,7 @@ describe("the preview", () => {
     fireEvent.click(screen.getByRole("button", { name: "Preview rounding in invoices" }));
 
     expect(toggle()).toHaveAttribute("aria-pressed", "true");
-    await waitFor(() => expect(readClaudeTranscript).toHaveBeenCalledWith(["/work/shop"], "b"));
+    await waitFor(() => expect(readClaudeTranscript).toHaveBeenCalledWith(["/work/shop"], "b", undefined));
     expect(within(panel()!).getByRole("heading", { name: "rounding in invoices" })).toBeInTheDocument();
   });
 
@@ -310,7 +312,7 @@ describe("the preview", () => {
     fireEvent.click(first);
 
     fireEvent.keyDown(first, { key: "ArrowDown" });
-    await waitFor(() => expect(readClaudeTranscript).toHaveBeenLastCalledWith(["/work/shop"], "b"));
+    await waitFor(() => expect(readClaudeTranscript).toHaveBeenLastCalledWith(["/work/shop"], "b", undefined));
     expect(screen.getByRole("button", { name: "Show rounding in invoices" })).toHaveAttribute("aria-current", "true");
 
     fireEvent.keyDown(screen.getByRole("button", { name: "Show rounding in invoices" }), { key: "Enter" });
@@ -325,7 +327,7 @@ describe("the preview", () => {
 
   it("shows the filter's top match at once, and the arrows go from the filter to the rows and back", async () => {
     vi.mocked(searchClaudeSessions).mockResolvedValue([]);
-    vi.mocked(readClaudeTranscript).mockResolvedValue({ messages: [], earlier: 0 });
+    vi.mocked(readClaudeTranscript).mockResolvedValue({ messages: [], earlier: 0, read: 1, unchanged: false });
     const onOpen = renderList(list);
     fireEvent.click(toggle());
 
@@ -333,7 +335,7 @@ describe("the preview", () => {
     fireEvent.change(filter, { target: { value: "invoice" } });
     // Picked for the preview, with nothing pressed.
     await waitFor(() => expect(screen.getByRole("button", { name: "Show rounding in invoices" })).toHaveAttribute("aria-current", "true"));
-    await waitFor(() => expect(readClaudeTranscript).toHaveBeenLastCalledWith(["/work/shop"], "b"));
+    await waitFor(() => expect(readClaudeTranscript).toHaveBeenLastCalledWith(["/work/shop"], "b", undefined));
 
     fireEvent.keyDown(filter, { key: "ArrowDown" });
     expect(screen.getByRole("button", { name: "Show rounding in invoices" })).toHaveFocus();
@@ -362,6 +364,8 @@ describe("the preview", () => {
         { role: "assistant", text: "The cents are lost when rounding." },
       ],
       earlier: 12,
+      read: 1,
+      unchanged: false,
     });
     renderList(list);
     fireEvent.change(filter(), { target: { value: "cents" } });
@@ -385,6 +389,8 @@ describe("the preview", () => {
         { role: "assistant", text: "Fixed the rounding." },
       ],
       earlier: 0,
+      read: 1,
+      unchanged: false,
     });
     const tall = vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockReturnValue(900);
     renderList(list);
@@ -396,6 +402,65 @@ describe("the preview", () => {
     tall.mockRestore();
   });
 
+  it("goes on with a conversation still going, reading only what was added", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true, now: NOW * 1000 });
+    const asked = { role: "user", text: "look at the invoices" } as const;
+    vi.mocked(readClaudeTranscript)
+      .mockResolvedValueOnce({ messages: [asked], earlier: 0, read: 10, unchanged: false })
+      .mockResolvedValueOnce({ messages: [], earlier: 0, read: 10, unchanged: true })
+      .mockResolvedValue({
+        messages: [{ ...asked }, { role: "assistant", text: "Fixed the rounding." }],
+        earlier: 0,
+        read: 20,
+        unchanged: false,
+      });
+    const tall = vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockReturnValue(900);
+    renderList(list);
+    fireEvent.click(screen.getByRole("button", { name: "Preview rounding in invoices" }));
+    const first = await within(panel()!).findByText("look at the invoices");
+
+    await act(() => vi.advanceTimersByTimeAsync(1500));
+    expect(readClaudeTranscript).toHaveBeenLastCalledWith(["/work/shop"], "b", 10);
+    expect(within(panel()!).queryByText("Fixed the rounding.")).not.toBeInTheDocument();
+
+    vi.mocked(Element.prototype.scrollTo).mockClear();
+    await act(() => vi.advanceTimersByTimeAsync(1500));
+    expect(within(panel()!).getByText("Fixed the rounding.")).toBeInTheDocument();
+    // What was there stays as it was, and the list follows what was added.
+    expect(within(panel()!).getByText("look at the invoices")).toBe(first);
+    expect(Element.prototype.scrollTo).toHaveBeenCalledWith({ top: 900 });
+    tall.mockRestore();
+  });
+
+  it("leaves where it was read, scrolled up, when more is added", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true, now: NOW * 1000 });
+    vi.mocked(readClaudeTranscript)
+      .mockResolvedValueOnce({ messages: [{ role: "user", text: "look at the invoices" }], earlier: 0, read: 10, unchanged: false })
+      .mockResolvedValue({
+        messages: [
+          { role: "user", text: "look at the invoices" },
+          { role: "assistant", text: "Fixed the rounding." },
+        ],
+        earlier: 0,
+        read: 20,
+        unchanged: false,
+      });
+    const tall = vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockReturnValue(900);
+    const high = vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(300);
+    renderList(list);
+    fireEvent.click(screen.getByRole("button", { name: "Preview rounding in invoices" }));
+    const messages = (await within(panel()!).findByText("look at the invoices")).closest("ol")!;
+    messages.scrollTop = 100;
+    fireEvent.scroll(messages);
+
+    vi.mocked(Element.prototype.scrollTo).mockClear();
+    await act(() => vi.advanceTimersByTimeAsync(1500));
+    expect(within(panel()!).getByText("Fixed the rounding.")).toBeInTheDocument();
+    expect(Element.prototype.scrollTo).not.toHaveBeenCalled();
+    tall.mockRestore();
+    high.mockRestore();
+  });
+
   it("reads only the row the arrows stop at", async () => {
     const three = [...list, at("c", "dark mode toggle", 2 * DAY)];
     renderList(three);
@@ -404,7 +469,7 @@ describe("the preview", () => {
     fireEvent.keyDown(screen.getByRole("button", { name: "Show login form loses focus" }), { key: "ArrowDown" });
     fireEvent.keyDown(screen.getByRole("button", { name: "Show rounding in invoices" }), { key: "ArrowDown" });
 
-    await waitFor(() => expect(readClaudeTranscript).toHaveBeenCalledWith(["/work/shop"], "c"));
+    await waitFor(() => expect(readClaudeTranscript).toHaveBeenCalledWith(["/work/shop"], "c", undefined));
     expect(readClaudeTranscript).toHaveBeenCalledTimes(1);
   });
 
@@ -412,15 +477,15 @@ describe("the preview", () => {
     let answerA: (transcript: ClaudeTranscript) => void = () => {};
     vi.mocked(readClaudeTranscript)
       .mockImplementationOnce(() => new Promise((resolve) => (answerA = resolve)))
-      .mockResolvedValueOnce({ messages: [{ role: "assistant", text: "About invoices." }], earlier: 0 });
+      .mockResolvedValueOnce({ messages: [{ role: "assistant", text: "About invoices." }], earlier: 0, read: 1, unchanged: false });
     renderList(list);
     fireEvent.click(toggle());
     fireEvent.click(screen.getByRole("button", { name: "Show login form loses focus" }));
-    await waitFor(() => expect(readClaudeTranscript).toHaveBeenCalledWith(["/work/shop"], "a"));
+    await waitFor(() => expect(readClaudeTranscript).toHaveBeenCalledWith(["/work/shop"], "a", undefined));
     fireEvent.click(screen.getByRole("button", { name: "Show rounding in invoices" }));
     expect(await within(panel()!).findByText("About invoices.")).toBeInTheDocument();
 
-    await act(async () => answerA({ messages: [{ role: "assistant", text: "About the login form." }], earlier: 0 }));
+    await act(async () => answerA({ messages: [{ role: "assistant", text: "About the login form." }], earlier: 0, read: 1, unchanged: false }));
     expect(within(panel()!).queryByText("About the login form.")).not.toBeInTheDocument();
   });
 
@@ -434,7 +499,7 @@ describe("the preview", () => {
   it.each(["codex", "pi", "junie"])("reads a %s conversation too", async (agent) => {
     renderList([...list, at("x", "port the parser", 2 * DAY, { agent })]);
     fireEvent.click(screen.getByRole("button", { name: "Preview port the parser" }));
-    await waitFor(() => expect(readClaudeTranscript).toHaveBeenCalledWith(expect.any(Array), "x"));
+    await waitFor(() => expect(readClaudeTranscript).toHaveBeenCalledWith(expect.any(Array), "x", undefined));
   });
 
   it("offers no preview of a conversation it cannot read, and still resumes it", async () => {

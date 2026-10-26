@@ -22,9 +22,9 @@ fn junie_home() -> PathBuf {
     crate::roer::home().unwrap_or_default().join(".junie")
 }
 
-/// Past Junie conversations under `cwds`, but for those a Junie in one of
-/// Roer's panes has open, which its live row stands for; those open in a
-/// Junie elsewhere are marked so. `panes` are the panes' processes; `None`
+/// Past Junie conversations under `cwds`: those a Junie in one of Roer's
+/// panes has open marked with that pane, as its live row stands for them;
+/// those open in a Junie elsewhere marked so. `panes` are the panes' processes; `None`
 /// when they are not known, and then any live one may be in one.
 pub fn threads_for(cwds: &[String], panes: Option<&[u64]>, table: &Table) -> Vec<ClaudeThread> {
     let home = junie_home();
@@ -36,8 +36,11 @@ fn threads_in(home: &Path, cwds: &[String], panes: Option<&[u64]>, table: &Table
     sessions_in(home, cwds)
         .into_iter()
         .map(|(thread, _)| thread)
-        .filter(|thread| live.get(&thread.id) != Some(&Owner::Pane))
-        .map(|thread| ClaudeThread { open_elsewhere: live.get(&thread.id) == Some(&Owner::Elsewhere), ..thread })
+        .map(|thread| match live.get(&thread.id) {
+            Some(Owner::Pane(pane)) => ClaudeThread { pane: Some(*pane), ..thread },
+            Some(Owner::Elsewhere) => ClaudeThread { open_elsewhere: true, ..thread },
+            None => thread,
+        })
         .collect()
 }
 
@@ -113,6 +116,7 @@ fn thread_of(dir: &Path, cwds: &[String]) -> Option<(ClaudeThread, PathBuf)> {
         branch: None,
         open_elsewhere: false,
         gone: false,
+        pane: None,
         created_at: secs("createdAt"),
     };
     Some((thread, events))
@@ -241,14 +245,15 @@ mod tests {
     /// process is its parent.
     #[cfg(unix)]
     #[test]
-    fn one_open_in_a_roer_pane_is_left_to_its_live_row_and_one_elsewhere_marked() {
+    fn one_open_in_a_roer_pane_or_elsewhere_is_marked_so() {
         let home = temp_home();
         write(&home, "session-a", "/w", "Open here", &[prompt("hi")]);
         // As Junie writes it: once it is up, seconds after it started.
         register(&home, u64::from(std::process::id()), "session-a", my_start_ms() + 5_000);
 
         let pane = u64::from(std::os::unix::process::parent_id());
-        assert!(threads_in(&home, &["/w".to_string()], Some(&[pane]), &Table::default()).is_empty());
+        let here = threads_in(&home, &["/w".to_string()], Some(&[pane]), &Table::default());
+        assert_eq!(here[0].pane, Some(pane));
         let elsewhere = threads_in(&home, &["/w".to_string()], Some(&[]), &Table::default());
         assert!(elsewhere[0].open_elsewhere);
 

@@ -373,7 +373,7 @@ fn dispatch(state: &Arc<AppState>, cmd: &str, args: Value, cid: Option<&str>) ->
             call!(args, crate::claude::roer_claude_search, "cwds": Vec<String>, "query": String)
         }
         "roer_claude_transcript" => {
-            call!(args, crate::claude::roer_claude_transcript, "cwds": Vec<String>, "id": String)
+            call!(args, crate::claude::roer_claude_transcript, "cwds": Vec<String>, "id": String, "seen": Option<u64>)
         }
 
         // agents

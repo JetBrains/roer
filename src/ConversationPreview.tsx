@@ -10,6 +10,24 @@ import { relativeAge, shorten } from "./SessionBrowser";
  * the arrows can run down the list without reading each one on the way. */
 const READ_DEBOUNCE_MS = 100;
 
+/** How often the conversation shown is read again, for one still going on
+ * elsewhere: only what was added since is read, and sent only if anything was. */
+const READ_AGAIN_MS = 1500;
+
+/** How near the end the list can be scrolled and still count as at it. */
+const AT_END_PX = 24;
+
+/** `next`, with the messages `previous` already had kept as they were, so
+ * the ones on screen do not render again for each one added. */
+function keep(previous: ClaudeTranscript | null, next: ClaudeTranscript): ClaudeTranscript {
+  if (!previous) return next;
+  const had = new Map(previous.messages.map((message) => [`${message.role}\0${message.at ?? ""}\0${message.text}`, message]));
+  return {
+    ...next,
+    messages: next.messages.map((message) => had.get(`${message.role}\0${message.at ?? ""}\0${message.text}`) ?? message),
+  };
+}
+
 /** The agents whose transcripts Roer can read. */
 const READABLE = new Set(["claude", "codex", "pi", "junie"]);
 
@@ -26,6 +44,8 @@ export interface ConversationPreviewProps {
   /** Its branch, or its worktree's folder, as its row says it. */
   where?: string;
   home: string | undefined;
+  /** Running in one of Roer's panes: opened rather than resumed, and nothing is started either way. */
+  live?: boolean;
   onResume: (conversation: ClaudeSession) => void;
   onClose: () => void;
 }
@@ -35,7 +55,10 @@ export interface ConversationPreviewProps {
  * tell it from the others before resuming one: resuming starts the CLI, and
  * with it its hooks and MCP servers, and moves the conversation to the top.
  * It opens where the conversation left off or, with a filter on, at the
- * first message the filter's words are in.
+ * first message the filter's words are in. A conversation still going on
+ * elsewhere goes on here too: what it adds shows as it is written, and the
+ * list follows it while it is scrolled to the end. A reply shows once it is
+ * finished, as that is when the CLI writes it.
  */
 export function ConversationPreview({
   conversation,
@@ -43,28 +66,53 @@ export function ConversationPreview({
   terms,
   where,
   home,
+  live = false,
   onResume,
   onClose,
 }: ConversationPreviewProps) {
   const [read, setRead] = useState<{ id: string; transcript: ClaudeTranscript | null } | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
   const list = useRef<HTMLOListElement>(null);
+  /** The conversation and filter the list was last put in place for; after that, what is added only follows. */
+  const placed = useRef<string | null>(null);
+  const atEnd = useRef(true);
   const id = conversation && readable(conversation) ? conversation.id : undefined;
   const cwdsKey = cwds.join("\n");
 
   useEffect(() => {
     if (!id) return;
     let current = true;
+    /** The `read` of the last answer, until the transcript is gone or not found. */
+    let seen: number | undefined;
+    let timer: number;
     setFailed(null);
-    const timer = window.setTimeout(() => {
-      readClaudeTranscript(cwdsKey ? cwdsKey.split("\n") : [], id)
-        .then((transcript) => {
-          if (current) setRead({ id, transcript });
+    const readIt = () => {
+      // Not while the window is out of sight: nobody is reading it.
+      if (document.visibilityState === "hidden") {
+        timer = window.setTimeout(readIt, READ_AGAIN_MS);
+        return;
+      }
+      const first = seen === undefined;
+      readClaudeTranscript(cwdsKey ? cwdsKey.split("\n") : [], id, seen)
+        .then((next) => {
+          if (!current) return;
+          if (!next) {
+            seen = undefined;
+            setRead((was) => (was?.id === id && was.transcript === null ? was : { id, transcript: null }));
+          } else if (!next.unchanged) {
+            seen = next.read;
+            setRead((was) => ({ id, transcript: keep(was?.id === id ? was.transcript : null, next) }));
+          }
+          timer = window.setTimeout(readIt, READ_AGAIN_MS);
         })
         .catch((cause: unknown) => {
-          if (current) setFailed(String(cause));
+          if (!current) return;
+          // A read that failed once it was on screen leaves it there and tries again.
+          if (first) setFailed(String(cause));
+          else timer = window.setTimeout(readIt, READ_AGAIN_MS);
         });
-    }, READ_DEBOUNCE_MS);
+    };
+    timer = window.setTimeout(readIt, READ_DEBOUNCE_MS);
     return () => {
       current = false;
       window.clearTimeout(timer);
@@ -79,14 +127,22 @@ export function ConversationPreview({
 
   // The panel's own list scrolls, the page stays put: to the first match,
   // in the middle; with none, to the end, where the conversation left off.
+  // Read again, it moves only to follow what was added, and only from the end.
+  const place = `${id ?? ""}\0${terms.join(" ")}`;
   useEffect(() => {
     const messages = list.current;
     if (!messages) return;
+    if (placed.current === place) {
+      if (atEnd.current) messages.scrollTo?.({ top: messages.scrollHeight });
+      return;
+    }
+    placed.current = place;
     const at = messages.querySelector<HTMLElement>("[data-first-match]");
+    atEnd.current = !at;
     messages.scrollTo?.({
       top: at ? at.offsetTop - (messages.clientHeight - at.offsetHeight) / 2 : messages.scrollHeight,
     });
-  }, [transcript, matchAt]);
+  }, [transcript, matchAt, place]);
 
   return (
     <aside
@@ -106,7 +162,7 @@ export function ConversationPreview({
               </span>
             </div>
             <button type="button" className="primary" onClick={() => onResume(conversation)}>
-              Resume
+              {live ? "Open" : "Resume"}
             </button>
           </>
         ) : (
@@ -119,7 +175,9 @@ export function ConversationPreview({
         </button>
       </header>
       <p className="conversation-preview-note muted">
-        Read-only: nothing runs while you read, so no hooks or MCP servers start.
+        {live
+          ? "Running in Roer: what it says shows here as it is written, a reply once it is finished."
+          : "Read-only: nothing runs while you read, so no hooks or MCP servers start."}
       </p>
       {!conversation ? (
         <p className="muted">Pick a conversation to read it here.</p>
@@ -132,7 +190,14 @@ export function ConversationPreview({
       ) : transcript === null ? (
         <p className="muted">There is nothing to show for this one.</p>
       ) : (
-        <ol className="conversation-messages" ref={list}>
+        <ol
+          className="conversation-messages"
+          ref={list}
+          onScroll={(event) => {
+            const messages = event.currentTarget;
+            atEnd.current = messages.scrollHeight - messages.scrollTop - messages.clientHeight <= AT_END_PX;
+          }}
+        >
           {transcript.earlier > 0 ? (
             <li className="conversation-earlier muted">
               {transcript.earlier} earlier {transcript.earlier === 1 ? "message" : "messages"} not shown
@@ -140,7 +205,8 @@ export function ConversationPreview({
           ) : null}
           {transcript.messages.map((message, index) => (
             <Said
-              key={index}
+              // Its place in the whole conversation, which stays its own as the window moves on.
+              key={transcript.earlier + index}
               message={message}
               agent={conversation.agent ?? "claude"}
               terms={terms}

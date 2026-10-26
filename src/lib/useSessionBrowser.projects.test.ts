@@ -390,6 +390,23 @@ describe("live Codex conversations", () => {
   });
 });
 
+describe("conversations open in Roer's panes", () => {
+  it("leaves them to their live rows, found by the pane's process", async () => {
+    vi.mocked(listSessions).mockResolvedValue([
+      { id: "1", session: "w-1", pane: "%0", attached: true, cwd: "/tmp/w", command: "claude", pid: 41 },
+    ]);
+    vi.mocked(listClaudeSessions).mockResolvedValue([
+      { id: "live", cwd: "/tmp/w", title: "Weather tab", updatedAt: 3, pane: 41 },
+      { id: "past", cwd: "/tmp/w", title: "Fix it", updatedAt: 1 },
+    ]);
+    const { result } = setUp([]);
+
+    await waitFor(() => expect(result.current.paneConversations.get(41)?.id).toBe("live"));
+    expect(listClaudeSessions).toHaveBeenCalledWith(expect.any(Array), [41]);
+    expect(result.current.claudeSessions.map((past) => past.id)).toEqual(["past"]);
+  });
+});
+
 describe("a workspace's folder", () => {
   it("takes in what runs there, and leaves it out of the first workspace", async () => {
     vi.mocked(listSessions).mockResolvedValue([
