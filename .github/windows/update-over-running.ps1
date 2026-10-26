@@ -4,7 +4,8 @@
 # The setup must finish on its own, leave every file it ships as it ships
 # it, the running psmux.exe included, start the app again, and leave the
 # session alive. Then once more, while the first update's moved-aside
-# psmux.exe still runs that session.
+# psmux.exe still runs that session. psmux must still know that server for
+# its own: it forgets one whose exe is not called psmux.
 #
 # Here the setup is started beside the running app; the updater starts it and
 # quits. Either way the setup finds the app running and closes it.
@@ -127,7 +128,8 @@ function Update($pass) {
 
     # The server runs on from the file moved aside, which stays until it exits.
     Write-Host "      psmux runs from: $((Get-Process psmux -ErrorAction SilentlyContinue).Path -join ', ')"
-    Write-Host "      left aside: $((Get-ChildItem (Join-Path $dir 'roer') -Filter *.old).Name -join ', ')"
+    $aside = Join-Path $dir 'roer\aside'
+    Write-Host "      left aside: $((Get-ChildItem $aside -Recurse -File -ErrorAction SilentlyContinue).FullName -join ', ')"
 
     # /R: the app again, started by the setup.
     $deadline = (Get-Date).AddSeconds(60)
@@ -151,8 +153,8 @@ Update 'again'
 & $psmux -L roer-update-check kill-server 2>$null
 Start-Sleep 2
 Start-Process $new -ArgumentList '/S' -Wait
-$left = Get-ChildItem (Join-Path $dir 'roer') -Filter *.old
-Check "nothing is left aside once nothing runs from it" (-not $left) ($left.Name -join ', ')
+$left = Get-ChildItem (Join-Path $dir 'roer\aside') -Recurse -File -ErrorAction SilentlyContinue
+Check "nothing is left aside once nothing runs from it" (-not $left) ($left.FullName -join ', ')
 
 & $psmux -L roer-update-check kill-server 2>$null
 Get-Process | Where-Object { $_.Path -eq $app } | Stop-Process -Force -ErrorAction SilentlyContinue
