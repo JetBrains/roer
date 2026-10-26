@@ -174,8 +174,22 @@ impl Tmux {
         if is_psmux(&self.program) {
             self.ok(&["set-option", "-g", "prefix", "M-F12"]);
             self.ok(&["unbind-key", "C-b"]);
-        } else if self.wheel_lines() {
-            self.bind_wheel();
+        } else {
+            self.hyperlinks();
+            if self.wheel_lines() {
+                self.bind_wheel();
+            }
+        }
+    }
+
+    /// The config's hyperlinks feature, for a server started before the
+    /// config had it, which reads its config only as it starts. A client's
+    /// features are settled as it attaches, so that client and every later
+    /// one gets the links Claude Code writes (OSC 8) rather than their text
+    /// alone. Once: the option is a list, and each set would add to it.
+    fn hyperlinks(&self) {
+        if !self.read(&["show-options", "-s", "terminal-features"]).contains(":hyperlinks") {
+            self.ok(&["set-option", "-as", "terminal-features", "xterm*:hyperlinks"]);
         }
     }
 
