@@ -272,9 +272,9 @@ mod tests {
         #[cfg(unix)]
         assert!(!threads[0].open_elsewhere);
         // Windows cannot say when a process started, nor who started whom,
-        // so a live pid is taken for one in a pane, as with Claude Code.
+        // so a live pid is taken for one in some pane, as with Claude Code.
         #[cfg(windows)]
-        assert!(threads.is_empty());
+        assert_eq!(threads[0].pane, Some(0));
 
         std::fs::remove_dir_all(&home).ok();
     }
