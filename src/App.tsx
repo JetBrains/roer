@@ -1113,6 +1113,8 @@ export function App() {
     agent: onStage ? runningAgent(onStage) : undefined,
     busy: onStage?.state === "working",
     changed,
+    // Polled with the live list, so a `cd` with no edit after it still moves the tabs to the new repository.
+    liveCwd: onStage?.cwd,
   });
   const agentState = onStage && runningAgent(onStage) ? onStage.state : undefined;
   // What the Workspace tab is about, as its extension sections see it. The

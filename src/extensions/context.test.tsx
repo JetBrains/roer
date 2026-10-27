@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { gitCurrentBranch, gitRoot } from "../lib/git";
 import { sendToSession } from "../lib/github";
+import { resolveDir } from "../lib/session";
 import { useStageSession } from "./context";
 
 vi.mock("../lib/git", async (importOriginal) => ({
@@ -16,6 +17,7 @@ vi.mock("../lib/github", () => ({ sendToSession: vi.fn() }));
 const batch = (n: number) => ({ root: "/a", paths: [`f${n}`], broad: false });
 
 beforeEach(() => {
+  vi.mocked(resolveDir).mockImplementation(async (cwd?: string) => cwd ?? "");
   vi.mocked(gitRoot).mockImplementation(async (dir) => dir);
   vi.mocked(gitCurrentBranch).mockResolvedValue("main");
 });
@@ -42,6 +44,21 @@ describe("useStageSession", () => {
     vi.mocked(gitCurrentBranch).mockResolvedValue("feature");
     rerender({ changed: batch(2) });
     await waitFor(() => expect(result.current?.branch).toBe("feature"));
+  });
+
+  it("sees a `cd` when the live list moves the pane, with no batch from the watch", async () => {
+    const staged = { cwd: "/a", pane: "%1" };
+    vi.mocked(resolveDir).mockResolvedValue("/a");
+    const { result, rerender } = renderHook(
+      ({ liveCwd }) => useStageSession(staged, { busy: false, changed: null, liveCwd }),
+      { initialProps: { liveCwd: "/a" } },
+    );
+    await waitFor(() => expect(result.current?.root).toBe("/a"));
+
+    vi.mocked(resolveDir).mockResolvedValue("/a-feature");
+    vi.mocked(gitCurrentBranch).mockResolvedValue("feature");
+    rerender({ liveCwd: "/a-feature" });
+    await waitFor(() => expect(result.current).toMatchObject({ root: "/a-feature", branch: "feature" }));
   });
 
   it("never shows one session's pane with another's repository", async () => {
