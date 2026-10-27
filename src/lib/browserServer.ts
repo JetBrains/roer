@@ -9,6 +9,13 @@ import { invoke, listen, type UnlistenFn } from "./backend";
 
 export const startBrowserServer = (): Promise<void> => invoke("start_browser_server");
 
+/**
+ * Starts it the same way, but puts a link on the clipboard instead: one
+ * with a code that lets one browser in, once, within a minute, rather than
+ * the server's token. Offered on the title bar's browser button.
+ */
+export const copyBrowserLink = (): Promise<void> => invoke("copy_browser_link");
+
 /** The menu item was chosen. */
 export const onBrowserServerMenu = (handler: () => void): Promise<UnlistenFn> =>
   listen("roer://browser-server", () => handler());

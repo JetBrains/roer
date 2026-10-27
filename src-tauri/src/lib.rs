@@ -137,6 +137,7 @@ pub fn run() {
             projects::project_rename,
             projects::project_delete,
             server::start_browser_server,
+            server::copy_browser_link,
             logfile::app_log,
             files::files_grep,
             files::files_list,

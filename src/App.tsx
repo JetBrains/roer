@@ -58,7 +58,7 @@ import { ShortcutsDialog } from "./ShortcutsDialog";
 import { TerminalView } from "./TerminalView";
 import { WorkspaceSidebar } from "./WorkspaceSidebar";
 import { claudeSetupStatus, onClaudeSetupMenu, type SetupStatus } from "./lib/claudeSetup";
-import { onBrowserServerMenu, startBrowserServer } from "./lib/browserServer";
+import { copyBrowserLink, onBrowserServerMenu, startBrowserServer } from "./lib/browserServer";
 import { onFilesChanged, type FilesChanged } from "./lib/files";
 import { defaultTakesPrompt, listAgents, onAgentsMenu, type AgentList } from "./lib/agents";
 import { checkForUpdate, onCheckUpdatesMenu, type UpdateStatus } from "./lib/updates";
@@ -196,6 +196,22 @@ function openInBrowser() {
       kind: "error",
     });
   });
+}
+
+/** The browser button's right-click "Copy Browser Link". */
+function copyLinkForBrowser() {
+  void copyBrowserLink().then(
+    () =>
+      message("It opens this session in one browser, once, within a minute.", {
+        title: "Browser link copied",
+        kind: "info",
+      }),
+    (cause: unknown) =>
+      message(String(cause), {
+        title: "Could not copy a browser link",
+        kind: "error",
+      }),
+  );
 }
 
 export function App() {
@@ -1243,15 +1259,22 @@ export function App() {
           <Puzzle size={15} />
         </button>
 
-        <button
-          type="button"
-          className="browser-toggle"
-          aria-label="Open this session in a browser"
-          title="Open this session in a browser"
-          onClick={openInBrowser}
-        >
-          <Globe size={15} />
-        </button>
+        <ContextMenu>
+          <ContextMenuTrigger asChild>
+            <button
+              type="button"
+              className="browser-toggle"
+              aria-label="Open this session in a browser"
+              title="Open this session in a browser (right-click to copy a link)"
+              onClick={openInBrowser}
+            >
+              <Globe size={15} />
+            </button>
+          </ContextMenuTrigger>
+          <ContextMenuContent>
+            <ContextMenuItem onSelect={copyLinkForBrowser}>Copy Browser Link</ContextMenuItem>
+          </ContextMenuContent>
+        </ContextMenu>
 
         <button
           type="button"
