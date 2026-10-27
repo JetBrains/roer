@@ -899,7 +899,7 @@ fn typed_into(env: &Env, name: &str, expected: &str) -> String {
 fn new_starts_the_agent_on_a_first_prompt() {
     let env = Env::new("first-prompt");
     in_a_terminal(&env, &["new", "--agent", "codex", "--prompt", "'Make me a tab.'", "tab"], "tab");
-    let expected = "codex \"$(cat ";
+    let expected = "--no-daemon) \"$(cat ";
     let typed = typed_into(&env, "tab", expected);
     assert!(typed.contains(expected), "typed into the shell: {typed}");
     let prompts = env.home.join("agents/.prompts");
@@ -913,7 +913,10 @@ fn new_starts_the_agent_on_a_first_prompt() {
     kill_outer(&env);
 
     let before = env.tmux(&["list-sessions", "-F", "#{session_name}"]);
-    assert_eq!(code(&env.run(&["new", "--agent", "junie", "--prompt", "x", "nope"])), 2);
+    // A custom command takes no first prompt.
+    std::fs::create_dir_all(env.home.join("agents")).unwrap();
+    std::fs::write(env.home.join("agents/plain.md"), "---\nname: Plain\ncli: custom\ncommand: true\n---\n").unwrap();
+    assert_eq!(code(&env.run(&["new", "--agent", "plain", "--prompt", "x", "nope"])), 2);
     assert_eq!(code(&env.run(&["new", "--shell", "--prompt", "x", "nope"])), 2);
     assert_eq!(env.tmux(&["list-sessions", "-F", "#{session_name}"]), before);
 }
@@ -931,7 +934,7 @@ fn new_starts_a_saved_agent_and_resume_another_cli() {
     .unwrap();
 
     in_a_terminal(&env, &["new", "--agent", "reviewer", "rev"], "rev");
-    let expected = "codex -m gpt-5.5 -c model_reasoning_effort=high";
+    let expected = "--no-daemon) -m gpt-5.5 -c model_reasoning_effort=high";
     let typed = typed_into(&env, "rev", expected);
     assert!(typed.contains(expected), "typed into the shell: {typed}");
     kill_outer(&env);
@@ -968,7 +971,7 @@ fn new_starts_a_saved_agent_and_resume_another_cli() {
 
     let name = format!("{}-resume", shim_name(&env.dir));
     in_a_terminal(&env, &["resume", "0f3c-9a", "--agent", "codex"], &name);
-    let expected = "codex resume 0f3c-9a -a untrusted";
+    let expected = "--no-daemon) resume 0f3c-9a -a untrusted";
     let typed = typed_into(&env, &name, expected);
     assert!(typed.contains(expected), "typed into the shell: {typed}");
     kill_outer(&env);

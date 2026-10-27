@@ -73,7 +73,9 @@ fn tools_changed() -> bool {
 }
 
 pub fn serve(roer: &Roer) -> Result<(), Fail> {
-    let server = Server { roer, here: roer.tmux.inside_roer().ok(), idle: Cell::new(false), draws: Cell::new(false), views: RefCell::default() };
+    // By its ancestors where the client cut tmux's variables out of its environment, as Codex does.
+    let here = roer.tmux.inside_roer().ok().or_else(|| roer.tmux.pane_by_ancestry());
+    let server = Server { roer, here, idle: Cell::new(false), draws: Cell::new(false), views: RefCell::default() };
     watch_extension_tools();
     let stdin = std::io::stdin();
     let mut stdout = std::io::stdout();
