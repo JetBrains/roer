@@ -67,6 +67,7 @@ struct AppState {
     /// Which connection spawned each live PTY; `pty_write`/`pty_resize`/
     /// `pty_close` from any other connection are refused.
     pty_owners: SyncMutex<HashMap<String, String>>,
+    invites: Arc<Invites>,
 }
 
 struct Connection {
@@ -197,29 +198,69 @@ async fn require_token(State(state): State<Arc<AppState>>, req: Request<axum::bo
     }
 }
 
+/// How long a copied link's code lets a browser in: long enough to paste it
+/// somewhere, short enough that a link left in a clipboard history or a
+/// chat is already worthless.
+const INVITE_TTL: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// The codes copied links carry in place of the token, by their SHA-256:
+/// each lets one browser in, once, until `INVITE_TTL` runs out.
+#[derive(Default)]
+struct Invites(SyncMutex<HashMap<Digest, Invite>>);
+
+struct Invite {
+    expires: std::time::Instant,
+    /// What the browser's cookie is set to once the code is spent.
+    token: String,
+}
+
+impl Invites {
+    fn mint(&self, token: &str) -> String {
+        let code = generate_token();
+        let now = std::time::Instant::now();
+        let mut invites = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        invites.retain(|_, invite| invite.expires > now);
+        invites.insert(digest(&code), Invite { expires: now + INVITE_TTL, token: token.to_string() });
+        code
+    }
+
+    /// Spends `code`: a second try with it fails, even within the time.
+    fn redeem(&self, code: &str) -> Option<String> {
+        let invite = self.0.lock().unwrap_or_else(|e| e.into_inner()).remove(&digest(code))?;
+        (invite.expires > std::time::Instant::now()).then_some(invite.token)
+    }
+}
+
 #[derive(Deserialize)]
 struct SessionQuery {
-    token: String,
+    token: Option<String>,
+    code: Option<String>,
 }
 
 /// The one route a browser can reach without already carrying the cookie:
 /// proves it knows the server's token (from the URL `roer-server` printed at
-/// startup) and gets a `SameSite=Strict`, `HttpOnly` cookie in return, so
-/// every later call is authorized without the token being typed again. Then
-/// redirects to `/` — this is what a browser actually lands on when it
-/// opens the bootstrap link, not a page meant to be read.
+/// startup), or holds a code from a copied link, and gets a
+/// `SameSite=Strict`, `HttpOnly` cookie in return, so every later call is
+/// authorized without the token being typed again. Then redirects to `/` —
+/// this is what a browser actually lands on when it opens the bootstrap
+/// link, not a page meant to be read.
 async fn session(State(state): State<Arc<AppState>>, headers: HeaderMap, Query(q): Query<SessionQuery>) -> Response {
-    // Checked as well-formed too: with only a hash configured, nothing else
-    // vouches that the token is fit to be the cookie's value.
-    if !is_url_safe(&q.token) || !digests_match(&digest(&q.token), &state.token_digest) {
-        return (StatusCode::FORBIDDEN, "bad token").into_response();
-    }
+    let token = match (q.token, q.code) {
+        // Checked as well-formed too: with only a hash configured, nothing
+        // else vouches that the token is fit to be the cookie's value.
+        (Some(token), _) if is_url_safe(&token) && digests_match(&digest(&token), &state.token_digest) => token,
+        (None, Some(code)) => match state.invites.redeem(&code) {
+            Some(token) => token,
+            None => return (StatusCode::FORBIDDEN, "this link was used already or has expired").into_response(),
+        },
+        _ => return (StatusCode::FORBIDDEN, "bad token").into_response(),
+    };
     let mut res = axum::response::Redirect::to("/").into_response();
     // The server itself only speaks HTTP; HTTPS means a TLS-terminating
     // proxy in front, and then the cookie must never go out in the clear.
     let https = headers.get("x-forwarded-proto").and_then(|v| v.to_str().ok()) == Some("https");
     let secure = if https { "; Secure" } else { "" };
-    let cookie = format!("{TOKEN_COOKIE}={}; Path=/; HttpOnly; SameSite=Strict{secure}", q.token);
+    let cookie = format!("{TOKEN_COOKIE}={token}; Path=/; HttpOnly; SameSite=Strict{secure}");
     if let Ok(value) = HeaderValue::from_str(&cookie) {
         res.headers_mut().insert(header::SET_COOKIE, value);
     }
@@ -707,6 +748,7 @@ pub struct Started {
     /// `None` when the server was given only the token's hash.
     token: Option<String>,
     bus: Bus,
+    invites: Arc<Invites>,
 }
 
 impl Started {
@@ -717,6 +759,15 @@ impl Started {
     pub fn bootstrap_url(&self) -> String {
         let public = std::env::var("ROER_SERVER_PUBLIC_URL").ok();
         format!("{}/api/session?token={}", public_base(self.addr, public.as_deref()), self.token_or_placeholder())
+    }
+
+    /// A link like the bootstrap URL, but carrying a code that lets one
+    /// browser in once, within `INVITE_TTL`, instead of the token itself —
+    /// fit to copy and paste anywhere. `None` given only the token's hash.
+    pub fn invite_url(&self) -> Option<String> {
+        let code = self.invites.mint(self.token.as_deref()?);
+        let public = std::env::var("ROER_SERVER_PUBLIC_URL").ok();
+        Some(format!("{}/api/session?code={code}", public_base(self.addr, public.as_deref())))
     }
 
     fn token_or_placeholder(&self) -> &str {
@@ -764,7 +815,9 @@ async fn start(addr: SocketAddr, own_watchers: bool, auth: Auth) -> std::io::Res
         connections: SyncMutex::new(HashMap::new()),
         next_generation: AtomicU64::new(0),
         pty_owners: SyncMutex::new(HashMap::new()),
+        invites: Arc::default(),
     });
+    let invites = state.invites.clone();
 
     // Same watchers the desktop app arms in `setup`, fed the server's bus
     // instead of an `AppHandle`. Handoff's own watcher is skipped: it exists
@@ -810,7 +863,7 @@ async fn start(addr: SocketAddr, own_watchers: bool, auth: Auth) -> std::io::Res
         Auth::Token(token) => Some(token),
         Auth::Digest(_) => None,
     };
-    Ok(Started { addr: bound, token, bus })
+    Ok(Started { addr: bound, token, bus, invites })
 }
 
 /// Boots the HTTP + WebSocket server and blocks until the process is
@@ -885,19 +938,31 @@ pub fn default_addr() -> SocketAddr {
 /// minted for itself.
 #[tauri::command(async)]
 pub async fn start_browser_server() -> Result<(), String> {
+    let url = with_running(Started::bootstrap_url).await?;
+    crate::gh::open_in_system_browser(&url)
+}
+
+/// Starts the in-process server as "Open This Session in a Browser…" does,
+/// but puts a link on the clipboard instead of opening one: a link with a
+/// one-time code that expires (`Started::invite_url`), not the token, so a
+/// clipboard history or a paste in the wrong place gives nobody a way in.
+#[tauri::command(async)]
+pub async fn copy_browser_link() -> Result<(), String> {
+    let url = with_running(Started::invite_url).await?.ok_or("the browser server has no token to share")?;
+    arboard::Clipboard::new().and_then(|mut clipboard| clipboard.set_text(url)).map_err(|e| e.to_string())
+}
+
+/// `f` of the in-process server, started first if it is not yet running.
+async fn with_running<T>(f: impl FnOnce(&Started) -> T) -> Result<T, String> {
     let cell = RUNNING.get_or_init(|| Mutex::new(None));
     let mut guard = cell.lock().await;
-    let url = if let Some(started) = &*guard {
-        started.bootstrap_url()
-    } else {
+    if guard.is_none() {
         let explicit = std::env::var("ROER_SERVER_PORT").is_ok_and(|p| !p.is_empty());
         let started = start_in_app(default_addr(), explicit).await.map_err(|e| e.to_string())?;
         let _ = IN_PROCESS_BUS.set(started.bus.clone());
-        let url = started.bootstrap_url();
         *guard = Some(started);
-        url
-    };
-    crate::gh::open_in_system_browser(&url)
+    }
+    Ok(f(guard.as_ref().expect("started above")))
 }
 
 /// The app's server on `addr`, or, when another program has that port and
@@ -1016,6 +1081,56 @@ mod tests {
         assert_eq!(public_base(wildcard_v6, None), "http://localhost:4317");
         assert_eq!(public_base(wildcard, Some("https://roer.example/")), "https://roer.example");
         assert_eq!(public_base(wildcard, Some("")), "http://localhost:4317");
+    }
+
+    #[test]
+    fn an_invite_lets_one_browser_in_once() {
+        let invites = Invites::default();
+        let code = invites.mint("the-token");
+        assert_eq!(invites.redeem("not-the-code"), None);
+        assert_eq!(invites.redeem(&code).as_deref(), Some("the-token"));
+        assert_eq!(invites.redeem(&code), None, "already spent");
+    }
+
+    #[test]
+    fn an_invite_expires_unspent() {
+        let invites = Invites::default();
+        let code = invites.mint("the-token");
+        invites.0.lock().unwrap().values_mut().for_each(|i| i.expires = std::time::Instant::now());
+        assert_eq!(invites.redeem(&code), None);
+        assert!(invites.0.lock().unwrap().is_empty(), "spent by the try, so not kept around either");
+    }
+
+    #[tokio::test]
+    async fn an_invite_link_carries_a_code_not_the_token() {
+        let started = start_in_app("127.0.0.1:0".parse().unwrap(), true).await.unwrap();
+        let link = started.invite_url().unwrap();
+        assert!(link.contains("/api/session?code="), "{link}");
+        assert!(!link.contains(started.token.as_deref().unwrap()), "{link}");
+        assert_ne!(started.invite_url().unwrap(), link, "a fresh code every copy");
+    }
+
+    #[tokio::test]
+    async fn opening_an_invite_link_sets_the_cookie_and_spends_it() {
+        let started = start_in_app("127.0.0.1:0".parse().unwrap(), true).await.unwrap();
+        let link = started.invite_url().unwrap();
+        let path = &link[link.find("/api/").unwrap()..];
+        let get = |addr: SocketAddr, path: String| {
+            tokio::task::spawn_blocking(move || {
+                use std::io::{Read, Write};
+                let mut stream = std::net::TcpStream::connect(addr).unwrap();
+                write!(stream, "GET {path} HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n\r\n").unwrap();
+                let mut response = String::new();
+                stream.read_to_string(&mut response).unwrap();
+                response
+            })
+        };
+        let first = get(started.addr, path.to_string()).await.unwrap();
+        let token = started.token.as_deref().unwrap();
+        assert!(first.starts_with("HTTP/1.1 303"), "{first}");
+        assert!(first.contains(&format!("set-cookie: {TOKEN_COOKIE}={token};")), "{first}");
+        let again = get(started.addr, path.to_string()).await.unwrap();
+        assert!(again.starts_with("HTTP/1.1 403"), "{again}");
     }
 
     #[test]

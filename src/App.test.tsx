@@ -30,7 +30,8 @@ import { attachProject, listWorkspaces } from "./lib/workspaces";
 import { createProject, listProjects } from "./lib/projects";
 import { pickFolder } from "./lib/folderPicker";
 import { reportPluginUiReceipt } from "./lib/pluginUi";
-import { startBrowserServer } from "./lib/browserServer";
+import { message } from "@tauri-apps/plugin-dialog";
+import { copyBrowserLink, startBrowserServer } from "./lib/browserServer";
 import { gitReposIn, gitRoot } from "./lib/git";
 import { openUrl } from "./lib/github";
 
@@ -129,8 +130,13 @@ vi.mock("@xterm/addon-fit", () => ({
   },
 }));
 
+vi.mock("@tauri-apps/plugin-dialog", () => ({
+  message: vi.fn().mockResolvedValue(undefined),
+}));
+
 vi.mock("./lib/browserServer", () => ({
   startBrowserServer: vi.fn().mockResolvedValue(undefined),
+  copyBrowserLink: vi.fn().mockResolvedValue(undefined),
   onBrowserServerMenu: vi.fn().mockResolvedValue(() => undefined),
 }));
 
@@ -482,6 +488,17 @@ describe("App", () => {
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "Open this session in a browser" }));
     expect(startBrowserServer).toHaveBeenCalled();
+  });
+
+  it("copies a browser link from the browser button's right-click menu", async () => {
+    render(<App />);
+    fireEvent.contextMenu(await screen.findByRole("button", { name: "Open this session in a browser" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Copy Browser Link" }));
+    await waitFor(() =>
+      expect(message).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ title: "Browser link copied" })),
+    );
+    expect(copyBrowserLink).toHaveBeenCalled();
+    expect(startBrowserServer).not.toHaveBeenCalled();
   });
 
   it("opens on the launcher rather than a terminal", async () => {
