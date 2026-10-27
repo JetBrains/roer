@@ -4,7 +4,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import "@xterm/xterm/css/xterm.css";
 
-import { closePty, decodeOutput, noteTyped, resizePty, spawnPty, writePty } from "./lib/pty";
+import { closePty, decodeOutput, noteKey, noteTyped, resizePty, spawnPty, writePty } from "./lib/pty";
 import { onFileDrag } from "./lib/backend";
 import { isOver, pathsAsTyped } from "./lib/fileDrop";
 import { openUrl } from "./lib/github";
@@ -224,7 +224,9 @@ export function TerminalView({ args, cwd, onAttached, onPane, onExit, onOpenFile
     // a draft in an agent's prompt count: Enter sends it, and Escape, the
     // arrows and Ctrl or Cmd combinations write nothing into it.
     const keySub = terminal.onKey(({ domEvent }) => {
-      if (pane && leavesDraft(domEvent)) noteTyped(pane);
+      if (!pane) return;
+      noteKey(pane);
+      if (leavesDraft(domEvent)) noteTyped(pane);
     });
     const dataSub = terminal.onData((data) => {
       if (pane && data.startsWith("\x1b[200~")) noteTyped(pane);

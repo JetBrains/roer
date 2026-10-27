@@ -17,6 +17,8 @@ Review the diff. Report bugs first, style last.
 
 `~/.roer/agents/<id>.md` is yours alone; `<project>/.roer/agents/<id>.md` is committed and shared. The body is added to the agent's instructions where the CLI takes extra ones: Claude Code and pi read it from a file, Junie gets it as `--system-prompt` and Codex as `developer_instructions`, both read in by the shell (`$(cat …)`) so the text itself is never typed. Keys roer does not know are kept when the app saves the file.
 
+A session roer starts also tells it what the agent is doing, for the sidebar's "working", "needs you" and "finished" and the line under a session that waits: Claude Code and Junie through hooks in a settings file of roer's (`--settings`, `--config-location`), and Pi through an extension of roer's (`--extension`) loaded beside your own. Nothing is added to `~/.claude`, `~/.junie` or `~/.pi`. Codex is told by its title, its output and its bell.
+
 - `roer agents` lists them, `*` marking the default; `roer agents default <id>` changes it (`ROER_AGENT` overrides it for one shell).
 - `roer agents command <id>` prints exactly what the agent types into its session.
 - `roer resume <id> --agent codex` resumes a Codex conversation; the Resume list shows Codex conversations beside Claude Code's.

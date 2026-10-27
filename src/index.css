@@ -910,6 +910,17 @@ button.tree-session {
   padding-left: 4px;
 }
 
+/* Under the name, lined up with it. */
+button.tree-session .tree-note {
+  min-width: 0;
+  padding-left: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--roer-muted);
+}
+
 button.tree-session:hover {
   background: var(--roer-hover);
 }
@@ -1259,6 +1270,43 @@ button.row .muted {
 button.row .badge {
   flex: 0 0 auto;
   margin-left: auto;
+}
+
+/* A row's first line, which lays out as if it were not there until the row
+   has a note: then the note goes under it, and the line stays as it was. */
+.row-line {
+  display: contents;
+}
+
+button.row.noted,
+button.tree-session.noted {
+  flex-direction: column;
+  align-items: stretch;
+  row-gap: 3px;
+}
+
+button.row.noted .row-line,
+button.tree-session.noted .row-line {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+button.row.noted .row-line {
+  gap: 8px;
+}
+
+button.tree-session.noted .row-line {
+  gap: 6px;
+}
+
+button.row .row-note {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--roer-muted);
 }
 
 /* A Project row's own name shares no line with a session's, so squeezing it

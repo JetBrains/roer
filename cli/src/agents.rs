@@ -112,7 +112,8 @@ pub const CLIS: &[Cli] = &[
         instructions: &["--append-system-prompt", "{}"],
         first_prompt: &["{text}"],
         resume: &["--session", "{}"],
-        status: &[],
+        // Roer's extension, beside any of the person's own: Pi has no hooks.
+        status: &["--extension", "{}"],
         models: &[],
         procs: &["pi", "node"],
     },
@@ -1446,7 +1447,7 @@ mod tests {
     }
 
     #[test]
-    fn hands_the_status_hooks_to_claude_and_junie_only() {
+    fn hands_the_status_hooks_to_the_clis_that_take_them() {
         let path = std::path::Path::new("/home/me/.roer/claude-status.json");
         let claude = agent("claude");
         assert!(claude.takes_status());
@@ -1464,6 +1465,11 @@ mod tests {
         let codex = agent("codex");
         assert!(!codex.takes_status());
         assert_eq!(codex.command_line_with(None, false, Some(path)).unwrap(), "codex");
+        // Pi's as an extension of roer's, beside the person's own.
+        let path = std::path::Path::new("/home/me/.roer/pi-status.ts");
+        let pi = agent("pi");
+        assert!(pi.takes_status());
+        assert_eq!(pi.command_line_with(None, false, Some(path)).unwrap(), "pi --extension /home/me/.roer/pi-status.ts");
     }
 
     #[test]

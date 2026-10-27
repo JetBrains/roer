@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { gitChanges, gitRepo } from "./lib/git";
 import { notify } from "./lib/notify";
 import {
+  keyedSince,
   killSession,
   listClaudeSessions,
   listPastSessions,
@@ -24,7 +25,15 @@ import {
   workspaceAssignments,
 } from "./lib/workspaces";
 import { NewSessionButton } from "./NewSessionButton";
-import { checkoutLabel, isWorking, paneLabel, runningAgent, SessionBrowser, type OpenRequest } from "./SessionBrowser";
+import {
+  checkoutLabel,
+  isWorking,
+  notificationText,
+  paneLabel,
+  runningAgent,
+  SessionBrowser,
+  type OpenRequest,
+} from "./SessionBrowser";
 import { WorkspaceSidebar } from "./WorkspaceSidebar";
 
 vi.mock("./lib/pty", () => ({
@@ -34,6 +43,7 @@ vi.mock("./lib/pty", () => ({
   listClaudeSessions: vi.fn(),
   searchClaudeSessions: vi.fn(async () => []),
   roerStatus: vi.fn(),
+  keyedSince: vi.fn(() => false),
 }));
 
 vi.mock("./lib/confirm", () => ({ confirmAction: vi.fn() }));
@@ -92,8 +102,8 @@ beforeEach(() => {
  * The sidebar and the browser split one hook's state across two places on
  * screen — same shape as `App.tsx`, just without the stage around it.
  */
-function Harness({ onOpen }: { onOpen: (request: OpenRequest) => void }) {
-  const browser = useSessionBrowser({ token: "none", onOpen });
+function Harness({ onOpen, activePane }: { onOpen: (request: OpenRequest) => void; activePane?: string }) {
+  const browser = useSessionBrowser({ token: "none", onOpen, activePane });
   return (
     <>
       <WorkspaceSidebar
@@ -619,14 +629,116 @@ describe("what the agent is doing", () => {
 
       const badge = await screen.findByText("needs you");
       expect(badge).toHaveAttribute("title", "Claude needs your permission to use Bash");
-      expect(notify).toHaveBeenCalledWith(
-        "fixing tests",
-        expect.stringContaining("Claude needs your permission to use Bash"),
-        expect.any(Function),
-      );
+      // The banner never says it in the agent's words; the row does.
+      expect(notify).toHaveBeenCalledWith("fixing tests", expect.stringMatching(/^Claude needs you · /), expect.any(Function));
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("says under the row what it waits on, and what a finished turn ended on", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      vi.mocked(listSessions).mockResolvedValue([{ ...claude("\u2802 fixing tests"), state: "working" }]);
+      renderList();
+      await screen.findByText("working");
+      expect(document.querySelector(".row-note")).toBeNull();
+
+      vi.mocked(listSessions).mockResolvedValue([
+        { ...claude("\u2733 fixing tests"), state: "waiting", note: "Wants to run npm test -- --run" },
+      ]);
+      await vi.advanceTimersByTimeAsync(3000);
+      await waitFor(() => expect(document.querySelector(".row-note")).toHaveTextContent("Wants to run npm test -- --run"));
+
+      vi.mocked(listSessions).mockResolvedValue([{ ...claude("\u2802 fixing tests"), state: "working" }]);
+      await vi.advanceTimersByTimeAsync(3000);
+      await waitFor(() => expect(document.querySelector(".row-note")).toBeNull());
+
+      vi.mocked(listSessions).mockResolvedValue([
+        { ...claude("\u2733 fixing tests"), state: "done", note: "Opened PR #140 against main." },
+      ]);
+      await vi.advanceTimersByTimeAsync(3000);
+      await waitFor(() => expect(document.querySelector(".row-note")).toHaveTextContent("Done: Opened PR #140 against main."));
+      expect(notify).toHaveBeenLastCalledWith("fixing tests", expect.stringMatching(/^Claude finished · /), expect.any(Function));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("never puts the agent's own words in a notification", () => {
+    const asked: SessionInfo = { ...claude("\u2733 x"), state: "waiting", note: "Wants to run curl -H 'Authorization: Bearer x'" };
+    expect(notificationText(asked, "claude")).toBe("Claude needs you");
+    expect(notificationText({ ...asked, state: "done", note: "Set API_KEY=sk-1 in .env." }, "claude")).toBe("Claude finished");
+    // A bell or a title alone says what it always said.
+    expect(notificationText({ ...claude(""), command: "codex", bell: true }, "codex")).toBe("Codex is waiting for you");
+  });
+
+  it("keeps saying a session needs you after it was seen, until a key is pressed in it", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const focus = vi.spyOn(document, "hasFocus").mockReturnValue(true);
+    try {
+      vi.mocked(listSessions).mockResolvedValue([{ ...claude("\u2802 fixing tests"), state: "working" }]);
+      const view = render(<Harness onOpen={vi.fn()} activePane="%0" />);
+      await screen.findByTitle(/^roer-a /);
+      // It asks while on stage, in front of the person: seen, and still blocked.
+      vi.mocked(listSessions).mockResolvedValue([
+        { ...claude("\u2733 fixing tests"), state: "waiting", note: "Asks: Which base? (main / release)" },
+      ]);
+      await vi.advanceTimersByTimeAsync(3000);
+      view.rerender(<Harness onOpen={vi.fn()} activePane="%9" />);
+      await vi.advanceTimersByTimeAsync(3000);
+      await waitFor(() => expect(screen.getAllByText("needs you").length).toBeGreaterThan(0));
+
+      // Escape on its question runs no hook: the key is what says it was dealt with.
+      vi.mocked(keyedSince).mockReturnValue(true);
+      await vi.advanceTimersByTimeAsync(3000);
+      await waitFor(() => expect(screen.queryByText("needs you")).toBeNull());
+    } finally {
+      focus.mockRestore();
+      vi.mocked(keyedSince).mockReturnValue(false);
+      vi.useRealTimers();
+    }
+  });
+
+  it("counts a key pressed after the question came, before the list saw it", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const focus = vi.spyOn(document, "hasFocus").mockReturnValue(true);
+    let keyAt = -Infinity;
+    vi.mocked(keyedSince).mockImplementation((_pane, time) => keyAt > time);
+    try {
+      vi.mocked(listSessions).mockResolvedValue([{ ...claude("\u2802 fixing tests"), state: "working" }]);
+      const view = render(<Harness onOpen={vi.fn()} activePane="%0" />);
+      await screen.findByTitle(/^roer-a /);
+      // Asked, then Escape within the same poll: the hook's time is before the key.
+      const since = Date.now() + 500;
+      keyAt = since + 1000;
+      vi.mocked(listSessions).mockResolvedValue([
+        { ...claude("\u2733 fixing tests"), state: "waiting", since, note: "Asks: Which base? (main / release)" },
+      ]);
+      await vi.advanceTimersByTimeAsync(3000);
+      view.rerender(<Harness onOpen={vi.fn()} activePane="%9" />);
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(screen.queryByText("needs you")).toBeNull();
+    } finally {
+      focus.mockRestore();
+      vi.mocked(keyedSince).mockReset().mockReturnValue(false);
+      vi.useRealTimers();
+    }
+  });
+
+  it("tells a prompt dealt with before the window started by what printed after it", async () => {
+    const now = Date.now();
+    const asked = { ...claude("\u2733 fixing tests"), state: "waiting" as const, since: now - 60_000, note: "Asks: Which base?" };
+    // Cancelled while no window watched: "User declined" printed after it.
+    vi.mocked(listSessions).mockResolvedValue([{ ...asked, activity: Math.floor((now - 50_000) / 1000) }]);
+    const cancelled = renderList();
+    await screen.findByTitle(/^roer-a /);
+    await waitFor(() => expect(cancelled.container.querySelector(".badge.needs")).toBeNull());
+    cancelled.unmount();
+    // Still open: nothing printed since it was drawn.
+    vi.mocked(listSessions).mockResolvedValue([{ ...asked, activity: Math.floor((now - 59_000) / 1000) }]);
+    renderList();
+    await waitFor(() => expect(screen.getAllByText("needs you").length).toBeGreaterThan(0));
   });
 
   it("marks a session that rang the bell out of sight as waiting", async () => {
@@ -725,7 +837,7 @@ describe("what the agent is doing", () => {
       await waitFor(() => expect(row).toHaveTextContent("waiting"));
       expect(row).not.toHaveTextContent("working");
       // Named, so it says which session.
-      expect(notify).toHaveBeenCalledWith("fixing tests", expect.stringContaining("claude is waiting"), expect.any(Function));
+      expect(notify).toHaveBeenCalledWith("fixing tests", expect.stringContaining("Claude is waiting"), expect.any(Function));
     } finally {
       vi.useRealTimers();
     }
@@ -771,7 +883,7 @@ describe("what the agent is doing", () => {
       await vi.advanceTimersByTimeAsync(9000);
 
       await waitFor(() => expect(row).toHaveTextContent("waiting"));
-      expect(notify).toHaveBeenCalledWith("junie", expect.stringContaining("junie is waiting"), expect.any(Function));
+      expect(notify).toHaveBeenCalledWith("junie", expect.stringContaining("Junie is waiting"), expect.any(Function));
     } finally {
       vi.useRealTimers();
     }

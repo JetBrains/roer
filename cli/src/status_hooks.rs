@@ -2,6 +2,8 @@
 //! its terminal: Claude Code and Junie run a hook on each turn's start and
 //! end, before or after every tool, and whenever they need the person (a
 //! permission prompt, a question), and each hook here runs `roer status`.
+//! Pi has no hooks, only extensions: roer hands it one of its own, which runs
+//! `roer status` on Pi's events with the input a Claude Code hook would have.
 //! That sets the pane's `@roer_state`, which `roer list --json` reports.
 //! The turn hooks also hand the agent the Generative UI panel's clicks as
 //! they happen, rather than when it next thinks to call `read_ui_actions`.
@@ -29,7 +31,8 @@ const NOTE_CHARS: usize = 200;
 /// Where a CLI's settings file goes: one for every session of it, rewritten
 /// each time one starts so it always names the `roer` that started it.
 pub fn settings_path(cli: &str) -> PathBuf {
-    records::home().join(format!("{cli}-status.json"))
+    let extension = if cli == "pi" { "ts" } else { "json" };
+    records::home().join(format!("{cli}-status.{extension}"))
 }
 
 /// The hooks for `cli`, each running `bin`. Those marked `--actions=<cli>`
@@ -70,6 +73,14 @@ fn settings(cli: &str, bin: &str) -> Value {
         _ => json!({
             "hooks": {
                 "UserPromptSubmit": actions("working"),
+                // Which tool call the agent is at, for a permission request
+                // to be matched with; and a question or a plan, which wait
+                // on the person without any permission asked.
+                "PreToolUse": hook("working"),
+                // In the background for the same reason as Junie's: its
+                // words say what is asked ("run npm test"), where the
+                // notification only names the tool, seconds later.
+                "PermissionRequest": background("waiting"),
                 // After a permission prompt is answered, the tool runs: back at work.
                 "PostToolUse": actions("working"),
                 "Notification": hook("waiting"),
@@ -130,8 +141,12 @@ pub fn write(cli: &str, bin: &str) -> Result<PathBuf, Fail> {
     // Whole or not at all: another session starting at the same moment may
     // be handing this file to its own agent, which must never read it half
     // written. A rename replaces it in one step.
-    let partial = path.with_extension(format!("json.{}.partial", std::process::id()));
-    let text = format!("{}\n", serde_json::to_string_pretty(&settings).unwrap_or_default());
+    let partial = path.with_extension(format!("{}.partial", std::process::id()));
+    let text = if cli == "pi" {
+        PI_EXTENSION.replace("__ROER__", &Value::String(bin.to_string()).to_string())
+    } else {
+        format!("{}\n", serde_json::to_string_pretty(&settings).unwrap_or_default())
+    };
     std::fs::write(&partial, text).map_err(fail)?;
     std::fs::rename(&partial, &path).map_err(|e| {
         let _ = std::fs::remove_file(&partial);
@@ -140,25 +155,197 @@ pub fn write(cli: &str, bin: &str) -> Result<PathBuf, Fail> {
     Ok(path)
 }
 
-/// The one line of a hook's input worth showing: Claude Code's own words for
-/// what it needs ("Claude needs your permission to use Bash"), or for Junie,
-/// which gives none, what its permission prompt is about, with nothing in it
-/// that would break a tab-separated row.
-pub fn note(input: &Value) -> String {
-    let text = match input.get("message").and_then(Value::as_str) {
-        Some(message) => message.to_string(),
-        None if input.get("hook_event_name").and_then(Value::as_str) == Some("PermissionRequest") => {
-            let tool = input.get("tool_name").and_then(Value::as_str).unwrap_or_default();
-            match input.pointer("/tool_input/command").and_then(Value::as_str) {
-                Some(command) => format!("Junie needs your permission to run {command}"),
-                None if !tool.is_empty() => format!("Junie needs your permission to use {tool}"),
-                None => "Junie needs your permission".to_string(),
-            }
+/// Roer's extension for a Pi session it started: what Pi is doing, told to
+/// `roer status` as a Claude Code hook would tell it. Pi asks no permission
+/// for its tools, so it waits on the person only for an extension's prompt;
+/// a run is over at `agent_settled`, after which nothing continues it on its
+/// own, where `agent_end` can be followed by a retry or a compaction.
+const PI_EXTENSION: &str = r#"// Written by roer for the Pi sessions it starts; rewritten each time one does.
+import { execFile } from "node:child_process";
+
+const ROER = __ROER__;
+
+// One call at a time, in the order Pi's events came: run side by side, a
+// `working` could land after the `done` that followed it, and stay.
+let queue: Promise<void> = Promise.resolve();
+
+function status(state: string, input: Record<string, unknown>): void {
+  queue = queue.then(
+    () =>
+      new Promise<void>((done) => {
+        try {
+          const child = execFile(ROER, ["status", state, "--hook"], () => done());
+          child.stdin?.end(JSON.stringify(input));
+        } catch {
+          // Outside a roer session, or without roer: nothing to tell.
+          done();
         }
-        None => String::new(),
+      }),
+  );
+}
+
+/** The text of the run's last reply. */
+function lastReply(messages: unknown): string {
+  if (!Array.isArray(messages)) return "";
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i] as { role?: string; content?: unknown };
+    if (message?.role !== "assistant") continue;
+    const content = Array.isArray(message.content) ? message.content : [];
+    return content
+      .filter((part: { type?: string; text?: unknown }) => part?.type === "text" && typeof part.text === "string")
+      .map((part: { text: string }) => part.text)
+      .join("\n");
+  }
+  return "";
+}
+
+export default function (pi: { on: (event: string, handler: (event: any) => void) => void }): void {
+  let running = false;
+  let reply = "";
+  pi.on("agent_start", () => {
+    running = true;
+    status("working", { hook_event_name: "UserPromptSubmit" });
+  });
+  pi.on("ui_prompt_start", (event) => {
+    const title = typeof event?.title === "string" ? event.title.trim() : "";
+    status("waiting", { hook_event_name: "Notification", message: title ? `Asks: ${title}` : "Pi needs your input" });
+  });
+  // Back at work, or, for a prompt outside a run, nothing to say.
+  pi.on("ui_prompt_end", () => status(running ? "working" : "clear", { hook_event_name: "UserPromptSubmit" }));
+  pi.on("agent_end", (event) => {
+    reply = lastReply(event?.messages);
+  });
+  pi.on("agent_settled", (event) => {
+    running = false;
+    // Stopped by the person: what it said so far is no summary of anything.
+    status("done", { hook_event_name: "Stop", last_assistant_message: event?.aborted ? "" : reply });
+    reply = "";
+  });
+  pi.on("session_shutdown", () => status("clear", { hook_event_name: "SessionEnd" }));
+}
+"#;
+
+/// The one line of a hook's input worth showing, for a row and a
+/// notification: what a permission request is for ("Wants to run npm test"),
+/// the question asked, the plan to approve, the start of a finished turn's
+/// last reply, or else the agent's own words ("Claude needs your permission
+/// to use Bash"). Nothing in it breaks a tab-separated row.
+pub fn note(input: &Value) -> String {
+    let event = input.get("hook_event_name").and_then(Value::as_str).unwrap_or_default();
+    let text = match event {
+        "PermissionRequest" => wants(input),
+        "PreToolUse" => asks(input).unwrap_or_default(),
+        "Stop" => input
+            .get("last_assistant_message")
+            .and_then(Value::as_str)
+            .map(gist)
+            .unwrap_or_default(),
+        _ => input.get("message").and_then(Value::as_str).unwrap_or_default().to_string(),
     };
+    clip(&text)
+}
+
+/// What a permission request asks to do, said the way the tool does it.
+fn wants(input: &Value) -> String {
+    let tool = input.get("tool_name").and_then(Value::as_str).unwrap_or_default();
+    let field = |name: &str| input.pointer(&format!("/tool_input/{name}")).and_then(Value::as_str).filter(|v| !v.is_empty());
+    let path = |name: &str| field(name).map(|path| relative(input, path));
+    let said = match tool {
+        "Bash" | "PowerShell" => field("command").map(|command| format!("Wants to run {command}")),
+        "Edit" | "MultiEdit" => path("file_path").map(|path| format!("Wants to edit {path}")),
+        "Write" => path("file_path").map(|path| format!("Wants to write {path}")),
+        "NotebookEdit" => path("notebook_path").map(|path| format!("Wants to edit {path}")),
+        "Read" => path("file_path").map(|path| format!("Wants to read {path}")),
+        "WebFetch" => field("url").map(|url| format!("Wants to fetch {url}")),
+        "WebSearch" => field("query").map(|query| format!("Wants to search the web for {query}")),
+        _ => None,
+    };
+    // Junie names its terminal tool otherwise, and says what it runs the same way.
+    let said = said.or_else(|| field("command").map(|command| format!("Wants to run {command}")));
+    said.unwrap_or_else(|| match tool.strip_prefix("mcp__").and_then(|rest| rest.split_once("__")) {
+        Some((server, name)) => format!("Wants to use {name} from {server}"),
+        None if !tool.is_empty() => format!("Wants to use {tool}"),
+        None => "Wants your permission".to_string(),
+    })
+}
+
+/// A tool call that is itself a question for the person, about to be put to
+/// them: what it asks, with the answers offered, or the plan it wants
+/// approved. `None` for any other, and for the hook after the same call,
+/// which comes once it was answered and carries the same input.
+pub fn asks(input: &Value) -> Option<String> {
+    if input.get("hook_event_name").and_then(Value::as_str) != Some("PreToolUse") {
+        return None;
+    }
+    match input.get("tool_name").and_then(Value::as_str)? {
+        "AskUserQuestion" => {
+            let questions = input.pointer("/tool_input/questions")?.as_array()?;
+            let first = questions.first()?;
+            let question = first.get("question").and_then(Value::as_str)?;
+            let options: Vec<&str> = first
+                .get("options")
+                .and_then(Value::as_array)
+                .map(|options| options.iter().filter_map(|o| o.get("label").and_then(Value::as_str)).collect())
+                .unwrap_or_default();
+            let mut text = format!("Asks: {question}");
+            if !options.is_empty() {
+                text.push_str(&format!(" ({})", options.join(" / ")));
+            }
+            if questions.len() > 1 {
+                text.push_str(&format!(" and {} more", questions.len() - 1));
+            }
+            Some(text)
+        }
+        "ExitPlanMode" => {
+            let plan = input.pointer("/tool_input/plan").and_then(Value::as_str).map(gist).unwrap_or_default();
+            Some(if plan.is_empty() { "Has a plan for you to approve".to_string() } else { format!("Has a plan for you to approve: {plan}") })
+        }
+        _ => None,
+    }
+}
+
+/// `path` from the session's directory when it is under it, which is how the
+/// person knows it; as given otherwise.
+fn relative(input: &Value, path: &str) -> String {
+    let cwd = input.get("cwd").and_then(Value::as_str).unwrap_or_default().trim_end_matches('/');
+    match path.strip_prefix(cwd).and_then(|rest| rest.strip_prefix('/')) {
+        Some(rest) if !cwd.is_empty() && !rest.is_empty() => rest.to_string(),
+        _ => path.to_string(),
+    }
+}
+
+/// The first paragraph of a reply or a plan with its Markdown taken off: a
+/// heading's hashes, emphasis, code ticks, a list's bullet. What a
+/// notification can show of it in a line or two.
+fn gist(text: &str) -> String {
+    let paragraph = text
+        .split("\n\n")
+        .map(str::trim)
+        .find(|part| part.chars().any(char::is_alphanumeric))
+        .unwrap_or_default();
+    paragraph
+        .lines()
+        .map(|line| line.trim_start().trim_start_matches(['#', '>', '-', '*', ' ']).trim())
+        .collect::<Vec<_>>()
+        .join(" ")
+        .replace("**", "")
+        .replace("__", "")
+        .replace('`', "")
+}
+
+/// One line, at most [`NOTE_CHARS`], cut at a word with an ellipsis when it
+/// is longer.
+fn clip(text: &str) -> String {
     let flat: String = text.split_whitespace().collect::<Vec<_>>().join(" ");
-    flat.chars().take(NOTE_CHARS).collect()
+    if flat.chars().count() <= NOTE_CHARS {
+        return flat;
+    }
+    let cut: String = flat.chars().take(NOTE_CHARS - 1).collect();
+    let cut = match cut.rfind(' ') {
+        Some(space) if space > NOTE_CHARS / 2 => &cut[..space],
+        _ => &cut,
+    };
+    format!("{}…", cut.trim_end_matches([',', ';', ':', '.', ' ']))
 }
 
 /// Which tool call a hook is about, as a short tag, or "" for a hook about
@@ -177,6 +364,21 @@ pub fn tool(input: &Value) -> String {
         (hash ^ u64::from(byte)).wrapping_mul(0x100000001b3)
     });
     format!("{hash:016x}")
+}
+
+/// Whether a hook is Claude Code's `Notification` of a permission prompt,
+/// which comes seconds after the request or the question it is about and
+/// says less than they did. Any other notification is news of its own: an
+/// MCP server's question, an extension's prompt. Told by its type where
+/// Claude Code sends one, and by its words where it does not.
+pub fn echoes_a_prompt(input: &Value) -> bool {
+    if input.get("hook_event_name").and_then(Value::as_str) != Some("Notification") {
+        return false;
+    }
+    match input.get("notification_type").and_then(Value::as_str) {
+        Some(kind) => kind == "permission_prompt",
+        None => input.get("message").and_then(Value::as_str).is_some_and(|text| text.contains("needs your permission")),
+    }
 }
 
 /// Whether a hook is a permission request, whose `waiting` is told by `tool`.
@@ -227,10 +429,94 @@ mod tests {
             "tool_input": { "command": "touch\nmade.txt" },
             "permission_reason": "bash_command",
         });
-        assert_eq!(note(&bash), "Junie needs your permission to run touch made.txt");
+        assert_eq!(note(&bash), "Wants to run touch made.txt");
         let edit = json!({ "hook_event_name": "PermissionRequest", "tool_name": "Edit", "tool_input": {} });
-        assert_eq!(note(&edit), "Junie needs your permission to use Edit");
+        assert_eq!(note(&edit), "Wants to use Edit");
         assert_eq!(note(&json!({ "hook_event_name": "Stop" })), "");
+    }
+
+    #[test]
+    fn says_what_claude_asks_permission_for() {
+        let asked = |tool: &str, input: Value| {
+            note(&json!({ "hook_event_name": "PermissionRequest", "cwd": "/repo", "tool_name": tool, "tool_input": input }))
+        };
+        assert_eq!(asked("Bash", json!({ "command": "npm test -- --run", "description": "Run tests" })), "Wants to run npm test -- --run");
+        assert_eq!(asked("Edit", json!({ "file_path": "/repo/src/watch.rs", "old_string": "a" })), "Wants to edit src/watch.rs");
+        assert_eq!(asked("Write", json!({ "file_path": "/elsewhere/x.md" })), "Wants to write /elsewhere/x.md");
+        assert_eq!(asked("WebFetch", json!({ "url": "https://docs.rs/notify" })), "Wants to fetch https://docs.rs/notify");
+        assert_eq!(asked("mcp__roer__show_ui", json!({})), "Wants to use show_ui from roer");
+        assert_eq!(asked("Glob", json!({ "pattern": "*" })), "Wants to use Glob");
+    }
+
+    #[test]
+    fn says_what_a_question_or_a_plan_asks() {
+        let question = json!({
+            "hook_event_name": "PreToolUse",
+            "tool_name": "AskUserQuestion",
+            "tool_input": { "questions": [
+                { "question": "Which base branch?", "header": "Base", "options": [{ "label": "main" }, { "label": "release" }], "multiSelect": false },
+                { "question": "Squash?", "options": [] },
+            ] },
+        });
+        assert_eq!(note(&question), "Asks: Which base branch? (main / release) and 1 more");
+        let plan = json!({
+            "hook_event_name": "PreToolUse",
+            "tool_name": "ExitPlanMode",
+            "tool_input": { "plan": "## Watch HEAD\n\nThen the **rest** of it." },
+        });
+        assert_eq!(note(&plan), "Has a plan for you to approve: Watch HEAD");
+        assert!(asks(&plan).is_some() && asks(&question).is_some());
+        // Any other tool call is only work, and says nothing.
+        let bash = json!({ "hook_event_name": "PreToolUse", "tool_name": "Bash", "tool_input": { "command": "ls" } });
+        assert_eq!(asks(&bash), None);
+        assert_eq!(note(&bash), "");
+        // The hook after the question, once it was answered, with the same input: asks nothing.
+        let mut answered = question.clone();
+        answered["hook_event_name"] = json!("PostToolUse");
+        assert_eq!(asks(&answered), None);
+    }
+
+    #[test]
+    fn tells_an_echo_of_a_prompt_from_news() {
+        let notification = |kind: Option<&str>, message: &str| {
+            let mut input = json!({ "hook_event_name": "Notification", "message": message });
+            if let Some(kind) = kind {
+                input["notification_type"] = json!(kind);
+            }
+            input
+        };
+        assert!(echoes_a_prompt(&notification(Some("permission_prompt"), "Claude needs your permission to use Bash")));
+        assert!(echoes_a_prompt(&notification(None, "Claude needs your permission to use Bash")));
+        // An MCP server's question, or Pi's extension prompt, is a prompt of its own.
+        assert!(!echoes_a_prompt(&notification(Some("elicitation_dialog"), "roer wants your input")));
+        assert!(!echoes_a_prompt(&notification(None, "Asks: Which release?")));
+        assert!(!echoes_a_prompt(&json!({ "hook_event_name": "PermissionRequest", "message": "needs your permission" })));
+    }
+
+    #[test]
+    fn hands_pi_an_extension_that_runs_this_roer() {
+        assert!(settings_path("pi").to_string_lossy().ends_with("pi-status.ts"));
+        let text = PI_EXTENSION.replace("__ROER__", &Value::String("/Apps/My \"Roer\"/roer".into()).to_string());
+        // The path as a JS string, whatever is in it.
+        assert!(text.contains(r#"const ROER = "/Apps/My \"Roer\"/roer";"#), "{text}");
+        for event in ["agent_start", "ui_prompt_start", "ui_prompt_end", "agent_end", "agent_settled", "session_shutdown"] {
+            assert!(text.contains(&format!("pi.on(\"{event}\"")), "{event}");
+        }
+        // Not the words Claude Code's idle reminder uses, which say nothing is asked.
+        assert!(!text.contains("waiting for your input"));
+        // Every string literal on one line: a line break in one is a syntax error, and Pi loads nothing.
+        for line in text.lines() {
+            assert_eq!(line.matches('"').count() % 2, 0, "{line}");
+        }
+    }
+
+    #[test]
+    fn says_what_a_turn_ended_on() {
+        let stop = |text: &str| note(&json!({ "hook_event_name": "Stop", "last_assistant_message": text }));
+        assert_eq!(stop("Opened **PR #140** against `main`.\n\n| a | b |\n"), "Opened PR #140 against main.");
+        assert_eq!(stop("\n\n## Done\n\n- one\n- two"), "Done");
+        let long = stop(&"word ".repeat(100));
+        assert!(long.ends_with('…') && long.chars().count() <= NOTE_CHARS, "{long}");
     }
 
     #[test]
@@ -246,7 +532,10 @@ mod tests {
         }
         assert_eq!(hooks["PermissionRequest"][0]["hooks"][0]["command"], format!("{roer} status waiting --hook"));
         assert!(!hooks.contains_key("Notification"));
-        assert!(settings("claude", "/bin/roer")["hooks"].get("PermissionRequest").is_none());
+        // Claude's too, which it would otherwise answer.
+        let claude = settings("claude", "/bin/roer");
+        assert_eq!(claude["hooks"]["PermissionRequest"][0]["hooks"][0]["async"], true);
+        assert_eq!(claude["hooks"]["PreToolUse"][0]["hooks"][0]["async"].as_bool(), None);
     }
 
     #[test]

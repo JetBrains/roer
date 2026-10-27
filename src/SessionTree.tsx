@@ -15,6 +15,7 @@ import {
   LiveName,
   liveRank,
   needsYou,
+  rowNote,
   paneLabel,
   runningAgent,
   shorten,
@@ -279,7 +280,14 @@ export function SessionTree({
   const row = (session: SessionInfo) => {
     const state = statusOf(session, waiting);
     const here = session.pane === activePane;
-    const classes = ["tree-session", here ? "active" : "", session.pane === pickedPane ? "picked" : ""].filter(Boolean);
+    // What it waits on, or how its turn ended, under its name: only while it waits and is out of sight.
+    const note = !here && (state === "needs" || state === "waiting") ? rowNote(session) : null;
+    const classes = [
+      "tree-session",
+      here ? "active" : "",
+      session.pane === pickedPane ? "picked" : "",
+      note ? "noted" : "",
+    ].filter(Boolean);
     const held = heldByPane.get(session.pane) ?? [];
     return (
       <li key={session.pane}>
@@ -297,6 +305,7 @@ export function SessionTree({
             title={`${session.session} — ${shorten(session.cwd, home)}`}
             onClick={() => openSession(session)}
           >
+            <span className="row-line">
             <span className={`tree-dot ${state}`} aria-hidden="true" />
             <LiveName session={session} />
             {STATUS_WORDS[state] && !here ? <span className={`tree-state ${state}`}>{STATUS_WORDS[state]}</span> : null}
@@ -306,6 +315,12 @@ export function SessionTree({
                 title={`Waiting to be sent to its agent: ${held.map((request) => request.label).join("; ")}. Open the session, then + in the tab strip to send or cancel.`}
               >
                 {held.length === 1 ? "1 queued" : `${held.length} queued`}
+              </span>
+            ) : null}
+            </span>
+            {note ? (
+              <span className="tree-note" title={note}>
+                {note}
               </span>
             ) : null}
           </button>
