@@ -78,6 +78,17 @@ export interface TerminalViewProps {
 export const leavesDraft = (event: KeyboardEvent): boolean =>
   !event.ctrlKey && !event.metaKey && (event.key.length === 1 || event.key === "Backspace" || event.key === "Delete");
 
+/** Whether a key ends a question or a permission prompt: Enter confirms the
+ * choice (Shift or Option with it is a new line), Escape and Ctrl+C cancel it. The arrows only move between choices,
+ * and typing an answer leaves it open; a choice picked by its own key runs
+ * the agent's hook, which says so itself. */
+export const settlesPrompt = (event: KeyboardEvent): boolean =>
+  !event.metaKey &&
+  !event.altKey &&
+  ((!event.ctrlKey && event.key === "Escape") ||
+    (!event.ctrlKey && !event.shiftKey && event.key === "Enter") ||
+    (event.ctrlKey && event.key.toLowerCase() === "c"));
+
 export function TerminalView({ args, cwd, onAttached, onPane, onExit, onOpenFile, active = true, shown = active }: TerminalViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
@@ -222,10 +233,11 @@ export function TerminalView({ args, cwd, onAttached, onPane, onExit, onOpenFile
     // Keys and pastes only: onData also carries what the terminal answers
     // on its own, such as focus and cursor reports. Only keys that can leave
     // a draft in an agent's prompt count: Enter sends it, and Escape, the
-    // arrows and Ctrl or Cmd combinations write nothing into it.
+    // arrows and Ctrl or Cmd combinations write nothing into it. Apart from
+    // that, the keys that end a question or a permission prompt.
     const keySub = terminal.onKey(({ domEvent }) => {
       if (!pane) return;
-      noteKey(pane);
+      if (settlesPrompt(domEvent)) noteKey(pane);
       if (leavesDraft(domEvent)) noteTyped(pane);
     });
     const dataSub = terminal.onData((data) => {
