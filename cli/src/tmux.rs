@@ -265,6 +265,27 @@ impl Tmux {
             .unwrap_or_default())
     }
 
+    /// The pane of Roer's server this process runs under, told by its
+    /// ancestors rather than by `$TMUX`. An agent that starts its MCP servers
+    /// with an environment of its own (Codex passes on only a few variables,
+    /// none of them tmux's) still starts them as its children, so one of
+    /// their ancestors is the process a pane runs. Started anywhere else, by
+    /// an app, none is.
+    ///
+    /// Not on psmux, whose panes have no process ids to match, nor where `ps`
+    /// cannot be run.
+    pub fn pane_by_ancestry(&self) -> Option<String> {
+        if self.is_psmux() {
+            return None;
+        }
+        let panes = self.read(&["list-panes", "-a", "-F", "#{pane_pid} #{pane_id}"]);
+        if panes.is_empty() {
+            return None;
+        }
+        let out = Command::new("ps").args(["-A", "-o", "pid=,ppid="]).stderr(Stdio::null()).output().ok()?;
+        pane_among_ancestors(std::process::id(), &lines(&out.stdout), &panes)
+    }
+
     /// The session a pane of this server belongs to.
     pub fn session_of(&self, pane: &str) -> String {
         self.read(&["display-message", "-p", "-t", pane, "#{session_name}"])
@@ -373,6 +394,34 @@ fn inside(program: &str, args: &[&str]) -> Option<String> {
     out.status.success().then(|| lines(&out.stdout))
 }
 
+/// The pane whose process is `pid` or one of its ancestors, the nearest
+/// first: `parents` is `ps`'s "pid ppid" per line, `panes` tmux's "pid pane".
+fn pane_among_ancestors(pid: u32, parents: &str, panes: &str) -> Option<String> {
+    let pairs = |text: &str| -> Vec<(u32, String)> {
+        text.lines()
+            .filter_map(|line| {
+                let mut words = line.split_whitespace();
+                Some((words.next()?.parse().ok()?, words.next()?.to_string()))
+            })
+            .collect()
+    };
+    let panes = pairs(panes);
+    let parents: std::collections::HashMap<u32, u32> =
+        pairs(parents).into_iter().filter_map(|(pid, ppid)| Some((pid, ppid.parse().ok()?))).collect();
+    let mut at = pid;
+    // Bounded, so a table read mid-change can never send it round a loop.
+    for _ in 0..64 {
+        if let Some((_, pane)) = panes.iter().find(|(owner, _)| *owner == at) {
+            return Some(pane.clone());
+        }
+        at = *parents.get(&at)?;
+        if at <= 1 {
+            return None;
+        }
+    }
+    None
+}
+
 /// A command's output as lines joined by `\n`, without the last one's end.
 /// psmux ends its lines with `\r\n`, and a stray `\r` would make `%1\r` a
 /// different pane from `%1` and trail every column `roer list` prints.
@@ -388,7 +437,25 @@ fn sh_word(word: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_console_title, knows_termtype, lines, sh_word};
+    use super::{is_console_title, knows_termtype, lines, pane_among_ancestors, sh_word};
+
+    #[test]
+    fn finds_the_pane_an_agent_started_its_mcp_server_under() {
+        // launchd 1 → tmux server 50 → pane's shell 100 → codex 200 → roer mcp 300.
+        let parents = "  1     0\n 50     1\n100    50\n200   100\n300   200\n400     1\n";
+        let panes = "100 %14\n101 %15";
+        assert_eq!(pane_among_ancestors(300, parents, panes).as_deref(), Some("%14"));
+        assert_eq!(pane_among_ancestors(100, parents, panes).as_deref(), Some("%14"));
+        // An app's server is under no pane.
+        assert_eq!(pane_among_ancestors(400, parents, panes), None);
+        // Nor is a process `ps` no longer knows.
+        assert_eq!(pane_among_ancestors(999, parents, panes), None);
+    }
+
+    #[test]
+    fn never_goes_round_a_loop_in_the_table() {
+        assert_eq!(pane_among_ancestors(7, "7 8\n8 7\n", "100 %1"), None);
+    }
 
     #[test]
     fn tmux_knows_a_terminal_by_name_from_3_3() {

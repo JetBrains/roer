@@ -59,6 +59,12 @@ pub struct Cli {
     /// `roer list` tells a running agent from one that has quit. Claude Code
     /// sets its process title to its version: see `is_live`.
     procs: &'static [&'static str],
+    /// A flag that keeps the session's servers its own, put first wherever
+    /// the CLI's `--help` lists it: Codex otherwise runs every session's MCP
+    /// servers in a background server it shares, under no pane, so `roer mcp`
+    /// cannot tell which session it serves. Older Codex refuses the flag, so
+    /// the session's shell asks the `codex` it will run, each time.
+    own_servers: Option<&'static str>,
 }
 
 pub const CLIS: &[Cli] = &[
@@ -78,6 +84,7 @@ pub const CLIS: &[Cli] = &[
         status: &["--settings", "{}"],
         models: &["opus", "sonnet", "haiku", "claude-opus-5-5", "claude-sonnet-5-5", "claude-fable-5-1"],
         procs: &["claude"],
+        own_servers: None,
     },
     Cli {
         id: "codex",
@@ -98,6 +105,7 @@ pub const CLIS: &[Cli] = &[
         // Only for a codex that cannot list its own: see `models`.
         models: &["gpt-6.1-sol", "gpt-6-astra", "gpt-6-sol", "gpt-6-luna", "gpt-5.6-sol", "gpt-5.5"],
         procs: &["codex"],
+        own_servers: Some("--no-daemon"),
     },
     Cli {
         id: "pi",
@@ -116,6 +124,7 @@ pub const CLIS: &[Cli] = &[
         status: &["--extension", "{}"],
         models: &[],
         procs: &["pi", "node"],
+        own_servers: None,
     },
     Cli {
         id: "junie",
@@ -128,11 +137,13 @@ pub const CLIS: &[Cli] = &[
         auto: None,
         full: Some(&["--brave"]),
         instructions: &["--system-prompt={text}"],
-        first_prompt: &[],
+        // Submitted in interactive mode, where a bare task would run it headless.
+        first_prompt: &["--prompt={text}"],
         resume: &["--resume", "--session-id={}"],
         status: &["--config-location={}"],
         models: &[],
         procs: &["junie"],
+        own_servers: None,
     },
 ];
 
@@ -368,6 +379,9 @@ impl Agent {
             }
             words.extend(fill(cli.resume, id));
         }
+        // Before a subcommand too: `codex --no-daemon resume <id>`. Not on
+        // Windows, where psmux's panes cannot be found by process anyway.
+        let own_servers = cli.own_servers.filter(|_| !cfg!(windows));
         if !self.model.is_empty() && !cli.model.is_empty() {
             words.extend(fill(cli.model, &self.model));
         }
@@ -385,6 +399,9 @@ impl Agent {
         };
         words.extend(permissions.iter().map(|word| word.to_string()));
         let mut words: Vec<Word> = words.into_iter().map(Word::Plain).collect();
+        if let Some(flag) = own_servers {
+            words.insert(1, Word::IfListed { bin: cli.bin.to_string(), flag: flag.to_string() });
+        }
         if let Some(prompt) = prompt {
             for template in cli.instructions {
                 words.push(prompt.word(template));
@@ -547,6 +564,8 @@ enum Word {
     /// `before` followed by the contents of `path`, which the session's shell
     /// reads when it runs the line.
     Read { before: String, path: PathBuf },
+    /// `flag`, where `bin --help` lists it, else no word at all.
+    IfListed { bin: String, flag: String },
 }
 
 impl Word {
@@ -559,6 +578,11 @@ impl Word {
                 format!("\"{before}$(Get-Content -Raw {})\"", quote(&path.to_string_lossy()))
             }
             Word::Read { before, path } => format!("\"{before}$(cat {})\"", quote(&path.to_string_lossy())),
+            // Unquoted, so an empty answer is no word rather than an empty one.
+            Word::IfListed { bin, flag } => {
+                let (bin, flag) = (quote(bin), quote(flag));
+                format!("$({bin} --help 2>/dev/null | grep -q -e {flag} && echo {flag})")
+            }
         }
     }
 }
@@ -1292,6 +1316,19 @@ fn stdin_json() -> Result<Value, Fail> {
 mod tests {
     use super::*;
 
+    /// How every Codex line starts: with `--no-daemon` where that `codex` knows it.
+    const CODEX: &str = "codex $(codex --help 2>/dev/null | grep -q -e --no-daemon && echo --no-daemon)";
+
+    #[test]
+    fn keeps_codex_servers_its_own_where_codex_knows_how() {
+        // The shell asks the codex it is about to run, so an older one, which refuses the flag, starts without it.
+        let line = agent("codex").command_line(None, false).unwrap();
+        assert_eq!(line, CODEX);
+        // Ahead of the subcommand, which is where codex takes it.
+        assert!(agent("codex").command_line(Some("abc"), false).unwrap().starts_with(&format!("{CODEX} resume abc")));
+        assert!(!agent("claude").command_line(None, false).unwrap().contains("--help"));
+    }
+
     #[test]
     fn codex_lists_the_models_its_picker_shows_in_its_own_order() {
         let catalog = r#"Last login: Thu Oct 23 on ttys001
@@ -1349,7 +1386,7 @@ mod tests {
         codex.model = "gpt-5.5".into();
         codex.effort = "high".into();
         codex.args = vec!["--search".into()];
-        assert_eq!(codex.command_line(None, false).unwrap(), "codex -m gpt-5.5 -c model_reasoning_effort=high --search");
+        assert_eq!(codex.command_line(None, false).unwrap(), format!("{CODEX} -m gpt-5.5 -c model_reasoning_effort=high --search"));
 
         let mut junie = agent("junie");
         junie.model = "gpt-5.5".into();
@@ -1377,7 +1414,7 @@ mod tests {
         let mut codex = agent("codex");
         codex.instructions = text.into();
         let line = codex.command_line(None, false).unwrap();
-        assert_eq!(line, format!("codex -c \"developer_instructions={}\"", read(&prompt.toml)));
+        assert_eq!(line, format!("{CODEX} -c \"developer_instructions={}\"", read(&prompt.toml)));
 
         let mut claude = agent("claude");
         claude.instructions = text.into();
@@ -1414,7 +1451,7 @@ mod tests {
             claude.command_line(Some("abc-123"), false).unwrap(),
             "claude --resume abc-123 --permission-mode manual"
         );
-        assert_eq!(agent("codex").command_line(Some("abc"), false).unwrap(), "codex resume abc -a untrusted");
+        assert_eq!(agent("codex").command_line(Some("abc"), false).unwrap(), format!("{CODEX} resume abc -a untrusted"));
     }
 
     /// The first prompt goes before the agent's own arguments, read by the
@@ -1437,9 +1474,13 @@ mod tests {
         let codex = agent("codex");
         assert_eq!(
             codex.command_line_starting(None, false, None, Some(text)).unwrap(),
-            format!("codex {}", read(&prompt.text))
+            format!("{CODEX} {}", read(&prompt.text))
         );
-        assert!(agent("junie").command_line_starting(None, false, None, Some(text)).is_err());
+        // Junie's `--prompt` submits it in interactive mode; a bare task would run headless.
+        assert_eq!(
+            agent("junie").command_line_starting(None, false, None, Some(text)).unwrap(),
+            format!("junie \"--prompt={}", &read(&prompt.text)[1..])
+        );
         let mut custom = agent("claude");
         custom.cli = "custom".into();
         custom.command = "my-agent".into();
@@ -1464,7 +1505,7 @@ mod tests {
         );
         let codex = agent("codex");
         assert!(!codex.takes_status());
-        assert_eq!(codex.command_line_with(None, false, Some(path)).unwrap(), "codex");
+        assert_eq!(codex.command_line_with(None, false, Some(path)).unwrap(), CODEX);
         // Pi's as an extension of roer's, beside the person's own.
         let path = std::path::Path::new("/home/me/.roer/pi-status.ts");
         let pi = agent("pi");
@@ -1508,7 +1549,7 @@ mod tests {
         );
         let mut codex = agent("codex");
         codex.args = vec!["--ask-for-approval=never".into(), "-s".into(), "danger-full-access".into(), "--search".into()];
-        assert_eq!(codex.command_line(Some("abc"), false).unwrap(), "codex resume abc -a untrusted --search");
+        assert_eq!(codex.command_line(Some("abc"), false).unwrap(), format!("{CODEX} resume abc -a untrusted --search"));
         // A new session keeps them: the agent asked for them.
         assert!(claude.command_line(None, false).unwrap().contains("--dangerously-skip-permissions"));
     }
