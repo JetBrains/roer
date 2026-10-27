@@ -171,16 +171,16 @@ export const noteTyped = (pane: string, at = Date.now()): void => {
 /** Whether the person typed into `pane` after `time`. */
 export const typedSince = (pane: string, time: number): boolean => (typedAt.get(pane) ?? -Infinity) > time;
 
-/** When the person last pressed any key in each pane's terminal, Escape and
- * the arrows too: how a question or a permission prompt they answered or
- * cancelled is told, since cancelling one runs no hook of the agent's. */
+/** When the person last pressed a key that ends a question or a permission
+ * prompt in each pane's terminal (`settlesPrompt`): how one they cancelled
+ * is told, since cancelling runs no hook of the agent's. */
 const keyedAt = new Map<string, number>();
 
 export const noteKey = (pane: string, at = Date.now()): void => {
   keyedAt.set(pane, at);
 };
 
-/** Whether the person pressed a key in `pane` after `time`. */
+/** Whether the person pressed such a key in `pane` after `time`. */
 export const keyedSince = (pane: string, time: number): boolean => (keyedAt.get(pane) ?? -Infinity) > time;
 
 export const resizePty = (id: string, cols: number, rows: number): Promise<void> =>

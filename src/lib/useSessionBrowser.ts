@@ -240,8 +240,9 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
           (session.bell && !hadRung.get(session.pane))),
     );
     // Held up on a question or a permission: it keeps saying so after it was
-    // looked at, until the person presses a key in it. Answering it runs a
-    // hook, cancelling it with Escape runs none, and either is a key. Counted
+    // looked at, until the person confirms or cancels it in Roer's terminal:
+    // Enter, Escape or Ctrl+C, not the arrows that move between its choices.
+    // Answering it runs a hook too; cancelling runs none. Counted
     // from when the hook said so, which roer records, and not from when this
     // list first saw it, up to a poll later: a key in between is an answer.
     const listedAt = Date.now();
