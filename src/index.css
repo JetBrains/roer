@@ -1869,6 +1869,55 @@ button.link.show-more {
   white-space: nowrap;
 }
 
+/* With no session on screen, the ones there are to open, as a row of buttons that wraps. */
+.changes-pick {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+}
+
+/* Stepping through the comments: where in them the diff is, between the arrows. */
+.note-steps {
+  flex: none;
+  align-items: center;
+}
+
+.note-steps > span {
+  padding: 0 4px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+/* Asking for a review: one word, kept whole beside the layout switch. */
+.changes-head .review-menu {
+  flex: none;
+  white-space: nowrap;
+}
+
+/* In a narrow tab the key hints give way, and the title is what gets cut, so
+   the layout switch and the review never run into each other. */
+.changes-head {
+  container-type: inline-size;
+}
+
+@container (max-width: 620px) {
+  .changes-head .keys {
+    display: none;
+  }
+
+  .changes-head .keys + .seg {
+    margin-left: auto;
+  }
+}
+
+/* Narrower still, the arrows say enough. */
+@container (max-width: 480px) {
+  .changes-head .note-steps > span {
+    display: none;
+  }
+}
+
 /* Commits the local changes, between the diff's header and the diff. */
 .commit-box {
   flex: none;
@@ -2029,7 +2078,8 @@ button.link.show-more {
   white-space: nowrap;
 }
 
-.changes-said {
+.changes-said,
+.send-open {
   font-size: 12px;
   white-space: nowrap;
 }
@@ -2493,12 +2543,49 @@ button.tree-row.selected {
   font-style: italic;
 }
 
-.tree-row .note-count {
-  font-size: 10.5px;
+/* A file's row and its note count, a button of its own beside it: the row's
+   hover and selection reach under the count, so the two read as one row. */
+.tree-file {
+  display: flex;
+  align-items: center;
+}
+
+.tree-file:hover {
+  background: var(--roer-hover);
+}
+
+.tree-file:has(> .tree-row.selected) {
+  background: var(--roer-tree-selected);
+  box-shadow: inset 0 0 0 1px var(--roer-tree-selected-ring);
+}
+
+.tree-file > button.tree-row {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.tree-file > button.tree-row:hover,
+.tree-file > button.tree-row.selected {
+  background: none;
+  box-shadow: none;
+}
+
+.tree-file > .note-count {
+  flex: none;
+  margin-right: 8px;
   padding: 0 6px;
+  font-size: 10.5px;
+  line-height: 16px;
+  border: none;
   border-radius: 8px;
   background: var(--ide-accent);
   color: #fff;
+  cursor: pointer;
+}
+
+.tree-file > .note-count:focus-visible {
+  outline: 2px solid var(--roer-accent);
+  outline-offset: 1px;
 }
 
 /* Side by side: the old file on the left, the new one on the right --------- */

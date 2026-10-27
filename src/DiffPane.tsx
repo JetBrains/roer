@@ -14,7 +14,7 @@ import {
 import { PanelLeftClose, PanelLeftOpen } from "lucide-react";
 
 import { Spans } from "./CodeLine";
-import { isCardNote, NoteCard, NoteComposer, type NoteAction, type NoteAnswer } from "./DiffNote";
+import { isCardNote, NoteCard, NoteComposer, noteKey, type NoteAction, type NoteAnswer } from "./DiffNote";
 import {
   changedRange,
   pairRows,
@@ -31,6 +31,7 @@ import {
   toSpans,
   type Colouring,
 } from "./lib/highlight";
+import { isNextComment, isPrevComment, shortcutLabel } from "./lib/keys";
 import { langFor } from "./lib/lang";
 import {
   changeKind,
@@ -77,8 +78,9 @@ export interface DiffPaneProps {
   /** A note was answered with one of `noteActions`. */
   onNoteAnswer?: (answer: NoteAnswer) => void;
   /** Selects `path` at the change holding `line`, each time `seq` changes —
-   * how something outside the pane points into it. */
-  reveal?: { path: string; line: number; side?: "old" | "new"; seq: number };
+   * how something outside the pane points into it. With `note`, a note's
+   * `id`, that note is also scrolled to and counted from. */
+  reveal?: { path: string; line: number; side?: "old" | "new"; seq: number; note?: string };
   /** Lets the viewer write a comment on any line: each gets a + that opens
    * a field under it, and what is written comes here. Drawing it is up to
    * the owner, as one of `notes`. */
@@ -425,6 +427,12 @@ export function DiffPane({
   const rootRef = useRef<HTMLDivElement>(null);
   const hunkRefs = useRef<(HTMLDivElement | null)[]>([]);
   const rowRefs = useRef<Map<string, HTMLButtonElement | null>>(new Map());
+  const diffRef = useRef<HTMLDivElement>(null);
+  // A note asked for, from the tree or by stepping through them, until its file's diff is in and the note is on
+  // screen; without `key`, the file's first.
+  const [toNote, setToNote] = useState<{ path: string; key?: string } | null>(null);
+  // The note stepped to last, which the next step goes on from.
+  const [atNote, setAtNote] = useState<string | null>(null);
 
   const tree = useMemo(() => buildTree(files ?? []), [files]);
   const order = useMemo(() => fileOrder(tree), [tree]);
@@ -461,6 +469,10 @@ export function DiffPane({
   useEffect(() => {
     if (!reveal) return;
     select({ path: reveal.path, at: { line: reveal.line, side: reveal.side ?? "new" } });
+    if (reveal.note) {
+      setToNote({ path: reveal.path, key: reveal.note });
+      setAtNote(reveal.note);
+    }
     // Keyed on `seq` alone: pointing at the same line again is still a request.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reveal?.seq]);
@@ -560,6 +572,16 @@ export function DiffPane({
     return counts;
   }, [notes]);
 
+  // The file at its first note: one heading the file comes first, then the lowest line.
+  const selectFirstNote = (file: string) => {
+    const own = (notes ?? []).filter((note) => note.path === file);
+    const lined = own.filter((note) => note.line !== undefined);
+    const first = own.length > lined.length ? undefined : lined.reduce((a, b) => (b.line! < a.line! ? b : a), lined[0]);
+    select({ path: file, at: first ? { line: first.line!, side: first.side ?? "new" } : 0 });
+    setToNote({ path: file });
+    setAtNote(first ? noteKey(first) : null);
+  };
+
   const noteContext = useMemo(
     () => ({
       byLine: lineNotes,
@@ -632,7 +654,55 @@ export function DiffPane({
     [index, parsed, selection, stepFile],
   );
 
+  // Every note in the order the tree lists their files: in each, the ones heading it first, then by line.
+  const noteOrder = useMemo(() => {
+    const rank = new Map(order.map((file, i) => [file.path, i]));
+    return (notes ?? [])
+      .filter((note) => rank.has(note.path))
+      .sort((a, b) => rank.get(a.path)! - rank.get(b.path)! || (a.line ?? 0) - (b.line ?? 0));
+  }, [notes, order]);
+  // Where in them the view is: the one stepped to last, while the file on screen is still its own. Moved to another
+  // file by the arrows, the tree or a click, the view is between comments again, and counts them all.
+  const stepped = atNote === null ? -1 : noteOrder.findIndex((note) => noteKey(note) === atNote);
+  const noteAt = stepped >= 0 && noteOrder[stepped].path === selection?.path ? stepped : -1;
+
+  // The next or the previous note, round from the last to the first: its file, the change it is on, and the note
+  // itself on screen. Between comments, the first one after the change on screen, or the last one before it.
+  const stepNote = useCallback(
+    (delta: 1 | -1) => {
+      if (noteOrder.length === 0) return;
+      let to = noteAt < 0 ? -1 : (noteAt + delta + noteOrder.length) % noteOrder.length;
+      if (to < 0) {
+        const rank = new Map(order.map((file, i) => [file.path, i]));
+        const here = rank.get(selection?.path ?? "") ?? -1;
+        // The change on screen, by the first line it numbers; a file whose diff is not in yet, from its top.
+        const hunk = selection?.path === path ? parsed?.hunks[index] : undefined;
+        const from = hunk?.lines.find((line) => line.newNo !== undefined)?.newNo ?? 0;
+        const after = (note: DiffNote) => {
+          const there = rank.get(note.path)!;
+          return there > here || (there === here && (note.line ?? 0) >= from);
+        };
+        to = delta === 1 ? noteOrder.findIndex(after) : noteOrder.map((note) => !after(note)).lastIndexOf(true);
+        if (to < 0) to = delta === 1 ? 0 : noteOrder.length - 1;
+      }
+      const next = noteOrder[to];
+      const key = noteKey(next);
+      setAtNote(key);
+      select({ path: next.path, at: next.line === undefined ? 0 : { line: next.line, side: next.side ?? "new" } });
+      setToNote({ path: next.path, key });
+    },
+    [noteOrder, noteAt, order, selection, path, parsed, index, select],
+  );
+
   const onKeyDown = (event: KeyboardEvent) => {
+    // Before the plain arrows, which the comment keys hold a modifier with.
+    const comment = isNextComment(event.nativeEvent) ? 1 : isPrevComment(event.nativeEvent) ? -1 : 0;
+    if (comment !== 0) {
+      if (noteOrder.length === 0) return;
+      event.preventDefault();
+      stepNote(comment);
+      return;
+    }
     const step: Record<string, () => void> = {
       ArrowDown: () => stepHunk(1),
       ArrowUp: () => stepHunk(-1),
@@ -652,6 +722,14 @@ export function DiffPane({
   useEffect(() => {
     hunkRefs.current[index]?.scrollIntoView?.({ block: "nearest" });
   }, [index, diff, reveal?.seq]);
+
+  // After the hunk above, so the note wins: the one asked for, or the first the diff draws.
+  useEffect(() => {
+    if (toNote === null || toNote.path !== path || !parsed) return;
+    const notes = [...(diffRef.current?.querySelectorAll<HTMLElement>('[role="note"]') ?? [])];
+    (notes.find((note) => note.dataset.note === toNote.key) ?? notes[0])?.scrollIntoView?.({ block: "center" });
+    setToNote(null);
+  }, [toNote, path, parsed]);
 
   useEffect(() => {
     if (selection)
@@ -695,8 +773,21 @@ export function DiffPane({
             <span className="muted">
               {plural(count, "file", "files")} changed
             </span>
-            <span className="muted keys">↑↓ change · ←→ file</span>
+            <span className="muted keys">↑↓ change · ←→ file{noteOrder.length > 0 ? ` · ${shortcutLabel.prevComment()} ${shortcutLabel.nextComment()} comment` : ""}</span>
           </>
+        ) : null}
+        {noteOrder.length > 0 ? (
+          <div className="seg note-steps" role="group" aria-label="Comments">
+            <button type="button" aria-label="Previous comment" title={`Previous comment (${shortcutLabel.prevComment()})`} onClick={() => stepNote(-1)}>
+              ‹
+            </button>
+            <span className="muted">
+              {noteAt < 0 ? plural(noteOrder.length, "comment", "comments") : `${noteAt + 1} of ${noteOrder.length}`}
+            </span>
+            <button type="button" aria-label="Next comment" title={`Next comment (${shortcutLabel.nextComment()})`} onClick={() => stepNote(1)}>
+              ›
+            </button>
+          </div>
         ) : null}
         <div className="seg" role="group" aria-label="Diff layout">
           <button
@@ -739,7 +830,7 @@ export function DiffPane({
                   row.kind === "file" && row.path === selection?.path;
                 const indent = { paddingLeft: `${6 + row.depth * 12}px` };
                 return (
-                  <li key={`${row.kind}:${row.path}`}>
+                  <li key={`${row.kind}:${row.path}`} className={row.kind === "file" ? "tree-file" : undefined}>
                     {row.kind === "dir" ? (
                       <button
                         type="button"
@@ -776,11 +867,6 @@ export function DiffPane({
                         </span>
                         <span className="name">{row.name}</span>
                         {row.file.binary && <span className="muted">bin</span>}
-                        {notesPerFile.has(row.path) ? (
-                          <span className="note-count" title="Notes on this file">
-                            {notesPerFile.get(row.path)}
-                          </span>
-                        ) : null}
                         {row.file.counted && (
                           <span className="counts">
                             <span className="plus">+{row.file.added}</span>
@@ -789,13 +875,25 @@ export function DiffPane({
                         )}
                       </button>
                     )}
+                    {/* Beside the file's button rather than in it, so it can be focused and pressed on its own. */}
+                    {row.kind === "file" && notesPerFile.has(row.path) ? (
+                      <button
+                        type="button"
+                        className="note-count"
+                        title="Go to the first note on this file"
+                        aria-label={`Go to the first of ${plural(notesPerFile.get(row.path) ?? 0, "note", "notes")} on ${row.name}`}
+                        onClick={() => selectFirstNote(row.path)}
+                      >
+                        {notesPerFile.get(row.path)}
+                      </button>
+                    ) : null}
                   </li>
                 );
               })}
             </ul>
           )}
 
-          <div className="diff" aria-label="Diff">
+          <div className="diff" aria-label="Diff" ref={diffRef}>
             {selected ? (
               <div className="diff-head">
                 <span className="kind">{changeKind(selected)}</span>

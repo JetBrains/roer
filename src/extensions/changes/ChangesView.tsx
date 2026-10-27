@@ -1,10 +1,26 @@
 import { useEffect, useState } from "react";
-import { gitBranches, gitCurrentBranch, gitRoot, resolveDir, type Session } from "roer";
-import { Button } from "roer/ui";
+import {
+  baseName,
+  buildTree,
+  fileOrder,
+  gitBranches,
+  gitCurrentBranch,
+  gitRoot,
+  resolveDir,
+  useActivateTab,
+  useSessions,
+  useShowSession,
+  useStartSession,
+  type FileChange,
+  type Session,
+} from "roer";
+import { Button, EmptyState } from "roer/ui";
 
 import { DiffBrowserView } from "./DiffBrowserView";
-import { canAsk, localReviewPrompt, onBranch, ready, storedBase, useBranchComments } from "./local";
+import { acceptRest, canAsk, localReviewPrompt, ready, storedBase, undecided, holderOf, updateRoles, useBranchComments, useReviewRoles } from "./local";
+import { SendComments } from "./SendComments";
 import { ReviewView } from "./ReviewView";
+import { agentTitle, deliver, sendTargets, targetName, type Target } from "./targets";
 
 /** What the tab shows: the branch, all of it and then step by step, or its pull request. */
 export type Scope = "branch" | "pr";
@@ -25,11 +41,6 @@ export interface ChangesViewProps {
   onSent?: () => void;
   /** How many comments still wait on a decision. */
   onOpenCount?: (count: number) => void;
-}
-
-function agentName(session: Session | null): string {
-  const agent = session?.agent;
-  return agent ? agent[0].toUpperCase() + agent.slice(1) : "the agent";
 }
 
 /**
@@ -89,19 +100,42 @@ export function ChangesView({ session, active, onSent, onOpenCount }: ChangesVie
   const root = where?.root;
   useEffect(() => setPicked(null), [cwd, pane, root]);
 
-  const agent = agentName(session);
-  const toSend = ready(comments);
+  const agent = agentTitle(session?.agent);
+  const startSession = useStartSession();
+  const sessions = useSessions();
+  const showSession = useShowSession();
+  const activateTab = useActivateTab();
+  const roles = useReviewRoles(where?.root ?? null, branch, sessions);
+  const targets = sendTargets(roles, session, sessions);
 
-  const send = async () => {
-    if (!session || !where || toSend.length === 0) return;
+  // The first comment still to decide, shown on the Branch view: on the branch as a whole before those on a commit,
+  // and in the order its tree lists the files, top line first.
+  const [showComment, setShowComment] = useState<{ id: string; seq: number } | undefined>(undefined);
+  const showOpen = () => {
+    const open = undecided(comments);
+    // Only the paths matter to the order, so only they are given.
+    const order = fileOrder(buildTree(open.map((c) => ({ path: c.path }) as FileChange))).map((file) => file.path);
+    const [first] = open.sort(
+      (a, b) => Number(!!a.commit) - Number(!!b.commit) || order.indexOf(a.path) - order.indexOf(b.path) || a.line - b.line,
+    );
+    if (!first) return;
+    setScope("branch");
+    setShowComment((last) => ({ id: first.id, seq: (last?.seq ?? 0) + 1 }));
+  };
+
+  const send = async (target: Target) => {
+    const sent = ready(comments);
+    if (!where || sent.length === 0) return;
     setSending(true);
     setSaid(null);
     try {
-      const sent = toSend;
-      await session.send(onBranch(localReviewPrompt(storedBase(where.root, branch) ?? "", sent), elsewhere));
+      const prompt = localReviewPrompt(storedBase(where.root, branch) ?? "", sent);
+      await deliver(target, prompt, { session, root: where.root, branch });
       // Sent comments are done with: the agent is about to move the lines they sat on.
       update((current) => current.filter((c) => !sent.some((one) => one.id === c.id)));
-      setSaid(`Sent ${sent.length} ${sent.length === 1 ? "comment" : "comments"} to ${agent}.`);
+      setSaid(`Sent ${sent.length} ${sent.length === 1 ? "comment" : "comments"} to ${targetName(target, session?.pane)}.`);
+      // Where it went comes up, so the agent can be seen taking them on.
+      if (target.pane !== session?.pane) showSession?.(target.pane);
       onSent?.();
     } catch (cause) {
       setSaid(String(cause));
@@ -109,6 +143,31 @@ export function ChangesView({ session, active, onSent, onOpenCount }: ChangesVie
       setSending(false);
     }
   };
+
+  // Nothing to show changes of: the sessions there are to open instead, rather than a view that looks for a
+  // repository in no folder and says what git said about that.
+  if (!session) {
+    return (
+      <div className="changes-view">
+        <EmptyState
+          text="No session on screen"
+          detail="Changes shows the branch of the session on screen: its edits, its commits and its pull request."
+          footer={
+            <div className="changes-pick">
+              {sessions.slice(0, 5).map((one) => (
+                <Button key={one.pane} onClick={() => showSession?.(one.pane)} disabled={!showSession}>
+                  {agentTitle(one.agent)} in {baseName(one.cwd) || one.cwd}
+                </Button>
+              ))}
+              <Button variant="borderless" onClick={() => activateTab("sessions")}>
+                {sessions.length > 0 ? "Pick another in Workspace" : "Pick one in Workspace"}
+              </Button>
+            </div>
+          }
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="changes-view">
@@ -165,16 +224,17 @@ export function ChangesView({ session, active, onSent, onOpenCount }: ChangesVie
         <div className="changes-slot" ref={setSlot} hidden={scope !== "branch"} />
         {said ? <span className="muted changes-said">{said}</span> : null}
         {scope !== "branch" ? <span className="review-spacer" /> : null}
-        {/* Only once there is something to send; the agent's name is in its accessible name. */}
-        {scope !== "pr" && toSend.length > 0 ? (
-          <Button
-            variant="primary"
-            aria-label={`Send ${toSend.length} to ${agent}`}
-            onClick={() => void send()}
-            disabled={sending || !canAsk(session)}
-          >
-            Send {toSend.length}
-          </Button>
+        {/* Only once there is something to send or decide on; the agent's name is in the accessible names. */}
+        {scope !== "pr" ? (
+          <SendComments
+            comments={comments}
+            targets={targets}
+            stagePane={session?.pane}
+            disabled={sending}
+            onSend={(target) => void send(target)}
+            onAcceptRest={() => update(acceptRest)}
+            onShowOpen={showOpen}
+          />
         ) : null}
       </div>
       <div className="changes-scope" hidden={scope !== "branch"}>
@@ -192,6 +252,14 @@ export function ChangesView({ session, active, onSent, onOpenCount }: ChangesVie
           onComments={where ? update : undefined}
           agent={agent}
           send={session && canAsk(session) ? session.send : undefined}
+          startSession={startSession}
+          showComment={showComment}
+          onReviewAsked={(by) => {
+            if (!where) return;
+            // The session that asked keeps the decisions: its own work, reviewed by itself or by a new session.
+            const asker = canAsk(session) ? holderOf(session?.pane, sessions) : undefined;
+            updateRoles(where.root, branch, () => (by === "here" ? { asker, reviewer: asker } : { asker }));
+          }}
           onSent={onSent}
           onCommitted={(short) => setSaid(`Committed ${short}.`)}
         />

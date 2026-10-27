@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { answered, localReviewPrompt, type LocalComment } from "./local";
+import { answered, forCheckout, localReviewPrompt, type LocalComment } from "./local";
 
 const comment = (over: Partial<LocalComment>): LocalComment => ({
   id: "c1",
@@ -35,5 +35,24 @@ describe("answered", () => {
     const decided = answered([agent], { note: { id: "a1" }, action: "instruct", text: "Keep it" });
     expect(decided[0].verdict).toEqual({ kind: "instruct", text: "Keep it" });
     expect(answered(decided, { note: { id: "a1" }, action: "" })[0].verdict).toBeUndefined();
+  });
+});
+
+describe("forCheckout", () => {
+  const reviewed = { root: "/repo", branch: "feat" };
+
+  it("leaves the prompt as it is for an agent on the reviewed branch", () => {
+    expect(forCheckout("Do it.", reviewed, { root: "/repo", branch: "feat" })).toBe("Do it.");
+  });
+
+  it("names the branch to an agent in the same repository on another one", () => {
+    expect(forCheckout("Do it.", reviewed, { root: "/repo", branch: "main" })).toMatch(/^This is about the branch `feat`, which is not the one checked out here\.[\s\S]*Do it\.$/);
+  });
+
+  it("names the repository too to an agent that is elsewhere, or that cannot be found", () => {
+    for (const there of [{ root: "/other", branch: "feat" }, { root: null, branch: null }]) {
+      expect(forCheckout("Do it.", reviewed, there)).toMatch(/^This is about the branch `feat` of the repository at `\/repo`, which is not where you are now\./);
+    }
+    expect(forCheckout("Do it.", { root: "/repo", branch: null }, { root: "/other", branch: null })).toMatch(/^This is about the repository at `\/repo`/);
   });
 });

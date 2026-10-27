@@ -19,6 +19,7 @@ import {
   shortcutLabel,
   splitPatch,
   useHotkey,
+  type useStartSession,
   type BranchDiff,
   type Changes,
   type Commit,
@@ -28,6 +29,7 @@ import {
 import type { NewNote, NoteAnswer } from "roer/ui";
 
 import { CommitBox } from "./CommitBox";
+import { ReviewMenu } from "./ReviewMenu";
 import { answered, commentNote, lineInFile, newCommentId, reviewRequestPrompt, type LocalComment } from "./local";
 
 export interface DiffBrowserViewProps {
@@ -53,6 +55,13 @@ export interface DiffBrowserViewProps {
   agent?: string;
   /** Types a prompt into the session, which is how the commit box asks the agent for a message. */
   send?: (text: string) => Promise<void>;
+  /** Starts a new session in `cwd` on a prompt, for a review asked of a fresh one; absent where none can start. */
+  startSession?: ReturnType<typeof useStartSession>;
+  /** A review was asked for: of the stage's session, or of a new one, which is named the reviewer once it hands
+   * its comments over. */
+  onReviewAsked?: (by: "here" | "new") => void;
+  /** A comment to show, by its id, each time `seq` changes: the slot it is on, then the comment itself. */
+  showComment?: { id: string; seq: number };
   /** A prompt went to the session; show it. */
   onSent?: () => void;
   /** The local changes were committed; the new commit's short hash. */
@@ -95,6 +104,9 @@ export function DiffBrowserView({
   onComments,
   agent = "the agent",
   send,
+  startSession,
+  onReviewAsked,
+  showComment,
   onSent,
   onCommitted,
 }: DiffBrowserViewProps) {
@@ -115,6 +127,8 @@ export function DiffBrowserView({
   const [whole, setWhole] = useState<BranchDiff | null>(null);
   const [wholeError, setWholeError] = useState<string | null>(null);
   const [commitFiles, setCommitFiles] = useState<Changes["files"] | null>(null);
+  // Which commit `commitFiles` are, so nothing is pointed into the last commit's for the moment after a switch.
+  const [commitFilesOf, setCommitFilesOf] = useState<string | null>(null);
   const [commitFilesError, setCommitFilesError] = useState<string | null>(null);
   const [token, setToken] = useState(0);
 
@@ -282,6 +296,7 @@ export function DiffBrowserView({
       .then((next) => {
         if (cancelled) return;
         setCommitFiles(next);
+        setCommitFilesOf(commit.hash);
         setCommitFilesError(null);
       })
       .catch((cause: unknown) => {
@@ -412,6 +427,27 @@ export function DiffBrowserView({
   );
 
   const files = isAll ? wholeChanges : isLocalSelected ? localChanges?.files ?? null : commitFiles;
+
+  // A comment asked for from outside: its slot first, its commit's or the branch as a whole, then the comment, once
+  // that slot's own files are in.
+  const [toReveal, setToReveal] = useState<{
+    slot: string;
+    reveal: { path: string; line: number; side: "old" | "new"; seq: number; note: string };
+  } | null>(null);
+  useEffect(() => {
+    const comment = showComment && comments?.find((one) => one.id === showComment.id);
+    if (!showComment || !comment) return;
+    const own = comment.commit && slots.some((one) => slotKey(one) === comment.commit?.hash) ? comment.commit.hash : null;
+    const slot = own ?? (slots.some((one) => one.kind === "all") ? "all" : "local");
+    setPicked(slot);
+    setToReveal({ slot, reveal: { path: comment.path, line: comment.line, side: comment.side, seq: showComment.seq, note: comment.id } });
+    // Keyed on `seq` alone: asked again for the same comment is still a request.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showComment?.seq]);
+  const reveal =
+    toReveal && slot && slotKey(slot) === toReveal.slot && files && (slot.kind !== "commit" || commitFilesOf === slot.commit.hash)
+      ? toReveal.reveal
+      : undefined;
   const addComment = useCallback(
     (note: NewNote) => {
       if (!onComments) return;
@@ -474,10 +510,19 @@ export function DiffBrowserView({
     setAsked(null);
     void send(reviewRequestPrompt(whole.base))
       .then(() => {
+        onReviewAsked?.("here");
         setAsked(`Asked ${agent} for a review: its comments will show here.`);
         onSent?.();
       })
       .catch((cause: unknown) => setAsked(String(cause)));
+  };
+  // Started in this checkout, so the new session's comments are filed under the same branch.
+  const reviewInNewSession = async (pickAgent = false) => {
+    if (!startSession || !whole || !root) return;
+    setAsked(null);
+    if (!(await startSession(root, reviewRequestPrompt(whole.base), { pickAgent }))) return;
+    onReviewAsked?.("new");
+    setAsked("Started a new session on the review: its comments will show here.");
   };
 
   // `Cmd+Left`/`Cmd+Right` (`Alt` off macOS) step through the whole list — the branch as a whole, local
@@ -599,18 +644,17 @@ export function DiffBrowserView({
           loadFile={loadFile}
           resetKey={isAll ? `all:${root ?? ""}` : isLocalSelected ? `local:${localChanges?.root ?? ""}` : (commit?.hash ?? "")}
           refreshToken={isLocalSelected ? localToken : undefined}
+          reveal={reveal}
           title={title}
           headerExtra={
-            isAll && send && !head ? (
-              <button
-                type="button"
-                className="link"
-                title={`Ask ${agent} to review the branch and leave its comments here`}
-                onClick={askForReview}
+            isAll && !head && (send || startSession) ? (
+              <ReviewMenu
+                agent={agent}
+                onHere={send ? askForReview : undefined}
+                onNew={startSession && root ? () => void reviewInNewSession() : undefined}
+                onNewWith={startSession && root ? () => void reviewInNewSession(true) : undefined}
                 disabled={!whole || !whole.diff}
-              >
-                Review with {agent}
-              </button>
+              />
             ) : undefined
           }
           banner={

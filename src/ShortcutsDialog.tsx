@@ -99,7 +99,7 @@ export function ShortcutsDialog({ tabs = [], onClose }: { tabs?: readonly string
 
   const actions = new Map(ACTIONS);
   const before: ActionId[] = ["newSession", "pickAgent", "newWorktree", "goToFile", "nextWaiting", "previousSession"];
-  const after: ActionId[] = ["closeTab", "agents", "prevCommit", "nextCommit", "shortcuts"];
+  const after: ActionId[] = ["closeTab", "agents", "prevCommit", "nextCommit", "prevComment", "nextComment", "shortcuts"];
   const anyCustom = ACTIONS.some(([action]) => isCustom(action));
 
   return (

@@ -2,7 +2,7 @@ import { ChevronDown, ChevronRight } from "lucide-react";
 import { useState } from "react";
 
 import type { Scope, Session } from "./api";
-import { HostProvider } from "./context";
+import { HostProvider, type AgentSession, type StartSession } from "./context";
 import { useWorkspaceSections } from "./registry";
 import { Catch } from "./TabBody";
 
@@ -13,6 +13,9 @@ export interface WorkspaceSectionsProps {
   active: boolean;
   openFile: (root: string, path: string, line?: number) => void;
   activateTab: (tabId: string) => void;
+  startSession?: StartSession;
+  sessions?: readonly AgentSession[];
+  showSession?: (pane: string) => void;
   /** Asks the session's agent for a section of the person's own. */
   onAddSection?: () => void;
 }
@@ -83,7 +86,7 @@ function useFoldedDock() {
  * what one showed never stands for another. One the person has no use for
  * in a Workspace or Project is hidden there, and only there.
  */
-export function WorkspaceSections({ scope, session, active, openFile, activateTab, onAddSection }: WorkspaceSectionsProps) {
+export function WorkspaceSections({ scope, session, active, openFile, activateTab, startSession, sessions, showSession, onAddSection }: WorkspaceSectionsProps) {
   const sections = useWorkspaceSections();
   const { hidden, hide, showAll } = useHidden(scope);
   const here = scope.kind === "workspace" ? "this workspace" : "this project";
@@ -142,7 +145,7 @@ export function WorkspaceSections({ scope, session, active, openFile, activateTa
                 <div className="workspace-card-body">
                   {/* Keys stay with the terminal and the tab strip: a section
                     is shown beside them, not given the keyboard. */}
-                  <HostProvider value={{ extension: entry.extension, session, scope, active, focused: false, openFile, activateTab }}>
+                  <HostProvider value={{ extension: entry.extension, session, scope, active, focused: false, openFile, activateTab, startSession, sessions, showSession }}>
                     <Catch key={`${entry.generation}:${scope.kind}:${scope.id}`} extension={entry.extension}>
                       <View />
                     </Catch>

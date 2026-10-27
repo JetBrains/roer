@@ -468,19 +468,42 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
     void refreshWorktrees();
   }, [refreshWorktrees, token, activePane]);
 
+  /** Told whether the picker a tab opened (`openPickAgentAt`) started its session, once it closes either way. */
+  const pickedRef = useRef<((started: boolean) => void) | null>(null);
+  const settlePicker = (started: boolean) => {
+    pickedRef.current?.(started);
+    pickedRef.current = null;
+  };
+
   /** The picker from its first question, where: ⇧⌘N, and the sidebar's
    * New worktree. */
-  const openNewWorktree = () => setPicker({ step: "where" });
+  const openNewWorktree = () => {
+    settlePicker(false);
+    setPicker({ step: "where" });
+  };
 
   /** The picker on which agent, the place settled: ⌥⌘T for where a plain
    * New session would go, or a checkout's own + with Option. */
   const openPickAgent = (cwd?: string) => {
+    settlePicker(false);
     const at = cwd ?? newSessionCwd();
     if (at) setPicker({ step: "with", cwd: at });
     else setPicker({ step: "where" });
   };
 
-  const cancelPicker = () => setPicker(null);
+  /** The picker on which agent, for a session in `cwd` started on `prompt`: a tab asking for one, such as
+   * Changes for a review by an agent other than the default. True once the session starts; false when the picker
+   * is closed without one. */
+  const openPickAgentAt = (cwd: string, prompt: string): Promise<boolean> => {
+    settlePicker(false);
+    setPicker({ step: "with", cwd, prompt });
+    return new Promise((resolve) => (pickedRef.current = resolve));
+  };
+
+  const cancelPicker = () => {
+    settlePicker(false);
+    setPicker(null);
+  };
 
   /** Makes the worktree. Rejects with git's own complaint, for the dialog
    * to show without closing; what `.worktreeinclude` could not copy comes
@@ -494,8 +517,10 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
 
   /** The picker's last answer: the session, where it settled. */
   const startFromPicker = (cwd: string, agent?: string) => {
+    const prompt = picker?.step === "with" ? picker.prompt : undefined;
     setPicker(null);
-    startNewSession(cwd, selectedWorkspace, agent);
+    startNewSession(cwd, selectedWorkspace, agent, prompt);
+    settlePicker(true);
   };
 
   /** Every checkout the picker offers, the one a plain New session would
@@ -947,6 +972,9 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
   const asksForFolder = () =>
     status !== null && selectedWorkspace !== null && projects.length === 0 && !sessions.some((session) => session.pane === activePane);
 
+  /** A session with the default agent in `cwd`, on `prompt`: a tab asking for one, such as Changes for a review. */
+  const openNewAt = (cwd: string, prompt: string) => startNewSession(cwd, selectedWorkspace, undefined, prompt);
+
   /** New session in the home folder, for the one who wants no project. */
   const openNewInHome = () => startNewSession(status?.home, selectedWorkspace);
 
@@ -975,6 +1003,8 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
    * Project, attaches it to the Workspace the dialog was for, and starts the
    * session in it right away. */
   const attachNewProjectForNewSession = (path: string, agent?: string, prompt?: string) => {
+    // Only ever asked from the picker without a tab's prompt: a tab's session does not start this way.
+    settlePicker(false);
     setPicker(null);
     addFolder(path, { workspaceId: selectedWorkspace?.id, session: { agent, prompt } });
   };
@@ -1186,6 +1216,7 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
     visibleClaudeSessions,
     activePane,
     openNew,
+    openNewAt,
     openNewInHome,
     asksForFolder,
     newSessionCwd,
@@ -1195,6 +1226,7 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
     picker,
     openNewWorktree,
     openPickAgent,
+    openPickAgentAt,
     cancelPicker,
     handleCreateWorktree,
     startFromPicker,

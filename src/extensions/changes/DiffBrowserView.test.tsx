@@ -426,14 +426,74 @@ describe("DiffBrowserView — commits and the local-changes slot together", () =
     expect(gitBranchDiff).toHaveBeenCalledWith("/work/roer", "main", undefined);
     expect(await screen.findByText("A")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: /Next/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Next commit" }));
     expect(await screen.findByText("Local changes")).toBeInTheDocument();
     expect(screen.getByText("git.ts")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: /Next/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Next commit" }));
     await waitFor(() => expect(screen.getByText("commit 1 of 2")).toBeInTheDocument());
     await waitFor(() => expect(selectedFile()).toBe("committed.txt"));
     expect(gitCommitFiles).toHaveBeenCalledWith("/work/roer", "hash-first");
+  });
+
+  describe("asking for a review", () => {
+    const branched = () => {
+      vi.mocked(gitBranches).mockResolvedValue(["main", "feature"]);
+      vi.mocked(gitBranchCommits).mockResolvedValue([commit("first")]);
+      vi.mocked(gitBranchDiff).mockResolvedValue({
+        root: "/work/roer",
+        base: "main",
+        from: "fork",
+        commits: 1,
+        diff: `diff --git a/whole.txt b/whole.txt\n--- a/whole.txt\n+++ b/whole.txt\n${oneHunk}`,
+      });
+    };
+
+    const pick = async (item: string) => {
+      const trigger = await screen.findByRole("button", { name: /^Review/ });
+      await waitFor(() => expect(trigger).toBeEnabled());
+      fireEvent.keyDown(trigger, { key: "Enter" });
+      fireEvent.click(await screen.findByRole("menuitem", { name: item }));
+    };
+
+    it("asks the session on the stage, whichever agent runs there", async () => {
+      branched();
+      const send = vi.fn().mockResolvedValue(undefined);
+      render(<DiffBrowserView cwd="/work/roer/src" active agent="Codex" send={send} />);
+      await pick("In this session, with Codex");
+      await waitFor(() => expect(send).toHaveBeenCalledWith(expect.stringMatching(/git merge-base HEAD main/)));
+      expect(await screen.findByText(/Asked Codex for a review/)).toBeInTheDocument();
+    });
+
+    it("starts a new session on it in the branch's checkout, even beside a plain shell", async () => {
+      branched();
+      const startSession = vi.fn().mockResolvedValue(true);
+      const onReviewAsked = vi.fn();
+      render(<DiffBrowserView cwd="/work/roer/src" active startSession={startSession} onReviewAsked={onReviewAsked} />);
+      await pick("In a new session");
+      expect(startSession).toHaveBeenCalledWith("/work/roer", expect.stringMatching(/git merge-base HEAD main/), { pickAgent: false });
+      expect(await screen.findByText(/Started a new session on the review/)).toBeInTheDocument();
+      expect(onReviewAsked).toHaveBeenCalledWith("new");
+    });
+
+    it("asks which agent first for a new session with another agent", async () => {
+      branched();
+      // The picker is still up: the session has neither started nor been given up on.
+      const startSession = vi.fn(() => new Promise<boolean>(() => {}));
+      const onReviewAsked = vi.fn();
+      render(<DiffBrowserView cwd="/work/roer/src" active startSession={startSession} onReviewAsked={onReviewAsked} />);
+      await pick("In a new session, with another agent…");
+      expect(startSession).toHaveBeenCalledWith("/work/roer", expect.stringMatching(/git merge-base HEAD main/), { pickAgent: true });
+      expect(screen.queryByText(/Started a new session on the review/)).toBeNull();
+      expect(onReviewAsked).not.toHaveBeenCalled();
+    });
+
+    it("is not offered when nothing can be asked", async () => {
+      branched();
+      view();
+      expect(await screen.findByText("All changes")).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /^Review/ })).toBeNull();
+    });
   });
 
   it("hides the local-changes slot entirely once the branch picker moves off the checked-out branch", async () => {
@@ -447,7 +507,7 @@ describe("DiffBrowserView — commits and the local-changes slot together", () =
 
     // feature has one commit plus local changes: the whole branch, local changes and the commit.
     await waitFor(() => expect(screen.getByText("All changes")).toBeInTheDocument());
-    fireEvent.click(screen.getByRole("button", { name: /Next/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Next commit" }));
     await waitFor(() => expect(screen.getByText("Local changes")).toBeInTheDocument());
 
     fireEvent.change(screen.getByLabelText("Branch"), { target: { value: "main" } });
@@ -455,7 +515,7 @@ describe("DiffBrowserView — commits and the local-changes slot together", () =
     // main is not checked out, so the whole of it and its own two commits show — no local-changes slot.
     await waitFor(() => expect(screen.getByText("All changes")).toBeInTheDocument());
     await waitFor(() => expect(gitBranchDiff).toHaveBeenLastCalledWith("/work/roer", "main", "main"));
-    fireEvent.click(screen.getByRole("button", { name: /Next/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Next commit" }));
     await waitFor(() => expect(screen.getByText("commit 1 of 2")).toBeInTheDocument());
     expect(screen.queryByText("Local changes")).not.toBeInTheDocument();
   });
@@ -495,7 +555,7 @@ describe("DiffBrowserView — commits and the local-changes slot together", () =
     // Another branch than the one checked out: its commits alone, the first one on screen.
     render(<DiffBrowserView cwd="/work/roer/src" active branch="feature" />);
     await screen.findByText("All changes");
-    fireEvent.click(screen.getByRole("button", { name: /Next/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Next commit" }));
     expect(await screen.findByText(/runs on well past what one line/)).toBeInTheDocument();
     expect(screen.getByText(/Four\.…$/)).toBeInTheDocument();
     expect(screen.queryByText(/Six\./)).toBeNull();
@@ -524,9 +584,9 @@ describe("DiffBrowserView — commits and the local-changes slot together", () =
     view();
 
     await screen.findByText("All changes");
-    fireEvent.click(screen.getByRole("button", { name: /Next/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Next commit" }));
     await screen.findByText("Local changes");
-    fireEvent.click(screen.getByRole("button", { name: /Next/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Next commit" }));
 
     await screen.findByText("a.txt");
     await waitFor(() =>
@@ -547,7 +607,7 @@ describe("DiffBrowserView — commits and the local-changes slot together", () =
 
     // The key goes in as soon as Next is enabled on screen: after the render that counted the commit, before
     // React's effects have run, which is when a handler made for the old count would still be listening.
-    const next = screen.getByRole("button", { name: /Next/ }) as HTMLButtonElement;
+    const next = screen.getByRole("button", { name: "Next commit" }) as HTMLButtonElement;
     const pressed = new Promise<void>((done) => {
       const watch = new MutationObserver(() => {
         if (next.disabled) return;
@@ -590,7 +650,7 @@ describe("DiffBrowserView — commits and the local-changes slot together", () =
 describe("DiffBrowserView — comments", () => {
   /** The view with comments kept the way the tab keeps them, readable afterwards. */
   let kept: LocalComment[] = [];
-  function Commented({ initial = [] }: { initial?: LocalComment[] }) {
+  function Commented({ initial = [], showComment }: { initial?: LocalComment[]; showComment?: { id: string; seq: number } }) {
     const [comments, setComments] = useState<LocalComment[]>(initial);
     kept = comments;
     return (
@@ -600,6 +660,7 @@ describe("DiffBrowserView — comments", () => {
         comments={comments}
         onComments={(update) => setComments(update)}
         agent="Claude"
+        showComment={showComment}
       />
     );
   }
@@ -630,12 +691,69 @@ describe("DiffBrowserView — comments", () => {
   async function toCommit() {
     await screen.findByText("All changes");
     while (!screen.queryByText("commit 1 of 1")) {
-      fireEvent.click(screen.getByRole("button", { name: /Next/ }));
+      fireEvent.click(screen.getByRole("button", { name: "Next commit" }));
       await act(async () => {});
     }
     await screen.findAllByText("a.txt");
     await waitFor(() => expect(screen.getAllByRole("button", { name: "Comment on line 1" })).toHaveLength(2));
   }
+
+  it("counts from where the view is once it has moved off the comment's file", async () => {
+    vi.mocked(gitBranchDiff).mockResolvedValue({
+      root: "/work/roer",
+      base: "main",
+      from: "fork",
+      commits: 1,
+      diff: [
+        `diff --git a/src/lib/git.ts b/src/lib/git.ts\n--- a/src/lib/git.ts\n+++ b/src/lib/git.ts\n${twoHunks}`,
+        `diff --git a/README.md b/README.md\n--- a/README.md\n+++ b/README.md\n${twoHunks}`,
+      ].join(""),
+    });
+    Element.prototype.scrollIntoView = vi.fn();
+    render(
+      <Commented
+        initial={[
+          { id: "c1", path: "src/lib/git.ts", line: 1, side: "new", text: "Top of git", code: "ONE" },
+          { id: "c2", path: "README.md", line: 1, side: "new", text: "Top of readme", code: "ONE" },
+          { id: "c3", path: "README.md", line: 9, side: "new", text: "Lower in readme", code: "TWO" },
+        ]}
+      />,
+    );
+    await screen.findByText("All changes");
+    await waitFor(() => expect(selectedFile()).toBe("git.ts"));
+    const view = screen.getByTestId("changes");
+    fireEvent.keyDown(view, { key: "ArrowDown", code: "ArrowDown", metaKey: true });
+    await waitFor(() => expect(screen.getByText("1 of 3")).toBeInTheDocument());
+
+    // To the readme's second change, by the plain arrows: off the comment's file, so between comments again.
+    fireEvent.keyDown(view, { key: "ArrowRight" });
+    await waitFor(() => expect(selectedFile()).toBe("README.md"));
+    await screen.findByText("Top of readme");
+    await press("ArrowDown");
+    expect(position()).toBe("change 2 of 2");
+    expect(screen.getByText("3 comments")).toBeInTheDocument();
+
+    // The next is the first after the change on screen, not the first of all.
+    fireEvent.keyDown(view, { key: "ArrowDown", code: "ArrowDown", metaKey: true });
+    await waitFor(() => expect(screen.getByText("3 of 3")).toBeInTheDocument());
+    delete (Element.prototype as Partial<Element>).scrollIntoView;
+  });
+
+  it("opens the commit a comment asked for is on, at that comment", async () => {
+    Element.prototype.scrollIntoView = vi.fn();
+    const initial: LocalComment[] = [
+      { id: "c1", path: "a.txt", line: 1, side: "new", text: "On the commit", code: "new", author: "Codex", commit: { hash: "hash-only change", short: "only", subject: "only change" } },
+    ];
+    const { rerender } = render(<Commented initial={initial} />);
+    await screen.findByText("All changes");
+    rerender(<Commented initial={initial} showComment={{ id: "c1", seq: 1 }} />);
+    expect(await screen.findByText("commit 1 of 1")).toBeInTheDocument();
+    await waitFor(() => expect(selectedFile()).toBe("a.txt"));
+    expect(await screen.findByText("On the commit")).toBeInTheDocument();
+    // Counted from it, so the next step goes on from there.
+    expect(screen.getByText("1 of 1")).toBeInTheDocument();
+    delete (Element.prototype as Partial<Element>).scrollIntoView;
+  });
 
   it("leaves a comment on a commit, with the commit and the line's code, and shows it only there", async () => {
     render(<Commented />);
@@ -653,7 +771,7 @@ describe("DiffBrowserView — comments", () => {
       }),
     ]);
 
-    fireEvent.click(screen.getByRole("button", { name: /Previous/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Previous commit" }));
     await screen.findByText("git.ts");
     expect(screen.queryByText("Why new?")).toBeNull();
   });
@@ -678,6 +796,91 @@ describe("DiffBrowserView — comments", () => {
     );
     expect(await screen.findByText("Far down")).toBeInTheDocument();
     expect(screen.getByText("line 50")).toBeInTheDocument();
+  });
+
+  it("opens a file at its first comment from the count in the tree", async () => {
+    vi.mocked(gitBranchDiff).mockResolvedValue({
+      root: "/work/roer",
+      base: "main",
+      from: "fork",
+      commits: 1,
+      diff: [
+        `diff --git a/src/lib/git.ts b/src/lib/git.ts\n--- a/src/lib/git.ts\n+++ b/src/lib/git.ts\n${twoHunks}`,
+        `diff --git a/README.md b/README.md\n--- a/README.md\n+++ b/README.md\n${twoHunks}`,
+      ].join(""),
+    });
+    const scrolled: Element[] = [];
+    const scrollIntoView = vi.fn(function (this: Element) {
+      scrolled.push(this);
+    });
+    Element.prototype.scrollIntoView = scrollIntoView;
+    render(
+      <Commented
+        initial={[
+          { id: "c2", path: "README.md", line: 9, side: "new", text: "Second", code: "TWO" },
+          { id: "c1", path: "README.md", line: 1, side: "new", text: "First", code: "ONE" },
+        ]}
+      />,
+    );
+    await screen.findByText("All changes");
+    await waitFor(() => expect(selectedFile()).toBe("git.ts"));
+
+    // A button of its own beside the file's, so the keyboard reaches it too.
+    const jump = await screen.findByRole("button", { name: "Go to the first of 2 notes on README.md" });
+    expect(jump.closest("button.tree-row")).toBeNull();
+    fireEvent.click(jump);
+    await screen.findByText("First");
+    expect(selectedFile()).toBe("README.md");
+    expect(position()).toBe("change 1 of 2");
+    await waitFor(() => expect(scrolled.at(-1)?.textContent).toContain("First"));
+    delete (Element.prototype as Partial<Element>).scrollIntoView;
+  });
+
+  it("steps from comment to comment, across files and round from the last, by key or by its arrows", async () => {
+    vi.mocked(gitBranchDiff).mockResolvedValue({
+      root: "/work/roer",
+      base: "main",
+      from: "fork",
+      commits: 1,
+      diff: [
+        `diff --git a/src/lib/git.ts b/src/lib/git.ts\n--- a/src/lib/git.ts\n+++ b/src/lib/git.ts\n${twoHunks}`,
+        `diff --git a/README.md b/README.md\n--- a/README.md\n+++ b/README.md\n${twoHunks}`,
+      ].join(""),
+    });
+    Element.prototype.scrollIntoView = vi.fn();
+    render(
+      <Commented
+        initial={[
+          { id: "c1", path: "README.md", line: 9, side: "new", text: "In the readme", code: "TWO" },
+          { id: "c2", path: "src/lib/git.ts", line: 9, side: "new", text: "Lower in git", code: "TWO" },
+          { id: "c3", path: "src/lib/git.ts", line: 1, side: "new", text: "Top of git", code: "ONE" },
+        ]}
+      />,
+    );
+    await screen.findByText("All changes");
+    expect(await screen.findByText("3 comments")).toBeInTheDocument();
+    const order = [...document.querySelectorAll(".tree-row.file .name")].map((name) => name.textContent);
+    const first = order[0] === "git.ts" ? ["git.ts", "git.ts", "README.md"] : ["README.md", "git.ts", "git.ts"];
+
+    const keyed: (string | null)[] = [];
+    for (let i = 0; i < 4; i++) {
+      fireEvent.keyDown(screen.getByTestId("changes"), { key: "ArrowDown", code: "ArrowDown", metaKey: true });
+      await waitFor(() => expect(screen.getByText(`${(i % 3) + 1} of 3`)).toBeInTheDocument());
+      keyed.push(selectedFile());
+    }
+    // Round from the last to the first.
+    expect(keyed).toEqual([...first, first[0]]);
+    // Within git.ts, its top line before its lower one.
+    if (first[0] === "git.ts") expect(position()).toBe("change 1 of 2");
+
+    fireEvent.click(screen.getByRole("button", { name: "Previous comment" }));
+    await waitFor(() => expect(screen.getByText("3 of 3")).toBeInTheDocument());
+    expect(selectedFile()).toBe(first[2]);
+    fireEvent.keyDown(screen.getByTestId("changes"), { key: "ArrowUp", code: "ArrowUp", metaKey: true });
+    await waitFor(() => expect(screen.getByText("2 of 3")).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "Next comment" }));
+    await waitFor(() => expect(screen.getByText("3 of 3")).toBeInTheDocument());
+    delete (Element.prototype as Partial<Element>).scrollIntoView;
   });
 
   it("deletes a comment from its card", async () => {

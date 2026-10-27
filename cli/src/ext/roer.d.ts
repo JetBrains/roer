@@ -136,6 +136,26 @@ declare module "roer" {
   export function useOpenFile(): (root: string, path: string, line?: number) => void;
   /** Brings a tab to the top: "sessions", "terminal", "changes", or an extension's `ext:<id>/<tab>`. */
   export function useActivateTab(): (tabId: string) => void;
+  /** Starts a session in `cwd` on `prompt` and puts it on the stage: with the default agent, or, with `pickAgent`
+   * or where the default cannot be handed a prompt, the one the person picks. Null where no agent can be handed a
+   * first prompt, or there is no stage to start one on. Resolves true once it starts, false when the person closed
+   * the picker instead. */
+  export function useStartSession(): StartSession | null;
+  export type StartSession = (cwd: string, prompt: string, options?: { pickAgent?: boolean }) => Promise<boolean>;
+  /** A live session with an agent running in it. */
+  export interface AgentSession {
+    pane: string;
+    /** The session's own id, which a pane id reused by a later tmux server does not share. */
+    id: string;
+    /** "claude", "codex", … */
+    agent: string;
+    cwd: string;
+  }
+  /** The live sessions an agent runs in, the stage's among them; empty where there is no session list. Send to
+   * one with `sendToSession(pane, text)`. */
+  export function useSessions(): readonly AgentSession[];
+  /** Puts the live session in `pane` on the stage; null where there is no stage to put it on. */
+  export function useShowSession(): ((pane: string) => void) | null;
 
   // ---------------------------------------------------------------- server.ts
 
@@ -269,6 +289,14 @@ declare module "roer" {
   export function isUntracked(file: FileChange): boolean;
   /** One letter for a change: M, A, D, R, ? … */
   export function statusLetter(file: FileChange): string;
+
+  /** Changed files as a folder tree, the way the diff's file list draws them: folders first, then files. */
+  export type TreeNode =
+    | { kind: "dir"; name: string; path: string; children: TreeNode[] }
+    | { kind: "file"; name: string; path: string; file: FileChange };
+  export function buildTree(files: readonly FileChange[]): TreeNode[];
+  /** The files of a tree in the order it lists them. */
+  export function fileOrder(nodes: readonly TreeNode[]): FileChange[];
 
   // ---------------------------------------------------------------- GitHub (through `gh`)
 
@@ -479,8 +507,9 @@ declare module "roer" {
     notes?: DiffNote[];
     noteActions?: readonly import("roer/ui").NoteAction[];
     onNoteAnswer?: (answer: import("roer/ui").NoteAnswer) => void;
-    /** Selects `path` at the change holding `line`, each time `seq` changes. */
-    reveal?: { path: string; line: number; side?: "old" | "new"; seq: number };
+    /** Selects `path` at the change holding `line`, each time `seq` changes; with `note`, a note's `id`, that note is
+     * scrolled to too. */
+    reveal?: { path: string; line: number; side?: "old" | "new"; seq: number; note?: string };
     /** A file whole on either side, base64 (`gitBlob`), null where it does not exist: with it a picture is shown as
      * one, and a Markdown file can be read rendered, its pictures included. */
     loadFile?: (path: string, side: "old" | "new") => Promise<string | null>;
@@ -509,6 +538,8 @@ declare module "roer" {
     previousSession(): string;
     prevCommit(): string;
     nextCommit(): string;
+    prevComment(): string;
+    nextComment(): string;
   };
 }
 
