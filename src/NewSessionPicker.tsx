@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
 
-import { canStart, type AgentList } from "./lib/agents";
+import { canStart, cliOf, type AgentList } from "./lib/agents";
 import type { Place } from "./lib/checkouts";
 import { gitBranches } from "./lib/git";
 import type { Project } from "./lib/projects";
@@ -10,7 +10,8 @@ import { matchesQuery } from "./GoToFile";
 
 /** Which question the picker opens on: where the session goes, or, with
  * that settled, what it starts. */
-export type PickerStart = { step: "where" } | { step: "with"; cwd: string };
+/** With `prompt`, the session starts on it, so only an agent that can be handed one is offered. */
+export type PickerStart = { step: "where" } | { step: "with"; cwd: string; prompt?: string };
 
 export interface NewSessionPickerProps {
   /** Every checkout to offer, the current one first. */
@@ -183,7 +184,9 @@ export function NewSessionPicker({
     return [...seen.values()];
   }, [places]);
 
-  const startable = agents?.agents.filter((agent) => canStart(agents, agent)) ?? [];
+  const onPrompt = start.step === "with" && start.prompt !== undefined;
+  const startable =
+    agents?.agents.filter((agent) => canStart(agents, agent) && (!onPrompt || cliOf(agents, agent)?.firstPrompt === true)) ?? [];
   const byDefault = [
     ...startable.filter((agent) => agent.id === agents?.default),
     ...startable.filter((agent) => agent.id !== agents?.default),
@@ -280,7 +283,9 @@ export function NewSessionPicker({
           fields: [agent.name, agent.cli, agent.id],
           pick: () => finish(agent.id),
         })),
-        { key: "agent:shell", name: "Shell", detail: "no agent", fields: ["shell terminal"], pick: () => finish(SHELL) },
+        ...(onPrompt
+          ? []
+          : [{ key: "agent:shell", name: "Shell", detail: "no agent", fields: ["shell terminal"], pick: () => finish(SHELL) }]),
       ].filter((row) => matchesQuery(row.fields, typed));
     }
     // made: start anyway first, then what went wrong, to read.

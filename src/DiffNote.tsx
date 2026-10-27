@@ -157,7 +157,12 @@ export function NoteCard({
   const classes = ["note-card", file ? "file" : "", note.tone ?? "", decided && !editing ? "settled" : ""];
 
   return (
-    <div className={classes.filter(Boolean).join(" ")} role="note" aria-label={note.author ? `Comment by ${note.author}` : "Note"}>
+    <div
+      className={classes.filter(Boolean).join(" ")}
+      role="note"
+      aria-label={note.author ? `Comment by ${note.author}` : "Note"}
+      data-note={noteKey(note)}
+    >
       {note.author || note.tag || url ? (
         <div className="note-card-head">
           {note.author ? <strong>{note.author}</strong> : null}
@@ -238,3 +243,6 @@ export function NoteCard({
     </div>
   );
 }
+
+/** A note's name in the diff, for stepping from one to the next: its id, or where it sits when it has none. */
+export const noteKey = (note: DiffNote): string => note.id ?? `${note.path}\0${note.side ?? "new"}\0${note.line ?? ""}\0${note.text}`;

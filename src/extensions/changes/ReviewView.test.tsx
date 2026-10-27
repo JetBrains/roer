@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Session } from "../api";
 import { gitBranchDiff, gitCurrentBranch } from "../../lib/git";
 import { ghPrDiff, ghPrForBranch, ghPrReview, ghStatus, type PrReview, type PrSummary } from "../../lib/github";
+import { HostProvider } from "../context";
 import { storedComments } from "./local";
 import { ReviewView } from "./ReviewView";
 import { addCommentsTool } from "./tool";
@@ -224,7 +225,7 @@ describe("ReviewView", () => {
       render(<ReviewView session={session()} active scope="local" branch="spec" />);
       expect(await screen.findByText("2 commits since origin/main")).toBeInTheDocument();
       expect(gitBranchDiff).toHaveBeenCalledWith("/repo", undefined, "spec");
-      expect(screen.queryByRole("button", { name: "Review with Claude" })).toBeNull();
+      expect(screen.queryByRole("button", { name: /^Review/ })).toBeNull();
     });
 
     it("compares the branch with its pull request's base when that is not the default", async () => {
@@ -255,7 +256,7 @@ describe("ReviewView", () => {
       expect(prompt).toMatch(/## 1\. src\/a\.ts:2\n```\nlet i = 1\n```\nStart at 0 after all\./);
       expect(prompt).toMatch(/## 2\. src\/a\.ts, removed line 2\n```\nlet i = 0\n```\nWhy was this removed\?/);
       expect(onSent).toHaveBeenCalled();
-      expect(await screen.findByText("Sent 2 comments to Claude.")).toBeInTheDocument();
+      expect(await screen.findByText("Sent 2 comments to this session, with Claude.")).toBeInTheDocument();
       expect(screen.queryByText("Start at 0 after all.")).toBeNull();
       expect(screen.getByRole("button", { name: "Send 0 to Claude" })).toBeDisabled();
     });
@@ -327,14 +328,46 @@ describe("ReviewView", () => {
       expect(screen.getByText("line 40")).toBeInTheDocument();
     });
 
+    /** Opens the Review menu and picks `item` from it. */
+    async function review(item: string) {
+      fireEvent.keyDown(screen.getByRole("button", { name: /^Review/ }), { key: "Enter" });
+      fireEvent.click(await screen.findByRole("menuitem", { name: item }));
+    }
+
     it("asks Claude for a review that comes back through the tool", async () => {
       const staged = await openLocal();
-      fireEvent.click(screen.getByRole("button", { name: "Review with Claude" }));
+      await review("In this session, with Claude");
       await waitFor(() => expect(staged.send).toHaveBeenCalledTimes(1));
       const prompt = vi.mocked(staged.send).mock.calls[0][0];
       expect(prompt).toMatch(/git diff \$\(git merge-base HEAD origin\/main\)/);
       expect(prompt).toMatch(/`changes__add_comments` tool/);
       expect(prompt).toMatch(/Don't change any code yet/);
+    });
+
+    it("starts a new session on the review, in the checkout the diff was read from", async () => {
+      const startSession = vi.fn().mockResolvedValue(true);
+      const staged = session();
+      render(
+        <HostProvider
+          value={{ extension: "changes", session: staged, scope: null, active: true, focused: true, openFile: vi.fn(), activateTab: vi.fn(), startSession }}
+        >
+          <ReviewView session={staged} active />
+        </HostProvider>,
+      );
+      await screen.findByText("Off by one.");
+      fireEvent.click(screen.getByRole("button", { name: "Local changes" }));
+      await screen.findByText("2 commits since origin/main, and what is not committed");
+      await review("In a new session");
+      expect(startSession).toHaveBeenCalledWith("/repo", expect.stringMatching(/`changes__add_comments` tool/), { pickAgent: false });
+      expect(staged.send).not.toHaveBeenCalled();
+      expect(await screen.findByText(/Started a new session on the review/)).toBeInTheDocument();
+    });
+
+    it("offers no new session where no agent can be handed a prompt", async () => {
+      await openLocal();
+      fireEvent.keyDown(screen.getByRole("button", { name: /^Review/ }), { key: "Enter" });
+      expect(await screen.findByRole("menuitem", { name: "In a new session" })).toHaveAttribute("data-disabled");
+      expect(screen.getByRole("menuitem", { name: "In a new session, with another agent…" })).toHaveAttribute("data-disabled");
     });
 
     it("points at Claude's comments from the pull request view", async () => {

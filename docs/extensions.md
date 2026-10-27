@@ -177,6 +177,9 @@ interface Session {
 }
 useOpenFile(): (path: string, line?: number) => void;
 useActivateTab(): (tabId: string) => void;
+useStartSession(): ((cwd: string, prompt: string, options?: { pickAgent?: boolean }) => Promise<boolean>) | null; // a new session on a prompt; pickAgent asks which agent; false if the picker was closed
+useSessions(): readonly { pane: string; id: string; agent: string; cwd: string }[]; // live sessions with an agent, for sendToSession
+useShowSession(): ((pane: string) => void) | null; // puts another live session on the stage
 ```
 
 The rule from `App.tsx` still holds: state from one session must never act on

@@ -129,6 +129,21 @@ describe("the new session picker", () => {
     expect(names.at(-1)).toContain("Shell");
   });
 
+  it("offers only agents that take a first prompt when it starts on one, and no shell", () => {
+    const list: AgentList = {
+      ...agents,
+      clis: [cli("claude"), { ...cli("codex"), firstPrompt: false }, cli("pi", false)],
+    };
+    const { onStart } = open({ agents: list, start: { step: "with", cwd: "/work/roer", prompt: "Review it." } });
+    const names = screen.getAllByRole("option").map((row) => row.textContent);
+    expect(names).toEqual([expect.stringContaining("Claude Code")]);
+    // Backspace has nowhere to go: the place is the prompt's.
+    press("Backspace");
+    expect(box()).toHaveAccessibleName("Start with");
+    press("Enter");
+    expect(onStart).toHaveBeenCalledWith("/work/roer", "claude");
+  });
+
   it("makes a new worktree named by what was typed, from the default branch", async () => {
     const { onStart, onCreateWorktree } = open();
     type("Add search");

@@ -25,6 +25,13 @@ interface Host {
   focused: boolean;
   openFile: (root: string, path: string, line?: number) => void;
   activateTab: (tabId: string) => void;
+  /** Starts a session in `cwd` on `prompt`, with the default agent or the one the person picks; absent where no
+   * agent can be handed one. */
+  startSession?: StartSession;
+  /** The live sessions an agent runs in, for a tab that sends to one other than the stage's. */
+  sessions?: readonly AgentSession[];
+  /** Puts another live session on the stage, by its pane. */
+  showSession?: (pane: string) => void;
 }
 
 const HostContext = createContext<Host>({
@@ -69,6 +76,34 @@ export const useOpenFile = (): Host["openFile"] => useContext(HostContext).openF
 
 /** Brings a tab to the top, by its id ("terminal", "changes", …). */
 export const useActivateTab = (): Host["activateTab"] => useContext(HostContext).activateTab;
+
+/** Starts a session in `cwd` on `prompt` and puts it on the stage: with the default agent, or, with `pickAgent` or
+ * where the default cannot be handed a prompt, the one the person picks. True once it starts; false when the person
+ * closed the picker instead. */
+export type StartSession = (cwd: string, prompt: string, options?: { pickAgent?: boolean }) => Promise<boolean>;
+
+/** A live session with an agent running in it. */
+export interface AgentSession {
+  pane: string;
+  /** The session's own id, which a pane id reused by a later tmux server does not share. */
+  id: string;
+  /** "claude", "codex", … */
+  agent: string;
+  cwd: string;
+}
+
+const NO_SESSIONS: readonly AgentSession[] = [];
+
+/** Puts the live session in `pane` on the stage; null where there is no stage to put it on. */
+export const useShowSession = (): ((pane: string) => void) | null => useContext(HostContext).showSession ?? null;
+
+/** The live sessions an agent runs in, the stage's among them; empty where there is no session list. */
+export const useSessions = (): readonly AgentSession[] => useContext(HostContext).sessions ?? NO_SESSIONS;
+
+/** Starts a session on a prompt (see `StartSession`); null where no agent can be handed a first prompt, or there
+ * is no stage to start one on. */
+export const useStartSession = (): StartSession | null =>
+  useContext(HostContext).startSession ?? null;
 
 /** The id of the extension whose tab is rendering. */
 export const useExtensionId = (): string => useContext(HostContext).extension;

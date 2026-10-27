@@ -132,6 +132,96 @@ export function storeBase(root: string, branch: string | null, base: string | un
   }
 }
 
+/** A session in a review: its pane, and its session's `@roer_id`. tmux numbers panes from `%0` again on every new
+ * server, so a pane id alone can name a later session that has nothing to do with the review; the id cannot. A
+ * reviewer named by its tool call has only the pane until the tab sees it live and adds the id. */
+export interface RoleHolder {
+  pane: string;
+  id?: string;
+}
+
+/** Who a branch's review is between: the session that asked for it, whose work it is and where the decisions go
+ * by default, and the one that wrote its comments. */
+export interface ReviewRoles {
+  asker?: RoleHolder;
+  reviewer?: RoleHolder;
+}
+
+const rolesKey = (root: string, branch: string | null) => `roer:review:roles:${root}:${branch || "(detached)"}`;
+
+const isHolder = (value: unknown): value is RoleHolder =>
+  typeof value === "object" && value !== null && typeof (value as RoleHolder).pane === "string";
+
+export function storedRoles(root: string, branch: string | null): ReviewRoles {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(rolesKey(root, branch)) ?? "{}") as Record<string, unknown> | null;
+    // Anything else, such as a bare pane id kept before ids were, names no one for sure.
+    return {
+      ...(isHolder(parsed?.asker) ? { asker: parsed.asker } : {}),
+      ...(isHolder(parsed?.reviewer) ? { reviewer: parsed.reviewer } : {}),
+    };
+  } catch {
+    return {};
+  }
+}
+
+/** Changes a branch's roles, and tells the tabs: a tool call names the reviewer while the tab is open. */
+export function updateRoles(root: string, branch: string | null, update: (current: ReviewRoles) => ReviewRoles): void {
+  try {
+    localStorage.setItem(rolesKey(root, branch), JSON.stringify(update(storedRoles(root, branch))));
+  } catch {
+    /* the stage's session gets the decisions, then */
+  }
+  for (const listener of listeners) listener();
+}
+
+/** Whether `holder` is the live session in its pane: the same session, where its id is known. */
+export const holds = (holder: RoleHolder | undefined, sessions: readonly { pane: string; id: string }[]): boolean =>
+  !!holder && sessions.some((one) => one.pane === holder.pane && (!holder.id || one.id === holder.id));
+
+/** A branch's roles, kept in step like its comments. A holder known only by its pane gets the id of the session
+ * live in it, the first time the tab sees one. */
+export function useReviewRoles(
+  root: string | null,
+  branch: string | null,
+  sessions: readonly { pane: string; id: string }[],
+): ReviewRoles {
+  const [roles, setRoles] = useState<ReviewRoles>({});
+  useEffect(() => {
+    if (!root) {
+      setRoles({});
+      return;
+    }
+    setRoles(storedRoles(root, branch));
+    return onCommentsChanged(() => setRoles(storedRoles(root, branch)));
+  }, [root, branch]);
+  // The ids the live sessions give the holders still without one, as one value, so the effect runs when they change
+  // rather than on every poll's new list.
+  const claim = (["asker", "reviewer"] as const)
+    .map((role) => {
+      const holder = roles[role];
+      return holder && !holder.id ? (sessions.find((one) => one.pane === holder.pane)?.id ?? "") : "";
+    })
+    .join("\0");
+  useEffect(() => {
+    if (!root || !claim.replace(/\0/g, "")) return;
+    const [asker, reviewer] = claim.split("\0");
+    updateRoles(root, branch, (current) => ({
+      ...current,
+      ...(current.asker && !current.asker.id && asker ? { asker: { ...current.asker, id: asker } } : {}),
+      ...(current.reviewer && !current.reviewer.id && reviewer ? { reviewer: { ...current.reviewer, id: reviewer } } : {}),
+    }));
+  }, [root, branch, claim]);
+  return roles;
+}
+
+/** The session in `pane` as a role holder, with the id of the session live there. */
+export function holderOf(pane: string | undefined, sessions: readonly { pane: string; id: string }[]): RoleHolder | undefined {
+  if (!pane) return undefined;
+  const id = sessions.find((one) => one.pane === pane)?.id;
+  return id ? { pane, id } : { pane };
+}
+
 /** The text of `line` on `side` of `path` in `patch`, or "" when it is not there. */
 export function lineText(patch: string, path: string, line: number, side: "old" | "new"): string {
   const file = splitPatch(patch).find((f) => f.path === path);
@@ -209,6 +299,14 @@ export function commentNote(comment: LocalComment, agent: string, drawn: boolean
 export const ready = (comments: readonly LocalComment[]): LocalComment[] =>
   comments.filter((comment) => !comment.author || comment.verdict);
 
+/** The agent comments still waiting on the person's decision. */
+export const undecided = (comments: readonly LocalComment[]): LocalComment[] =>
+  comments.filter((comment) => comment.author && !comment.verdict);
+
+/** Every agent comment not decided yet, accepted; the decisions already made stay as they are. */
+export const acceptRest = (comments: readonly LocalComment[]): LocalComment[] =>
+  comments.map((comment) => (comment.author && !comment.verdict ? { ...comment, verdict: { kind: "accept" } } : comment));
+
 /** A fence that the code inside it cannot close. */
 function fence(code: string): string {
   let ticks = "```";
@@ -219,13 +317,14 @@ function fence(code: string): string {
 /** A prompt for the session's agent: each comment, at its line, with the line's code to find it by. The
  * person's comments go in as instructions; an agent's go in with the person's decision on it. */
 export function localReviewPrompt(base: string, comments: readonly LocalComment[]): string {
-  const since = base ? `since it left ${base}, uncommitted work included` : "that are not committed yet";
+  // Without a base the tab cannot say how far back the comments reach, so the prompt does not guess.
+  const since = base ? ` since it left ${base}, uncommitted work included` : "";
   const own = comments.some((comment) => !comment.author);
   const theirs = comments.some((comment) => comment.author);
   const parts = [
     own
-      ? `I reviewed the changes on this branch ${since}, and left comments on lines. Address each one at its spot.`
-      : `I went through the review comments on the changes on this branch ${since} and decided on each.`,
+      ? `I reviewed the changes on this branch${since}, and left comments on lines. Address each one at its spot.`
+      : `I went through the review comments on the changes on this branch${since} and decided on each.`,
     ...(theirs
       ? [
           UNTRUSTED_DECIDED,
@@ -275,6 +374,27 @@ export function onBranch(prompt: string, branch?: string): string {
   if (!branch) return prompt;
   return [
     `This is about the branch \`${branch}\`, which is not the one checked out here. Make any change on \`${branch}\`: work in the worktree that has it checked out, or switch to it first, and leave the branch checked out here alone.`,
+    "",
+    prompt,
+  ].join("\n");
+}
+
+/**
+ * A prompt about `branch` of the repository at `root`, for an agent whose
+ * own checkout is `there`: as it is when that is the one, told the branch
+ * when the repository is the same, and told the repository too when it is
+ * not, or when where the agent is could not be read. A session other than
+ * the stage's may have moved since the comments were left.
+ */
+export function forCheckout(
+  prompt: string,
+  { root, branch }: { root: string; branch: string | null },
+  there: { root: string | null; branch: string | null },
+): string {
+  if (there.root === root) return branch && there.branch !== branch ? onBranch(prompt, branch) : prompt;
+  const what = branch ? `the branch \`${branch}\` of the repository at \`${root}\`` : `the repository at \`${root}\``;
+  return [
+    `This is about ${what}, which is not where you are now. Make any change there${branch ? `, in the worktree that has \`${branch}\` checked out` : ""}, and leave what you have checked out alone.`,
     "",
     prompt,
   ].join("\n");

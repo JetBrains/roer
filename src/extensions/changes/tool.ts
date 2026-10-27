@@ -1,6 +1,6 @@
 import { gitBranchDiff, gitCurrentBranch, gitRoot, resolveDir, splitPatch, type ToolContext, type ToolOptions } from "roer";
 
-import { diffSpots, lineText, newCommentId, spot, storedBase, updateComments, type LocalComment } from "./local";
+import { diffSpots, lineText, newCommentId, spot, storedBase, updateComments, updateRoles, type LocalComment } from "./local";
 
 const SEVERITIES = ["info", "warn", "error"] as const;
 
@@ -81,6 +81,9 @@ export function addCommentsTool(onAdded: (pending: number) => void): ToolOptions
       if (added.length === 0) {
         throw new Error(skipped.length > 0 ? `No comments added: ${skipped.join("; ")}` : "`comments` is empty");
       }
+      // The reviewer is one place the decisions can go, beside the session that asked.
+      const pane = context.pane;
+      if (pane) updateRoles(diff.root, branch, (roles) => ({ ...roles, reviewer: { pane } }));
       const all = updateComments(diff.root, branch, (current) => [...current, ...added]);
       onAdded(all.filter((c) => c.author && !c.verdict).length);
 

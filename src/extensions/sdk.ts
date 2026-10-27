@@ -8,7 +8,8 @@
  */
 export { defineExtension } from "./api";
 export type { Activate, Extension, Roer, Scope, SectionOptions, Session, TabOptions, ToolContext, ToolOptions } from "./api";
-export { useActivateTab, useActive, useOpenFile, useScope, useSession } from "./context";
+export { useActivateTab, useActive, useOpenFile, useScope, useSession, useSessions, useShowSession, useStartSession } from "./context";
+export type { AgentSession, StartSession } from "./context";
 
 // The extension's own server.ts.
 export { useCall, useRpc } from "./rpc";

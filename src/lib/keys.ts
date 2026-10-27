@@ -71,6 +71,8 @@ export type ActionId =
   | "agents"
   | "prevCommit"
   | "nextCommit"
+  | "prevComment"
+  | "nextComment"
   | "shortcuts";
 
 const chord = (code: string, mods: Partial<Omit<Chord, "code">> = {}): Chord => ({
@@ -105,6 +107,8 @@ const nav = (code: string): Chord => (isMac() ? chord(code, { meta: true }) : ch
  *   `Cmd+Shift+W`.
  * - Agents, `Cmd+,`: where every Mac app keeps its settings.
  * - Commits, `Cmd+Left` and `Right` (`Alt` off macOS): back and forward.
+ * - Comments, `Cmd+Up` and `Down` (`Alt` off macOS): the same hand, the
+ *   other axis, as the plain arrows step through changes and files.
  * - The sheet, `Cmd+/`.
  */
 const defaults = (): Record<ActionId, Chord> => ({
@@ -118,6 +122,8 @@ const defaults = (): Record<ActionId, Chord> => ({
   agents: isMac() ? chord("Comma", { meta: true }) : chord("Comma", { ctrl: true }),
   prevCommit: nav("ArrowLeft"),
   nextCommit: nav("ArrowRight"),
+  prevComment: nav("ArrowUp"),
+  nextComment: nav("ArrowDown"),
   shortcuts: app("Slash"),
 });
 
@@ -133,6 +139,8 @@ export const ACTIONS: ReadonlyArray<[ActionId, string]> = [
   ["agents", "Agents"],
   ["prevCommit", "Previous commit"],
   ["nextCommit", "Next commit"],
+  ["prevComment", "Previous comment"],
+  ["nextComment", "Next comment"],
   ["shortcuts", "Keyboard shortcuts"],
 ];
 
@@ -246,6 +254,8 @@ export const shortcutLabel = {
   previousSession: label("previousSession"),
   prevCommit: label("prevCommit"),
   nextCommit: label("nextCommit"),
+  prevComment: label("prevComment"),
+  nextComment: label("nextComment"),
 };
 
 /** Why `chord` cannot be `action`'s key, or null when it can: a key needs
@@ -282,7 +292,7 @@ export const allShortcuts = (tabs: readonly string[] = DEFAULT_TABS): Array<[str
   return [
     ...(["newSession", "pickAgent", "newWorktree", "goToFile", "nextWaiting", "previousSession"] as const).map(of),
     ...tabs.slice(0, 9).map((tab, i): [string, string] => [tab, shortcutLabel.tab(i + 1)]),
-    ...(["closeTab", "agents", "prevCommit", "nextCommit", "shortcuts"] as const).map(of),
+    ...(["closeTab", "agents", "prevCommit", "nextCommit", "prevComment", "nextComment", "shortcuts"] as const).map(of),
     ...fontSizeShortcuts(),
   ];
 };
@@ -298,6 +308,8 @@ export const isNewWorktree = (event: KeyboardEvent): boolean => matchesChord(cho
 export const isManageAgents = (event: KeyboardEvent): boolean => matchesChord(chordOf("agents"), event);
 export const isPrevCommit = (event: KeyboardEvent): boolean => matchesChord(chordOf("prevCommit"), event);
 export const isNextCommit = (event: KeyboardEvent): boolean => matchesChord(chordOf("nextCommit"), event);
+export const isPrevComment = (event: KeyboardEvent): boolean => matchesChord(chordOf("prevComment"), event);
+export const isNextComment = (event: KeyboardEvent): boolean => matchesChord(chordOf("nextComment"), event);
 export const isCloseTab = (event: KeyboardEvent): boolean => matchesChord(chordOf("closeTab"), event);
 export const isShortcuts = (event: KeyboardEvent): boolean => matchesChord(chordOf("shortcuts"), event);
 export const isNextWaiting = (event: KeyboardEvent): boolean => matchesChord(chordOf("nextWaiting"), event);

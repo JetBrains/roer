@@ -1,7 +1,7 @@
 import { Component, type ErrorInfo, type ReactNode } from "react";
 
 import type { Scope, Session } from "./api";
-import { HostProvider } from "./context";
+import { HostProvider, type AgentSession, type StartSession } from "./context";
 import { logExtension } from "./loader";
 import type { StageTabEntry } from "./registry";
 
@@ -51,15 +51,18 @@ export interface TabBodyProps {
   focused?: boolean;
   openFile: (root: string, path: string, line?: number) => void;
   activateTab: (tabId: string) => void;
+  startSession?: StartSession;
+  sessions?: readonly AgentSession[];
+  showSession?: (pane: string) => void;
 }
 
 /** An extension's tab, with the session and stage its hooks read. */
-export function TabBody({ entry, session, scope = null, active, focused = active, openFile, activateTab }: TabBodyProps) {
+export function TabBody({ entry, session, scope = null, active, focused = active, openFile, activateTab, startSession, sessions, showSession }: TabBodyProps) {
   const View = entry.component;
   // Another session is another tab, unless the tab asked to keep its state.
   const key = entry.keepAcrossSessions ? "kept" : (session?.pane ?? "none");
   return (
-    <HostProvider value={{ extension: entry.extension, session, scope, active, focused, openFile, activateTab }}>
+    <HostProvider value={{ extension: entry.extension, session, scope, active, focused, openFile, activateTab, startSession, sessions, showSession }}>
       {/* A new component (a reload) starts the boundary over, and so does another session. */}
       <Catch key={`${entry.generation}:${key}`} extension={entry.extension}>
         <View />

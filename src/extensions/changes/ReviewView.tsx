@@ -18,11 +18,15 @@ import {
   type ReviewThread,
   type Session,
   type ThreadVerdict,
+  useSessions,
+  useShowSession,
+  useStartSession,
 } from "roer";
 import { Button, DiffView, EmptyState, type NewNote, type NoteAction, type NoteAnswer } from "roer/ui";
 
 import {
   commentNote,
+  acceptRest,
   answered,
   lineText,
   localReviewPrompt,
@@ -37,9 +41,15 @@ import {
   diffSpots,
   spot,
   updateComments,
+  holderOf,
+  updateRoles,
+  useReviewRoles,
   type LocalComment,
 } from "./local";
 import { MergeBox, OpenPullRequest, Reviews, useCopilotReview } from "./PullRequest";
+import { ReviewMenu } from "./ReviewMenu";
+import { SendComments } from "./SendComments";
+import { deliver, sendTargets, targetName, type Target } from "./targets";
 
 export interface ReviewViewProps {
   session: Session | null;
@@ -294,6 +304,7 @@ export function ReviewView({ session, active, branch: other, onSent, onOpenCount
   );
 
   const agent = agentName(session);
+  const startSession = useStartSession();
   const actions = useMemo<NoteAction[]>(
     () => [
       { label: "Accept", value: "accept", primary: true, done: "Accepted" },
@@ -409,11 +420,19 @@ export function ReviewView({ session, active, branch: other, onSent, onOpenCount
 
   const answerLocal = useCallback((answer: NoteAnswer) => setKept((current) => answered(current, answer)), [setKept]);
 
+  const sessions = useSessions();
+  const showSession = useShowSession();
+  const roles = useReviewRoles(localReady?.root ?? null, localBranch, sessions);
+  const targets = sendTargets(roles, session, sessions);
+
   const askForReview = async () => {
     if (!localReady || !session) return;
     setError(null);
     try {
       await session.send(reviewRequestPrompt(localReady.base));
+      // It reviews its own work: its decisions come back to it.
+      const asker = holderOf(session.pane, sessions);
+      updateRoles(localReady.root, localBranch, () => ({ asker, reviewer: asker }));
       setSentNote(`Asked ${agent} for a review: its comments will show here.`);
       onSent?.();
     } catch (cause) {
@@ -421,16 +440,31 @@ export function ReviewView({ session, active, branch: other, onSent, onOpenCount
     }
   };
 
-  const sendLocal = async () => {
-    if (!localReady || !session || toSend.length === 0) return;
+  // Started in the checkout the diff was read from, so the new session's comments are filed under its branch. The
+  // session that asked keeps the decisions; the new one is named the reviewer once it hands its comments over.
+  const reviewInNewSession = async (pickAgent = false) => {
+    if (!localReady || !startSession) return;
+    setError(null);
+    const asker = canAsk(session) ? holderOf(session?.pane, sessions) : undefined;
+    if (!(await startSession(localReady.root, reviewRequestPrompt(localReady.base), { pickAgent }))) return;
+    updateRoles(localReady.root, localBranch, () => ({ asker }));
+    setSentNote("Started a new session on the review: its comments will show here.");
+  };
+
+  const sendLocal = async (target: Target) => {
+    const sent = toSend;
+    if (!localReady || sent.length === 0) return;
     setSending(true);
     setError(null);
     try {
-      const sent = toSend;
-      await session.send(onBranch(localReviewPrompt(localReady.base, sent), other));
+      const prompt = localReviewPrompt(localReady.base, sent);
+      const branch = other ?? localBranch;
+      await deliver(target, prompt, { session, root: localReady.root, branch });
       // Sent comments are done with: the agent is about to move the lines they sat on.
       setKept((current) => current.filter((c) => !sent.some((one) => one.id === c.id)));
-      setSentNote(`Sent ${sent.length} ${sent.length === 1 ? "comment" : "comments"} to ${agent}.`);
+      setSentNote(`Sent ${sent.length} ${sent.length === 1 ? "comment" : "comments"} to ${targetName(target, session?.pane)}.`);
+      // Where it went comes up, so the agent can be seen taking them on.
+      if (target.pane !== session?.pane) showSession?.(target.pane);
       onSent?.();
     } catch (cause) {
       setError(String(cause));
@@ -479,14 +513,25 @@ export function ReviewView({ session, active, branch: other, onSent, onOpenCount
           </Button>
           {/* The agent's comments are filed under the branch checked out where it runs, so only that one is offered. */}
           {other ? null : (
-            <Button onClick={() => void askForReview()} disabled={!localReady || !localReady.diff || !canAsk(session)}>
-              Review with {agent}
-            </Button>
+            <ReviewMenu
+              className="gen-button"
+              agent={agent}
+              onHere={canAsk(session) ? () => void askForReview() : undefined}
+              onNew={startSession ? () => void reviewInNewSession() : undefined}
+              onNewWith={startSession ? () => void reviewInNewSession(true) : undefined}
+              disabled={!localReady || !localReady.diff}
+            />
           )}
           {scope ? null : (
-            <Button variant="primary" onClick={() => void sendLocal()} disabled={sending || toSend.length === 0 || !canAsk(session)}>
-              Send {toSend.length} to {agent}
-            </Button>
+            <SendComments
+              comments={comments}
+              targets={targets}
+              stagePane={session.pane}
+              always
+              disabled={sending}
+              onSend={(target) => void sendLocal(target)}
+              onAcceptRest={() => setKept(acceptRest)}
+            />
           )}
         </header>
 

@@ -60,7 +60,7 @@ import { WorkspaceSidebar } from "./WorkspaceSidebar";
 import { claudeSetupStatus, onClaudeSetupMenu, type SetupStatus } from "./lib/claudeSetup";
 import { copyBrowserLink, onBrowserServerMenu, startBrowserServer } from "./lib/browserServer";
 import { onFilesChanged, type FilesChanged } from "./lib/files";
-import { defaultTakesPrompt, listAgents, onAgentsMenu, type AgentList } from "./lib/agents";
+import { anyTakesPrompt, defaultTakesPrompt, listAgents, onAgentsMenu, type AgentList } from "./lib/agents";
 import { checkForUpdate, onCheckUpdatesMenu, type UpdateStatus } from "./lib/updates";
 import {
   isGoToFile,
@@ -921,6 +921,7 @@ export function App() {
     useCallback(() => openNewRef.current(), []),
   );
 
+
   // Read again whenever they may have changed: on opening the picker or the
   // editor, and for a different directory, whose project has its own.
   //
@@ -954,6 +955,29 @@ export function App() {
     setAgents(null);
     void refreshAgents();
   }, [agentsCwd, refreshAgents]);
+
+  // A tab's way to a new session on a prompt, such as Changes asking for a review: with the default agent, or asked
+  // which one when the tab wants that or the default cannot be handed a prompt. Offered where some agent can. The
+  // default is `cwd`'s own, which another project's agents may set apart from the ones read for here; the picker
+  // reads that folder's itself.
+  const startSession = anyTakesPrompt(agents)
+    ? async (cwd: string, prompt: string, options?: { pickAgent?: boolean }) => {
+        if (!options?.pickAgent) {
+          const there = cwd === agentsCwd ? agents : await listAgents(cwd).catch(() => null);
+          if (defaultTakesPrompt(there)) {
+            browser.openNewAt(cwd, prompt);
+            return true;
+          }
+        }
+        void refreshAgents();
+        return browser.openPickAgentAt(cwd, prompt);
+      }
+    : undefined;
+  // The live sessions a tab can send to, such as Changes sending decisions to the session that asked for a review.
+  const agentSessions = browser.allSessions.flatMap((live) => {
+    const agent = runningAgent(live);
+    return agent ? [{ pane: live.pane, id: live.id, agent, cwd: live.cwd }] : [];
+  });
 
   const openAgentPicker = useCallback(
     (open: boolean) => {
@@ -1603,6 +1627,9 @@ export function App() {
                   active={tabs.active === "sessions"}
                   openFile={openInTab}
                   activateTab={activateTab}
+                  startSession={startSession}
+                  sessions={agentSessions}
+                  showSession={attach}
                   onAddSection={() => setShowingNewSection(true)}
                 />
               ) : null}
@@ -1624,6 +1651,9 @@ export function App() {
                     focused={tabs.active === tab.tabId && mainFocused}
                     openFile={openInTab}
                     activateTab={activateTab}
+                    startSession={startSession}
+                    sessions={agentSessions}
+                    showSession={attach}
                   />
                 </div>
               ))}
@@ -1698,6 +1728,9 @@ export function App() {
                       focused={beside.focus === "side"}
                       openFile={openInTab}
                       activateTab={activateTab}
+                      startSession={startSession}
+                      sessions={agentSessions}
+                      showSession={attach}
                     />
                   ) : sideFile ? (
                     <FileView

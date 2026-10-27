@@ -112,6 +112,10 @@ export const blankAgent = (cli: string): Agent => ({
   path: "",
 });
 
+/** Whether any agent that can start here can be handed a first prompt. */
+export const anyTakesPrompt = (list: AgentList | null): boolean =>
+  !!list?.agents.some((agent) => canStart(list, agent) && cliOf(list, agent)?.firstPrompt === true);
+
 /** Whether the agent a plain New session starts can be handed a first prompt. */
 export const defaultTakesPrompt = (list: AgentList | null): boolean => {
   const agent = list?.agents.find((one) => one.id === list.default);
