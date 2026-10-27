@@ -179,6 +179,9 @@ pub struct SessionInfo {
     pub state: String,
     /// Its words for what it is waiting for, with `waiting`.
     pub note: String,
+    /// When it began to wait, in milliseconds since the epoch; 0 while it
+    /// does not, or when the shim is too old to say.
+    pub since: u64,
     /// When the session was last opened, in seconds since the epoch; 0 when
     /// it never was, or the shim is too old to say.
     pub opened: u64,
@@ -323,6 +326,8 @@ struct JsonRow {
     #[serde(default)]
     note: String,
     #[serde(default)]
+    since: u64,
+    #[serde(default)]
     opened: u64,
     #[serde(default)]
     pid: u64,
@@ -346,6 +351,7 @@ fn parse_line(line: &str) -> Option<SessionInfo> {
             bell: row.bell,
             state: row.state,
             note: row.note,
+            since: row.since,
             opened: row.opened,
             pid: row.pid,
         };
@@ -366,6 +372,7 @@ fn parse_line(line: &str) -> Option<SessionInfo> {
         bell: false,
         state: String::new(),
         note: String::new(),
+        since: 0,
         opened: 0,
         pid: 0,
     };

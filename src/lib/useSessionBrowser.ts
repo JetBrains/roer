@@ -21,6 +21,7 @@ import {
 import { confirmAction } from "./confirm";
 import { notify } from "./notify";
 import {
+  keyedSince,
   killSession,
   listClaudeSessions,
   listPastSessions,
@@ -50,7 +51,7 @@ import {
   workspaceAssignments,
   type Workspace,
 } from "../lib/workspaces";
-import { isWorking, paneLabel, runningAgent, shorten, toldByOutput, type OpenRequest } from "../SessionBrowser";
+import { isWorking, notificationText, paneLabel, runningAgent, shorten, toldByOutput, type OpenRequest } from "../SessionBrowser";
 
 /** What a session's directory has on its branch, for its row. */
 export interface DirStats {
@@ -177,6 +178,13 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
   const workingRef = useRef(new Map<string, boolean>());
   const bellRef = useRef(new Map<string, boolean>());
   const stateRef = useRef(new Map<string, string>());
+  /** When each pane's hooks began to say it waits on the person, in ms. */
+  const blockedSinceRef = useRef(new Map<string, number>());
+  /** When the last list was taken, in ms: the earliest a wait first seen in
+   * the next one can have begun, for a roer that does not say. */
+  const listedAtRef = useRef<number | null>(null);
+  /** When this window started: keys pressed before it were never seen. */
+  const startedAtRef = useRef(Date.now());
   // Per pane, its last output and in how many lists in a row that moved on.
   const printedRef = useRef(new Map<string, { activity: number; lists: number }>());
   // The first list only says how things stand: nothing in it is news.
@@ -231,11 +239,39 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
           (session.state === "waiting" && wasState.get(session.pane) !== "waiting") ||
           (session.bell && !hadRung.get(session.pane))),
     );
+    // Held up on a question or a permission: it keeps saying so after it was
+    // looked at, until the person presses a key in it. Answering it runs a
+    // hook, cancelling it with Escape runs none, and either is a key. Counted
+    // from when the hook said so, which roer records, and not from when this
+    // list first saw it, up to a poll later: a key in between is an answer.
+    const listedAt = Date.now();
+    const blockedSince = new Map<string, number>();
+    for (const session of live) {
+      if (session.state !== "waiting") continue;
+      const since = session.since || blockedSinceRef.current.get(session.pane) || listedAtRef.current || listedAt;
+      blockedSince.set(session.pane, since);
+    }
+    blockedSinceRef.current = blockedSince;
+    listedAtRef.current = listedAt;
+    const byPane = new Map(live.map((session) => [session.pane, session]));
+    const dealtWith = (pane: string) => {
+      const since = blockedSince.get(pane);
+      if (since === undefined) return false;
+      if (keyedSince(pane, since)) return true;
+      // Waiting since before this window started, whose keys it never saw:
+      // a prompt answered or cancelled then printed after it ("User declined
+      // to answer"), where one still open has printed nothing since.
+      const activity = byPane.get(pane)?.activity ?? 0;
+      return since < startedAtRef.current && activity * 1000 > since + PRINTED_AFTER_MS;
+    };
+    const blocked = new Set(
+      [...blockedSince.keys()].filter((pane) => working.get(pane) === false && !dealtWith(pane)),
+    );
     const before = waitingRef.current;
     setWaiting(
       new Set(
-        [...before, ...turned.map((session) => session.pane)].filter(
-          (pane) => !seen(pane) && working.get(pane) === false,
+        [...before, ...turned.map((session) => session.pane), ...blocked].filter(
+          (pane) => (blocked.has(pane) || !seen(pane)) && working.get(pane) === false && !dealtWith(pane),
         ),
       ),
     );
@@ -247,9 +283,7 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
         if (before.has(session.pane)) continue;
         const who = runningAgent(session) ?? session.command;
         const name = paneLabel(session.title, session.command) || who;
-        // Claude's own words when its hooks gave them: "Claude needs your
-        // permission to use Bash" says what to do, not only where.
-        const what = session.note || `${who} is waiting for you`;
+        const what = notificationText(session, who);
         void notify(name, `${what} · ${shorten(session.cwd, homeRef.current)}`, () =>
           onOpenRef.current({
             args: ["attach", session.pane],
@@ -1188,6 +1222,10 @@ function lastProjectAmong(projects: Project[]): string | undefined {
     return undefined;
   }
 }
+
+/** How long after a prompt began its agent may still be drawing it: output
+ * past this, for a wait older than the window, is taken as its answer. */
+const PRINTED_AFTER_MS = 3000;
 
 /** How often the live list is read for agents starting and stopping. */
 const POLL_MS = 3000;

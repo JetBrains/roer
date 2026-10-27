@@ -204,6 +204,7 @@ mod tests {
             bell: false,
             state: String::new(),
             note: String::new(),
+            since: 0,
             opened: 0,
             pid: 0,
         }

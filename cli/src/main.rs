@@ -505,14 +505,14 @@ impl Roer {
         let format = format!(
             "#{{@roer_id}}\t#{{session_name}}\t{}\t#{{?session_attached,attached,detached}}\t\
              #{{pane_current_path}}\t#{{pane_current_command}}\t#{{@roer_agent_procs}}\t#{{@roer_agent}}\t\
-             #{{window_activity}}\t#{{window_bell_flag}}\t#{{@roer_state}}\t#{{@roer_note}}\t#{{session_last_attached}}\t#{{pane_pid}}\t\
+             #{{window_activity}}\t#{{window_bell_flag}}\t#{{@roer_state}}\t#{{@roer_note}}\t#{{@roer_since}}\t#{{session_last_attached}}\t#{{pane_pid}}\t\
              #{{?#{{||:#{{==:#{{pane_title}},#{{host}}}},#{{==:#{{pane_title}},#{{host_short}}}}}},,#{{pane_title}}}}",
             self.tmux.pane_format()
         );
         let rows = self.tmux.read(&["list-panes", "-a", "-F", &format]);
         for row in rows.lines().filter(|row| !row.is_empty()) {
-            let f: Vec<&str> = row.splitn(15, '\t').collect();
-            let [id, session, pane, attached, cwd, command, procs, agent, activity, bell, state, note, opened, pid, title] = f[..] else {
+            let f: Vec<&str> = row.splitn(16, '\t').collect();
+            let [id, session, pane, attached, cwd, command, procs, agent, activity, bell, state, note, since, opened, pid, title] = f[..] else {
                 println!("{row}");
                 continue;
             };
@@ -534,6 +534,9 @@ impl Roer {
                     // What the agent's own hooks last said, while it runs.
                     "state": if agent.is_empty() { "" } else { state },
                     "note": note,
+                    // When it began to wait, in milliseconds since the epoch;
+                    // 0 while it does not.
+                    "since": since.parse::<u64>().unwrap_or(0),
                     // Seconds since the epoch; 0 where it never was, or the
                     // engine does not say.
                     "opened": opened.parse::<u64>().unwrap_or(0),
@@ -574,6 +577,11 @@ impl Roer {
         // hook's output, taken only by a hook that can deliver them. A turn
         // they keep going is still at work, not done.
         let mut state = state;
+        // A question or a plan is a tool call like any other, and waits on
+        // the person without a permission asked for it.
+        if state == "working" && input.as_ref().and_then(status_hooks::asks).is_some() {
+            state = "waiting";
+        }
         if let Some(cli) = args.iter().find_map(|arg| arg.strip_prefix("--actions=")) {
             if let Some(input) = input.as_ref().filter(|input| status_hooks::delivers(cli, input)) {
                 let actions = Self::take_actions(&pane).unwrap_or_default();
@@ -586,7 +594,7 @@ impl Roer {
             }
         }
         if state == "clear" {
-            for option in ["@roer_state", "@roer_note", "@roer_tool"] {
+            for option in ["@roer_state", "@roer_note", "@roer_tool", "@roer_since"] {
                 self.set_status_option(&pane, option, None);
             }
             return Ok(());
@@ -600,6 +608,27 @@ impl Roer {
                 return Ok(());
             }
         }
+        // Claude Code's notification of a permission prompt comes seconds after
+        // the request or the question, naming only the tool: their own words,
+        // about what it is for, stay. Any other notification says something new.
+        if state == "waiting" && input.as_ref().is_some_and(status_hooks::echoes_a_prompt) {
+            let now = self.tmux.read(&["display-message", "-p", "-t", &pane, "#{@roer_state}\t#{@roer_note}"]);
+            if now.split_once('\t').is_some_and(|(was, note)| was == "waiting" && !note.trim().is_empty()) {
+                return Ok(());
+            }
+        }
+        // When it began to wait on the person, in milliseconds since the
+        // epoch: the app counts a key pressed after it as an answer, or as
+        // Escape on the prompt, which runs no hook. Kept while it waits.
+        if state == "waiting" {
+            let was = self.tmux.read(&["display-message", "-p", "-t", &pane, "#{@roer_state}"]);
+            if was.trim() != "waiting" {
+                let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
+                self.set_status_option(&pane, "@roer_since", Some(&now.as_millis().to_string()));
+            }
+        } else {
+            self.set_status_option(&pane, "@roer_since", None);
+        }
         self.set_status_option(&pane, "@roer_state", Some(state));
         // The tool call the agent is at, for a permission request to match.
         if state == "working" && !tool.is_empty() {
@@ -607,8 +636,9 @@ impl Roer {
         } else if state != "waiting" {
             self.set_status_option(&pane, "@roer_tool", None);
         }
-        // A note belongs to the moment it was said: kept only with `waiting`.
-        if state == "waiting" && !note.is_empty() {
+        // A note belongs to the moment it was said: kept with `waiting`, and
+        // with `done` for what the turn ended on, until the next one starts.
+        if (state == "waiting" || state == "done") && !note.is_empty() {
             self.set_status_option(&pane, "@roer_note", Some(&note));
         } else {
             self.set_status_option(&pane, "@roer_note", None);

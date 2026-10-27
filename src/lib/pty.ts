@@ -31,8 +31,12 @@ export interface SessionInfo {
    * started by roer reports `working`, `waiting` (for a permission or an
    * answer) and `done` (a turn ended). Empty for anything without hooks. */
   state?: "working" | "waiting" | "done" | "";
-  /** Its words for what it waits for, with `waiting`. */
+  /** Its words for what it waits for, with `waiting`, or what its turn
+   * ended on, with `done`. */
   note?: string;
+  /** When it began to wait, with `waiting`, in milliseconds since the epoch;
+   * 0 or missing otherwise, or when the shim is too old to say. */
+  since?: number;
   /** When the session was last opened, in seconds since the epoch; 0 or
    * missing when it never was or the shim cannot say. */
   opened?: number;
@@ -166,6 +170,18 @@ export const noteTyped = (pane: string, at = Date.now()): void => {
 
 /** Whether the person typed into `pane` after `time`. */
 export const typedSince = (pane: string, time: number): boolean => (typedAt.get(pane) ?? -Infinity) > time;
+
+/** When the person last pressed any key in each pane's terminal, Escape and
+ * the arrows too: how a question or a permission prompt they answered or
+ * cancelled is told, since cancelling one runs no hook of the agent's. */
+const keyedAt = new Map<string, number>();
+
+export const noteKey = (pane: string, at = Date.now()): void => {
+  keyedAt.set(pane, at);
+};
+
+/** Whether the person pressed a key in `pane` after `time`. */
+export const keyedSince = (pane: string, time: number): boolean => (keyedAt.get(pane) ?? -Infinity) > time;
 
 export const resizePty = (id: string, cols: number, rows: number): Promise<void> =>
   invoke("pty_resize", { id, cols, rows });

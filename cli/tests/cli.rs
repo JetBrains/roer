@@ -42,6 +42,17 @@ impl Env {
         // canonicalize: macOS's temp dir is behind /var -> /private/var, and
         // tmux reports pane paths resolved.
         let root = std::fs::canonicalize(&root).unwrap();
+        // Stand-ins for every agent roer starts, first on the PATH of the
+        // terminals the tests type into: a test must never start a real one,
+        // which would reach a model, or stop at its own prompts.
+        let stubs = root.join("bin");
+        std::fs::create_dir_all(&stubs).unwrap();
+        for agent in ["claude", "codex", "junie", "pi"] {
+            let stub = stubs.join(agent);
+            std::fs::write(&stub, "#!/bin/sh\nexec sleep 300\n").unwrap();
+            std::fs::set_permissions(&stub, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+        }
+        std::fs::create_dir_all(root.join("user")).unwrap();
         Env {
             socket: format!("roer-test-{name}-{}", std::process::id()),
             home: root.join("home"),
@@ -411,9 +422,43 @@ fn a_hook_says_what_the_agent_is_doing_and_list_reports_it() {
     assert_eq!(row["pane"], pane.as_str());
     assert_eq!(row["state"], "waiting", "{row}");
     assert_eq!(row["note"], "Claude needs your permission to use Bash");
+    assert!(row["since"].as_u64().unwrap_or(0) > 1_700_000_000_000, "when it began to wait, in ms: {row}");
 
     assert_eq!(code(&env.run(&["status", "sleeping"])), 2, "not a state");
     assert_eq!(code(&env.roer(&["status", "done"]).env_remove("TMUX").output().unwrap()), 0, "quiet outside");
+}
+
+/// When a pane began to wait is set once, kept while it waits, and gone once
+/// it works again: what the app counts a key pressed after as an answer from.
+#[test]
+fn a_wait_says_when_it_began_until_it_ends() {
+    let env = Env::new("since");
+    let bin = env!("CARGO_BIN_EXE_roer");
+    let script = [
+        format!("'{bin}' status waiting"),
+        "tmux set-option -p -F @first '#{@roer_since}'".to_string(),
+        "sleep 0.05".to_string(),
+        format!("'{bin}' status waiting"),
+        "tmux set-option -p -F @again '#{@roer_since}'".to_string(),
+        format!("'{bin}' status working"),
+        "tmux set-option -p -F @after '#{@roer_since}'".to_string(),
+        "tmux set-option -p @ran 1".to_string(),
+        "exec cat".to_string(),
+    ];
+    pane(&env, "since", &script.join("; "));
+    let mut seen = String::new();
+    for _ in 0..100 {
+        seen = env.tmux(&["display-message", "-p", "-t", "=since:", "#{@ran}|#{@first}|#{@again}|#{@after}"]);
+        if seen.starts_with("1|") {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let parts: Vec<&str> = seen.trim().split('|').collect();
+    assert_eq!(parts.len(), 4, "{seen}");
+    assert!(parts[1].parse::<u64>().is_ok_and(|ms| ms > 1_700_000_000_000), "set: {seen}");
+    assert_eq!(parts[2], parts[1], "kept while it waits: {seen}");
+    assert_eq!(parts[3], "", "gone once it works: {seen}");
 }
 
 #[test]
@@ -425,11 +470,17 @@ fn a_permission_request_that_comes_late_says_nothing() {
         format!(r#"{{"hook_event_name":"PermissionRequest","tool_name":"Bash","tool_input":{{"type":"TerminalAction","command":"{command}"}}}}"#)
     };
     let stop = r#"{"hook_event_name":"Stop"}"#.to_string();
+    let question = |event: &str| {
+        format!(r#"{{"hook_event_name":"{event}","tool_name":"AskUserQuestion","tool_input":{{"questions":[{{"question":"Which base?","options":[{{"label":"main"}}]}}]}}}}"#)
+    };
     // Each the hooks of one turn in the order they ran, and what is left.
     let cases = [
         ("asks", vec![("working", before("touch a")), ("waiting", asked("touch a"))], "waiting"),
         ("moved-on", vec![("working", before("touch a")), ("working", before("touch b")), ("waiting", asked("touch a"))], "working"),
         ("finished", vec![("working", before("touch a")), ("done", stop.clone()), ("waiting", asked("touch a"))], "done"),
+        // A question waits until it is answered, and the hook after it is work again.
+        ("question", vec![("working", question("PreToolUse"))], "waiting"),
+        ("answered", vec![("working", question("PreToolUse")), ("working", question("PostToolUse"))], "working"),
     ];
     for (session, hooks, _) in &cases {
         let mut script: Vec<String> =
@@ -685,10 +736,14 @@ fn in_a_terminal_with(env: &Env, bin: &Path, args: &[&str], wait_for: &str) {
     let outer = terminal_socket(env, env.terminals.get());
     let bin = bin.display();
     // env -u TMUX: the outer pane is itself inside tmux, and a client started
-    // there refuses to nest.
+    // there refuses to nest. A HOME of the test's own, so the session's login
+    // shell reads no profile that puts a real agent back before the stand-ins.
+    let root = env.home.parent().unwrap();
     let command = format!(
-        "cd '{}' && env -u TMUX ROER_SOCKET='{}' ROER_HOME='{}' '{bin}' {}",
+        "cd '{}' && env -u TMUX HOME='{}' PATH=\"{}:$PATH\" ROER_SOCKET='{}' ROER_HOME='{}' '{bin}' {}",
         env.dir.display(),
+        root.join("user").display(),
+        root.join("bin").display(),
         env.socket,
         env.home.display(),
         args.join(" ")

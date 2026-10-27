@@ -127,6 +127,27 @@ export function needsYou(session: SessionInfo): boolean {
   return session.state === "waiting";
 }
 
+/** What a session's hooks last said it is waiting on, or what its turn
+ * ended on, as a row and a notification say it; `null` when they said
+ * nothing. */
+export function rowNote(session: SessionInfo): string | null {
+  const note = session.note?.trim();
+  if (!note) return null;
+  return session.state === "done" ? `Done: ${note}` : note;
+}
+
+/** What a notification about a session says: that it needs you or
+ * finished, never in the agent's own words. A notification can be read
+ * where the terminal cannot, on a shared screen or in the system's history,
+ * and those words can hold anything the agent saw; what it waits on is
+ * under its row, in Roer. */
+export function notificationText(session: SessionInfo, who: string): string {
+  const name = who ? who[0].toUpperCase() + who.slice(1) : who;
+  if (session.state === "waiting") return `${name} needs you`;
+  if (session.state === "done") return `${name} finished`;
+  return `${name} is waiting for you`;
+}
+
 /** Where a live row goes in its group: what is held up on you, what has
  * finished and waits, what is at work, then the rest, each the most
  * recently opened first. */
@@ -468,6 +489,9 @@ export function SessionBrowser({
   // what and when more than by where.
   const entries: SessionEntry[] = visibleSessions.map((session): SessionEntry => ({ kind: "live", session }));
   const sections = sessionSections(projectsInView, worktrees, repos, roots, entries, waiting, folderInView);
+  // Under a row that waits on you, or finished while you were away: what for, without opening it.
+  const shownNote = (session: SessionInfo) =>
+    session.pane !== activePane && waiting.has(session.pane) && !isWorking(session) && rowNote(session) !== null;
   // A Project's group is always two levels, Project then checkout, as the
   // sidebar's tree is. A repository outside the Projects in view needs a
   // heading only beside others.
@@ -576,7 +600,13 @@ export function SessionBrowser({
                       <span className="workspace-row">
                         <button
                           type="button"
-                          className={entry.session.pane === activePane ? "row active" : "row"}
+                          className={[
+                            "row",
+                            entry.session.pane === activePane ? "active" : "",
+                            shownNote(entry.session) ? "noted" : "",
+                          ]
+                            .filter(Boolean)
+                            .join(" ")}
                           aria-current={entry.session.pane === activePane ? "true" : undefined}
                           title={`${entry.session.session} — ${shorten(entry.session.cwd, status?.home)}`}
                           onClick={() =>
@@ -588,6 +618,7 @@ export function SessionBrowser({
                             })
                           }
                         >
+                          <span className="row-line">
                           <LiveName session={entry.session} />
                           <RowMeta
                             session={entry.session}
@@ -622,6 +653,12 @@ export function SessionBrowser({
                                 ? "attached"
                                 : "detached"}
                           </span>
+                          </span>
+                          {shownNote(entry.session) ? (
+                            <span className="row-note" title={rowNote(entry.session) ?? undefined}>
+                              {rowNote(entry.session)}
+                            </span>
+                          ) : null}
                         </button>
                       </span>
                     </AssignMenu>
