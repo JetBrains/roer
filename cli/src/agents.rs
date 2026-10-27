@@ -1316,14 +1316,20 @@ fn stdin_json() -> Result<Value, Fail> {
 mod tests {
     use super::*;
 
-    /// How every Codex line starts: with `--no-daemon` where that `codex` knows it.
-    const CODEX: &str = "codex $(codex --help 2>/dev/null | grep -q -e --no-daemon && echo --no-daemon)";
+    /// How every Codex line starts: with `--no-daemon` where that `codex` knows it. Not on Windows, where
+    /// psmux's panes cannot be found by process, so its servers being its own would gain nothing.
+    const CODEX: &str = if cfg!(windows) {
+        "codex"
+    } else {
+        "codex $(codex --help 2>/dev/null | grep -q -e --no-daemon && echo --no-daemon)"
+    };
 
     #[test]
     fn keeps_codex_servers_its_own_where_codex_knows_how() {
         // The shell asks the codex it is about to run, so an older one, which refuses the flag, starts without it.
         let line = agent("codex").command_line(None, false).unwrap();
         assert_eq!(line, CODEX);
+        assert_eq!(line.contains("--no-daemon"), !cfg!(windows));
         // Ahead of the subcommand, which is where codex takes it.
         assert!(agent("codex").command_line(Some("abc"), false).unwrap().starts_with(&format!("{CODEX} resume abc")));
         assert!(!agent("claude").command_line(None, false).unwrap().contains("--help"));
