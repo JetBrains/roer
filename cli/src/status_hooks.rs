@@ -169,7 +169,8 @@ const ROER = __ROER__;
 // `working` could land after the `done` that followed it, and stay.
 let queue: Promise<void> = Promise.resolve();
 
-function status(state: string, input: Record<string, unknown>): void {
+// The call, once it has run: what Pi waits on at shutdown, where it may exit right after.
+function status(state: string, input: Record<string, unknown>): Promise<void> {
   queue = queue.then(
     () =>
       new Promise<void>((done) => {
@@ -182,14 +183,16 @@ function status(state: string, input: Record<string, unknown>): void {
         }
       }),
   );
+  return queue;
 }
 
-/** The text of the run's last reply. */
+/** The text of the run's last reply; none for one stopped by the person or by an error, which sums nothing up. */
 function lastReply(messages: unknown): string {
   if (!Array.isArray(messages)) return "";
   for (let i = messages.length - 1; i >= 0; i--) {
-    const message = messages[i] as { role?: string; content?: unknown };
+    const message = messages[i] as { role?: string; content?: unknown; stopReason?: unknown };
     if (message?.role !== "assistant") continue;
+    if (message.stopReason === "aborted" || message.stopReason === "error") return "";
     const content = Array.isArray(message.content) ? message.content : [];
     return content
       .filter((part: { type?: string; text?: unknown }) => part?.type === "text" && typeof part.text === "string")
@@ -199,7 +202,7 @@ function lastReply(messages: unknown): string {
   return "";
 }
 
-export default function (pi: { on: (event: string, handler: (event: any) => void) => void }): void {
+export default function (pi: { on: (event: string, handler: (event: any) => unknown) => void }): void {
   let running = false;
   let reply = "";
   pi.on("agent_start", () => {
@@ -215,12 +218,13 @@ export default function (pi: { on: (event: string, handler: (event: any) => void
   pi.on("agent_end", (event) => {
     reply = lastReply(event?.messages);
   });
-  pi.on("agent_settled", (event) => {
+  // `agent_settled` carries nothing; a run the person stopped is told by its last reply, in `agent_end`.
+  pi.on("agent_settled", () => {
     running = false;
-    // Stopped by the person: what it said so far is no summary of anything.
-    status("done", { hook_event_name: "Stop", last_assistant_message: event?.aborted ? "" : reply });
+    status("done", { hook_event_name: "Stop", last_assistant_message: reply });
     reply = "";
   });
+  // Returned, so Pi waits for it before it exits: the pane would keep the run's state otherwise.
   pi.on("session_shutdown", () => status("clear", { hook_event_name: "SessionEnd" }));
 }
 "#;
@@ -502,6 +506,16 @@ mod tests {
         for event in ["agent_start", "ui_prompt_start", "ui_prompt_end", "agent_end", "agent_settled", "session_shutdown"] {
             assert!(text.contains(&format!("pi.on(\"{event}\"")), "{event}");
         }
+        // One `roer status` at a time, in the order the events came: side by side, a `working` could land after
+        // the `done` that followed it.
+        assert!(text.contains("queue = queue.then("), "{text}");
+        // A stopped run's half a reply is no "Done:" note: told by the reply itself, since `agent_settled`
+        // carries nothing to say so.
+        assert!(text.contains(r#"message.stopReason === "aborted""#), "{text}");
+        assert!(!text.contains("event?.aborted"), "{text}");
+        // Shutdown waits for the clear, whose call it is handed.
+        assert!(text.contains(r#"pi.on("session_shutdown", () => status("clear""#), "{text}");
+        assert!(text.contains("return queue;"), "{text}");
         // Not the words Claude Code's idle reminder uses, which say nothing is asked.
         assert!(!text.contains("waiting for your input"));
         // Every string literal on one line: a line break in one is a syntax error, and Pi loads nothing.
