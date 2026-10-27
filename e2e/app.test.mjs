@@ -190,8 +190,11 @@ function conversation(cwd, { prompt, reply = "Done.", title, entrypoint = "cli",
 test("past conversations are all listed by name, and found by what was said", async () => {
   const id = (n) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
   // A minute apart, the first the oldest, so which ten come first never
-  // rests on a tie: 36 down to 27, the SDK run, newest, left out.
-  const at = (n) => new Date(Date.now() - (40 - n) * 60_000);
+  // rests on a tie: 36 down to 27, the SDK run, newest, left out. All today
+  // by the local calendar, even in a run just after midnight, when the
+  // older ones would otherwise be put under Yesterday.
+  const latest = Math.max(Date.now(), new Date().setHours(0, 41, 0, 0));
+  const at = (n) => new Date(latest - (40 - n) * 60_000);
   for (let n = 1; n <= 34; n += 1) {
     app.transcript(app.project, id(n), conversation(app.project, { prompt: `Task number ${n}`, title: `Seeded conversation ${n}` }), at(n));
   }
