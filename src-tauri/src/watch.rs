@@ -66,6 +66,8 @@ pub struct Changed {
     pub paths: Vec<String>,
     /// More changed than `paths` names: take it as everything.
     pub broad: bool,
+    /// `HEAD` moved: a checkout, which may have changed no file at all.
+    pub head: bool,
 }
 
 /// What one batch came to, once git has been asked which of it matters.
@@ -82,10 +84,17 @@ struct Settled {
 /// is how the thread is told to end.
 pub(crate) struct Watch {
     _watcher: RecommendedWatcher,
+    /// On a linked worktree's git directory, which holds its `HEAD` and is
+    /// not under the worktree at all.
+    _head: Option<RecommendedWatcher>,
 }
 
 /// Start watching `root`, reporting to `app` and marking `repos` stale.
-pub(crate) fn arm<S: Sink>(app: S, repos: Arc<Mutex<Repos>>, root: String) -> Result<Watch, String> {
+pub(crate) fn arm<S: Sink>(
+    app: S,
+    repos: Arc<Mutex<Repos>>,
+    root: String,
+) -> Result<Watch, String> {
     // FSEvents reports canonical paths, and a worktree under `/var` or a
     // symlinked home is reached by a name that is not the one it reports —
     // so the prefix events are stripped of has to be the canonical one, and
@@ -94,21 +103,58 @@ pub(crate) fn arm<S: Sink>(app: S, repos: Arc<Mutex<Repos>>, root: String) -> Re
         .canonicalize()
         .map_err(|e| format!("could not resolve {root}: {e}"))?;
 
+    // A checkout writes `HEAD` and maybe nothing else: switching to a branch
+    // on the same commit, or making one. It is in `.git` for the main
+    // worktree, and so under the watch already; a linked worktree's is in
+    // the main one's `.git/worktrees/<name>`, which needs a watch of its own.
+    // Of the directory, not the file: git writes `HEAD.lock` and renames it
+    // over `HEAD`, which a watch on the old file would never see.
+    let git_dir = git::git(&root, &["rev-parse", "--absolute-git-dir"])
+        .ok()
+        .and_then(|dir| Path::new(dir.trim()).canonicalize().ok());
+    let head = git_dir.as_ref().map(|dir| dir.join("HEAD"));
+
     let (tx, rx) = std::sync::mpsc::channel();
-    let mut watcher =
-        notify::recommended_watcher(tx).map_err(|e| format!("could not start a watch: {e}"))?;
+    let mut watcher = notify::recommended_watcher(tx.clone())
+        .map_err(|e| format!("could not start a watch: {e}"))?;
     watcher
         .watch(&full, RecursiveMode::Recursive)
         .map_err(|e| format!("could not watch {root}: {e}"))?;
+    let head_watcher = match &git_dir {
+        Some(dir) if !dir.starts_with(&full) => watch_head(tx, dir)
+            .map_err(|e| eprintln!("roer: could not watch {}: {e}", dir.display()))
+            .ok(),
+        _ => None,
+    };
 
-    std::thread::spawn(move || run(&app, &repos, &root, &full, &rx));
-    Ok(Watch { _watcher: watcher })
+    std::thread::spawn(move || run(&app, &repos, &root, &full, head.as_deref(), &rx));
+    Ok(Watch {
+        _watcher: watcher,
+        _head: head_watcher,
+    })
+}
+
+/// The git directory itself, not what is under it: `HEAD` is at its top.
+fn watch_head(
+    tx: std::sync::mpsc::Sender<notify::Result<notify::Event>>,
+    dir: &Path,
+) -> notify::Result<RecommendedWatcher> {
+    let mut watcher = notify::recommended_watcher(tx)?;
+    watcher.watch(dir, RecursiveMode::NonRecursive)?;
+    Ok(watcher)
 }
 
 type Events = Receiver<notify::Result<notify::Event>>;
 
 /// One thread per watched root: batch, ask git what matters, tell everyone.
-fn run<S: Sink>(app: &S, repos: &Arc<Mutex<Repos>>, root: &str, full: &Path, rx: &Events) {
+fn run<S: Sink>(
+    app: &S,
+    repos: &Arc<Mutex<Repos>>,
+    root: &str,
+    full: &Path,
+    head: Option<&Path>,
+    rx: &Events,
+) {
     // Kept across batches, because the answer only changes when a
     // `.gitignore` does — and then the whole cache is dropped.
     let mut ignored: HashMap<String, bool> = HashMap::new();
@@ -116,7 +162,7 @@ fn run<S: Sink>(app: &S, repos: &Arc<Mutex<Repos>>, root: &str, full: &Path, rx:
     // The blocking wait for the first event of a batch is also what ends the
     // thread: the channel closes when the watch handle is dropped.
     while let Ok(first) = rx.recv() {
-        let Some(settled) = settle(root, collect(rx, first, root, full), &mut ignored) else {
+        let Some(settled) = settle(root, collect(rx, first, root, full, head), &mut ignored) else {
             continue;
         };
         // A patch is what keeps the index current, and a listing scoped to
@@ -134,9 +180,15 @@ fn run<S: Sink>(app: &S, repos: &Arc<Mutex<Repos>>, root: &str, full: &Path, rx:
 
 /// Everything else the watch has to say after `first`, up to the first quiet
 /// or [`MAX_WAIT`].
-fn collect(rx: &Events, first: notify::Result<notify::Event>, root: &str, full: &Path) -> Batch {
+fn collect(
+    rx: &Events,
+    first: notify::Result<notify::Event>,
+    root: &str,
+    full: &Path,
+    head: Option<&Path>,
+) -> Batch {
     let mut batch = Batch::default();
-    batch.take(first, root, full);
+    batch.take(first, root, full, head);
 
     let opened = Instant::now();
     loop {
@@ -149,7 +201,7 @@ fn collect(rx: &Events, first: notify::Result<notify::Event>, root: &str, full: 
         let Ok(event) = rx.recv_timeout(if QUIET < left { QUIET } else { left }) else {
             break;
         };
-        batch.take(event, root, full);
+        batch.take(event, root, full, head);
     }
     batch
 }
@@ -170,10 +222,18 @@ struct Batch {
     /// A `.gitignore` moved, so every cached answer was given under the old
     /// one — and so was the listing.
     ignores: bool,
+    /// `HEAD` was written: the branch on screen may be another one now.
+    head: bool,
 }
 
 impl Batch {
-    fn take(&mut self, event: notify::Result<notify::Event>, root: &str, base: &Path) {
+    fn take(
+        &mut self,
+        event: notify::Result<notify::Event>,
+        root: &str,
+        base: &Path,
+        head: Option<&Path>,
+    ) {
         let event = match event {
             Ok(event) => event,
             // The one failure that has to be loud: the snapshot is now wrong
@@ -189,6 +249,12 @@ impl Batch {
         }
 
         for path in &event.paths {
+            // Before `.git` is dropped below, which is where the main
+            // worktree's `HEAD` is.
+            if head == Some(path.as_path()) {
+                self.head = true;
+                continue;
+            }
             let Some(rel) = relative(base, path) else {
                 continue;
             };
@@ -256,7 +322,7 @@ fn settle(root: &str, batch: Batch, ignored: &mut HashMap<String, bool>) -> Opti
     let whole = batch.full || batch.ignores;
 
     let live = keep(root, &batch.dirs, ignored);
-    if live.is_empty() && !whole {
+    if live.is_empty() && !whole && !batch.head {
         return None;
     }
 
@@ -271,6 +337,7 @@ fn settle(root: &str, batch: Batch, ignored: &mut HashMap<String, bool>) -> Opti
             root: root.to_string(),
             paths,
             broad: batch.broad || whole,
+            head: batch.head,
         },
         relist,
     })
@@ -328,6 +395,11 @@ fn parent(dir: &str) -> String {
 /// is no better off for it and the snapshot should be retired instead.
 fn patched(repos: &Arc<Mutex<Repos>>, root: &str, dirs: Option<&[String]>) -> bool {
     let Some(dirs) = dirs else { return false };
+    // Only `HEAD` moved: no file did, and no pathspec would list the whole
+    // repository.
+    if dirs.is_empty() {
+        return true;
+    }
     let listing = match relist(root, dirs) {
         Ok(listing) => listing,
         Err(e) => {
@@ -493,8 +565,11 @@ mod tests {
     use notify::event::{CreateKind, EventKind};
     use notify::{Event, Watcher};
 
-    use super::{collect, fit, known, relative, settle, unit, Batch, MAX_EVENT_PATHS, MAX_SPECS};
-    use crate::testing::{init, must, scratch, write};
+    use super::{
+        arm, collect, fit, known, relative, settle, unit, Batch, MAX_EVENT_PATHS, MAX_SPECS,
+    };
+    use crate::events::{Bus, ServerMsg};
+    use crate::testing::{commit, init, must, scratch, write};
 
     /// A create event naming every one of `paths`, as the watcher sees them:
     /// absolute, under the worktree.
@@ -508,7 +583,12 @@ mod tests {
 
     fn batch(base: &Path, paths: &[&str]) -> Batch {
         let mut batch = Batch::default();
-        batch.take(event(base, paths), "/repo", base);
+        batch.take(
+            event(base, paths),
+            "/repo",
+            base,
+            Some(&base.join(".git/HEAD")),
+        );
         batch
     }
 
@@ -542,6 +622,50 @@ mod tests {
         // Only the `.gitignore`, which is not inside `.git` at all.
         assert_eq!(batch.dirs, HashSet::from([".gitignore".to_string()]));
         assert!(batch.ignores);
+    }
+
+    #[test]
+    fn notices_head_move_though_it_is_inside_dot_git() {
+        let base = PathBuf::from("/repo");
+        let batch = batch(&base, &[".git/HEAD.lock", ".git/HEAD", ".git/logs/HEAD"]);
+        assert!(batch.head);
+        assert!(batch.dirs.is_empty() && batch.paths.is_empty());
+    }
+
+    #[test]
+    fn notices_a_linked_worktrees_head_outside_it() {
+        let base = PathBuf::from("/repo-feature");
+        let head = PathBuf::from("/repo/.git/worktrees/repo-feature/HEAD");
+        let mut batch = Batch::default();
+        batch.take(
+            Ok(Event {
+                kind: EventKind::Create(CreateKind::Any),
+                paths: vec![
+                    head.clone(),
+                    PathBuf::from("/repo/.git/worktrees/repo-feature/index"),
+                ],
+                attrs: Default::default(),
+            }),
+            "/repo-feature",
+            &base,
+            Some(&head),
+        );
+        assert!(batch.head);
+        assert!(batch.dirs.is_empty());
+    }
+
+    #[test]
+    fn reports_a_checkout_that_changed_no_file() {
+        let batch = Batch {
+            head: true,
+            ..Default::default()
+        };
+        let settled =
+            settle("/repo", batch, &mut HashMap::new()).expect("a checkout worth reporting");
+        assert!(settled.changed.head);
+        assert!(!settled.changed.broad);
+        // Nothing to list again, rather than the whole repository.
+        assert_eq!(settled.relist.as_deref(), Some(&[][..]));
     }
 
     #[test]
@@ -744,7 +868,7 @@ mod tests {
         let first = rx
             .recv_timeout(std::time::Duration::from_secs(10))
             .expect("an event");
-        let batch = collect(&rx, first, root, &base);
+        let batch = collect(&rx, first, root, &base, None);
         let settled = settle(root, batch, &mut HashMap::new()).expect("a change worth reporting");
 
         assert!(
@@ -760,6 +884,65 @@ mod tests {
         );
 
         drop(watcher);
+        std::fs::remove_dir_all(&dir).expect("cleaned up");
+    }
+
+    /// Waits for a reported change under `root` that says `HEAD` moved.
+    fn hears_head(bus: &Bus, root: &str, switch: impl FnOnce()) {
+        let mut rx = bus.0.subscribe();
+        switch();
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while std::time::Instant::now() < until {
+            match rx.try_recv() {
+                Ok(ServerMsg::Event { payload, .. }) => {
+                    if payload["root"] == root && payload["head"] == true {
+                        return;
+                    }
+                }
+                Ok(_) => {}
+                Err(_) => std::thread::sleep(std::time::Duration::from_millis(50)),
+            }
+        }
+        panic!("no change with head reported under {root}");
+    }
+
+    fn repo(name: &str) -> (PathBuf, String) {
+        let dir = scratch(name);
+        let root = dir.to_str().expect("a utf-8 path").to_string();
+        init(&root);
+        write(&dir, "a.txt", "one\n");
+        must(&root, &["add", "a.txt"]);
+        commit(&root, "first");
+        (dir, root)
+    }
+
+    #[test]
+    fn hears_a_new_branch_switched_to_in_the_worktree() {
+        let (dir, root) = repo("watch-head");
+        let bus = Bus::new();
+        let watch = arm(bus.clone(), Default::default(), root.clone()).expect("a watch");
+        // Same commit, so no file in the worktree moves: only `HEAD` does.
+        hears_head(&bus, &root, || must(&root, &["switch", "-qc", "feature"]));
+        drop(watch);
+        std::fs::remove_dir_all(&dir).expect("cleaned up");
+    }
+
+    #[test]
+    fn hears_a_branch_switched_to_in_a_linked_worktree() {
+        let (dir, root) = repo("watch-head-linked");
+        let linked = dir.with_file_name(format!(
+            "{}-linked",
+            dir.file_name().unwrap().to_str().unwrap()
+        ));
+        let _ = std::fs::remove_dir_all(&linked);
+        let other = linked.to_str().expect("a utf-8 path").to_string();
+        must(&root, &["worktree", "add", "-q", "-b", "side", &other]);
+        let bus = Bus::new();
+        let watch = arm(bus.clone(), Default::default(), other.clone()).expect("a watch");
+        // Its `HEAD` is in the main worktree's `.git/worktrees`, not under it.
+        hears_head(&bus, &other, || must(&other, &["switch", "-qc", "side-2"]));
+        drop(watch);
+        std::fs::remove_dir_all(&linked).expect("cleaned up");
         std::fs::remove_dir_all(&dir).expect("cleaned up");
     }
 }

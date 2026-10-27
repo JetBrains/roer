@@ -75,20 +75,22 @@ export const useExtensionId = (): string => useContext(HostContext).extension;
 
 /**
  * The stage's session as tabs see it, with its repository and branch looked
- * up. Looked up again when the session moves and on every batch its watch
- * reports, so a `git checkout` or a `cd` in the terminal shows on the next
- * change. What was found is kept with the session it was found for, so a
+ * up. Looked up again when the session moves, when the live list says its
+ * pane is in another directory (a `cd`), and on every batch its watch reports
+ * (a `git checkout`, which the watch hears even when no file moves). What was found is kept with the session it was found for, so a
  * tab never sees one session's pane with another's repository.
  */
 export function useStageSession(
   staged: { cwd?: string; pane?: string } | null,
-  info: { agent?: string | null; busy: boolean; changed: FilesChanged | null },
+  info: { agent?: string | null; busy: boolean; changed: FilesChanged | null; liveCwd?: string },
 ): Session | null {
   const cwd = staged?.cwd;
   const pane = staged?.pane;
   const key = `${cwd ?? ""}\0${pane ?? ""}`;
   const [found, setFound] = useState<{ key: string; root: string | null; branch: string | null } | null>(null);
   const changed = info.changed;
+  // Only a trigger: `resolveDir` asks the pane where it is itself.
+  const liveCwd = info.liveCwd;
   const has = staged !== null;
 
   useEffect(() => {
@@ -105,7 +107,7 @@ export function useStageSession(
     return () => {
       cancelled = true;
     };
-  }, [has, cwd, pane, key, changed]);
+  }, [has, cwd, pane, key, changed, liveCwd]);
 
   const where = found?.key === key ? found : null;
   const root = where?.root ?? null;

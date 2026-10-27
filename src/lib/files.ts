@@ -45,6 +45,8 @@ export interface FilesChanged {
   paths: string[];
   /** More changed than `paths` names: treat everything on screen as suspect. */
   broad: boolean;
+  /** `HEAD` moved: a checkout, which may have changed no file at all. */
+  head?: boolean;
 }
 
 export interface FileText {
