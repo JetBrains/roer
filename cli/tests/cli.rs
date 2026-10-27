@@ -481,6 +481,8 @@ fn a_permission_request_that_comes_late_says_nothing() {
         // A question waits until it is answered, and the hook after it is work again.
         ("question", vec![("working", question("PreToolUse"))], "waiting"),
         ("answered", vec![("working", question("PreToolUse")), ("working", question("PostToolUse"))], "working"),
+        // A note ending in `;`, which tmux would take for the end of a command.
+        ("semicolon", vec![("working", before("cd a;")), ("waiting", asked("cd a;"))], "waiting"),
     ];
     for (session, hooks, _) in &cases {
         let mut script: Vec<String> =
@@ -502,6 +504,8 @@ fn a_permission_request_that_comes_late_says_nothing() {
         }
         assert_eq!(state, *left, "{session}");
     }
+    let note = env.tmux(&["display-message", "-p", "-t", "=semicolon:", "#{@roer_note}"]);
+    assert_eq!(note.trim(), "Wants to run cd a;");
 }
 
 #[test]

@@ -594,78 +594,113 @@ impl Roer {
             }
         }
         if state == "clear" {
-            for option in ["@roer_state", "@roer_note", "@roer_tool", "@roer_since"] {
-                self.set_status_option(&pane, option, None);
-            }
+            let unset = ["@roer_state", "@roer_note", "@roer_tool", "@roer_since"].map(|option| (option, None));
+            self.set_status_options(&pane, &unset);
             return Ok(());
         }
+        // What the pane says now, read once for every check below and only
+        // while it waits: a tool call, which runs before every tool, reads
+        // nothing.
+        let (was, was_note, was_tool) = if state == "waiting" {
+            let now = self.tmux.read(&["display-message", "-p", "-t", &pane, "#{@roer_state}\t#{@roer_note}\t#{@roer_tool}"]);
+            let mut parts = now.splitn(3, '\t').map(str::to_string);
+            (parts.next().unwrap_or_default(), parts.next().unwrap_or_default(), parts.next().unwrap_or_default())
+        } else {
+            Default::default()
+        };
         // A permission request run in the background can come after its
         // prompt was answered and later hooks have said more: it counts only
         // while the agent is still at the tool call it asked about.
-        if state == "waiting" && input.as_ref().is_some_and(status_hooks::is_permission_request) {
-            let now = self.tmux.read(&["display-message", "-p", "-t", &pane, "#{@roer_state} #{@roer_tool}"]);
-            if now != format!("working {tool}") {
-                return Ok(());
-            }
+        if state == "waiting" && input.as_ref().is_some_and(status_hooks::is_permission_request) && (was != "working" || was_tool != tool)
+        {
+            return Ok(());
         }
         // Claude Code's notification of a permission prompt comes seconds after
         // the request or the question, naming only the tool: their own words,
         // about what it is for, stay. Any other notification says something new.
-        if state == "waiting" && input.as_ref().is_some_and(status_hooks::echoes_a_prompt) {
-            let now = self.tmux.read(&["display-message", "-p", "-t", &pane, "#{@roer_state}\t#{@roer_note}"]);
-            if now.split_once('\t').is_some_and(|(was, note)| was == "waiting" && !note.trim().is_empty()) {
-                return Ok(());
-            }
+        if state == "waiting"
+            && input.as_ref().is_some_and(status_hooks::echoes_a_prompt)
+            && was == "waiting"
+            && !was_note.trim().is_empty()
+        {
+            return Ok(());
         }
+        // Everything set in one call to tmux: a hook runs before every tool
+        // call, and each call is a process of its own.
+        let since;
+        let mut set: Vec<(&str, Option<&str>)> = Vec::new();
         // When it began to wait on the person, in milliseconds since the
         // epoch: the app counts a key pressed after it as an answer, or as
         // Escape on the prompt, which runs no hook. Kept while it waits.
         if state == "waiting" {
-            let was = self.tmux.read(&["display-message", "-p", "-t", &pane, "#{@roer_state}"]);
-            if was.trim() != "waiting" {
+            if was != "waiting" {
                 let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
-                self.set_status_option(&pane, "@roer_since", Some(&now.as_millis().to_string()));
+                since = now.as_millis().to_string();
+                set.push(("@roer_since", Some(&since)));
             }
         } else {
-            self.set_status_option(&pane, "@roer_since", None);
+            set.push(("@roer_since", None));
         }
-        self.set_status_option(&pane, "@roer_state", Some(state));
+        set.push(("@roer_state", Some(state)));
         // The tool call the agent is at, for a permission request to match.
         if state == "working" && !tool.is_empty() {
-            self.set_status_option(&pane, "@roer_tool", Some(&tool));
+            set.push(("@roer_tool", Some(&tool)));
         } else if state != "waiting" {
-            self.set_status_option(&pane, "@roer_tool", None);
+            set.push(("@roer_tool", None));
         }
         // A note belongs to the moment it was said: kept with `waiting`, and
         // with `done` for what the turn ended on, until the next one starts.
         if (state == "waiting" || state == "done") && !note.is_empty() {
-            self.set_status_option(&pane, "@roer_note", Some(&note));
+            set.push(("@roer_note", Some(&note)));
         } else {
-            self.set_status_option(&pane, "@roer_note", None);
+            set.push(("@roer_note", None));
         }
+        self.set_status_options(&pane, &set);
         Ok(())
     }
 
-    /// Sets one of what `status` keeps about a pane, or with `None` unsets
-    /// it. tmux keeps it on the pane. psmux refuses any user option on a pane
-    /// (it takes `remain-on-exit` alone), so there it goes on the session,
-    /// whose one pane a roer session's agent has to itself, as `@roer_agent`
-    /// does; formats read it there just the same.
-    fn set_status_option(&self, pane: &str, option: &str, value: Option<&str>) {
-        let session;
-        let mut args = vec!["set-option"];
-        if value.is_none() {
-            args.push("-u");
-        }
+    /// Sets what `status` keeps about a pane, or with `None` unsets it, in
+    /// one call to tmux: its commands chained with `;`. tmux keeps them on
+    /// the pane. psmux refuses any user option on a pane (it takes
+    /// `remain-on-exit` alone), so there they go on the session, whose one
+    /// pane a roer session's agent has to itself, as `@roer_agent` does;
+    /// formats read them there just the same. psmux drops chained commands,
+    /// so there it is a call each.
+    fn set_status_options(&self, pane: &str, options: &[(&str, Option<&str>)]) {
+        let session = if self.tmux.is_psmux() { format!("={}:", self.tmux.session_of(pane)) } else { String::new() };
+        let one = |option: &str, value: Option<&str>| -> Vec<String> {
+            let mut args = vec!["set-option".to_string()];
+            if value.is_none() {
+                args.push("-u".into());
+            }
+            if self.tmux.is_psmux() {
+                args.extend(["-t".into(), session.clone()]);
+            } else {
+                args.extend(["-p".into(), "-t".into(), pane.to_string()]);
+            }
+            args.push(option.to_string());
+            args.extend(value.map(tmux_value));
+            args
+        };
         if self.tmux.is_psmux() {
-            session = format!("={}:", self.tmux.session_of(pane));
-            args.extend(["-t", &session]);
-        } else {
-            args.extend(["-p", "-t", pane]);
+            for (option, value) in options {
+                let args = one(option, *value);
+                self.tmux.ok(&args.iter().map(String::as_str).collect::<Vec<_>>());
+            }
+            return;
         }
-        args.push(option);
-        args.extend(value);
-        self.tmux.ok(&args);
+        let chained: Vec<String> = options
+            .iter()
+            .enumerate()
+            .flat_map(|(i, (option, value))| {
+                let mut args = if i == 0 { Vec::new() } else { vec![";".to_string()] };
+                args.extend(one(option, *value));
+                args
+            })
+            .collect();
+        if !chained.is_empty() {
+            self.tmux.ok(&chained.iter().map(String::as_str).collect::<Vec<_>>());
+        }
     }
 
     /// Ends the session a pane is in, with everything running in it.
@@ -1104,6 +1139,17 @@ impl Roer {
     }
 }
 
+/// A value as one tmux argument that is only a value: tmux takes an argument
+/// ending in `;` for the end of a command, the `;` cut off, and keeps `\;`
+/// as a `;` of the value's own. A note such as "Wants to run cd a;" keeps
+/// its `;`.
+fn tmux_value(value: &str) -> String {
+    match value.strip_suffix(';') {
+        Some(rest) => format!("{rest}\\;"),
+        None => value.to_string(),
+    }
+}
+
 /// The pane a `--pane <id>` names or, without one, the pane this shell is in
 /// on Roer's server — the same rule `roer handoff` uses.
 fn resolve_pane(tmux: &Tmux, args: &[&str]) -> Result<String, Fail> {
@@ -1264,7 +1310,15 @@ fn without_long_prefix(path: &str) -> String {
 mod tests {
     use std::path::{Path, PathBuf};
 
-    use super::without_long_prefix;
+    use super::{tmux_value, without_long_prefix};
+
+    #[test]
+    fn keeps_a_value_s_last_semicolon_from_tmux() {
+        assert_eq!(tmux_value("Wants to run cd a;"), "Wants to run cd a\\;");
+        assert_eq!(tmux_value("x; y"), "x; y");
+        // Already escaped: one more, so tmux takes off only the one it adds.
+        assert_eq!(tmux_value("a\\;"), "a\\\\;");
+    }
 
     #[test]
     fn finds_the_config_in_the_app_bundle_only_from_inside_one() {
