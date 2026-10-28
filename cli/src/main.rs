@@ -65,8 +65,9 @@ usage:
   roer new [--agent <id>] --prompt <text> [name]
                         same, with the agent starting on <text> as its
                         first prompt; an error for an agent that takes none
-  roer new --shell [name]
-                        same, with just the shell
+  roer new --shell [--command <text>] [name]
+                        same, with just the shell; <text> is typed into it,
+                        to run with everything the shell sets up
   roer attach [name]    take a session back, detaching whoever holds it;
                         with no name, lists sessions
   roer list             list sessions as TSV:
@@ -409,12 +410,16 @@ impl Roer {
         let (model, args) = agents::take_flag(&args, "--model")?;
         let (effort, args) = agents::take_flag(&args, "--effort")?;
         let (first, args) = agents::take_flag(&args, "--prompt")?;
+        let (command, args) = agents::take_flag(&args, "--command")?;
         let (shell, args): (bool, Vec<&str>) = match args.first() {
             Some(&"--shell") => (true, args[1..].to_vec()),
             _ => (false, args),
         };
         if shell && first.is_some() {
             return Err(Fail::new(2, "a shell takes no --prompt"));
+        }
+        if !shell && command.is_some() {
+            return Err(Fail::new(2, "--command is for a shell: roer new --shell --command <text>"));
         }
         let agent = if shell {
             None
@@ -449,6 +454,11 @@ impl Roer {
         self.create_detached(&name)?;
         if let Some(agent) = agent {
             self.start_agent(&name, &agent, None, first)?;
+        }
+        // Typed, as an agent is, for the same reason: a `git clone` from the
+        // app finds the keys and credentials the person's own shell would.
+        if let Some(command) = command {
+            self.tmux.ok(&["send-keys", "-t", &format!("={name}:"), command, "Enter"]);
         }
         self.attach_session(&name, false)
     }
