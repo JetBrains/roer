@@ -925,6 +925,22 @@ fn new_starts_the_agent_on_a_first_prompt() {
     assert_eq!(env.tmux(&["list-sessions", "-F", "#{session_name}"]), before);
 }
 
+/// `--command` types its text into a new shell, as the app's clone does,
+/// and is refused anywhere but a shell.
+#[test]
+fn new_shell_types_a_command_into_it() {
+    let env = Env::new("shell-command");
+    in_a_terminal(&env, &["new", "--shell", "--command", "'echo cloned-$((40 + 2))'", "clone"], "clone");
+    // The answer, not the line typed: the shell ran it.
+    let typed = typed_into(&env, "clone", "cloned-42");
+    assert!(typed.contains("cloned-42"), "run in the shell: {typed}");
+    kill_outer(&env);
+
+    let before = env.tmux(&["list-sessions", "-F", "#{session_name}"]);
+    assert_eq!(code(&env.run(&["new", "--command", "true", "nope"])), 2);
+    assert_eq!(env.tmux(&["list-sessions", "-F", "#{session_name}"]), before);
+}
+
 /// A saved agent is started with its own flags, and the session is named by
 /// it in `list`, whether or not the agent ever titles its pane.
 #[test]
