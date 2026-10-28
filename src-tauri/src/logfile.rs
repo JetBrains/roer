@@ -71,7 +71,7 @@ pub fn init() {
 
 /// One timestamped line in the log.
 pub fn line(message: &str) {
-    let text = format!("{} {message}\n", timestamp());
+    let text = format!("{} {}\n", timestamp(), without_credentials(message));
     let Some(log) = LOG.get() else {
         eprint!("{text}");
         return;
@@ -81,6 +81,40 @@ pub fn line(message: &str) {
     if !log.redirected {
         eprint!("{text}");
     }
+}
+
+/// `message` with the password or token of any URL in it hidden: a clone of
+/// `https://user:token@host/repo` is logged as the command that runs it, and
+/// the log is made to be attached to an issue. What is left says which
+/// account it was, `https://user:***@host/repo`, or `https://***@host/repo`
+/// for a token alone.
+fn without_credentials(message: &str) -> std::borrow::Cow<'_, str> {
+    if !message.contains("://") || !message.contains('@') {
+        return std::borrow::Cow::Borrowed(message);
+    }
+    let mut out = String::with_capacity(message.len());
+    let mut rest = message;
+    while let Some(at) = rest.find("://") {
+        let (before, after) = rest.split_at(at + 3);
+        out.push_str(before);
+        // The authority: up to the path, or wherever the URL itself ends.
+        let end = after.find(|c: char| c == '/' || c.is_whitespace() || "'\"`<>".contains(c)).unwrap_or(after.len());
+        let authority = &after[..end];
+        match authority.rfind('@') {
+            Some(user_end) => {
+                let user = &authority[..user_end];
+                match user.split_once(':') {
+                    Some((name, _)) => out.push_str(&format!("{name}:***")),
+                    None => out.push_str("***"),
+                }
+                out.push_str(&authority[user_end..]);
+            }
+            None => out.push_str(authority),
+        }
+        rest = &after[end..];
+    }
+    out.push_str(rest);
+    std::borrow::Cow::Owned(out)
 }
 
 /// What `roer diagnose` says right now: the engine, its server and how it
@@ -178,7 +212,25 @@ fn civil(days: u64) -> (i64, u32, u32) {
 
 #[cfg(test)]
 mod tests {
-    use super::civil;
+    use super::{civil, without_credentials};
+
+    #[test]
+    fn a_url_is_logged_without_its_password_or_token() {
+        assert_eq!(
+            without_credentials("roer new --shell --command git clone 'https://me:ghp_secret@github.com/o/r.git' '/x/r' r in /x"),
+            "roer new --shell --command git clone 'https://me:***@github.com/o/r.git' '/x/r' r in /x"
+        );
+        assert_eq!(without_credentials("https://ghp_secret@github.com/o/r"), "https://***@github.com/o/r");
+        assert_eq!(
+            without_credentials("a https://u:p@one.example and https://two.example/x@y"),
+            "a https://u:***@one.example and https://two.example/x@y",
+            "an @ in the path is no account"
+        );
+        // Nothing to hide: as it was, ssh's own user included.
+        assert_eq!(without_credentials("git clone git@github.com:o/r.git"), "git clone git@github.com:o/r.git");
+        assert_eq!(without_credentials("ssh://git@host/r"), "ssh://***@host/r");
+        assert_eq!(without_credentials("stage: roer attach %3 in /tmp"), "stage: roer attach %3 in /tmp");
+    }
 
     #[test]
     fn days_become_dates() {

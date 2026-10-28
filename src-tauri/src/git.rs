@@ -82,6 +82,11 @@ pub(crate) fn command(dir: &str, args: &[&str]) -> Command {
         // Without this git escapes any non-ASCII path, and the escaped name
         // is not a path that can be diffed.
         .args(["-c", "core.quotePath=false"])
+        // A repository's own config can name a program for git to run as
+        // its file-system monitor, and `git status` runs it. Roer reads
+        // repositories nobody opened yet, such as one that turned up in a
+        // Workspace's folder, so none of them gets to run anything that way.
+        .args(["-c", "core.fsmonitor=false"])
         .args(args)
         .env("GIT_TERMINAL_PROMPT", "0")
         .env("GIT_OPTIONAL_LOCKS", "0");
@@ -1544,6 +1549,30 @@ mod tests {
         let from_sub = dir.join("src").to_string_lossy().to_string();
         assert_eq!(git_root(from_sub), Some(crate::testing::canonical(&dir)));
 
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A repository's config cannot have Roer run a program of its choosing
+    /// as its file-system monitor, as `git status` otherwise would.
+    #[cfg(unix)]
+    #[test]
+    fn a_repository_cannot_run_its_own_fsmonitor_through_roer() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = scratch("fsmonitor");
+        let at = dir.to_string_lossy().to_string();
+        init(&at);
+        write(&dir, "a.txt", "a");
+        must(&at, &["add", "a.txt"]);
+        commit(&at, "first");
+        let ran = dir.join("ran");
+        let hook = dir.join("monitor.sh");
+        std::fs::write(&hook, format!("#!/bin/sh\ntouch '{}'\n", ran.display())).unwrap();
+        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+        must(&at, &["config", "core.fsmonitor", &hook.to_string_lossy()]);
+
+        changes(&at).unwrap();
+
+        assert!(!ran.exists(), "the repository's fsmonitor ran");
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
