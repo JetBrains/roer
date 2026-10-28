@@ -1400,6 +1400,7 @@ export function App() {
             folderInView={browser.folderInView}
             projects={browser.projectsInView}
             onOpen={show}
+            onAddProject={browser.projects.length > 0 ? () => browser.openAddProject() : undefined}
           />
         </WorkspaceSidebar>
 

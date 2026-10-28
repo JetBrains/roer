@@ -6113,3 +6113,31 @@ button.first-project-side {
 .first-project-line {
   margin-bottom: 12px;
 }
+
+/* More than one action beside a heading, kept together at its end. */
+.heading-actions {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 12px;
+}
+
+/* Under the sidebar's Projects, where the next one would go. */
+button.tree-add {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  margin: 8px 0 4px;
+  padding: 4px 6px;
+  font-size: 12px;
+  text-align: left;
+  color: var(--roer-muted);
+  background: none;
+  border: 1px dashed var(--roer-border);
+  border-radius: 6px;
+}
+
+button.tree-add:hover {
+  color: var(--roer-accent);
+  border-color: var(--roer-accent);
+}

@@ -350,6 +350,26 @@ describe("App", () => {
     expect(screen.queryByRole("button", { name: "Add your first project" })).not.toBeInTheDocument();
   });
 
+  it("offers the next project under the sidebar's projects and atop the Workspace tab", async () => {
+    vi.mocked(listProjects).mockResolvedValue([{ id: "p1", name: "roer", path: "/Users/test/roer" }]);
+    vi.mocked(listWorkspaces).mockResolvedValue([{ id: "w1", name: "Default", projects: ["p1"] }]);
+    render(<App />);
+
+    // Not the first-project card: there is one.
+    fireEvent.click(await screen.findByRole("button", { name: "Add project…" }));
+    let dialog = await screen.findByRole("dialog", { name: "Add a project" });
+    expect(within(dialog).getByRole("radio", { name: "Clone" })).toHaveAttribute("aria-checked", "true");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole("button", { name: "+ Add project" }));
+    dialog = await screen.findByRole("dialog", { name: "Add a project" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("region", { name: "Add your first project" })).not.toBeInTheDocument();
+    vi.mocked(listProjects).mockResolvedValue([{ id: "home", name: "test", path: "/Users/test" }]);
+    vi.mocked(listWorkspaces).mockResolvedValue([]);
+  });
+
   it("clones the first project from the card, through the dialog", async () => {
     vi.mocked(listProjects).mockResolvedValueOnce([]);
     vi.mocked(listWorkspaces).mockResolvedValue([{ id: "w1", name: "Default", projects: [] }]);
