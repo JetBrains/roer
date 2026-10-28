@@ -1,8 +1,8 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { gitReposIn, gitRoot } from "./git";
-import { listClaudeSessions, listPastSessions, listSessions, roerStatus } from "./pty";
+import { gitCheckedOut, gitReposIn, gitRoot } from "./git";
+import { killSession, listClaudeSessions, listPastSessions, listSessions, roerStatus, type SessionInfo } from "./pty";
 import { createProject, deleteProject, listProjects, renameProject } from "./projects";
 import {
   attachProject,
@@ -21,10 +21,12 @@ vi.mock("./pty", () => ({
   listPastSessions: vi.fn(),
   listClaudeSessions: vi.fn(),
   roerStatus: vi.fn(),
+  killSession: vi.fn(async () => undefined),
 }));
 
 vi.mock("./git", () => ({
   gitRoot: vi.fn(async () => null),
+  gitCheckedOut: vi.fn(async () => false),
   gitReposIn: vi.fn(async () => []),
 }));
 
@@ -37,7 +39,7 @@ vi.mock("./workspaces", () => ({
   attachProject: vi.fn(),
   detachProject: vi.fn(),
   workspaceAssignments: vi.fn(async () => ({})),
-  assignSession: vi.fn(),
+  assignSession: vi.fn(async () => undefined),
   unassignSession: vi.fn(),
 }));
 
@@ -50,6 +52,8 @@ vi.mock("./projects", () => ({
 
 const ask = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/plugin-dialog", () => ({ ask }));
+// A browser tab asks as a desktop app does, through the same question.
+vi.mock("./confirm", () => ({ confirmAction: ask }));
 
 function workspace(overrides: Partial<Workspace> = {}): Workspace {
   return { id: "w1", name: "one", projects: [], ...overrides };
@@ -74,6 +78,7 @@ beforeEach(() => {
   vi.mocked(renameProject).mockReset();
   vi.mocked(deleteProject).mockReset();
   vi.mocked(gitRoot).mockReset().mockResolvedValue(null);
+  vi.mocked(gitCheckedOut).mockReset().mockResolvedValue(false);
   vi.mocked(gitReposIn).mockReset().mockResolvedValue([]);
   ask.mockReset();
 });
@@ -448,5 +453,264 @@ describe("a workspace's folder", () => {
     await waitFor(() => expect(result.current.workspaces[0].folder).toBe("/Users/test/work"));
     await act(async () => result.current.handleSetWorkspaceFolder("w1", null));
     await waitFor(() => expect(result.current.workspaces[0].folder).toBeUndefined());
+  });
+});
+
+/** A live row as `roer list` gives it, for the pane a clone runs in. */
+function pane(overrides: Partial<SessionInfo> = {}): SessionInfo {
+  return { id: "s5", session: "hello", pane: "%5", attached: true, cwd: "/Users/test/work", command: "zsh", ...overrides };
+}
+
+describe("adding a project from the dialog", () => {
+  const dest = "/Users/test/work/hello";
+
+  beforeEach(() => {
+    localStorage.clear();
+    vi.mocked(killSession).mockClear();
+  });
+
+  /** Asks for a clone into `dest`, attached to w2, and gives back the hook. */
+  async function cloning(session = false) {
+    const onOpen = vi.fn();
+    const hook = setUp([workspace(), workspace({ id: "w2", name: "two" })], onOpen);
+    await waitFor(() => expect(hook.result.current.workspaces).toHaveLength(2));
+    act(() =>
+      hook.result.current.handleAddProject({ mode: "clone", url: "https://example.com/hello.git", dest, workspaceId: "w2", session }),
+    );
+    return { ...hook, onOpen };
+  }
+
+  /** The live list becomes `live`, read as the poll would, with git's
+   * answer about the folder in by the end. */
+  async function listed(result: { current: { refresh: () => Promise<void> } }, live: SessionInfo[]) {
+    vi.mocked(listSessions).mockResolvedValue(live);
+    await act(async () => result.current.refresh());
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
+  }
+
+  /** The next poll's worth of time on: a list read now is read well after
+   * the last look at the folder. */
+  let ahead = 0;
+  const realNow = Date.now.bind(Date);
+  function later() {
+    ahead += 5000;
+    vi.spyOn(Date, "now").mockImplementation(() => realNow() + ahead);
+  }
+
+  afterEach(() => {
+    ahead = 0;
+    vi.restoreAllMocks();
+  });
+
+  it("clones in a terminal of its own, and adds the project once git is done there", async () => {
+    vi.mocked(createProject).mockResolvedValue({ id: "p9", name: "hello", path: dest });
+    vi.mocked(attachProject).mockResolvedValue(workspace({ id: "w2", name: "two", projects: ["p9"] }));
+    const { result, onOpen } = await cloning();
+
+    expect(onOpen).toHaveBeenCalledWith(
+      expect.objectContaining({
+        args: ["new", "--shell", "--command", `git clone 'https://example.com/hello.git' '${dest}'`, "hello"],
+        cwd: "/Users/test/work",
+      }),
+    );
+
+    // While git runs, the folder is not a project yet, whatever it holds.
+    vi.mocked(gitRoot).mockResolvedValue(dest);
+    await listed(result, [pane({ command: "git" })]);
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 20)));
+    expect(createProject).not.toHaveBeenCalled();
+
+    await listed(result, [pane()]);
+    // Looks done, but the list may predate git: said again by a later one.
+    expect(createProject).not.toHaveBeenCalled();
+    later();
+    await listed(result, [pane()]);
+    await waitFor(() => expect(attachProject).toHaveBeenCalledWith("w2", "p9"));
+    expect(createProject).toHaveBeenCalledWith("hello", dest);
+    await waitFor(() => expect(killSession).toHaveBeenCalledWith("%5"));
+    // In view, where the dialog said, rather than where the sidebar was.
+    expect(result.current.selectedWorkspaceId).toBe("w2");
+    expect(result.current.projects).toEqual([{ id: "p9", name: "hello", path: dest }]);
+  });
+
+  it("starts a session in the clone, when asked to", async () => {
+    vi.mocked(createProject).mockResolvedValue({ id: "p9", name: "hello", path: dest });
+    vi.mocked(attachProject).mockResolvedValue(workspace({ id: "w2", name: "two", projects: ["p9"] }));
+    const { result, onOpen } = await cloning(true);
+    vi.mocked(gitRoot).mockResolvedValue(dest);
+
+    await listed(result, [pane({ command: "git" })]);
+    await listed(result, [pane()]);
+    later();
+    await listed(result, [pane()]);
+
+    await waitFor(() => expect(onOpen).toHaveBeenCalledWith(expect.objectContaining({ args: ["new"], cwd: dest })));
+  });
+
+  it("leaves a failed clone's terminal open, to say why", async () => {
+    const { result } = await cloning();
+
+    await listed(result, [pane({ command: "git" })]);
+    // git gave up, and took the folder it began with it.
+    await listed(result, [pane()]);
+    await listed(result, [pane()]);
+
+    expect(createProject).not.toHaveBeenCalled();
+    expect(killSession).not.toHaveBeenCalled();
+  });
+
+  it("tells its terminal from another session started meanwhile by its name", async () => {
+    vi.mocked(createProject).mockResolvedValue({ id: "p9", name: "hello", path: dest });
+    vi.mocked(attachProject).mockResolvedValue(workspace({ id: "w2", name: "two", projects: ["p9"] }));
+    const { result } = await cloning();
+    vi.mocked(gitRoot).mockResolvedValue(dest);
+
+    const other = pane({ id: "s6", session: "elsewhere", pane: "%6" });
+    await listed(result, [other, pane({ command: "git" })]);
+    await listed(result, [other, pane()]);
+    later();
+    await listed(result, [other, pane()]);
+
+    await waitFor(() => expect(killSession).toHaveBeenCalledWith("%5"));
+    expect(killSession).toHaveBeenCalledTimes(1);
+  });
+
+  it("takes no list read before git started for git done, however far it got", async () => {
+    const { result } = await cloning(true);
+    // Still the shell when the list was read, and by the time the folder is
+    // looked at git has made it, .git and all, and is fetching.
+    vi.mocked(gitRoot).mockResolvedValue(dest);
+    await listed(result, [pane()]);
+    later();
+    await listed(result, [pane({ command: "git" })]);
+    later();
+    await listed(result, [pane({ command: "git" })]);
+
+    expect(createProject).not.toHaveBeenCalled();
+    expect(killSession).not.toHaveBeenCalled();
+  });
+
+  it("knows git as Windows names it, for a clone of an empty repository", async () => {
+    vi.mocked(createProject).mockResolvedValue({ id: "p9", name: "hello", path: dest });
+    vi.mocked(attachProject).mockResolvedValue(workspace({ id: "w2", name: "two", projects: ["p9"] }));
+    const { result } = await cloning();
+    // Nothing to check out, ever: a repository there once git has stopped.
+    vi.mocked(gitRoot).mockResolvedValue(dest);
+
+    await listed(result, [pane({ command: "git.exe" })]);
+    later();
+    await listed(result, [pane({ command: "git.exe" })]);
+    expect(createProject).not.toHaveBeenCalled();
+
+    await listed(result, [pane({ command: "pwsh" })]);
+    later();
+    await listed(result, [pane({ command: "pwsh" })]);
+    await waitFor(() => expect(attachProject).toHaveBeenCalledWith("w2", "p9"));
+  });
+
+  it("knows a clone is done by its checkout where the terminal never says git runs", async () => {
+    vi.mocked(createProject).mockResolvedValue({ id: "p9", name: "hello", path: dest });
+    vi.mocked(attachProject).mockResolvedValue(workspace({ id: "w2", name: "two", projects: ["p9"] }));
+    const { result } = await cloning();
+    const shell = pane({ command: "pwsh" });
+    // A repository there all along, fetching: not checked out yet.
+    vi.mocked(gitRoot).mockResolvedValue(dest);
+    await listed(result, [shell]);
+    later();
+    await listed(result, [shell]);
+    expect(createProject).not.toHaveBeenCalled();
+    expect(killSession).not.toHaveBeenCalled();
+
+    vi.mocked(gitCheckedOut).mockResolvedValue(true);
+    await listed(result, [shell]);
+    later();
+    await listed(result, [shell]);
+
+    await waitFor(() => expect(attachProject).toHaveBeenCalledWith("w2", "p9"));
+    await waitFor(() => expect(killSession).toHaveBeenCalledWith("%5"));
+  });
+
+  it("makes a new repository with git init, the same way", async () => {
+    const onOpen = vi.fn();
+    const { result } = setUp([workspace()], onOpen);
+    await waitFor(() => expect(result.current.workspaces).toHaveLength(1));
+
+    act(() => result.current.handleAddProject({ mode: "new", dest, workspaceId: "w1", session: false }));
+
+    expect(onOpen).toHaveBeenCalledWith(
+      expect.objectContaining({ args: ["new", "--shell", "--command", `git init '${dest}'`, "hello"] }),
+    );
+    // And offers the same folder for the next one.
+    expect(result.current.projectParent("w1")).toBe("/Users/test/work");
+  });
+});
+
+describe("a workspace's folder, watched", () => {
+  const folder = "/Users/test/work";
+
+  beforeEach(() => {
+    localStorage.clear();
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** Long enough for the poll to look in the folders again. */
+  const aWhile = () => act(async () => vi.advanceTimersByTimeAsync(15_000));
+
+  it("attaches a repository that turns up in it, but not what was there to begin with", async () => {
+    vi.mocked(gitReposIn).mockResolvedValue([`${folder}/api`]);
+    vi.mocked(createProject).mockImplementation(async (name, path) => ({ id: `p-${name}`, name, path }));
+    vi.mocked(attachProject).mockImplementation(async (id, projectId) => workspace({ id, folder, projects: [projectId] }));
+    const { result } = setUp([workspace({ folder })]);
+    await waitFor(() => expect(gitReposIn).toHaveBeenCalledWith(folder));
+
+    // Cloned there by an agent, say.
+    vi.mocked(gitReposIn).mockResolvedValue([`${folder}/api`, `${folder}/web`]);
+    await aWhile();
+
+    await waitFor(() => expect(attachProject).toHaveBeenCalledWith("w1", "p-web"));
+    expect(createProject).toHaveBeenCalledTimes(1);
+    expect(createProject).toHaveBeenCalledWith("web", `${folder}/web`);
+    expect(result.current.workspaces[0].projects).toEqual(["p-web"]);
+  });
+
+  it("does not take back a repository detached from it", async () => {
+    vi.mocked(gitReposIn).mockResolvedValue([`${folder}/api`]);
+    setUp([workspace({ folder })]);
+    await waitFor(() => expect(gitReposIn).toHaveBeenCalled());
+
+    // api was there all along, so seen: a workspace without it chose so.
+    await aWhile();
+    await aWhile();
+
+    expect(createProject).not.toHaveBeenCalled();
+  });
+
+  it("leaves a repository cloned there from the dialog to the workspace the dialog said", async () => {
+    vi.mocked(gitReposIn).mockResolvedValue([]);
+    vi.mocked(createProject).mockImplementation(async (name, path) => ({ id: `p-${name}`, name, path }));
+    vi.mocked(attachProject).mockImplementation(async (id, projectId) => workspace({ id, projects: [projectId] }));
+    const { result } = setUp([workspace({ folder }), workspace({ id: "w2", name: "two" })]);
+    await waitFor(() => expect(gitReposIn).toHaveBeenCalled());
+
+    act(() =>
+      result.current.handleAddProject({ mode: "clone", url: "https://example.com/web.git", dest: `${folder}/web`, workspaceId: "w2", session: false }),
+    );
+    // Half cloned, in the folder: .git is there already.
+    vi.mocked(gitReposIn).mockResolvedValue([`${folder}/web`]);
+    vi.mocked(listSessions).mockResolvedValue([pane({ session: "web", command: "git" })]);
+    await aWhile();
+    expect(attachProject).not.toHaveBeenCalled();
+
+    vi.mocked(gitRoot).mockResolvedValue(`${folder}/web`);
+    vi.mocked(listSessions).mockResolvedValue([pane({ session: "web" })]);
+    await aWhile();
+    await aWhile();
+
+    await waitFor(() => expect(attachProject).toHaveBeenCalledWith("w2", "p-web"));
+    expect(attachProject).toHaveBeenCalledTimes(1);
   });
 });

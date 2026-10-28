@@ -47,6 +47,9 @@ export const gitRepo = (cwd: string): Promise<Repo | null> => invoke("git_repo",
 /** The repository a directory sits in, or `null` outside one. */
 export const gitRoot = (cwd: string): Promise<string | null> => invoke("git_root", { cwd });
 
+/** Whether a clone in `dir` is done: a commit at HEAD, and the files written. */
+export const gitCheckedOut = (dir: string): Promise<boolean> => invoke("git_checked_out", { dir });
+
 /** The repositories in a folder that is not one itself, two levels down at
  * most: a folder of checkouts, say. */
 export const gitReposIn = (dir: string): Promise<string[]> => invoke("git_repos_in", { dir });

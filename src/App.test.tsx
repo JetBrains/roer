@@ -335,11 +335,32 @@ describe("App", () => {
     vi.mocked(attachProject).mockResolvedValueOnce({ id: "w1", name: "Default", projects: ["p1"] });
     render(<App />);
 
-    expect(await screen.findByText(/No project yet: add the folder you work in/)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Add a project…" }));
+    const first = await screen.findByRole("region", { name: "Add your first project" });
+    // Once, though the empty stage behind the tab would say it too.
+    expect(screen.getAllByRole("region", { name: "Add your first project" })).toHaveLength(1);
+    // And the sidebar, where the sessions will be.
+    expect(screen.getByRole("button", { name: "Add your first project" })).toBeInTheDocument();
+
+    fireEvent.click(within(first).getByRole("button", { name: "Open a folder…" }));
     await waitFor(() => expect(attachProject).toHaveBeenCalledWith("w1", "p1"));
     expect(createProject).toHaveBeenCalledWith("roer", "/Users/test/roer");
-    await waitFor(() => expect(screen.queryByText(/No project yet/)).not.toBeInTheDocument());
+    // Started in it, as the first thing anyone does with a project.
+    await waitFor(() => expect(spawnPty).toHaveBeenCalled());
+    await waitFor(() => expect(screen.queryByRole("region", { name: "Add your first project" })).not.toBeInTheDocument());
+    expect(screen.queryByRole("button", { name: "Add your first project" })).not.toBeInTheDocument();
+  });
+
+  it("clones the first project from the card, through the dialog", async () => {
+    vi.mocked(listProjects).mockResolvedValueOnce([]);
+    vi.mocked(listWorkspaces).mockResolvedValue([{ id: "w1", name: "Default", projects: [] }]);
+    render(<App />);
+
+    const first = await screen.findByRole("region", { name: "Add your first project" });
+    fireEvent.click(within(first).getByRole("button", { name: "Clone a repository…" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "Add a project" });
+    expect(within(dialog).getByRole("radio", { name: "Clone" })).toHaveAttribute("aria-checked", "true");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
   });
 
   describe("before there is any project", () => {

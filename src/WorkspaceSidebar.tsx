@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronRight } from "lucide-react";
+import { ChevronDown, ChevronRight, Plus } from "lucide-react";
 import { useState, type ReactNode } from "react";
 
 import type { SessionBrowserState } from "./lib/useSessionBrowser";
@@ -18,9 +18,7 @@ export type WorkspaceSidebarProps = Pick<
   | "handleRenameWorkspace"
   | "handleDeleteWorkspace"
   | "handleSetWorkspaceFolder"
-  | "handleAttachExistingProject"
-  | "handleAttachNewProject"
-  | "handleCreateProject"
+  | "openAddProject"
   | "handleRenameProject"
   | "handleDeleteProject"
 > & {
@@ -52,9 +50,7 @@ export function WorkspaceSidebar({
   handleRenameWorkspace,
   handleDeleteWorkspace,
   handleSetWorkspaceFolder,
-  handleAttachExistingProject,
-  handleAttachNewProject,
-  handleCreateProject,
+  openAddProject,
   handleRenameProject,
   handleDeleteProject,
   collapsed,
@@ -123,7 +119,6 @@ export function WorkspaceSidebar({
           {tab === "workspaces" ? (
             <WorkspaceSwitcher
               workspaces={workspaces}
-              projects={projects}
               selectedId={selectedWorkspaceId}
               onSelect={(id) => {
                 setSelectedWorkspaceId(id);
@@ -132,8 +127,10 @@ export function WorkspaceSidebar({
               onCreate={handleCreateWorkspace}
               onRename={handleRenameWorkspace}
               onDelete={handleDeleteWorkspace}
-              onAttachProject={handleAttachExistingProject}
-              onAttachNewProject={handleAttachNewProject}
+              onAddProject={(workspaceId) => {
+                setPicking(false);
+                openAddProject({ workspaceId });
+              }}
               onSetFolder={handleSetWorkspaceFolder}
             />
           ) : (
@@ -144,12 +141,28 @@ export function WorkspaceSidebar({
                 setSelectedProjectId(id);
                 setPicking(false);
               }}
-              onCreate={handleCreateProject}
+              onAdd={() => {
+                setPicking(false);
+                openAddProject();
+              }}
               onRename={handleRenameProject}
               onDelete={handleDeleteProject}
             />
           )}
         </div>
+      ) : null}
+
+      {/* Before any project, the way to the first, where the sessions
+        will be once there is one. */}
+      {status?.available && workspaces.length > 0 && projects.length === 0 && !picking ? (
+        <button
+          type="button"
+          className="primary first-project-side"
+          onClick={() => openAddProject()}
+        >
+          <Plus size={14} aria-hidden="true" />
+          Add your first project
+        </button>
       ) : null}
 
       {children}

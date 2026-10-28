@@ -63,6 +63,7 @@ pub fn run() {
             git::git_changes,
             git::git_diff,
             git::git_root,
+            git::git_checked_out,
             keybindings::keybindings_get,
             keybindings::keybindings_set,
             git::git_repos_in,

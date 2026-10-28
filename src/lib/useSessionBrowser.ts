@@ -1,10 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ask } from "@tauri-apps/plugin-dialog";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { logLine } from "./log";
 
 import { baseName } from "./files";
-import { gitChanges, gitRepo, gitReposIn, gitRoot, type Repo } from "../lib/git";
+import { gitChanges, gitCheckedOut, gitRepo, gitReposIn, gitRoot, type Repo } from "../lib/git";
 import { placesOf, type Place } from "./checkouts";
 import { pickFolder } from "./folderPicker";
 import type { PickerStart } from "../NewSessionPicker";
@@ -82,6 +81,45 @@ export interface FolderRepos {
   /** Asked because the folder was just made the Workspace's own: adding to
    * it is all there is to offer. */
   forFolder?: boolean;
+}
+
+/** Where the Add project dialog opens: on which Workspace, and on which of
+ * its ways in. */
+export interface AddProjectStart {
+  workspaceId?: string;
+  mode?: AddProjectMode;
+}
+
+export type AddProjectMode = "clone" | "new" | "folder" | "known";
+
+/** What the Add project dialog was asked for. `session` starts an agent in
+ * the project once it is there. */
+export type AddProjectRequest = { workspaceId: string; session: boolean } & (
+  | { mode: "clone"; url: string; dest: string }
+  | { mode: "new"; dest: string }
+  | { mode: "folder" }
+  | { mode: "known"; projectId: string }
+);
+
+/** A clone or new repository being made in a pane of its own, watched until
+ * git is done there. */
+interface Creating {
+  mode: "clone" | "new";
+  dest: string;
+  workspaceId: string;
+  session: boolean;
+  /** The tmux session asked for, to tell its pane from others started meanwhile. */
+  name: string;
+  known: string[];
+  pane?: string;
+  /** Seen running git: once it is not, a missing repository is a failure. */
+  ran?: boolean;
+  checking?: boolean;
+  /** When the repository was first seen there with git not running, in ms.
+   * Not yet done: git makes the folder and its `.git` before it fetches
+   * anything, so a list read just before git started, checked once git had,
+   * looks done. A list read well after says so for sure. */
+  seenAt?: number;
 }
 
 /** Just the directory's own name, used as a new Project's starting name. */
@@ -193,6 +231,9 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
   activePaneRef.current = activePane;
   const onOpenRef = useRef(onOpen);
   onOpenRef.current = onOpen;
+  // Set each render, below, with what it reads: the live list's watch on a
+  // clone or a new repository being made.
+  const watchCreatingRef = useRef<(live: SessionInfo[]) => void>(() => {});
   const homeRef = useRef<string | undefined>(undefined);
 
   /** Takes in a fresh live list: the rows, what finished or rang since the
@@ -309,6 +350,7 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
           .catch((cause: unknown) => setFailure(String(cause)));
       }
     }
+    watchCreatingRef.current(live);
   }, []);
 
   // Branch and uncommitted changes per directory, read with the full list
@@ -787,6 +829,200 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
     addFolder(path, { workspaceId });
   };
 
+  // The Add project dialog, while it is up.
+  const [addProject, setAddProject] = useState<AddProjectStart | null>(null);
+  const creatingRef = useRef<Creating[]>([]);
+
+  /** The dialog's answer. A clone or a new repository is made in a terminal
+   * pane, where git can ask for a passphrase and say what went wrong; the
+   * pane is watched (below) and the project made once git is done there. */
+  const handleAddProject = (request: AddProjectRequest) => {
+    setAddProject(null);
+    const { workspaceId } = request;
+    if (request.mode === "folder") {
+      void pickFolder().then((picked) => {
+        if (typeof picked !== "string") return;
+        setSelectedWorkspaceId(workspaceId);
+        addFolder(picked, { workspaceId, session: request.session ? {} : undefined });
+      });
+      return;
+    }
+    if (request.mode === "known") {
+      const project = projects.find((candidate) => candidate.id === request.projectId);
+      if (!project) return;
+      void attachProject(workspaceId, project.id)
+        .then((updated) => {
+          if (updated) replaced(updated);
+          setSelectedWorkspaceId(workspaceId);
+          if (request.session) startNewSession(project.path, updated);
+        })
+        .catch((cause: unknown) => setFailure(String(cause)));
+      return;
+    }
+    const { dest } = request;
+    const command =
+      request.mode === "clone" ? `git clone ${quoted(request.url)} ${quoted(dest)}` : `git init ${quoted(dest)}`;
+    // tmux makes these underscores in a session's name anyway.
+    const name = folderName(dest).replace(/[.:]/g, "_");
+    openedRef.current += 1;
+    const known = sessions.map((session) => session.pane);
+    creatingRef.current = [
+      ...creatingRef.current,
+      { mode: request.mode, dest, workspaceId, session: request.session, name, known },
+    ];
+    pendingAssignRef.current = { known, workspaceId };
+    try {
+      localStorage.setItem(PROJECT_PARENT_KEY, parentOf(dest));
+    } catch {
+      /* only a convenience */
+    }
+    onOpen({
+      args: ["new", "--shell", "--command", command, name],
+      cwd: parentOf(dest),
+      title: request.mode === "clone" ? `clone ${name}` : `init ${name}`,
+      nonce: `new-${openedRef.current}`,
+      known,
+    });
+  };
+
+  /** Where the dialog offers to put a new repository: the Workspace's own
+   * folder, else where the last one went, else beside the newest project. */
+  const projectParent = (workspaceId: string | undefined): string | undefined => {
+    const folder = workspaces.find((workspace) => workspace.id === workspaceId)?.folder;
+    if (folder) return folder;
+    try {
+      const last = localStorage.getItem(PROJECT_PARENT_KEY);
+      if (last) return last;
+    } catch {
+      /* only a convenience */
+    }
+    const newest = projects[projects.length - 1];
+    return newest ? parentOf(newest.path) : status?.home;
+  };
+
+  /** Read on every live list: a pane making a project is found by the name
+   * it was asked for, then waited on while it runs git. A repository there
+   * once it does not, still so in a list read after it was seen, is the
+   * project; none, after git ran, is a failure its pane is left open to
+   * explain. */
+  watchCreatingRef.current = (live) => {
+    const now = Date.now();
+    for (const pending of creatingRef.current) {
+      if (!pending.pane) {
+        const fresh = live.filter((session) => !pending.known.includes(session.pane));
+        const mine =
+          fresh.find((session) => session.session === pending.name || session.session.startsWith(`${pending.name}-`)) ??
+          (fresh.length === 1 ? fresh[0] : undefined);
+        if (!mine) continue;
+        pending.pane = mine.pane;
+      }
+      const session = live.find((candidate) => candidate.pane === pending.pane);
+      if (!session) {
+        creatingRef.current = creatingRef.current.filter((other) => other !== pending);
+        continue;
+      }
+      if (/^git(\.exe)?$/i.test(session.command)) {
+        pending.ran = true;
+        pending.seenAt = undefined;
+        continue;
+      }
+      if (pending.seenAt !== undefined && now - pending.seenAt >= SETTLED_MS) {
+        void finishCreating(pending, session.pane);
+        continue;
+      }
+      if (pending.checking || pending.seenAt !== undefined) continue;
+      pending.checking = true;
+      void madeIn(pending)
+        .catch(() => false)
+        .then((made) => {
+          pending.checking = false;
+          if (made) {
+            pending.seenAt = Date.now();
+          } else if (pending.ran) {
+            creatingRef.current = creatingRef.current.filter((other) => other !== pending);
+          }
+        });
+    }
+  };
+
+  /** Whether git has made the project. A clone is, once it has checked
+   * out a commit: that needs no word from the terminal, which cannot say
+   * what runs in it everywhere. A repository there will do once git was
+   * seen to run and stop, as for a clone of an empty one; and for `git init`,
+   * which is done as soon as there is one at all. */
+  const madeIn = async (pending: Creating): Promise<boolean> => {
+    if (pending.mode === "clone" && (await gitCheckedOut(pending.dest))) return true;
+    if (pending.mode === "clone" && !pending.ran) return false;
+    const root = await gitRoot(pending.dest);
+    return root !== null && baseName(trimmed(root)) === folderName(pending.dest);
+  };
+
+  /** The project a pane has made: registered, attached where the dialog
+   * said, in view, and its pane, whose output is done with, closed. */
+  const finishCreating = async (pending: Creating, pane: string) => {
+    if (!creatingRef.current.includes(pending)) return;
+    creatingRef.current = creatingRef.current.filter((other) => other !== pending);
+    madeRef.current.add(trimmed(pending.dest));
+    try {
+      const project = await createProject(folderName(pending.dest), pending.dest);
+      known(project);
+      const workspace = await attachProject(pending.workspaceId, project.id);
+      if (workspace) replaced(workspace);
+      setSelectedWorkspaceId(pending.workspaceId);
+      if (pending.session) startNewSession(pending.dest, workspace);
+      await killSession(pane);
+    } catch (cause: unknown) {
+      setFailure(String(cause));
+    }
+  };
+
+  // Made from the dialog, so attached where it said: a Workspace whose
+  // folder it is in takes it only if the dialog chose that one.
+  const madeRef = useRef(new Set<string>());
+
+  /** A Workspace that stands for a folder takes the repositories that turn
+   * up in it, cloned there by an agent, say. What was there when the folder
+   * was first looked at was asked about then, and a project detached since
+   * stays detached: only one never seen before is attached. */
+  const attachNewInFolders = async () => {
+    const seen = readSeen();
+    let changed = false;
+    for (const workspace of workspaces) {
+      if (!workspace.folder) continue;
+      const repos = (await gitReposIn(workspace.folder).catch(() => null))?.map(trimmed);
+      if (!repos) continue;
+      const key = `${workspace.id}\n${trimmed(workspace.folder)}`;
+      const before = seen[key];
+      const making = new Set(creatingRef.current.map((pending) => trimmed(pending.dest)));
+      // One still being cloned is looked at again once it is done.
+      const settled = repos.filter((repo) => !making.has(repo));
+      const fresh = before ? settled.filter((repo) => !before.includes(repo) && !madeRef.current.has(repo)) : [];
+      if (!before || settled.some((repo) => !before.includes(repo))) {
+        seen[key] = [...new Set([...(before ?? []), ...settled])];
+        changed = true;
+      }
+      let current = workspace;
+      for (const repo of fresh) {
+        try {
+          const project = await createProject(folderName(repo), repo);
+          known(project);
+          logLine(`sessions: ${repo} turned up in ${workspace.folder}, attached to ${workspace.name}`);
+          current = (await attachProject(current.id, project.id)) ?? current;
+        } catch (cause: unknown) {
+          setFailure(String(cause));
+        }
+      }
+      if (current !== workspace) replaced(current);
+    }
+    if (changed) writeSeen(seen);
+  };
+  const attachNewInFoldersRef = useRef(attachNewInFolders);
+  attachNewInFoldersRef.current = attachNewInFolders;
+  const foldersKey = workspaces.map((workspace) => `${workspace.id}=${workspace.folder ?? ""}`).join(",");
+  useEffect(() => {
+    if (foldersKey) void attachNewInFoldersRef.current();
+  }, [foldersKey]);
+
   const handleDetachProject = (projectId: string) => {
     if (!selectedWorkspace) return;
     void detachProject(selectedWorkspace.id, projectId)
@@ -798,9 +1034,9 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
         setWorkspaces(nextWorkspaces);
         if (!isOrphaned(projectId, nextWorkspaces)) return;
         const project = projects.find((candidate) => candidate.id === projectId);
-        const alsoDelete = await ask(
+        const alsoDelete = await confirmAction(
           `"${project?.name ?? "This project"}" is no longer attached to any Workspace. Delete it too?`,
-          { title: "Detach project", kind: "warning" },
+          "Detach project",
         );
         if (!alsoDelete) return;
         await deleteProject(projectId);
@@ -861,6 +1097,7 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
             return;
           }
           takeLive(live);
+          if (ticks % FOLDERS_EVERY === 0) void attachNewInFoldersRef.current();
           if (ticks % STATS_EVERY === 0) {
             refreshStats(live);
             // A checkout can switch branch, or a worktree be made or
@@ -1238,6 +1475,12 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
     folderRepos,
     confirmFolderRepos,
     cancelFolderRepos: () => setFolderRepos(null),
+    addProject,
+    openAddProject: (start: AddProjectStart = {}) =>
+      setAddProject({ ...start, workspaceId: start.workspaceId ?? selectedWorkspace?.id ?? workspaces[0]?.id }),
+    closeAddProject: () => setAddProject(null),
+    handleAddProject,
+    projectParent,
     openClaudeSession,
     refresh,
   };
@@ -1265,6 +1508,48 @@ const POLL_MS = 3000;
 
 /** Every how many polls the branches and changes are read again. */
 const STATS_EVERY = 10;
+
+/** How long after a clone looks done a list must be read to say it is: far
+ * longer than `roer list` takes, so that list was asked for after the look. */
+const SETTLED_MS = 1000;
+
+/** Every how many polls Workspace folders are looked in for new repositories. */
+const FOLDERS_EVERY = 4;
+
+/** Where the last clone or new repository went, offered for the next. */
+const PROJECT_PARENT_KEY = "roer:new-project-parent";
+
+/** Per Workspace and folder, the repositories already seen in it. */
+const FOLDER_SEEN_KEY = "roer:folder-repos-seen";
+
+function readSeen(): Record<string, string[]> {
+  try {
+    const parsed: unknown = JSON.parse(localStorage.getItem(FOLDER_SEEN_KEY) ?? "{}");
+    return parsed && typeof parsed === "object" ? (parsed as Record<string, string[]>) : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeSeen(seen: Record<string, string[]>) {
+  try {
+    localStorage.setItem(FOLDER_SEEN_KEY, JSON.stringify(seen));
+  } catch {
+    /* seen again next time, and still not attached: there is no record to differ from */
+  }
+}
+
+const trimmed = (path: string) => path.replace(/[\\/]+$/, "");
+
+/** The folder a path is in. */
+const parentOf = (path: string) => {
+  const clean = trimmed(path);
+  const cut = Math.max(clean.lastIndexOf("/"), clean.lastIndexOf("\\"));
+  return cut > 0 ? clean.slice(0, cut) : clean;
+};
+
+/** One word to a shell, in single quotes; the dialog lets through no quote of its own. */
+const quoted = (text: string) => `'${text}'`;
 
 /** What `openNew` takes to start a session with just a shell. */
 export const SHELL = "--shell";

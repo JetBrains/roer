@@ -27,7 +27,7 @@ vi.mock("./lib/pty", () => ({
   roerStatus: vi.fn(),
 }));
 vi.mock("./lib/confirm", () => ({ confirmAction: vi.fn() }));
-vi.mock("./lib/git", () => ({ gitRepo: vi.fn(), gitChanges: vi.fn() }));
+vi.mock("./lib/git", () => ({ gitRepo: vi.fn(), gitChanges: vi.fn(), gitReposIn: vi.fn(async () => []) }));
 vi.mock("./lib/notify", () => ({ notify: vi.fn(async () => undefined) }));
 vi.mock("./lib/workspaces", () => ({
   listWorkspaces: vi.fn(async () => []),

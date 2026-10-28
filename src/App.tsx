@@ -39,6 +39,8 @@ import { ClaudeSetup } from "./ClaudeSetup";
 import { UpdateNotice } from "./UpdateNotice";
 import { GoToFile, type SessionHit } from "./GoToFile";
 import { NewSessionButton } from "./NewSessionButton";
+import { AddProjectDialog } from "./AddProjectDialog";
+import { FirstProject } from "./FirstProject";
 import { FolderReposDialog } from "./FolderReposDialog";
 import { NewSessionPicker } from "./NewSessionPicker";
 import { SessionTree } from "./SessionTree";
@@ -1375,9 +1377,7 @@ export function App() {
           handleRenameWorkspace={browser.handleRenameWorkspace}
           handleDeleteWorkspace={browser.handleDeleteWorkspace}
           handleSetWorkspaceFolder={browser.handleSetWorkspaceFolder}
-          handleAttachExistingProject={browser.handleAttachExistingProject}
-          handleAttachNewProject={browser.handleAttachNewProject}
-          handleCreateProject={browser.handleCreateProject}
+          openAddProject={browser.openAddProject}
           handleRenameProject={browser.handleRenameProject}
           handleDeleteProject={browser.handleDeleteProject}
         >
@@ -1561,22 +1561,14 @@ export function App() {
             ) : (
               <div className="empty">
                 {notice ? <p className="notice">{notice}</p> : null}
-                {browser.asksForFolder() ? (
-                  // Before any project: what one is, and the way to the
-                  // first, rather than a terminal in home nobody asked for.
-                  <div className="first-folder">
-                    <p>Start with the folder you work in: a git repository, or a folder of them.</p>
-                    <button type="button" className="primary" onClick={() => browser.openNew()}>
-                      Open a folder…
-                    </button>
-                    <p className="muted">
-                      Or{" "}
-                      <button type="button" className="link" onClick={browser.openNewInHome}>
-                        start in your home folder
-                      </button>{" "}
-                      without a project.
-                    </p>
-                  </div>
+                {/* Behind the Workspace tab it is that tab's to say. */}
+                {browser.asksForFolder() && tabs.active !== "sessions" ? (
+                  <FirstProject
+                    onClone={() => browser.openAddProject({ mode: "clone" })}
+                    onFolder={() => browser.openNew()}
+                    onNew={() => browser.openAddProject({ mode: "new" })}
+                    onHome={browser.openNewInHome}
+                  />
                 ) : null}
                 <p className="muted" hidden={browser.asksForFolder()}>
                   Pick a session, or start a new one with {shortcutLabel.newSession()}.{" "}
@@ -1597,10 +1589,9 @@ export function App() {
                 selectedWorkspace={browser.selectedWorkspace}
                 selectedWorkspaceProjects={browser.selectedWorkspaceProjects}
                 handleAssign={browser.handleAssign}
-                handleAttachExistingProject={
-                  browser.handleAttachExistingProject
-                }
-                handleAttachNewProject={browser.handleAttachNewProject}
+                openAddProject={browser.openAddProject}
+                handleAddProject={browser.handleAddProject}
+                openNewInHome={browser.openNewInHome}
                 handleDetachProject={browser.handleDetachProject}
                 roots={browser.roots}
                 repos={browser.repos}
@@ -1810,6 +1801,18 @@ export function App() {
             onChanged={refreshAgents}
             onStart={(id) => browser.openNew(id)}
             onClose={() => setAgentsDialog(null)}
+          />
+        ) : null}
+
+        {browser.addProject ? (
+          <AddProjectDialog
+            start={browser.addProject}
+            workspaces={browser.workspaces}
+            projects={browser.projects}
+            home={browser.status?.home}
+            parentFor={browser.projectParent}
+            onAdd={browser.handleAddProject}
+            onClose={browser.closeAddProject}
           />
         ) : null}
 

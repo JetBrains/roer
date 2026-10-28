@@ -272,6 +272,20 @@ pub fn git_root(cwd: String) -> Option<String> {
     root(&cwd).ok()
 }
 
+/// Whether `dir` is a clone git has finished checking out: a repository of
+/// its own (not a folder inside another), with a commit at HEAD and an index
+/// git is no longer writing. A clone makes the folder and its `.git` before
+/// it fetches anything, so a repository being there says nothing yet; and
+/// what the terminal says is running there cannot be had everywhere.
+#[tauri::command(async)]
+pub fn git_checked_out(dir: String) -> bool {
+    let git = std::path::Path::new(&dir).join(".git");
+    git.is_dir()
+        && git.join("index").is_file()
+        && !git.join("index.lock").exists()
+        && run(&dir, &["rev-parse", "--verify", "--quiet", "HEAD^{commit}"]).is_ok_and(|out| out.status.success())
+}
+
 /// How far below a folder `repos_in` looks: `~/work/<repo>` and
 /// `~/work/<team>/<repo>`, not a whole disk.
 const REPOS_DEPTH: usize = 2;
@@ -1189,7 +1203,7 @@ fn count_lines(path: &Path) -> (Option<u32>, bool) {
 #[cfg(test)]
 mod tests {
     use super::{
-        blob, branch_commits, branch_diff, branches, changes, git_branch_diff, git_commit_all, commit_files, count_lines, git, git_commit_diff,
+        blob, branch_commits, branch_diff, branches, changes, git_branch_diff, git_checked_out, git_commit_all, commit_files, count_lines, git, git_commit_diff,
         git_diff, git_root, numstat, parse_name_status, parse_status, push_upstream, repo, repos_in, root,
         upstream_status, Stat, Upstream, MAX_DIFF_BYTES,
     };
@@ -1529,6 +1543,33 @@ mod tests {
 
         let from_sub = dir.join("src").to_string_lossy().to_string();
         assert_eq!(git_root(from_sub), Some(crate::testing::canonical(&dir)));
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_clone_is_checked_out_once_it_has_a_commit_and_its_index_is_written() {
+        let dir = scratch("checked-out");
+        let at = dir.to_string_lossy().to_string();
+        assert!(!git_checked_out(at.clone()), "no folder yet");
+
+        // As a clone has it while it fetches: a repository, nothing in it.
+        init(&at);
+        assert!(!git_checked_out(at.clone()), "no commit yet");
+
+        write(&dir, "a.txt", "a");
+        must(&at, &["add", "a.txt"]);
+        commit(&at, "first");
+        assert!(git_checked_out(at.clone()));
+
+        // Still writing the files out.
+        std::fs::write(dir.join(".git/index.lock"), "").unwrap();
+        assert!(!git_checked_out(at.clone()), "the checkout holds the index");
+        std::fs::remove_file(dir.join(".git/index.lock")).unwrap();
+
+        // A folder inside it is no clone of its own.
+        std::fs::create_dir_all(dir.join("sub")).unwrap();
+        assert!(!git_checked_out(dir.join("sub").to_string_lossy().to_string()));
 
         std::fs::remove_dir_all(&dir).unwrap();
     }
