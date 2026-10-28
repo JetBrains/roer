@@ -1208,6 +1208,10 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
   /** A session with the default agent in `cwd`, on `prompt`: a tab asking for one, such as Changes for a review. */
   const openNewAt = (cwd: string, prompt: string) => startNewSession(cwd, selectedWorkspace, undefined, prompt);
 
+  /** A session with the default agent in `cwd`: a Project's own heading
+   * starting one there. */
+  const openNewIn = (cwd: string) => startNewSession(cwd, selectedWorkspace);
+
   /** New session in the home folder, for the one who wants no project. */
   const openNewInHome = () => startNewSession(status?.home, selectedWorkspace);
 
@@ -1451,6 +1455,7 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
     openNew,
     openNewAt,
     openNewInHome,
+    openNewIn,
     asksForFolder,
     newSessionCwd,
     projectsInView,

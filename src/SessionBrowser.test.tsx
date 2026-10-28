@@ -13,13 +13,14 @@ import {
   type SessionInfo,
 } from "./lib/pty";
 import { useSessionBrowser } from "./lib/useSessionBrowser";
-import { listProjects } from "./lib/projects";
+import { listProjects, renameProject } from "./lib/projects";
 import { listWorktrees, restorableWorktree, restoreWorktree } from "./lib/worktrees";
 import { confirmAction } from "./lib/confirm";
 import {
   assignSession,
   attachProject,
   deleteWorkspace,
+  detachProject,
   listWorkspaces,
   unassignSession,
   workspaceAssignments,
@@ -149,6 +150,9 @@ function Harness({ onOpen, activePane }: { onOpen: (request: OpenRequest) => voi
         handleAddProject={browser.handleAddProject}
         openNewInHome={browser.openNewInHome}
         handleDetachProject={browser.handleDetachProject}
+        handleRenameProject={browser.handleRenameProject}
+        openNewIn={browser.openNewIn}
+        openPickAgent={browser.openPickAgent}
         roots={browser.roots}
         repos={browser.repos}
         waiting={browser.waiting}
@@ -1097,5 +1101,61 @@ describe("runningAgent", () => {
     expect(runningAgent(live("zsh"))).toBeNull();
     expect(runningAgent(live("vim"))).toBeNull();
     expect(runningAgent(live("node"))).toBeNull();
+  });
+});
+
+describe("the Workspace's projects", () => {
+  const roer = { id: "p1", name: "roer", path: "/work/roer" };
+  const api = { id: "p2", name: "api", path: "/work/api" };
+
+  beforeEach(() => {
+    vi.mocked(listProjects).mockResolvedValue([roer, api]);
+    vi.mocked(listWorkspaces).mockResolvedValue([{ id: "w1", name: "Default", projects: ["p1", "p2"] }]);
+  });
+
+  it("lists each one with what runs in it, and the ones running nothing too", async () => {
+    vi.mocked(listSessions).mockResolvedValue([
+      { id: "1", session: "fix", pane: "%0", attached: false, cwd: "/work/roer", command: "claude", agent: "Claude Code", title: "Fix the login" },
+    ]);
+    renderList();
+
+    const view = await screen.findByRole("navigation", { name: "Workspace" });
+    await waitFor(() =>
+      expect(within(view).getAllByRole("heading", { level: 3 }).map((h) => h.textContent)).toEqual(["roer", "api"]),
+    );
+    expect(within(view).getByRole("heading", { level: 2, name: /^Projects/ })).toBeInTheDocument();
+    expect(within(view).getByText("Nothing running")).toBeInTheDocument();
+    // Its path beside it, and no second list of them further down.
+    expect(within(view).getByText("/work/api")).toBeInTheDocument();
+    expect(within(view).queryByRole("button", { name: "Detach api" })).not.toBeInTheDocument();
+  });
+
+  it("starts a session in one from its heading", async () => {
+    const onOpen = vi.fn();
+    renderList(onOpen);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Start a session in api" }));
+
+    await waitFor(() => expect(onOpen).toHaveBeenCalledWith(expect.objectContaining({ args: ["new"], cwd: "/work/api" })));
+  });
+
+  it("detaches and renames one from its menu", async () => {
+    vi.mocked(detachProject).mockReset().mockResolvedValue({ id: "w1", name: "Default", projects: ["p1"] });
+    vi.mocked(renameProject).mockReset().mockResolvedValue({ ...api, name: "backend" });
+    renderList();
+
+    fireEvent.pointerDown(await screen.findByRole("button", { name: "More for api" }), { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Rename…" }));
+    const name = await screen.findByRole("textbox", { name: "Project name" });
+    fireEvent.change(name, { target: { value: "backend" } });
+    fireEvent.keyDown(name, { key: "Enter" });
+    await waitFor(() => expect(renameProject).toHaveBeenCalledWith("p2", "backend"));
+
+    // The heading goes by the new name.
+    expect(await screen.findByRole("button", { name: "backend" })).toBeInTheDocument();
+
+    fireEvent.pointerDown(screen.getByRole("button", { name: "More for roer" }), { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Detach from Default" }));
+    await waitFor(() => expect(detachProject).toHaveBeenCalledWith("w1", "p1"));
   });
 });

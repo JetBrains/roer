@@ -1593,6 +1593,9 @@ export function App() {
                 handleAddProject={browser.handleAddProject}
                 openNewInHome={browser.openNewInHome}
                 handleDetachProject={browser.handleDetachProject}
+                handleRenameProject={browser.handleRenameProject}
+                openNewIn={browser.openNewIn}
+                openPickAgent={browser.openPickAgent}
                 roots={browser.roots}
                 repos={browser.repos}
                 waiting={browser.waiting}
