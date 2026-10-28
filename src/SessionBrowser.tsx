@@ -533,9 +533,22 @@ export function SessionBrowser({
 
       <h2>
         Sessions
-        <button type="button" className="link" onClick={() => void refresh()}>
-          Refresh
-        </button>
+        <span className="heading-actions">
+          {/* At the top, not under the Projects at the bottom: it is how the
+            next one comes in, and the list above can be long. */}
+          {selectedWorkspace && projects.length > 0 ? (
+            <button
+              type="button"
+              className="link"
+              onClick={() => openAddProject({ workspaceId: selectedWorkspace.id })}
+            >
+              + Add project
+            </button>
+          ) : null}
+          <button type="button" className="link" onClick={() => void refresh()}>
+            Refresh
+          </button>
+        </span>
       </h2>
 
       {visibleSessions.length === 0 ? (
@@ -705,13 +718,6 @@ export function SessionBrowser({
         <>
           <h2 className="muted">
             Projects
-            <button
-              type="button"
-              className="link"
-              onClick={() => openAddProject({ workspaceId: selectedWorkspace.id, mode: projects.length > 0 ? "known" : "clone" })}
-            >
-              Add project
-            </button>
           </h2>
 
           {selectedWorkspaceProjects.length === 0 ? (

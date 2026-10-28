@@ -159,6 +159,9 @@ export type SessionTreeProps = Pick<
   /** The Projects in view, whose checkouts the tree is made of. */
   projects: Project[];
   onOpen: (request: OpenRequest) => void;
+  /** The Add project dialog, offered under the Projects; left out before
+   * there is any, when the sidebar offers the first in a button of its own. */
+  onAddProject?: () => void;
 };
 
 /**
@@ -187,6 +190,7 @@ export function SessionTree({
   folderInView,
   projects,
   onOpen,
+  onAddProject,
 }: SessionTreeProps) {
   const ordered = orderTree(projects, worktrees, repos, visibleSessions, waiting, folderInView);
   const [query, setQuery] = useState("");
@@ -427,6 +431,13 @@ export function SessionTree({
             </ul>
           )}
         </div>
+      ) : null}
+      {/* After the Projects, where the next one would go. */}
+      {onAddProject && !searching ? (
+        <button type="button" className="tree-add" onClick={onAddProject}>
+          <Plus size={12} aria-hidden="true" />
+          Add project…
+        </button>
       ) : null}
       {tree.elsewhere.length > 0 ? (
         <div className="tree-project">
