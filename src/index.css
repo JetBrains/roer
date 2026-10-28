@@ -6141,3 +6141,61 @@ button.tree-add:hover {
   color: var(--roer-accent);
   border-color: var(--roer-accent);
 }
+
+/* A Project's heading in the Workspace tab: its path beside its name, and
+   what it does at the end of the line. */
+.sessions-view .group-path {
+  min-width: 0;
+  font-size: 11px;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: normal;
+  color: var(--roer-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sessions-view .group-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+}
+
+.sessions-view .nothing-running {
+  margin: 2px 0 4px 18px;
+  font-size: 12px;
+}
+
+/* Each Project's group apart from the next, as the sidebar's are. */
+.sessions-view .project-group + .project-group {
+  margin-top: 10px;
+}
+
+.sessions-view .group-actions .tree-action {
+  color: var(--roer-muted);
+}
+
+.sessions-view .group-actions .tree-action:hover {
+  color: var(--roer-fg);
+}
+
+.sessions-view h2.elsewhere {
+  margin-top: 16px;
+}
+
+.sessions-view .group-rename {
+  max-width: 320px;
+}
+
+/* Fainter than the heading until it is pointed at, as in the sidebar, but
+   not so faint that a Project's actions are missed. */
+.sessions-view .group-actions button.tree-action {
+  opacity: 0.7;
+}
+
+.sessions-view .fold-head:hover .group-actions button.tree-action,
+.sessions-view .group-actions button.tree-action[data-state="open"] {
+  opacity: 1;
+}

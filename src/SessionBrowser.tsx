@@ -1,5 +1,5 @@
-import { ChevronDown, ChevronRight } from "lucide-react";
-import type { ReactNode } from "react";
+import { ChevronDown, ChevronRight, Ellipsis, Plus } from "lucide-react";
+import { useState, type ReactNode } from "react";
 
 import {
   ContextMenu,
@@ -8,6 +8,13 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import type { Repo } from "./lib/git";
 import type { Worktree } from "./lib/worktrees";
 import type { Project } from "./lib/projects";
@@ -268,6 +275,8 @@ interface Section {
   key: string;
   /** A Project in view's, rather than a repository's outside them. */
   project: boolean;
+  /** The Project it is, for its heading's actions; not for the folder. */
+  projectId?: string;
   heading: string;
   /** What the heading's tooltip shows. */
   path: string;
@@ -296,10 +305,13 @@ function sessionSections(
   folder?: string,
 ): Section[] {
   const tree = buildTree(projects, worktrees, repos, entries, (entry) => entry.session.cwd, (list) => byRank(list, waiting), folder);
+  // Every Project in view has its group, running anything or not: the list
+  // is the Workspace's Projects, with what runs in each under it.
   const sections: Section[] = tree.projects
     .map((node) => ({
       key: `project-${node.project.id}`,
       project: true,
+      projectId: node.project.id,
       heading: node.project.name,
       path: node.project.path,
       checkouts: node.checkouts
@@ -310,8 +322,7 @@ function sessionSections(
           linked: !checkout.worktree.main,
           entries: checkout.items,
         })),
-    }))
-    .filter((section) => section.checkouts.length > 0);
+    }));
 
   // The Workspace's own folder, after its Projects, as in the sidebar.
   if (folder && tree.inFolder.length > 0) {
@@ -416,6 +427,9 @@ export type SessionBrowserProps = Pick<
   | "handleAddProject"
   | "openNewInHome"
   | "handleDetachProject"
+  | "handleRenameProject"
+  | "openNewIn"
+  | "openPickAgent"
   | "roots"
   | "repos"
   | "waiting"
@@ -452,6 +466,9 @@ export function SessionBrowser({
   handleAddProject,
   openNewInHome,
   handleDetachProject,
+  handleRenameProject,
+  openNewIn,
+  openPickAgent,
   roots,
   repos,
   waiting,
@@ -484,7 +501,17 @@ export function SessionBrowser({
 
   /** A group's heading, folding what is under it. Folded, it says how much
    * is hidden and whether any of it waits on you. */
-  const foldHead = (key: string, heading: ReactNode, inside: SessionEntry[], level: 3 | 4, className: string, title: string) => {
+  const foldHead = (
+    key: string,
+    heading: ReactNode,
+    inside: SessionEntry[],
+    level: 3 | 4,
+    className: string,
+    title: string,
+    actions?: ReactNode,
+    /** Said after the heading, outside the button that folds it. */
+    note?: string,
+  ) => {
     const open = !folded.has(key);
     const Tag = level === 3 ? "h3" : "h4";
     const waits = inside.some((entry) => entry.kind === "live" && waiting.has(entry.session.pane));
@@ -496,6 +523,7 @@ export function SessionBrowser({
             {heading}
           </button>
         </Tag>
+        {note ? <span className="group-path">{note}</span> : null}
         {open ? null : (
           <span className="fold-count" title={`${inside.length} hidden`}>
             {inside.length}
@@ -507,9 +535,60 @@ export function SessionBrowser({
             ) : null}
           </span>
         )}
+        {actions}
       </div>
     );
   };
+
+  // The Project whose heading is a name field for the moment.
+  const [renaming, setRenaming] = useState<{ id: string; name: string } | null>(null);
+  const submitRename = () => {
+    const name = renaming?.name.trim();
+    if (renaming && name) handleRenameProject(renaming.id, name);
+    setRenaming(null);
+  };
+
+  /** What a Project's heading does to it: start a session there (with ⌥,
+   * pick the agent), and the rest from its menu. */
+  const projectActions = (section: Section) => {
+    const project = projects.find((candidate) => candidate.id === section.projectId);
+    if (!project) return null;
+    return (
+      <span className="group-actions">
+        <button
+          type="button"
+          className="tree-action"
+          aria-label={`Start a session in ${project.name}`}
+          title={`Start a session in ${shorten(project.path, status?.home)} (with ⌥, pick the agent)`}
+          onClick={(event) => (event.altKey ? openPickAgent(project.path) : openNewIn(project.path))}
+        >
+          <Plus size={13} aria-hidden="true" />
+        </button>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button type="button" className="tree-action" aria-label={`More for ${project.name}`}>
+              <Ellipsis size={13} aria-hidden="true" />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onSelect={() => openPickAgent(project.path)}>Start a session with…</DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => setRenaming({ id: project.id, name: project.name })}>Rename…</DropdownMenuItem>
+            {selectedWorkspace ? (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem variant="destructive" onSelect={() => handleDetachProject(project.id)}>
+                  Detach from {selectedWorkspace.name}
+                </DropdownMenuItem>
+              </>
+            ) : null}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </span>
+    );
+  };
+
+  // What no Project holds comes after them, under a heading of its own.
+  const firstLoose = sections.findIndex((section) => !section.project);
 
   return (
     <nav className="sessions-view" aria-label="Workspace">
@@ -532,10 +611,9 @@ export function SessionBrowser({
       ) : null}
 
       <h2>
-        Sessions
+        {sections.some((section) => section.projectId) ? "Projects" : "Sessions"}
         <span className="heading-actions">
-          {/* At the top, not under the Projects at the bottom: it is how the
-            next one comes in, and the list above can be long. */}
+          {/* Atop the list it adds to. */}
           {selectedWorkspace && projects.length > 0 ? (
             <button
               type="button"
@@ -551,7 +629,7 @@ export function SessionBrowser({
         </span>
       </h2>
 
-      {visibleSessions.length === 0 ? (
+      {sections.length === 0 ? (
         <p className="muted">
           {selectedWorkspace ? (
             "Nothing running in this Workspace's projects yet."
@@ -563,9 +641,25 @@ export function SessionBrowser({
           )}
         </p>
       ) : (
-        sections.map((section) => (
-          <div key={section.key}>
-            {headed(section)
+        sections.map((section, index) => (
+          <div key={section.key} className={section.project ? "project-group" : undefined}>
+            {index === firstLoose && firstLoose > 0 ? <h2 className="elsewhere">Elsewhere</h2> : null}
+            {renaming && renaming.id === section.projectId ? (
+              <div className="fold-head level-3">
+                <input
+                  className="workspace-input group-rename"
+                  aria-label="Project name"
+                  value={renaming.name}
+                  autoFocus
+                  onChange={(event) => setRenaming({ ...renaming, name: event.target.value })}
+                  onBlur={submitRename}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") submitRename();
+                    if (event.key === "Escape") setRenaming(null);
+                  }}
+                />
+              </div>
+            ) : headed(section)
               ? foldHead(
                   section.key,
                   section.heading,
@@ -573,8 +667,13 @@ export function SessionBrowser({
                   3,
                   "group",
                   shorten(section.path, status?.home),
+                  section.projectId ? projectActions(section) : undefined,
+                  section.projectId ? shorten(section.path, status?.home) : undefined,
                 )
               : null}
+            {section.projectId && section.checkouts.length === 0 && !folded.has(section.key) ? (
+              <p className="muted nothing-running">Nothing running</p>
+            ) : null}
             {headed(section) && folded.has(section.key) ? null : section.checkouts.map((checkout) => {
             const key = `${section.key}|${checkout.key}`;
             return (
@@ -713,39 +812,6 @@ export function SessionBrowser({
         handleAssign={handleAssign}
         onOpen={openClaudeSession}
       />
-
-      {selectedWorkspace ? (
-        <>
-          <h2 className="muted">
-            Projects
-          </h2>
-
-          {selectedWorkspaceProjects.length === 0 ? (
-            <p className="muted">No projects attached yet.</p>
-          ) : (
-            <ul>
-              {selectedWorkspaceProjects.map((project) => (
-                <li key={project.id}>
-                  <span className="workspace-row">
-                    <span className="workspace-item" title={project.path}>
-                      <strong>{project.name}</strong>
-                      <span className="muted">{shorten(project.path, status?.home)}</span>
-                    </span>
-                    <button
-                      type="button"
-                      className="tab-x"
-                      aria-label={`Detach ${project.name}`}
-                      onClick={() => handleDetachProject(project.id)}
-                    >
-                      ×
-                    </button>
-                  </span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </>
-      ) : null}
 
     </nav>
   );
