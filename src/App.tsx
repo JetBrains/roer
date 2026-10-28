@@ -1566,7 +1566,6 @@ export function App() {
                   <FirstProject
                     onClone={() => browser.openAddProject({ mode: "clone" })}
                     onFolder={() => browser.openNew()}
-                    onNew={() => browser.openAddProject({ mode: "new" })}
                     onHome={browser.openNewInHome}
                   />
                 ) : null}

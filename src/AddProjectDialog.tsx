@@ -15,14 +15,13 @@ export function repoName(url: string): string {
 
 const MODES: [AddProjectMode, string][] = [
   ["clone", "Clone"],
-  ["new", "New repository"],
   ["folder", "Folder on disk"],
   ["known", "Known project"],
 ];
 
 /**
- * Every way a project comes to a Workspace, in one place: cloned, made new,
- * picked from disk, or one Roer already knows. Which Workspace is asked
+ * Every way a project comes to a Workspace, in one place: cloned, picked
+ * from disk, or one Roer already knows. Which Workspace is asked
  * here too, rather than taken from wherever the dialog was opened, since
  * there can be many.
  */
@@ -39,7 +38,7 @@ export function AddProjectDialog({
   workspaces: Workspace[];
   projects: Project[];
   home?: string;
-  /** Where a new repository goes by default, for a Workspace. */
+  /** Where a clone goes by default, for a Workspace. */
   parentFor: (workspaceId: string | undefined) => string | undefined;
   onAdd: (request: AddProjectRequest) => void;
   onClose: () => void;
@@ -82,8 +81,8 @@ export function AddProjectDialog({
   const problem = (() => {
     if (!workspace) return "Pick a workspace.";
     if (mode === "clone" && !url.trim()) return "";
-    if (mode === "clone" || mode === "new") {
-      if (!shownName.trim()) return mode === "new" ? "" : "Name the folder it goes in.";
+    if (mode === "clone") {
+      if (!shownName.trim()) return "Name the folder it goes in.";
       if (/[/\\]/.test(shownName)) return "The name is one folder, without slashes.";
       if (!parent.trim()) return "Say where it goes.";
       if (!/^([/~]|[A-Za-z]:)/.test(parent.trim())) return "Where it goes is a full path.";
@@ -98,7 +97,6 @@ export function AddProjectDialog({
     if (problem !== null || !workspace) return;
     const base = { workspaceId: workspace.id, session };
     if (mode === "clone") onAdd({ ...base, mode, url: url.trim(), dest });
-    else if (mode === "new") onAdd({ ...base, mode, dest });
     else if (mode === "folder") onAdd({ ...base, mode });
     else if (projectId) onAdd({ ...base, mode, projectId });
   };
@@ -115,7 +113,7 @@ export function AddProjectDialog({
     if (!parentEdited) setParent(shorten(parentFor(id) ?? "", home));
   };
 
-  const action = { clone: "Clone", new: "Create", folder: "Choose folder…", known: "Add" }[mode];
+  const action = { clone: "Clone", folder: "Choose folder…", known: "Add" }[mode];
 
   return (
     <div className="popup-scrim" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
@@ -164,14 +162,13 @@ export function AddProjectDialog({
           </Field>
         ) : null}
 
-        {mode === "clone" || mode === "new" ? (
+        {mode === "clone" ? (
           <>
             <Field label="Name">
               <input
                 className="mono"
                 value={shownName}
-                placeholder={mode === "clone" ? "From the URL" : "my-project"}
-                autoFocus={mode === "new"}
+                placeholder="From the URL"
                 spellCheck={false}
                 onChange={(event) => {
                   setName(event.target.value);
@@ -250,7 +247,7 @@ export function AddProjectDialog({
           </div>
         ) : null}
 
-        <Field label="Workspace" hint={mode === "clone" || mode === "new" ? "The project is attached to it." : undefined}>
+        <Field label="Workspace" hint={mode === "clone" ? "The project is attached to it." : undefined}>
           <Select value={workspaceId} onValueChange={changeWorkspace}>
             <SelectTrigger size="sm" aria-label="Workspace">
               <SelectValue placeholder="Pick one" />
@@ -270,9 +267,9 @@ export function AddProjectDialog({
           <span>Start a session in it</span>
         </label>
 
-        {mode === "clone" || mode === "new" ? (
+        {mode === "clone" ? (
           <p className="muted">
-            {mode === "clone" ? "git clone" : "git init"} runs in a terminal of its own, where git can ask for a passphrase. Once it
+            git clone runs in a terminal of its own, where git can ask for a passphrase. Once it
             is done the project is added, and the terminal closes; if it fails, the terminal stays to say why.
           </p>
         ) : null}

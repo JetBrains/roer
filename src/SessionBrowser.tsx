@@ -519,7 +519,6 @@ export function SessionBrowser({
         <FirstProject
           onClone={() => openAddProject({ workspaceId: selectedWorkspace.id, mode: "clone" })}
           onFolder={() => handleAddProject({ mode: "folder", workspaceId: selectedWorkspace.id, session: true })}
-          onNew={() => openAddProject({ workspaceId: selectedWorkspace.id, mode: "new" })}
           onHome={openNewInHome}
           compact={visibleSessions.length > 0}
         />

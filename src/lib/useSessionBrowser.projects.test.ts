@@ -630,17 +630,9 @@ describe("adding a project from the dialog", () => {
     await waitFor(() => expect(killSession).toHaveBeenCalledWith("%5"));
   });
 
-  it("makes a new repository with git init, the same way", async () => {
-    const onOpen = vi.fn();
-    const { result } = setUp([workspace()], onOpen);
-    await waitFor(() => expect(result.current.workspaces).toHaveLength(1));
+  it("offers the folder it cloned into for the next one", async () => {
+    const { result } = await cloning();
 
-    act(() => result.current.handleAddProject({ mode: "new", dest, workspaceId: "w1", session: false }));
-
-    expect(onOpen).toHaveBeenCalledWith(
-      expect.objectContaining({ args: ["new", "--shell", "--command", `git init '${dest}'`, "hello"] }),
-    );
-    // And offers the same folder for the next one.
     expect(result.current.projectParent("w1")).toBe("/Users/test/work");
   });
 });
