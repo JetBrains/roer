@@ -90,21 +90,19 @@ export interface AddProjectStart {
   mode?: AddProjectMode;
 }
 
-export type AddProjectMode = "clone" | "new" | "folder" | "known";
+export type AddProjectMode = "clone" | "folder" | "known";
 
 /** What the Add project dialog was asked for. `session` starts an agent in
  * the project once it is there. */
 export type AddProjectRequest = { workspaceId: string; session: boolean } & (
   | { mode: "clone"; url: string; dest: string }
-  | { mode: "new"; dest: string }
   | { mode: "folder" }
   | { mode: "known"; projectId: string }
 );
 
-/** A clone or new repository being made in a pane of its own, watched until
- * git is done there. */
+/** A clone being made in a pane of its own, watched until git is done
+ * there. */
 interface Creating {
-  mode: "clone" | "new";
   dest: string;
   workspaceId: string;
   session: boolean;
@@ -232,7 +230,7 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
   const onOpenRef = useRef(onOpen);
   onOpenRef.current = onOpen;
   // Set each render, below, with what it reads: the live list's watch on a
-  // clone or a new repository being made.
+  // clone being made.
   const watchCreatingRef = useRef<(live: SessionInfo[]) => void>(() => {});
   const homeRef = useRef<string | undefined>(undefined);
 
@@ -833,9 +831,9 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
   const [addProject, setAddProject] = useState<AddProjectStart | null>(null);
   const creatingRef = useRef<Creating[]>([]);
 
-  /** The dialog's answer. A clone or a new repository is made in a terminal
-   * pane, where git can ask for a passphrase and say what went wrong; the
-   * pane is watched (below) and the project made once git is done there. */
+  /** The dialog's answer. A clone is made in a terminal pane, where git can
+   * ask for a passphrase and say what went wrong; the pane is watched (below)
+   * and the project made once git is done there. */
   const handleAddProject = (request: AddProjectRequest) => {
     setAddProject(null);
     const { workspaceId } = request;
@@ -860,15 +858,14 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
       return;
     }
     const { dest } = request;
-    const command =
-      request.mode === "clone" ? `git clone ${quoted(request.url)} ${quoted(dest)}` : `git init ${quoted(dest)}`;
+    const command = `git clone ${quoted(request.url)} ${quoted(dest)}`;
     // tmux makes these underscores in a session's name anyway.
     const name = folderName(dest).replace(/[.:]/g, "_");
     openedRef.current += 1;
     const known = sessions.map((session) => session.pane);
     creatingRef.current = [
       ...creatingRef.current,
-      { mode: request.mode, dest, workspaceId, session: request.session, name, known },
+      { dest, workspaceId, session: request.session, name, known },
     ];
     pendingAssignRef.current = { known, workspaceId };
     try {
@@ -885,7 +882,7 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
     });
   };
 
-  /** Where the dialog offers to put a new repository: the Workspace's own
+  /** Where the dialog offers to put a clone: the Workspace's own
    * folder, else where the last one went, else beside the newest project. */
   const projectParent = (workspaceId: string | undefined): string | undefined => {
     const folder = workspaces.find((workspace) => workspace.id === workspaceId)?.folder;
@@ -948,11 +945,10 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
   /** Whether git has made the project. A clone is, once it has checked
    * out a commit: that needs no word from the terminal, which cannot say
    * what runs in it everywhere. A repository there will do once git was
-   * seen to run and stop, as for a clone of an empty one; and for `git init`,
-   * which is done as soon as there is one at all. */
+   * seen to run and stop, as for a clone of an empty one. */
   const madeIn = async (pending: Creating): Promise<boolean> => {
-    if (pending.mode === "clone" && (await gitCheckedOut(pending.dest))) return true;
-    if (pending.mode === "clone" && !pending.ran) return false;
+    if (await gitCheckedOut(pending.dest)) return true;
+    if (!pending.ran) return false;
     const root = await gitRoot(pending.dest);
     return root !== null && baseName(trimmed(root)) === folderName(pending.dest);
   };
@@ -1516,7 +1512,7 @@ const SETTLED_MS = 1000;
 /** Every how many polls Workspace folders are looked in for new repositories. */
 const FOLDERS_EVERY = 4;
 
-/** Where the last clone or new repository went, offered for the next. */
+/** Where the last clone went, offered for the next. */
 const PROJECT_PARENT_KEY = "roer:new-project-parent";
 
 /** Per Workspace and folder, the repositories already seen in it. */

@@ -1,4 +1,4 @@
-import { FolderOpen, GitBranchPlus, Download } from "lucide-react";
+import { Download, FolderOpen } from "lucide-react";
 
 /**
  * Before there is any project: what one is, and the ways to the first, as
@@ -8,14 +8,12 @@ import { FolderOpen, GitBranchPlus, Download } from "lucide-react";
 export function FirstProject({
   onClone,
   onFolder,
-  onNew,
   onHome,
   compact = false,
 }: {
   onClone: () => void;
   /** A folder on disk, with a session started in it. */
   onFolder: () => void;
-  onNew: () => void;
   /** A session in the home folder, without a project. */
   onHome?: () => void;
   /** One line, for someone already at work without a project: still said,
@@ -31,9 +29,6 @@ export function FirstProject({
         </button>{" "}
         <button type="button" className="link" onClick={onFolder}>
           Open a folder…
-        </button>{" "}
-        <button type="button" className="link" onClick={onNew}>
-          New repository…
         </button>
       </section>
     );
@@ -53,10 +48,6 @@ export function FirstProject({
         <button type="button" onClick={onFolder}>
           <FolderOpen size={16} aria-hidden="true" />
           Open a folder…
-        </button>
-        <button type="button" onClick={onNew}>
-          <GitBranchPlus size={16} aria-hidden="true" />
-          New repository…
         </button>
       </div>
       {onHome ? (
