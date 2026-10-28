@@ -24,6 +24,7 @@ import {
   unassignSession,
   workspaceAssignments,
 } from "./lib/workspaces";
+import { AddProjectDialog } from "./AddProjectDialog";
 import { NewSessionButton } from "./NewSessionButton";
 import {
   checkoutLabel,
@@ -120,13 +121,22 @@ function Harness({ onOpen, activePane }: { onOpen: (request: OpenRequest) => voi
         handleRenameWorkspace={browser.handleRenameWorkspace}
         handleDeleteWorkspace={browser.handleDeleteWorkspace}
         handleSetWorkspaceFolder={browser.handleSetWorkspaceFolder}
-        handleAttachExistingProject={browser.handleAttachExistingProject}
-        handleAttachNewProject={browser.handleAttachNewProject}
-        handleCreateProject={browser.handleCreateProject}
+        openAddProject={browser.openAddProject}
         handleRenameProject={browser.handleRenameProject}
         handleDeleteProject={browser.handleDeleteProject}
       />
       <NewSessionButton openNew={browser.openNew} />
+      {browser.addProject ? (
+        <AddProjectDialog
+          start={browser.addProject}
+          workspaces={browser.workspaces}
+          projects={browser.projects}
+          home={browser.status?.home}
+          parentFor={browser.projectParent}
+          onAdd={browser.handleAddProject}
+          onClose={browser.closeAddProject}
+        />
+      ) : null}
       <SessionBrowser
         status={browser.status}
         workspaces={browser.workspaces}
@@ -135,8 +145,9 @@ function Harness({ onOpen, activePane }: { onOpen: (request: OpenRequest) => voi
         selectedWorkspace={browser.selectedWorkspace}
         selectedWorkspaceProjects={browser.selectedWorkspaceProjects}
         handleAssign={browser.handleAssign}
-        handleAttachExistingProject={browser.handleAttachExistingProject}
-        handleAttachNewProject={browser.handleAttachNewProject}
+        openAddProject={browser.openAddProject}
+        handleAddProject={browser.handleAddProject}
+        openNewInHome={browser.openNewInHome}
         handleDetachProject={browser.handleDetachProject}
         roots={browser.roots}
         repos={browser.repos}
@@ -1019,17 +1030,22 @@ describe("attaching a project from a workspace's menu", () => {
 
     expect(await screen.findByRole("button", { name: /Default/ })).toHaveAttribute("aria-pressed", "true");
     fireEvent.contextMenu(screen.getByRole("button", { name: /Feature work/ }));
-    // The Workspace tab has an "Attach project" of its own, for the selected one.
-    fireEvent.click(await screen.findByRole("menuitem", { name: /Attach project/ }));
+    // The Add project dialog, on the Workspace right-clicked.
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Add project…" }));
+    const dialog = await screen.findByRole("dialog", { name: "Add a project" });
+    fireEvent.click(within(dialog).getByRole("radio", { name: "Known project" }));
 
-    // Only what the Workspace lacks is offered, then a folder from disk.
-    const api = await screen.findByRole("menuitem", { name: "api" });
-    expect(screen.queryByRole("menuitem", { name: "roer" })).not.toBeInTheDocument();
-    expect(screen.getByRole("menuitem", { name: "Attach a new project…" })).toBeInTheDocument();
-
-    fireEvent.click(api);
+    // Only what the Workspace lacks is offered, found by a search.
+    expect(within(dialog).queryByRole("option", { name: /roer/ })).not.toBeInTheDocument();
+    fireEvent.change(within(dialog).getByRole("textbox", { name: "Search projects" }), { target: { value: "ap" } });
+    fireEvent.click(within(dialog).getByRole("option", { name: /api/ }));
+    fireEvent.click(within(dialog).getByRole("checkbox", { name: "Start a session in it" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Add" }));
     await waitFor(() => expect(attachProject).toHaveBeenCalledWith("w2", "p2"));
-    expect(await screen.findByRole("button", { name: /Feature work.*2 projects/ })).toBeInTheDocument();
+    // And it is the one in view, where the project is.
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Switch Workspace or Project" })).toHaveAttribute("title", "Workspace: Feature work"),
+    );
   });
 });
 

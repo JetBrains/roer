@@ -5,29 +5,22 @@ import {
   ContextMenuContent,
   ContextMenuItem,
   ContextMenuSeparator,
-  ContextMenuSub,
-  ContextMenuSubContent,
-  ContextMenuSubTrigger,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import { confirmAction } from "./lib/confirm";
 import { pickFolder } from "./lib/folderPicker";
-import { type Project } from "./lib/projects";
 import { type Workspace } from "./lib/workspaces";
 
 export interface WorkspaceSwitcherProps {
   workspaces: Workspace[];
-  /** Every registered Project, so a Workspace's menu can offer the ones it lacks. */
-  projects: Project[];
   /** `null` while a Project is selected instead, or before any load. */
   selectedId: string | null;
   onSelect: (id: string) => void;
   onCreate: (name: string) => void;
   onRename: (id: string, name: string) => void;
   onDelete: (id: string) => void;
-  onAttachProject: (projectId: string, workspaceId: string) => void;
-  /** A folder picked from disk, registered as a Project if it is not one yet. */
-  onAttachNewProject: (path: string, workspaceId: string) => void;
+  /** The Add project dialog, on this Workspace. */
+  onAddProject: (workspaceId: string) => void;
   /** The folder a Workspace stands for, picked, or `null` to forget it. */
   onSetFolder: (workspaceId: string, folder: string | null) => void;
 }
@@ -39,14 +32,12 @@ export interface WorkspaceSwitcherProps {
  */
 export function WorkspaceSwitcher({
   workspaces,
-  projects,
   selectedId,
   onSelect,
   onCreate,
   onRename,
   onDelete,
-  onAttachProject,
-  onAttachNewProject,
+  onAddProject,
   onSetFolder,
 }: WorkspaceSwitcherProps) {
   const [creating, setCreating] = useState(false);
@@ -79,12 +70,6 @@ export function WorkspaceSwitcher({
       "Delete workspace",
     );
     if (confirmed) onDelete(workspace.id);
-  };
-
-  const attachNew = async (workspace: Workspace) => {
-    // A plain path, or `null` when the dialog was dismissed.
-    const picked = await pickFolder();
-    if (typeof picked === "string") onAttachNewProject(picked, workspace.id);
   };
 
   const pickWorkspaceFolder = async (workspace: Workspace) => {
@@ -175,28 +160,7 @@ export function WorkspaceSwitcher({
                   </button>
                 </ContextMenuTrigger>
                 <ContextMenuContent>
-                  <ContextMenuSub>
-                    <ContextMenuSubTrigger>Attach project</ContextMenuSubTrigger>
-                    <ContextMenuSubContent>
-                      {projects
-                        .filter((project) => !workspace.projects.includes(project.id))
-                        .map((project) => (
-                          <ContextMenuItem
-                            key={project.id}
-                            title={project.path}
-                            onSelect={() => onAttachProject(project.id, workspace.id)}
-                          >
-                            {project.name}
-                          </ContextMenuItem>
-                        ))}
-                      {projects.some((project) => !workspace.projects.includes(project.id)) ? (
-                        <ContextMenuSeparator />
-                      ) : null}
-                      <ContextMenuItem onSelect={() => void attachNew(workspace)}>
-                        Attach a new project…
-                      </ContextMenuItem>
-                    </ContextMenuSubContent>
-                  </ContextMenuSub>
+                  <ContextMenuItem onSelect={() => onAddProject(workspace.id)}>Add project…</ContextMenuItem>
                   {/* What runs in it outside the projects, such as an agent
                     across the repositories of a folder of them, is this
                     Workspace's too. */}

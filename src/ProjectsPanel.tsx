@@ -1,4 +1,3 @@
-import { ask } from "@tauri-apps/plugin-dialog";
 import { useState } from "react";
 
 import {
@@ -7,22 +6,21 @@ import {
   ContextMenuItem,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
-import { pickFolder } from "./lib/folderPicker";
+import { confirmAction } from "./lib/confirm";
 import type { Project } from "./lib/projects";
 
 export interface ProjectsPanelProps {
   projects: Project[];
   selectedId: string | null;
   onSelect: (id: string | null) => void;
-  onCreate: (name: string, path: string) => void;
+  /** The Add project dialog. */
+  onAdd: () => void;
   onRename: (id: string, name: string) => void;
   onDelete: (id: string) => void;
 }
 
-/** Just the directory's own name, used as a new Project's starting name. */
-function folderName(path: string): string {
-  return path.replace(/\/+$/, "").split("/").pop() ?? path;
-}
+/** How many projects there are before the tab offers to search them. */
+const SEARCH_FROM = 6;
 
 /**
  * The Projects tab of the sidebar: every registered git repository,
@@ -34,17 +32,19 @@ export function ProjectsPanel({
   projects,
   selectedId,
   onSelect,
-  onCreate,
+  onAdd,
   onRename,
   onDelete,
 }: ProjectsPanelProps) {
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
-
-  const addProject = async () => {
-    const picked = await pickFolder();
-    if (typeof picked === "string") onCreate(folderName(picked), picked);
-  };
+  const [query, setQuery] = useState("");
+  const needle = query.trim().toLowerCase();
+  // Newest first: the registry keeps them in the order they came, and the
+  // one just added is the one looked for.
+  const shown = projects
+    .filter((project) => !needle || `${project.name} ${project.path}`.toLowerCase().includes(needle))
+    .reverse();
 
   const startRename = (project: Project) => {
     setRenamingId(project.id);
@@ -58,10 +58,7 @@ export function ProjectsPanel({
   };
 
   const confirmDelete = async (project: Project) => {
-    const confirmed = await ask(`Delete "${project.name}"? This removes it from every Workspace.`, {
-      title: "Delete project",
-      kind: "warning",
-    });
+    const confirmed = await confirmAction(`Delete "${project.name}"? This removes it from every Workspace.`, "Delete project");
     if (confirmed) onDelete(project.id);
   };
 
@@ -69,16 +66,29 @@ export function ProjectsPanel({
     <div className="workspace-switcher">
       <h2>
         Projects
-        <button type="button" className="link" onClick={() => void addProject()}>
-          New project
+        <button type="button" className="link" onClick={onAdd}>
+          Add project
         </button>
       </h2>
 
+      {projects.length > SEARCH_FROM ? (
+        <input
+          type="search"
+          className="workspace-input projects-search"
+          placeholder="Search projects"
+          aria-label="Search projects"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+        />
+      ) : null}
+
       {projects.length === 0 ? (
         <p className="muted">No projects yet.</p>
+      ) : shown.length === 0 ? (
+        <p className="muted">None match.</p>
       ) : (
         <ul>
-          {projects.map((project) => {
+          {shown.map((project) => {
             const active = project.id === selectedId;
             if (renamingId === project.id) {
               return (

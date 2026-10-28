@@ -8,17 +8,10 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
-import { pickFolder } from "./lib/folderPicker";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import type { Repo } from "./lib/git";
 import type { Worktree } from "./lib/worktrees";
 import type { Project } from "./lib/projects";
+import { FirstProject } from "./FirstProject";
 import type { ClaudeSession, SessionInfo } from "./lib/pty";
 import type { DirStats, SessionBrowserState } from "./lib/useSessionBrowser";
 import type { Workspace } from "./lib/workspaces";
@@ -419,8 +412,9 @@ export type SessionBrowserProps = Pick<
   | "selectedWorkspace"
   | "selectedWorkspaceProjects"
   | "handleAssign"
-  | "handleAttachExistingProject"
-  | "handleAttachNewProject"
+  | "openAddProject"
+  | "handleAddProject"
+  | "openNewInHome"
   | "handleDetachProject"
   | "roots"
   | "repos"
@@ -454,8 +448,9 @@ export function SessionBrowser({
   selectedWorkspace,
   selectedWorkspaceProjects,
   handleAssign,
-  handleAttachExistingProject,
-  handleAttachNewProject,
+  openAddProject,
+  handleAddProject,
+  openNewInHome,
   handleDetachProject,
   roots,
   repos,
@@ -473,17 +468,6 @@ export function SessionBrowser({
   worktrees,
   onOpen,
 }: SessionBrowserProps) {
-  const attachableProjects: Project[] = selectedWorkspace
-    ? projects.filter((project) => !selectedWorkspace.projects.includes(project.id))
-    : [];
-
-  const attachNewProject = async () => {
-    // Resolves to a plain path, or `null` when the dialog was dismissed —
-    // nothing to do either way but let it settle.
-    const picked = await pickFolder();
-    if (typeof picked === "string") handleAttachNewProject(picked);
-  };
-
   // What is running, by checkout. Past conversations are a timeline of
   // their own below: there can be hundreds, and they are come back to by
   // what and when more than by where.
@@ -532,9 +516,17 @@ export function SessionBrowser({
       {/* Without a project New session asks where to go. The Workspace is
         there once both are read, so this never flashes. */}
       {selectedWorkspace && projects.length === 0 ? (
+        <FirstProject
+          onClone={() => openAddProject({ workspaceId: selectedWorkspace.id, mode: "clone" })}
+          onFolder={() => handleAddProject({ mode: "folder", workspaceId: selectedWorkspace.id, session: true })}
+          onNew={() => openAddProject({ workspaceId: selectedWorkspace.id, mode: "new" })}
+          onHome={openNewInHome}
+          compact={visibleSessions.length > 0}
+        />
+      ) : selectedWorkspace && selectedWorkspaceProjects.length === 0 && !selectedWorkspace.folder ? (
         <p className="notice">
-          No project yet: add the folder you work in, a git repository or a folder of them, and new sessions start there.{" "}
-          <button type="button" className="link" onClick={() => void attachNewProject()}>
+          {selectedWorkspace.name} has no project yet, so its new sessions have nowhere of their own to start.{" "}
+          <button type="button" className="link" onClick={() => openAddProject({ workspaceId: selectedWorkspace.id })}>
             Add a project…
           </button>
         </p>
@@ -714,31 +706,13 @@ export function SessionBrowser({
         <>
           <h2 className="muted">
             Projects
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <button type="button" className="link">
-                  Attach project
-                </button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                {attachableProjects.length > 0 ? (
-                  <>
-                    {attachableProjects.map((project) => (
-                      <DropdownMenuItem
-                        key={project.id}
-                        onSelect={() => handleAttachExistingProject(project.id)}
-                      >
-                        {project.name}
-                      </DropdownMenuItem>
-                    ))}
-                    <DropdownMenuSeparator />
-                  </>
-                ) : null}
-                <DropdownMenuItem onSelect={() => void attachNewProject()}>
-                  Attach a new project…
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
+            <button
+              type="button"
+              className="link"
+              onClick={() => openAddProject({ workspaceId: selectedWorkspace.id, mode: projects.length > 0 ? "known" : "clone" })}
+            >
+              Add project
+            </button>
           </h2>
 
           {selectedWorkspaceProjects.length === 0 ? (

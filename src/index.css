@@ -5315,7 +5315,8 @@ button.agent-row.on {
 }
 
 .agents-form input:not([type="checkbox"]),
-.agents-form textarea {
+.agents-form textarea,
+.add-project input:not([type="checkbox"]) {
   font: inherit;
   font-size: 12.5px;
   padding: 6px 8px;
@@ -5331,7 +5332,8 @@ button.agent-row.on {
 }
 
 .agents-form input:focus,
-.agents-form textarea:focus {
+.agents-form textarea:focus,
+.add-project input:focus {
   outline: none;
   border-color: var(--roer-accent);
 }
@@ -6007,4 +6009,107 @@ button.danger:hover {
 
 .changes-since {
   font-weight: 400;
+}
+
+/* The Workspaces/Projects list, folded open over the sessions: scrolled on
+   its own, so a long one neither runs off the column nor pushes them away. */
+.scope-panel {
+  max-height: 50vh;
+  overflow-y: auto;
+  margin-bottom: 12px;
+}
+
+.projects-search {
+  width: 100%;
+  margin-bottom: 6px;
+}
+
+.popup.add-project {
+  align-self: flex-start;
+}
+
+.add-project-parent {
+  display: flex;
+  gap: 6px;
+}
+
+.add-project-parent input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.add-project-known {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.add-project-known ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: 30vh;
+  overflow-y: auto;
+}
+
+/* Before any project: the one thing to do, in the middle of the stage and
+   at the top of the Workspace tab. */
+.first-project {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  max-width: 520px;
+  margin: 0 auto 20px;
+  padding: 22px 24px;
+  text-align: center;
+  border: 1px solid var(--roer-accent);
+  border-radius: 10px;
+  background: var(--roer-panel);
+}
+
+.first-project h2 {
+  margin: 0;
+  font-size: 16px;
+  letter-spacing: normal;
+  text-transform: none;
+  color: var(--roer-fg);
+}
+
+.first-project p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.first-project p.muted {
+  font-size: 12px;
+}
+
+.first-project-ways {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+}
+
+.first-project-ways button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+}
+
+button.first-project-side {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin-bottom: 12px;
+  padding: 7px 8px;
+}
+
+.first-project-line {
+  margin-bottom: 12px;
 }

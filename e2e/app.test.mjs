@@ -41,9 +41,13 @@ test("the first launch asks about Claude Code, and Not now is remembered", async
 
 test("opens on the session list, with nothing running, and says what a project is", async () => {
   await app.waitForText("Nothing running in this Workspace's projects yet.", ".sessions-view");
-  await app.waitForText("No project yet: add the folder you work in", ".sessions-view");
+  await app.waitForText("Add your first project", ".sessions-view");
+  await app.waitForText("A project is one git repository", ".sessions-view");
+  // The sidebar points at it too, where the sessions will be.
+  await app.waitForText("Add your first project", ".sidebar");
+  // And the empty stage, behind the tab, says it once the tab is left.
   await app.tab("Terminal");
-  await app.waitForText("Start with the folder you work in");
+  await app.waitForText("Clone a repository…", ".empty");
 });
 
 test("New session starts the default agent in a terminal", async () => {
