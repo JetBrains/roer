@@ -501,31 +501,37 @@ describe("DiffBrowserView — commits and the local-changes slot together", () =
       expect(onReviewAsked).not.toHaveBeenCalled();
     });
 
-    it("is asked of what is not committed when the branch has no commits of its own", async () => {
+    it("is asked of what is not committed alone on local changes, when the branch has no commits of its own", async () => {
       vi.mocked(gitBranches).mockResolvedValue(["main"]);
       vi.mocked(gitCurrentBranch).mockResolvedValue("main");
-      vi.mocked(gitBranchDiff).mockResolvedValue({
-        root: "/work/roer",
-        base: "origin/main",
-        from: "HEAD",
-        commits: 0,
-        diff: `diff --git a/whole.txt b/whole.txt\n--- a/whole.txt\n+++ b/whole.txt\n${oneHunk}`,
-      });
       const send = vi.fn().mockResolvedValue(undefined);
       render(<DiffBrowserView cwd="/work/roer/src" active agent="Codex" send={send} />);
       expect(await screen.findByText("Local changes")).toBeInTheDocument();
       await pick("In this session, with Codex");
-      await waitFor(() => expect(send).toHaveBeenCalledWith(expect.stringMatching(/git merge-base HEAD origin\/main/)));
+      await waitFor(() => expect(send).toHaveBeenCalledWith(expect.stringMatching(/git diff HEAD/)));
+      expect(send).not.toHaveBeenCalledWith(expect.stringMatching(/merge-base/));
       expect(await screen.findByText(/Asked Codex for a review/)).toBeInTheDocument();
     });
 
-    it("is not offered on what is not committed while the branch has commits, which the whole covers", async () => {
+    it("is asked of what is not committed alone on local changes, beside the branch's commits", async () => {
       branched();
-      render(<DiffBrowserView cwd="/work/roer/src" active send={vi.fn()} />);
-      expect(await screen.findByRole("button", { name: /^Review/ })).toBeInTheDocument();
+      const send = vi.fn().mockResolvedValue(undefined);
+      render(<DiffBrowserView cwd="/work/roer/src" active agent="Codex" send={send} />);
+      await pick("In this session, with Codex");
+      await waitFor(() => expect(send).toHaveBeenCalledWith(expect.stringMatching(/git merge-base HEAD main/)));
+      // What the whole was asked does not stay on screen under local changes.
       fireEvent.click(screen.getByRole("button", { name: "Next commit" }));
       expect(await screen.findByText("Local changes")).toBeInTheDocument();
-      expect(screen.queryByRole("button", { name: /^Review/ })).toBeNull();
+      expect(screen.queryByText(/Asked Codex for a review/)).toBeNull();
+      await pick("In this session, with Codex");
+      await waitFor(() => expect(send).toHaveBeenLastCalledWith(expect.stringMatching(/git diff HEAD/)));
+    });
+
+    it("is not offered on local changes once they are committed", async () => {
+      vi.mocked(gitChanges).mockResolvedValue({ ...changes, files: [] });
+      render(<DiffBrowserView cwd="/work/roer/src" active send={vi.fn()} />);
+      expect(await screen.findByText("Local changes")).toBeInTheDocument();
+      expect(await screen.findByRole("button", { name: /^Review/ })).toBeDisabled();
     });
 
     it("is not offered when nothing can be asked", async () => {
