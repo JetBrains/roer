@@ -69,6 +69,7 @@ pub fn run() {
             git::git_repos_in,
             git::git_repo,
             git::git_branches,
+            git::git_default_base,
             git::git_current_branch,
             git::git_branch_commits,
             git::git_commit_files,

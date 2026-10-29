@@ -363,6 +363,7 @@ fn dispatch(state: &Arc<AppState>, cmd: &str, args: Value, cid: Option<&str>) ->
         "git_diff" => call_res!(args, crate::git::git_diff, "root": String, "path": String, "untracked": bool),
         "git_branches" => call_res!(args, crate::git::git_branches, "cwd": String),
         "git_current_branch" => call_res!(args, crate::git::git_current_branch, "cwd": String),
+        "git_default_base" => call_res!(args, crate::git::git_default_base, "cwd": String),
         "git_branch_commits" => {
             call_res!(args, crate::git::git_branch_commits, "root": String, "branch": String, "base": String)
         }

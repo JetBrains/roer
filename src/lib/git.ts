@@ -104,6 +104,10 @@ export const gitCommitAll = (cwd: string, message: string): Promise<string> =>
 /** Every local branch, for the branch-diff view's two pickers. */
 export const gitBranches = (cwd: string): Promise<string[]> => invoke("git_branches", { cwd });
 
+/** The branch a pull request from here would go into, as the branch picker names it (`main`, not `origin/main`);
+ * empty when the repository has none. */
+export const gitDefaultBase = (cwd: string): Promise<string> => invoke("git_default_base", { cwd });
+
 /** The session's own branch, the sensible default for "which branch". */
 export const gitCurrentBranch = (cwd: string): Promise<string> =>
   invoke("git_current_branch", { cwd });

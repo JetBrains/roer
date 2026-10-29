@@ -420,6 +420,16 @@ fn branches(root: &str) -> Result<Vec<String>, String> {
     Ok(out.lines().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string).collect())
 }
 
+/// The branch a pull request from here would go into, by the name the
+/// branch picker knows it by: `main` rather than `origin/main`, which
+/// [`git_branch_commits`] and [`git_branch_diff`] look up on origin first
+/// anyway. Empty when there is none (no remote, no `main` or `master`).
+#[tauri::command(async)]
+pub fn git_default_base(cwd: String) -> Result<String, String> {
+    let root = root(&cwd)?;
+    Ok(default_base(&root).map(|base| base.strip_prefix("origin/").map(str::to_string).unwrap_or(base)).unwrap_or_default())
+}
+
 /// The session's own branch, the sensible default for "which branch". Empty
 /// when detached, which is not a branch a diff view can be about.
 #[tauri::command(async)]
@@ -529,6 +539,8 @@ pub fn git_branch_commits(root: String, branch: String, base: String) -> Result<
 }
 
 fn branch_commits(root: &str, branch: &str, base: &str) -> Result<Vec<Commit>, String> {
+    // Against the same ref as the branch's whole diff, so the two agree on what the branch has.
+    let base = base_ref(root, base).unwrap_or_else(|| base.to_string());
     let format = format!("%H{FIELD_SEP}%h{FIELD_SEP}%an{FIELD_SEP}%at{FIELD_SEP}%s{FIELD_SEP}%b{RECORD_SEP}");
     let range = format!("{base}..{branch}");
     let out = git(root, &["log", "--reverse", &format!("--format={format}"), &range])?;
@@ -1978,6 +1990,41 @@ mod tests {
         assert_eq!(found.commits, 1);
         assert!(found.diff.contains("mine.txt"), "{}", found.diff);
         assert!(!found.diff.contains("upstream.txt"), "{}", found.diff);
+        // The commit list agrees with the diff: the feature's own commit, not the upstream one too.
+        let listed = branch_commits(work, "feature", "develop").expect("commits");
+        assert_eq!(listed.iter().map(|c| c.subject.as_str()).collect::<Vec<_>>(), vec!["my work"]);
+
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn names_origins_default_branch_as_the_picker_does_even_without_a_local_copy() {
+        let base = scratch("default-base");
+        let remote = base.join("remote.git");
+        let work = base.join("work");
+        std::fs::create_dir_all(&remote).unwrap();
+        std::fs::create_dir_all(&work).unwrap();
+        let (remote, work) = (remote.to_str().unwrap(), work.to_str().unwrap());
+        must(remote, &["init", "-q", "--bare"]);
+        init(work);
+        must(work, &["remote", "add", "origin", remote]);
+        write(std::path::Path::new(work), "a.txt", "one\n");
+        commit_all(work, "first");
+        must(work, &["checkout", "-q", "-b", "develop"]);
+        must(work, &["push", "-q", "origin", "develop"]);
+        must(work, &["remote", "set-head", "origin", "develop"]);
+        // Only the feature branch is local, as in a clone that went straight to it.
+        must(work, &["checkout", "-q", "-b", "feature"]);
+        let local = branches(work).expect("branches");
+        for name in local.iter().filter(|name| *name != "feature") {
+            must(work, &["branch", "-q", "-D", name]);
+        }
+        write(std::path::Path::new(work), "mine.txt", "mine\n");
+        commit_all(work, "my work");
+
+        assert_eq!(super::git_default_base(work.to_string()).expect("default"), "develop");
+        let listed = branch_commits(work, "feature", "develop").expect("commits");
+        assert_eq!(listed.iter().map(|c| c.subject.as_str()).collect::<Vec<_>>(), vec!["my work"]);
 
         std::fs::remove_dir_all(&base).ok();
     }
