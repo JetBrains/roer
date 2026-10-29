@@ -10,6 +10,7 @@ import {
   gitCommitDiff,
   gitCommitFiles,
   gitCurrentBranch,
+  gitDefaultBase,
   gitDiff,
   gitRoot,
   isNextCommit,
@@ -166,10 +167,11 @@ export function DiffBrowserView({
 
     void dir()
       .then(async (at) => {
-        const [rootDir, names, current] = await Promise.all([
+        const [rootDir, names, current, fallback] = await Promise.all([
           gitRoot(at),
           gitBranches(at),
           gitCurrentBranch(at),
+          gitDefaultBase(at).catch(() => ""),
         ]);
         if (cancelled) return;
         if (!rootDir) {
@@ -181,12 +183,14 @@ export function DiffBrowserView({
         setCurrentBranch(current);
         const branchToUse = given || current || names[0] || "";
         setBranch((existing) => existing || branchToUse);
-        // `main` when the repository has one; otherwise anything but the
-        // branch itself, since diffing a branch against its own name is
-        // always empty.
+        // The branch a pull request would go into, which need not be a
+        // local one (a clone that only ever checked out its feature branch);
+        // without one, `main`, or anything but the branch itself, since
+        // diffing a branch against its own name is always empty.
         setBase(
           (existing) =>
             existing ||
+            fallback ||
             (names.includes("main") ? "main" : names.find((name) => name !== branchToUse) ?? names[0] ?? ""),
         );
       })
@@ -426,6 +430,10 @@ export function DiffBrowserView({
     [comments, isLocalSelected, isAll, commit, agent],
   );
 
+  // Asked of the branch as a whole, or, with no commits of its own (work on `main`, say), of what is not
+  // committed, which is then all it has. Not of another branch than the one checked out: the agent reads its own.
+  const reviewable = !head && (isAll || (isLocalSelected && commits?.length === 0));
+
   const files = isAll ? wholeChanges : isLocalSelected ? localChanges?.files ?? null : commitFiles;
 
   // A comment asked for from outside: its slot first, its commit's or the branch as a whole, then the comment, once
@@ -647,7 +655,7 @@ export function DiffBrowserView({
           reveal={reveal}
           title={title}
           headerExtra={
-            isAll && !head && (send || startSession) ? (
+            reviewable && (send || startSession) ? (
               <ReviewMenu
                 agent={agent}
                 onHere={send ? askForReview : undefined}
@@ -667,20 +675,23 @@ export function DiffBrowserView({
               ) : undefined
             ) : isLocalSelected ? (
               localChanges && localChanges.files.length > 0 ? (
-                <CommitBox
-                  root={localChanges.root}
-                  pane={pane}
-                  send={send}
-                  agent={agent}
-                  unsent={(comments ?? []).filter((c) => !c.commit).length}
-                  onSent={onSent}
-                  onCommitted={(short) => {
-                    // The new commit joins the list, and what was uncommitted is gone from the first slot.
-                    setToken((n) => n + 1);
-                    setLocalToken((n) => n + 1);
-                    onCommitted?.(short);
-                  }}
-                />
+                <>
+                  {asked ? <p className="notice">{asked}</p> : null}
+                  <CommitBox
+                    root={localChanges.root}
+                    pane={pane}
+                    send={send}
+                    agent={agent}
+                    unsent={(comments ?? []).filter((c) => !c.commit).length}
+                    onSent={onSent}
+                    onCommitted={(short) => {
+                      // The new commit joins the list, and what was uncommitted is gone from the first slot.
+                      setToken((n) => n + 1);
+                      setLocalToken((n) => n + 1);
+                      onCommitted?.(short);
+                    }}
+                  />
+                </>
               ) : undefined
             ) : commit ? (
               <CommitMessage key={commit.hash} commit={commit} />

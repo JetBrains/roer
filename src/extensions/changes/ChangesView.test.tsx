@@ -40,6 +40,7 @@ vi.mock("../../lib/git", async (importOriginal) => ({
   gitRoot: vi.fn(),
   gitBranches: vi.fn(),
   gitCurrentBranch: vi.fn(),
+  gitDefaultBase: vi.fn(async () => ""),
 }));
 vi.mock("../../lib/github", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../lib/github")>()),

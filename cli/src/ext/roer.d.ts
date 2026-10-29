@@ -277,6 +277,8 @@ declare module "roer" {
    * branch), as one patch: its commits and what is not committed yet, untracked files included. With `head`, another
    * branch than the one checked out: its commits alone. */
   export function gitBranchDiff(cwd: string, base?: string, head?: string): Promise<BranchDiff>;
+  /** The branch a pull request from here would go into, as `gitBranches` names it; empty when there is none. */
+  export function gitDefaultBase(cwd: string): Promise<string>;
   /** The commits on `branch` that are not on `base`, oldest first. */
   export function gitBranchCommits(root: string, branch: string, base: string): Promise<Commit[]>;
   /** Commits everything the worktree has changed, new files included, hooks and all; the new commit's short hash. */

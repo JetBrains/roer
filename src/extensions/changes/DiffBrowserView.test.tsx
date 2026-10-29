@@ -21,6 +21,7 @@ import {
   gitCommitDiff,
   gitCommitFiles,
   gitCurrentBranch,
+  gitDefaultBase,
   gitDiff,
   gitRoot,
   type Changes,
@@ -38,6 +39,7 @@ vi.mock("../../lib/git", async (importOriginal) => ({
   gitRoot: vi.fn(),
   gitBranches: vi.fn(),
   gitCurrentBranch: vi.fn(),
+  gitDefaultBase: vi.fn(),
   gitBranchCommits: vi.fn(),
   gitCommitFiles: vi.fn(),
   gitCommitDiff: vi.fn(),
@@ -128,6 +130,7 @@ beforeEach(() => {
   // "local changes" view used to have.
   vi.mocked(gitBranches).mockReset().mockResolvedValue(["feature"]);
   vi.mocked(gitCurrentBranch).mockReset().mockResolvedValue("feature");
+  vi.mocked(gitDefaultBase).mockReset().mockResolvedValue("");
   vi.mocked(gitBranchCommits).mockReset().mockResolvedValue([]);
   vi.mocked(gitCommitFiles).mockReset().mockResolvedValue([]);
   vi.mocked(gitCommitDiff).mockReset().mockResolvedValue("");
@@ -407,6 +410,16 @@ describe("DiffBrowserView — commits and the local-changes slot together", () =
     );
   });
 
+  it("takes origin's default branch for the base, even with no local copy of it", async () => {
+    vi.mocked(gitDefaultBase).mockResolvedValue("develop");
+
+    view();
+
+    await waitFor(() =>
+      expect(gitBranchCommits).toHaveBeenCalledWith("/work/roer", "feature", "develop"),
+    );
+  });
+
   it("opens on the whole branch, then steps to local changes and each of its commits", async () => {
     vi.mocked(gitBranches).mockResolvedValue(["main", "feature"]);
     vi.mocked(gitBranchCommits).mockResolvedValue([commit("first"), commit("second")]);
@@ -486,6 +499,33 @@ describe("DiffBrowserView — commits and the local-changes slot together", () =
       expect(startSession).toHaveBeenCalledWith("/work/roer", expect.stringMatching(/git merge-base HEAD main/), { pickAgent: true });
       expect(screen.queryByText(/Started a new session on the review/)).toBeNull();
       expect(onReviewAsked).not.toHaveBeenCalled();
+    });
+
+    it("is asked of what is not committed when the branch has no commits of its own", async () => {
+      vi.mocked(gitBranches).mockResolvedValue(["main"]);
+      vi.mocked(gitCurrentBranch).mockResolvedValue("main");
+      vi.mocked(gitBranchDiff).mockResolvedValue({
+        root: "/work/roer",
+        base: "origin/main",
+        from: "HEAD",
+        commits: 0,
+        diff: `diff --git a/whole.txt b/whole.txt\n--- a/whole.txt\n+++ b/whole.txt\n${oneHunk}`,
+      });
+      const send = vi.fn().mockResolvedValue(undefined);
+      render(<DiffBrowserView cwd="/work/roer/src" active agent="Codex" send={send} />);
+      expect(await screen.findByText("Local changes")).toBeInTheDocument();
+      await pick("In this session, with Codex");
+      await waitFor(() => expect(send).toHaveBeenCalledWith(expect.stringMatching(/git merge-base HEAD origin\/main/)));
+      expect(await screen.findByText(/Asked Codex for a review/)).toBeInTheDocument();
+    });
+
+    it("is not offered on what is not committed while the branch has commits, which the whole covers", async () => {
+      branched();
+      render(<DiffBrowserView cwd="/work/roer/src" active send={vi.fn()} />);
+      expect(await screen.findByRole("button", { name: /^Review/ })).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Next commit" }));
+      expect(await screen.findByText("Local changes")).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /^Review/ })).toBeNull();
     });
 
     it("is not offered when nothing can be asked", async () => {
