@@ -430,9 +430,12 @@ export function DiffBrowserView({
     [comments, isLocalSelected, isAll, commit, agent],
   );
 
-  // Asked of the branch as a whole, or, with no commits of its own (work on `main`, say), of what is not
-  // committed, which is then all it has. Not of another branch than the one checked out: the agent reads its own.
-  const reviewable = !head && (isAll || (isLocalSelected && commits?.length === 0));
+  // Asked of what the slot shows: the branch as a whole, uncommitted work included, or what is not committed alone.
+  // Not of another branch than the one checked out: the agent reads its own.
+  const reviewable = !head && (isAll || isLocalSelected);
+  // No base asks for `git diff HEAD`, what is not committed and nothing else.
+  const reviewBase = isLocalSelected ? "" : whole?.base;
+  const canReview = isLocalSelected ? !!localChanges && localChanges.files.length > 0 : !!whole?.diff;
 
   const files = isAll ? wholeChanges : isLocalSelected ? localChanges?.files ?? null : commitFiles;
 
@@ -513,10 +516,12 @@ export function DiffBrowserView({
   }, []);
 
   const [asked, setAsked] = useState<string | null>(null);
+  // Each slot asks for its own review, so what one was asked does not stay on screen under another.
+  useEffect(() => setAsked(null), [picked]);
   const askForReview = () => {
-    if (!send || !whole) return;
+    if (!send || reviewBase === undefined) return;
     setAsked(null);
-    void send(reviewRequestPrompt(whole.base))
+    void send(reviewRequestPrompt(reviewBase))
       .then(() => {
         onReviewAsked?.("here");
         setAsked(`Asked ${agent} for a review: its comments will show here.`);
@@ -526,9 +531,9 @@ export function DiffBrowserView({
   };
   // Started in this checkout, so the new session's comments are filed under the same branch.
   const reviewInNewSession = async (pickAgent = false) => {
-    if (!startSession || !whole || !root) return;
+    if (!startSession || reviewBase === undefined || !root) return;
     setAsked(null);
-    if (!(await startSession(root, reviewRequestPrompt(whole.base), { pickAgent }))) return;
+    if (!(await startSession(root, reviewRequestPrompt(reviewBase), { pickAgent }))) return;
     onReviewAsked?.("new");
     setAsked("Started a new session on the review: its comments will show here.");
   };
@@ -661,7 +666,7 @@ export function DiffBrowserView({
                 onHere={send ? askForReview : undefined}
                 onNew={startSession && root ? () => void reviewInNewSession() : undefined}
                 onNewWith={startSession && root ? () => void reviewInNewSession(true) : undefined}
-                disabled={!whole || !whole.diff}
+                disabled={!canReview}
               />
             ) : undefined
           }
