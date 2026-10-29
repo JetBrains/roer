@@ -1212,8 +1212,9 @@ export function useSessionBrowser({ activePane, token, onOpen }: UseSessionBrows
    * starting one there. */
   const openNewIn = (cwd: string) => startNewSession(cwd, selectedWorkspace);
 
-  /** New session in the home folder, for the one who wants no project. */
-  const openNewInHome = () => startNewSession(status?.home, selectedWorkspace);
+  /** A plain terminal in the home folder, for the one who wants no project:
+   * an agent there, with no repository to work in, is what nobody asks for. */
+  const openNewInHome = () => startNewSession(status?.home, selectedWorkspace, SHELL);
 
   /** Where a plain New session starts, without asking: the checkout of the
    * session on the stage, if that is among what is in view, so a second

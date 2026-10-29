@@ -440,11 +440,12 @@ describe("App", () => {
       expect(spawnPty).not.toHaveBeenCalled();
     });
 
-    it("still starts in the home folder, without a project, for the one who asks", async () => {
+    it("still opens a terminal, in the home folder and without an agent, for the one who asks", async () => {
       render(<App />);
-      fireEvent.click(await screen.findByRole("button", { name: "start in your home folder" }));
+      fireEvent.click(await screen.findByRole("button", { name: "open a terminal" }));
       await waitFor(() => expect(spawnPty).toHaveBeenCalled());
       expect(vi.mocked(spawnPty).mock.calls[0]?.[1]).toBe("/Users/test");
+      expect(vi.mocked(spawnPty).mock.calls[0]?.[0]).toContain("--shell");
       expect(pickFolder).not.toHaveBeenCalled();
     });
   });
