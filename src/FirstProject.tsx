@@ -14,7 +14,7 @@ export function FirstProject({
   onClone: () => void;
   /** A folder on disk, with a session started in it. */
   onFolder: () => void;
-  /** A session in the home folder, without a project. */
+  /** A terminal in the home folder, without a project. */
   onHome?: () => void;
   /** One line, for someone already at work without a project: still said,
    * but not in the way of what they are doing. */
@@ -54,7 +54,7 @@ export function FirstProject({
         <p className="muted">
           Or{" "}
           <button type="button" className="link" onClick={onHome}>
-            start in your home folder
+            open a terminal
           </button>{" "}
           without a project.
         </p>

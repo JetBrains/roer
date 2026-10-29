@@ -5,7 +5,7 @@
 // One app for the whole file, since it is a single instance and slow to
 // start: the tests run in order and each picks up where the last left off.
 import assert from "node:assert/strict";
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, afterEach, before, beforeEach, test } from "node:test";
 
@@ -52,8 +52,13 @@ test("opens on the session list, with nothing running, and says what a project i
 
 test("New session starts the default agent in a terminal", async () => {
   // With no project New session asks for a folder, in the system's own
-  // picker, which a test cannot drive; the empty stage starts in home too.
-  await app.click("start in your home folder");
+  // picker, which a test cannot drive, so the app is handed `roer new` in
+  // home, the way a terminal hands it a session.
+  const handoffs = join(app.roerHome, "handoffs");
+  mkdirSync(handoffs, { recursive: true });
+  const record = join(handoffs, "e2e-new.json");
+  writeFileSync(`${record}.partial`, JSON.stringify({ args: ["new"], cwd: app.home, label: "new session" }));
+  renameSync(`${record}.partial`, record);
   try {
     await app.waitForTerminal("fake-claude ready");
   } catch (e) {
