@@ -2,7 +2,8 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ExtensionsDialog } from "./ExtensionsDialog";
-import { listDisabled, listExtensions, setExtensionEnabled, type ExtensionInfo } from "./extensions/loader";
+import { listDisabled, listExtensions, removeExtension, setExtensionEnabled, type ExtensionInfo } from "./extensions/loader";
+import { confirmAction } from "./lib/confirm";
 import { connectOtherApp, otherApps, type OtherApp } from "./lib/otherApps";
 
 vi.mock("./extensions/loader", async (importOriginal) => ({
@@ -10,7 +11,10 @@ vi.mock("./extensions/loader", async (importOriginal) => ({
   listExtensions: vi.fn(),
   listDisabled: vi.fn(),
   setExtensionEnabled: vi.fn(),
+  removeExtension: vi.fn(),
 }));
+
+vi.mock("./lib/confirm", () => ({ confirmAction: vi.fn() }));
 
 vi.mock("./lib/otherApps", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./lib/otherApps")>()),
@@ -55,6 +59,22 @@ const APPS: OtherApp[] = [
 ];
 
 describe("ExtensionsDialog", () => {
+  it("removes one of yours once asked, and offers no Remove for built-in ones", async () => {
+    vi.mocked(removeExtension).mockReset().mockResolvedValue("Removed weather.");
+    vi.mocked(confirmAction).mockReset().mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+    render(<ExtensionsDialog onClose={vi.fn()} />);
+    await screen.findByText("Weather");
+    expect(screen.queryByRole("button", { name: "Remove Changes" })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Remove Weather" }));
+    await waitFor(() => expect(confirmAction).toHaveBeenCalledTimes(1));
+    expect(removeExtension).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Remove Weather" }));
+    await waitFor(() => expect(removeExtension).toHaveBeenCalledWith("weather"));
+    await waitFor(() => expect(screen.queryByText("Weather")).not.toBeInTheDocument());
+  });
+
   it("lists built-in extensions and yours, with what is wrong with each", async () => {
     render(<ExtensionsDialog onClose={vi.fn()} />);
     expect(await screen.findByText("Weather")).toBeInTheDocument();

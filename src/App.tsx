@@ -24,7 +24,8 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { loadBundled } from "./extensions/bundled";
 import { useStageSession } from "./extensions/context";
 import { installHost } from "./extensions/host";
-import { useExternalExtensions } from "./extensions/loader";
+import { removeExtension, setExtensionEnabled, useExternalExtensions } from "./extensions/loader";
+import { confirmAction } from "./lib/confirm";
 import { serveTools } from "./extensions/tools";
 import { useBadges, useStageTabs } from "./extensions/registry";
 import { TabBody } from "./extensions/TabBody";
@@ -94,12 +95,25 @@ import {
   closeTab,
   forRoot,
   noTabs,
+  reorderFiles,
   openFile,
   recent,
   tabId,
   tabName,
   type Tabs,
 } from "./lib/tabs";
+import {
+  arrange,
+  loadOnly,
+  loadOrder,
+  place,
+  saveOrder,
+  scopeKeyOf,
+  setPlaces,
+  saveOnly,
+  shownIn,
+  type Only,
+} from "./lib/stripLayout";
 import {
   closeSide,
   loadSplit,
@@ -117,6 +131,7 @@ import {
   ContextMenu,
   ContextMenuContent,
   ContextMenuItem,
+  ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import {
@@ -146,6 +161,8 @@ interface StripTab {
   title: string;
   order: number;
   needsSession: boolean;
+  /** The extension it is from; none for Workspace and Terminal. */
+  extension?: string;
 }
 
 /** The side pane's place buttons: the panel the icon fills is where it goes. */
@@ -161,6 +178,9 @@ const CORE_TABS: readonly StripTab[] = [
   { tabId: "sessions", title: "Workspace", order: 0, needsSession: false },
   { tabId: "terminal", title: "Terminal", order: 10, needsSession: false },
 ];
+
+/** Workspace and Terminal: moved like any tab, but always there, and never beside the terminal. */
+const isCore = (tabId: string): boolean => CORE_TABS.some((tab) => tab.tabId === tabId);
 
 interface SessionView extends OpenRequest {
   /** Set when this session was teleported in; a terminal is waiting on it.
@@ -250,9 +270,19 @@ export function App() {
   useEffect(() => serveTools(), []);
   const extensionTabs = useStageTabs();
   const badges = useBadges();
-  const strip: StripTab[] = [...CORE_TABS, ...extensionTabs].sort((a, b) => a.order - b.order);
-  const stripRef = useRef(strip);
-  stripRef.current = strip;
+  // The viewer's layout of the strip (lib/stripLayout.ts): one order for
+  // every Workspace, and what is hidden in each.
+  const [tabOrder, setTabOrder] = useState<string[]>(loadOrder);
+  const [onlyTabs, setOnlyTabs] = useState<Only>(loadOnly);
+  // The tab being dragged, if one is. The strip keeps its order until the drop:
+  // the tab follows the pointer and the others slide aside (handleTabPointerDown).
+  const [dragging, setDragging] = useState<string | null>(null);
+  const allTabs: StripTab[] = arrange(
+    [...CORE_TABS, ...extensionTabs].sort((a, b) => a.order - b.order),
+    tabOrder,
+  );
+  // Filled in once the Workspace on screen is known, below.
+  const stripRef = useRef<StripTab[]>([]);
   // Same reasoning as `everOpened`: mount once, keep it mounted, so
   // collapsing the panel and reopening it does not lose a live surface.
   const [everGenerativeUI, setEverGenerativeUI] = useState(false);
@@ -730,17 +760,48 @@ export function App() {
     window.addEventListener("blur", handleUp);
   };
 
-  /** A strip tab's menu: put it beside the terminal, or take it back. */
+  /** A strip tab's menu: put it beside the terminal or take it back, move it, hide it, or its extension. */
   const besideMenu = (id: string, trigger: React.ReactElement) => (
     <ContextMenu key={id}>
       <ContextMenuTrigger asChild>{trigger}</ContextMenuTrigger>
       <ContextMenuContent>
-        {SPLIT_PLACES.filter(({ place }) => split?.side !== id || split.place !== place).map(({ place, label }) => (
-          <ContextMenuItem key={place} onSelect={() => openBeside(id, place)}>
-            {split?.side === id ? "Move" : "Open"} {label.toLowerCase()}
-          </ContextMenuItem>
-        ))}
+        {/* A tab out of reach without a session is not put beside the terminal either. */}
+        {(isCore(id) || (allTabs.find((tab) => tab.tabId === id)?.needsSession && !session) ? [] : SPLIT_PLACES)
+          .filter(({ place }) => split?.side !== id || split.place !== place)
+          .map(({ place, label }) => (
+            <ContextMenuItem key={place} onSelect={() => openBeside(id, place)}>
+              {split?.side === id ? "Move" : "Open"} {label.toLowerCase()}
+            </ContextMenuItem>
+          ))}
         {split?.side === id ? <ContextMenuItem onSelect={closeBeside}>Back to the stage</ContextMenuItem> : null}
+        {isCore(id) ? null : <ContextMenuSeparator />}
+        <ContextMenuItem onSelect={() => nudgeTab(id, -1)}>Move left</ContextMenuItem>
+        <ContextMenuItem onSelect={() => nudgeTab(id, 1)}>Move right</ContextMenuItem>
+        {extensionOf(id) ? (
+          <>
+            {here ? (
+              <>
+                {places.length > 1 ? (
+                  <ContextMenuItem onSelect={() => hideHere(id)}>Hide in this {where}</ContextMenuItem>
+                ) : null}
+                {onlyTabs[id] ? (
+                  <ContextMenuItem onSelect={() => keepOnly(setPlaces(onlyTabs, id, null))}>
+                    Show in every Workspace
+                  </ContextMenuItem>
+                ) : (
+                  <ContextMenuItem onSelect={() => keepOnly(setPlaces(onlyTabs, id, [here]))}>
+                    Show only in this {where}
+                  </ContextMenuItem>
+                )}
+              </>
+            ) : null}
+            <ContextMenuSeparator />
+            <ContextMenuItem onSelect={() => void switchOffExtension(id)}>Switch off everywhere</ContextMenuItem>
+            {id.startsWith("ext:") ? (
+              <ContextMenuItem onSelect={() => void removeExtensionOf(id)}>Remove extension…</ContextMenuItem>
+            ) : null}
+          </>
+        ) : null}
       </ContextMenuContent>
     </ContextMenu>
   );
@@ -1038,26 +1099,6 @@ export function App() {
     ),
   );
 
-  // An extension's tab that went away (removed, or its session folder gone)
-  // cannot stay on top, nor can one asked for by an id the strip never had
-  // (`useActivateTab` with a typo): either would leave the stage blank.
-  const stripIds = strip.map((tab) => tab.tabId).join("\n");
-  useEffect(() => {
-    const ids = stripIds.split("\n");
-    setTabs((current) =>
-      current.active.startsWith("file:") || ids.includes(current.active) ? current : activate(current, "terminal"),
-    );
-  }, [stripIds, tabs.active]);
-
-  // The strip has no scrollbar, so the tab picked is brought into view, and
-  // a mouse's wheel scrolls it sideways as a trackpad does.
-  const tabStripRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    tabStripRef.current?.querySelector('[aria-selected="true"]')?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
-  }, [tabs.active, stripIds]);
-  const scrollTabStrip = (event: React.WheelEvent<HTMLDivElement>) => {
-    if (Math.abs(event.deltaY) > Math.abs(event.deltaX)) event.currentTarget.scrollLeft += event.deltaY;
-  };
 
   // The session on the stage before this one, for Ctrl+Tab: the pane it was
   // in, held while a different one comes up.
@@ -1165,6 +1206,189 @@ export function App() {
       : null;
   const scopeKey = JSON.stringify(scopeNow);
   const scope = useMemo(() => scopeNow, [scopeKey]);
+
+  // The strip as shown here: the tabs kept to other Workspaces and Projects left out.
+  const here = scopeKeyOf(scope);
+  const strip = allTabs.filter((tab) => shownIn(tab.tabId, here, onlyTabs));
+  const where = scope?.kind === "project" ? "Project" : "Workspace";
+  stripRef.current = strip;
+  // Everywhere a tab can be kept to, for the Extensions dialog's picker.
+  const places = [
+    ...browser.workspaces.map((one) => ({ key: `workspace:${one.id}`, name: one.name, kind: "Workspace" as const })),
+    ...browser.projects.map((one) => ({ key: `project:${one.id}`, name: one.name, kind: "Project" as const })),
+  ];
+
+  const keepOnly = (next: Only) => {
+    setOnlyTabs(next);
+    saveOnly(next);
+  };
+  /** Keeps tabs to `keys`, or, with null, shows them everywhere again. */
+  const placeTab = (id: string, keys: readonly string[] | null) => {
+    keepOnly(setPlaces(onlyTabs, id, keys));
+    // A tab not shown here is not beside the stage here either.
+    if (here && keys?.length && !keys.includes(here) && split?.side === id) setSplit(null);
+  };
+  /** Everywhere the tab is now, but here. */
+  const hideHere = (id: string) => {
+    if (!here) return;
+    placeTab(
+      id,
+      (onlyTabs[id] ?? places.map((one) => one.key)).filter((key) => key !== here),
+    );
+  };
+
+  /** The extension behind a strip tab, with its name for the menu's questions. */
+  const extensionOf = (id: string) => {
+    const tab = allTabs.find((one) => one.tabId === id);
+    return tab?.extension ? { id: tab.extension, title: tab.title } : undefined;
+  };
+  const failed = (title: string) => (cause: unknown) => void message(String(cause), { title, kind: "error" });
+  /** Off in every Workspace, its other tabs and sections too, until it is switched on in Extensions. */
+  const switchOffExtension = (id: string) => {
+    const ext = extensionOf(id);
+    if (ext) return setExtensionEnabled(ext.id, false).catch(failed(`Could not switch off ${ext.title}`));
+  };
+  /** Out of Roer altogether, once asked: a built-in one can only be switched off. */
+  const removeExtensionOf = async (id: string) => {
+    const ext = extensionOf(id);
+    if (!ext) return;
+    const sure = await confirmAction(
+      `Remove the extension behind ${ext.title}? Its tabs, Workspace sections and tools go from every Workspace. ` +
+        "Its files are moved to ~/.roer/extensions-removed, not deleted.",
+      `Remove ${ext.title}?`,
+    );
+    if (sure) await removeExtension(ext.id).catch(failed(`Could not remove ${ext.title}`));
+  };
+
+  /** Every strip tab, as the strip arranges them, hidden ones too: what an order is saved over. */
+  const stripOrder = allTabs.map((tab) => tab.tabId);
+  const fileOrder = tabs.files.map(tabId);
+  const saveTabOrder = (order: string[]) => {
+    setTabOrder(order);
+    saveOrder(order);
+  };
+  /** Puts the file tabs in `order`, for this session only: file tabs are not kept across launches. */
+  const orderFiles = (order: readonly string[]) => setTabs((current) => reorderFiles(current, order));
+  /** Swaps a tab with the one shown next to it in its group, the menu's Move left and right. */
+  const nudgeTab = (id: string, by: -1 | 1) => {
+    const file = id.startsWith("file:");
+    const shown = file ? fileOrder : strip.map((tab) => tab.tabId);
+    const target = shown[shown.indexOf(id) + by];
+    if (!target) return;
+    const order = place(file ? fileOrder : stripOrder, id, target, by < 0 ? "before" : "after");
+    if (file) orderFiles(order);
+    else saveTabOrder(order);
+  };
+
+  // A drag that moved is not a click as well.
+  const draggedRef = useRef(false);
+  /**
+   * Drags a tab along the strip: Workspace, Terminal and extensions' tabs
+   * among themselves, file tabs among themselves. By pointer rather than HTML
+   * drag and drop, which the webview hands to the file drop when it is on.
+   * The strip shows the new order as it goes; it is kept on release, and
+   * dropped if the window loses the pointer first.
+   */
+  const handleTabPointerDown = (e: React.PointerEvent<HTMLElement>, id: string) => {
+    const stripEl = tabStripRef.current;
+    if (!stripEl || e.button !== 0) return;
+    const group = id.startsWith("file:") ? "file" : "strip";
+    const startX = e.clientX;
+    const pointer = e.pointerId;
+    const handle = e.currentTarget;
+    const ids = group === "file" ? fileOrder : stripOrder;
+    // Measured once, where everything stood when the drag began: the others
+    // only ever slide by transforms, which leave the layout where it was.
+    const all = [...stripEl.querySelectorAll<HTMLElement>(`[data-drag="${group}"]`)];
+    const from = all.findIndex((el) => el.dataset.tabId === id);
+    if (from < 0) return;
+    const rects = all.map((el) => el.getBoundingClientRect());
+    const others = all.filter((_, at) => at !== from);
+    const centres = rects.filter((_, at) => at !== from).map((rect) => rect.left + rect.width / 2);
+    const own = rects[from];
+    // How far a neighbour slides to make room: the tab's width and the gap after it.
+    const step = own.width + (rects[from + 1] ? rects[from + 1].left - own.right : rects[from - 1] ? own.left - rects[from - 1].right : 0);
+    // Not past either end of its group.
+    const minDx = rects[0].left - own.left;
+    const maxDx = rects[rects.length - 1].right - own.right;
+    let started = false;
+    let at = from;
+    const handleMove = (ev: PointerEvent) => {
+      if (!started && Math.abs(ev.clientX - startX) < 5) return;
+      if (!started) {
+        started = true;
+        handle.setPointerCapture?.(pointer);
+        setDragging(id);
+        for (const el of others) el.classList.add("drag-shift");
+      }
+      const dx = ev.clientX - startX;
+      handle.style.transform = `translateX(${Math.max(minDx, Math.min(maxDx, dx))}px)`;
+      // Where it lands goes by the pointer, not by where the tab is drawn: a tab
+      // wider than the last one could never pass that one's middle otherwise.
+      const centre = own.left + own.width / 2 + dx;
+      at = centres.filter((one) => one < centre).length;
+      others.forEach((el, k) => {
+        const shift = k < from && k >= at ? step : k >= from && k < at ? -step : 0;
+        el.style.transform = shift ? `translateX(${shift}px)` : "";
+      });
+    };
+    const finish = (keep: boolean) => () => {
+      // Back in place without sliding, in the same frame the new order is drawn.
+      for (const el of all) {
+        el.classList.remove("drag-shift");
+        el.style.transform = "";
+      }
+      if (started) {
+        const target = others[Math.min(at, others.length - 1)]?.dataset.tabId;
+        if (keep && target && at !== from) {
+          const order = place(ids, id, target, at < others.length ? "before" : "after");
+          if (group === "strip") saveTabOrder(order);
+          else orderFiles(order);
+        }
+        draggedRef.current = true;
+        window.setTimeout(() => (draggedRef.current = false), 0);
+      }
+      setDragging(null);
+      if (handle.hasPointerCapture?.(pointer)) handle.releasePointerCapture(pointer);
+      window.removeEventListener("pointermove", handleMove);
+      window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", cancel);
+      window.removeEventListener("blur", cancel);
+    };
+    const up = finish(true);
+    const cancel = finish(false);
+    window.addEventListener("pointermove", handleMove);
+    window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", cancel);
+    window.addEventListener("blur", cancel);
+  };
+  /** What makes a tab draggable, and how the strip finds it while another is dragged. */
+  const dragProps = (id: string) => ({
+    "data-drag": id.startsWith("file:") ? "file" : "strip",
+    "data-tab-id": id,
+    onPointerDown: (e: React.PointerEvent<HTMLElement>) => handleTabPointerDown(e, id),
+  });
+
+  // An extension's tab that went away (removed, or its session folder gone)
+  // cannot stay on top, nor can one asked for by an id the strip never had
+  // (`useActivateTab` with a typo): either would leave the stage blank.
+  const stripIds = strip.map((tab) => tab.tabId).join("\n");
+  useEffect(() => {
+    const ids = stripIds.split("\n");
+    setTabs((current) =>
+      current.active.startsWith("file:") || ids.includes(current.active) ? current : activate(current, "terminal"),
+    );
+  }, [stripIds, tabs.active]);
+
+  // The strip has no scrollbar, so the tab picked is brought into view, and
+  // a mouse's wheel scrolls it sideways as a trackpad does.
+  const tabStripRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    tabStripRef.current?.querySelector('[aria-selected="true"]')?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+  }, [tabs.active, stripIds]);
+  const scrollTabStrip = (event: React.WheelEvent<HTMLDivElement>) => {
+    if (Math.abs(event.deltaY) > Math.abs(event.deltaX)) event.currentTarget.scrollLeft += event.deltaY;
+  };
   // Asks the agent on stage for a tab. Here rather than in the dialog, since
   // a request made while the agent works waits after the dialog is gone.
   const askAgent = useAskAgent(session?.pane, agentState);
@@ -1408,16 +1632,19 @@ export function App() {
           <div className="tab-bar">
             <div ref={tabStripRef} className="tabs" role="tablist" aria-label="Stage" onWheel={scrollTabStrip}>
               {strip.map((tab) => {
+                const dragClass = dragging === tab.tabId ? " dragging" : "";
                 if (tab.tabId === "sessions") {
-                  return (
+                  return besideMenu(
+                    tab.tabId,
               <button
                 key={tab.tabId}
                 type="button"
                 role="tab"
                 aria-selected={tabs.active === "sessions"}
-                className={tabs.active === "sessions" ? "tab on" : "tab"}
+                className={(tabs.active === "sessions" ? "tab on" : "tab") + dragClass}
                 title={number(tab.tabId)}
-                onClick={() => showTab("sessions")}
+                {...dragProps(tab.tabId)}
+                onClick={() => !draggedRef.current && showTab("sessions")}
               >
                 Workspace
                 {browser.waiting.size > 0 ? (
@@ -1426,22 +1653,24 @@ export function App() {
                     <span className="sr-only"> ({browser.waiting.size} waiting)</span>
                   </>
                 ) : null}
-              </button>
+              </button>,
                   );
                 }
                 if (tab.tabId === "terminal") {
-                  return (
+                  return besideMenu(
+                    tab.tabId,
               <button
                 key={tab.tabId}
                 type="button"
                 role="tab"
                 aria-selected={tabs.active === "terminal"}
-                className={tabs.active === "terminal" ? "tab on" : "tab"}
+                className={(tabs.active === "terminal" ? "tab on" : "tab") + dragClass}
                 title={number(tab.tabId)}
-                onClick={() => showTab("terminal")}
+                {...dragProps(tab.tabId)}
+                onClick={() => !draggedRef.current && showTab("terminal")}
               >
                 Terminal
-              </button>
+              </button>,
                   );
                 }
                 const badge = badges.get(tab.tabId);
@@ -1453,10 +1682,19 @@ export function App() {
                     type="button"
                     role="tab"
                     aria-selected={tabs.active === tab.tabId}
-                    className={tabs.active === tab.tabId ? "tab on" : beside ? "tab beside" : "tab"}
+                    className={[
+                      "tab",
+                      tabs.active === tab.tabId ? "on" : beside ? "beside" : "",
+                    ]
+                      .filter(Boolean)
+                      .join(" ") + dragClass}
                     title={number(tab.tabId)}
-                    disabled={tab.needsSession && !session}
+                    // Not `disabled`, which would take its menu away as well: a tab out of
+                    // reach until there is a session can still be moved, hidden or removed.
+                    aria-disabled={tab.needsSession && !session ? true : undefined}
+                    {...dragProps(tab.tabId)}
                     onClick={() => {
+                      if (draggedRef.current || (tab.needsSession && !session)) return;
                       opened(tab.tabId);
                       showTab(tab.tabId);
                     }}
@@ -1475,8 +1713,10 @@ export function App() {
                   // buttons; the wrapper is what looks like one tab.
                   <span
                     className={
-                      tabs.active === id ? "tab-wrap on" : split?.side === id ? "tab-wrap beside" : "tab-wrap"
+                      (tabs.active === id ? "tab-wrap on" : split?.side === id ? "tab-wrap beside" : "tab-wrap") +
+                      (dragging === id ? " dragging" : "")
                     }
+                    {...dragProps(id)}
                   >
                     <button
                       type="button"
@@ -1484,7 +1724,7 @@ export function App() {
                       aria-selected={tabs.active === id}
                       className="tab file"
                       title={file.path}
-                      onClick={() => showTab(id)}
+                      onClick={() => !draggedRef.current && showTab(id)}
                     >
                       {name}
                     </button>
@@ -1492,9 +1732,7 @@ export function App() {
                       type="button"
                       className="tab-x"
                       aria-label={`Close ${name}`}
-                      onClick={() =>
-                        setTabs((current) => closeTab(current, id))
-                      }
+                      onClick={() => !draggedRef.current && setTabs((current) => closeTab(current, id))}
                     >
                       ×
                     </button>
@@ -1850,6 +2088,12 @@ export function App() {
         {showingExtensions ? (
           <ExtensionsDialog
             onClose={() => setShowingExtensions(false)}
+            placement={{
+              places,
+              tabs: allTabs.flatMap((tab) => (tab.extension ? [{ tabId: tab.tabId, extension: tab.extension, title: tab.title }] : [])),
+              only: onlyTabs,
+              place: placeTab,
+            }}
             onNewTab={() => {
               setShowingExtensions(false);
               setShowingNewTab(true);

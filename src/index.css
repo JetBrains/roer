@@ -653,7 +653,8 @@ button.tab.beside,
   text-underline-offset: 4px;
 }
 
-button.tab:disabled {
+button.tab:disabled,
+button.tab[aria-disabled="true"] {
   color: var(--roer-disabled);
   cursor: default;
   border-color: transparent;
@@ -3086,6 +3087,17 @@ button.tree-row.selected {
 .tab-wrap.on {
   background: var(--roer-bg);
   border-color: var(--roer-border);
+}
+
+/* Hovered as one tab, the × included, the way the other tabs are: the label
+   button's own hover border would stop short of the ×. */
+.tab-wrap:hover {
+  border-color: var(--roer-accent);
+}
+
+.tab-wrap button.tab.file,
+.tab-wrap button.tab.file:hover {
+  border-color: transparent;
 }
 
 button.tab.file {
@@ -6198,4 +6210,137 @@ button.tree-add:hover {
 .sessions-view .fold-head:hover .group-actions button.tree-action,
 .sessions-view .group-actions button.tree-action[data-state="open"] {
   opacity: 1;
+}
+
+/* A tab being dragged along the strip (App's handleTabPointerDown): it
+   follows the pointer, over the others, which slide aside to make room. */
+.tabs button.tab.dragging,
+.tabs .tab-wrap.dragging {
+  position: relative;
+  z-index: 2;
+  cursor: grabbing;
+  background: var(--roer-bg);
+  border-color: var(--roer-border);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+}
+
+.tabs .drag-shift {
+  transition: transform 150ms ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tabs .drag-shift {
+    transition: none;
+  }
+}
+
+/* Remove, beside an extension's switch in the Extensions dialog. */
+.ext-remove {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  /* The app's own button padding would leave the icon no room. */
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  color: var(--roer-muted);
+  cursor: pointer;
+}
+
+.ext-remove svg {
+  flex: none;
+}
+
+.ext-remove:hover {
+  color: var(--roer-fg);
+  background: var(--roer-hover);
+}
+
+/* Where an extension's tab is shown (ExtensionsDialog's TabPlaces). One
+   shown everywhere says nothing, and offers its picker on the row's hover. */
+.ext-places {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--roer-muted);
+}
+
+.ext-places.quiet .ext-row-link {
+  margin-left: 0;
+  opacity: 0;
+}
+
+.ext-row:hover .ext-places.quiet .ext-row-link,
+.ext-places.quiet .ext-row-link:focus-visible,
+.ext-places.quiet .ext-row-link[data-state="open"] {
+  opacity: 1;
+}
+
+.ext-places-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 240px;
+  /* No taller than the room the window has beside its button, nor than a
+     screenful of Workspaces: the list inside scrolls. */
+  max-height: min(420px, calc(var(--radix-popover-content-available-height, 420px) - 8px));
+  font-size: 12px;
+}
+
+.ext-places-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.ext-places-hint {
+  margin: 0;
+  color: var(--roer-muted);
+}
+
+.ext-places-group {
+  margin: 0;
+  padding: 0;
+  border: none;
+}
+
+.ext-places-group legend {
+  margin-bottom: 2px;
+  font-weight: 600;
+}
+
+.ext-places-option {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+  cursor: pointer;
+}
+
+.ext-places-picker .ext-row-link {
+  align-self: flex-start;
+  margin-left: 0;
+}
+
+.ext-row-link {
+  margin-left: 6px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--roer-accent);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.ext-row-link:hover {
+  text-decoration: underline;
 }

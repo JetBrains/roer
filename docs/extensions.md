@@ -366,6 +366,23 @@ watched folder, so a switch reaches every window the way an edit does, and
 `roer ext list` reports them as `disabled`. `roer ext enable|disable` would
 write the same file; the dialog is the only way so far.
 
+**Removing one.** The trash button in the dialog, or Remove extension… in
+its tab's menu, does what `roer ext remove` does, with one difference: an
+installed copy is moved to `~/.roer/extensions-removed/<id>-<time>` rather
+than deleted, since it may be the only copy of someone's code. A session one
+loses its pointer, and its folder stays. A bundled one can only be switched
+off, which the tab's menu offers too (Switch off everywhere).
+
+**The tab strip.** Every tab on the stage's strip can be dragged along it, or
+moved with Move left and Move right in its menu; file tabs move among
+themselves. The order is one for every Workspace, kept in the window's
+`localStorage` as `roer:tab-order`, so Cmd+1…9 reach the same tabs
+everywhere. An extension's tab can be kept to some Workspaces and Projects:
+Show only in this Workspace and Hide in this Workspace in its menu, or the
+list under its row in the dialog. A tab with no list is shown everywhere; the
+lists are `roer:only-tabs`, by tab id. This places the tab only: the
+extension's sections, tools and server still run in every Workspace.
+
 ---
 
 ## 7. How the agent learns the API

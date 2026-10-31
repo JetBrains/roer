@@ -34,6 +34,8 @@ import { message } from "@tauri-apps/plugin-dialog";
 import { copyBrowserLink, startBrowserServer } from "./lib/browserServer";
 import { gitReposIn, gitRoot } from "./lib/git";
 import { openUrl } from "./lib/github";
+import { removeExtension, setExtensionEnabled } from "./extensions/loader";
+import { confirmAction } from "./lib/confirm";
 
 // Shared between the test body and the hoisted module mock below.
 const mocks = vi.hoisted(() => ({
@@ -102,6 +104,15 @@ vi.mock("@xterm/xterm", () => ({
       }),
     };
   },
+}));
+vi.mock("./extensions/loader", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./extensions/loader")>()),
+  setExtensionEnabled: vi.fn().mockResolvedValue(undefined),
+  removeExtension: vi.fn().mockResolvedValue("Removed."),
+}));
+vi.mock("./lib/confirm", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./lib/confirm")>()),
+  confirmAction: vi.fn(async (message: string) => window.confirm(message)),
 }));
 vi.mock("./lib/backend", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./lib/backend")>()),
@@ -1127,6 +1138,111 @@ describe("App", () => {
     }
   });
 
+  describe("the strip's layout", () => {
+    const Plain = () => <p>plain</p>;
+    beforeEach(() => {
+      for (const id of ["one", "two"])
+        registry.load(id, defineExtension((roer) => void roer.stage.registerTab({ id: "main", title: id, component: Plain, needsSession: false })));
+    });
+    afterEach(() => ["one", "two"].forEach((id) => registry.unload(id)));
+    const order = () =>
+      screen.getAllByRole("tab").map((tab) => tab.textContent).filter((name) => name === "one" || name === "two");
+
+    it("moves Terminal too, though it offers no hiding", async () => {
+      render(<App />);
+      fireEvent.contextMenu(await screen.findByRole("tab", { name: "Terminal" }));
+      expect(screen.queryByRole("menuitem", { name: /Hide in this/ })).not.toBeInTheDocument();
+      fireEvent.click(await screen.findByRole("menuitem", { name: "Move left" }));
+      expect(screen.getAllByRole("tab").slice(0, 2).map((tab) => tab.textContent)).toEqual(["Terminal", "Workspace"]);
+    });
+
+    it("moves a tab right from its menu, and keeps the order", async () => {
+      const { unmount } = render(<App />);
+      fireEvent.contextMenu(await screen.findByRole("tab", { name: "one" }));
+      fireEvent.click(await screen.findByRole("menuitem", { name: "Move right" }));
+      expect(order()).toEqual(["two", "one"]);
+      expect(
+        (JSON.parse(localStorage.getItem("roer:tab-order") ?? "[]") as string[]).filter((id) => id.startsWith("ext:")),
+      ).toEqual(["ext:two/main", "ext:one/main"]);
+      unmount();
+      render(<App />);
+      await screen.findByRole("tab", { name: "one" });
+      expect(order()).toEqual(["two", "one"]);
+    });
+
+    it("switches an extension off, or removes it, from its tab", async () => {
+      vi.mocked(confirmAction).mockResolvedValueOnce(true);
+      render(<App />);
+      fireEvent.contextMenu(await screen.findByRole("tab", { name: "one" }));
+      fireEvent.click(await screen.findByRole("menuitem", { name: "Switch off everywhere" }));
+      await waitFor(() => expect(setExtensionEnabled).toHaveBeenCalledWith("one", false));
+
+      fireEvent.contextMenu(screen.getByRole("tab", { name: "two" }));
+      fireEvent.click(await screen.findByRole("menuitem", { name: "Remove extension…" }));
+      await waitFor(() => expect(removeExtension).toHaveBeenCalledWith("two"));
+    });
+
+    /** Opens Extensions, and the picker of where `title`'s tab is shown. */
+    const pickPlaces = async (title: string) => {
+      fireEvent.click(screen.getByRole("button", { name: "Extensions" }));
+      const dialog = await screen.findByRole("dialog", { name: "Extensions" });
+      const row = within(dialog).getByText(title, { selector: "strong" }).closest("li") as HTMLElement;
+      return { dialog, row };
+    };
+
+    it("says nothing about a tab shown everywhere, and keeps one to the Workspaces checked", async () => {
+      vi.mocked(listWorkspaces).mockResolvedValue([
+        { id: "w1", name: "Default", projects: ["home"] },
+        { id: "w2", name: "Other", projects: [] },
+      ]);
+      render(<App />);
+      await waitFor(() => expect(screen.getByRole("tab", { name: "Changes" })).toBeInTheDocument());
+      const { row } = await pickPlaces("Changes");
+      expect(within(row).queryByText(/Shown only in/)).not.toBeInTheDocument();
+
+      fireEvent.click(within(row).getByRole("button", { name: "Choose Workspaces…" }));
+      fireEvent.click(await screen.findByRole("checkbox", { name: "Other" }));
+      expect(JSON.parse(localStorage.getItem("roer:only-tabs") ?? "null")).toEqual({ changes: ["workspace:w2"] });
+      expect(within(row).getByText("Shown only in Other")).toBeInTheDocument();
+      // Not shown in Default, the Workspace on screen.
+      expect(screen.queryByRole("tab", { name: "Changes" })).not.toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole("checkbox", { name: "Default" }));
+      expect(await screen.findByRole("tab", { name: "Changes" })).toBeInTheDocument();
+      expect(within(row).getByText("Shown only in Default, Other")).toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole("button", { name: "Show everywhere" }));
+      expect(localStorage.getItem("roer:only-tabs")).toBe("{}");
+    });
+
+    it("keeps a tab to this Workspace from its menu, and back to every one", async () => {
+      vi.mocked(listWorkspaces).mockResolvedValue([{ id: "w1", name: "Default", projects: ["home"] }]);
+      render(<App />);
+      await waitFor(() => expect(screen.getByRole("tab", { name: "one" })).toBeInTheDocument());
+      fireEvent.contextMenu(screen.getByRole("tab", { name: "one" }));
+      fireEvent.click(await screen.findByRole("menuitem", { name: "Show only in this Workspace" }));
+      expect(JSON.parse(localStorage.getItem("roer:only-tabs") ?? "null")).toEqual({ "ext:one/main": ["workspace:w1"] });
+
+      fireEvent.contextMenu(screen.getByRole("tab", { name: "one" }));
+      fireEvent.click(await screen.findByRole("menuitem", { name: "Show in every Workspace" }));
+      expect(localStorage.getItem("roer:only-tabs")).toBe("{}");
+    });
+
+    it("hides a tab here by keeping it to every other Workspace", async () => {
+      vi.mocked(listWorkspaces).mockResolvedValue([
+        { id: "w1", name: "Default", projects: ["home"] },
+        { id: "w2", name: "Other", projects: [] },
+      ]);
+      render(<App />);
+      fireEvent.contextMenu(await screen.findByRole("tab", { name: "one" }));
+      fireEvent.click(await screen.findByRole("menuitem", { name: "Hide in this Workspace" }));
+      expect(screen.queryByRole("tab", { name: "one" })).not.toBeInTheDocument();
+      const kept = JSON.parse(localStorage.getItem("roer:only-tabs") ?? "null")["ext:one/main"] as string[];
+      expect(kept).toContain("workspace:w2");
+      expect(kept).not.toContain("workspace:w1");
+    });
+  });
+
   describe("a tab beside the terminal", () => {
     function Pager() {
       const [pressed, setPressed] = useState(0);
@@ -1289,7 +1405,9 @@ describe("App", () => {
     render(<App />);
 
     // Whose changes? The repository comes from the session's own directory.
-    expect(await screen.findByRole("tab", { name: "Changes" })).toBeDisabled();
+    expect(await screen.findByRole("tab", { name: "Changes" })).toHaveAttribute("aria-disabled", "true");
+    fireEvent.click(screen.getByRole("tab", { name: "Changes" }));
+    expect(screen.getByRole("tab", { name: "Changes" })).toHaveAttribute("aria-selected", "false");
   });
 
   it("puts the changes view over the terminal without closing it", async () => {

@@ -9,6 +9,7 @@ import {
   noTabs,
   openFile,
   recent,
+  reorderFiles,
   tabId,
   tabName,
   type FileTab,
@@ -188,5 +189,14 @@ describe("forRoot", () => {
   it("changes nothing when every file is already from this repository", () => {
     const tabs = opened("a.ts", "b.ts");
     expect(forRoot(tabs, root)).toBe(tabs);
+  });
+});
+
+describe("reorderFiles", () => {
+  it("puts the open files in the order given, and the rest after them", () => {
+    const tabs = [file("a.ts"), file("b.ts"), file("c.ts")].reduce(openFile, noTabs);
+    const ids = (t: Tabs) => t.files.map((one) => one.path);
+    expect(ids(reorderFiles(tabs, [tabId(file("c.ts")), tabId(file("a.ts"))]))).toEqual(["c.ts", "a.ts", "b.ts"]);
+    expect(reorderFiles(tabs, tabs.files.map(tabId))).toBe(tabs);
   });
 });

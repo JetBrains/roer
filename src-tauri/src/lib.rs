@@ -148,6 +148,7 @@ pub fn run() {
             extensions::extension_log,
             extensions::extensions_disabled,
             extensions::extension_set_enabled,
+            extensions::extension_remove,
             extension_servers::extension_rpc,
             extension_tools::extension_tools_publish,
             extension_tools::extension_call_claim,
