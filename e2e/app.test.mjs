@@ -253,3 +253,30 @@ test("past conversations are all listed by name, and found by what was said", as
   await app.waitForText("quokka migration", ".popup");
   await (await app.find("input.popup-input", "Search")).sendKeys(Key.ESCAPE);
 });
+
+test("tabs are dragged into a new order, which the app keeps", async () => {
+  const order = () => app.tabOrder();
+  const before = await order();
+  assert.deepEqual(before.slice(0, 2), ["Workspace", "Terminal"]);
+
+  await app.drag("Terminal", "Workspace", "left");
+  await app.until("Terminal before Workspace", async () => (await order()).slice(0, 2).join() === "Terminal,Workspace");
+  // A drag is not a click: the tab on top stays the one that was.
+  assert.equal(await (await app.button("Terminal")).getAttribute("aria-selected"), "false");
+
+  // Workspace, wider than the tab it is dropped past, to the end of the
+  // strip: where it lands goes by the pointer, not by how far the tab is drawn.
+  const last = (await order()).at(-1);
+  assert.notEqual(last, "Workspace");
+  await app.drag("Workspace", last, "right");
+  await app.until("Workspace last", async () => (await order()).at(-1) === "Workspace");
+
+  const saved = await app.driver.executeScript("return JSON.parse(localStorage.getItem('roer:tab-order') || '[]')");
+  assert.equal(saved[0], "terminal", "the order is kept for the next launch");
+  assert.equal(saved.at(-1), "sessions");
+
+  // Back as it was, for whoever comes next.
+  await app.driver.executeScript("localStorage.removeItem('roer:tab-order')");
+  await app.driver.navigate().refresh();
+  await app.until("the default order again", async () => (await order()).slice(0, 2).join() === "Workspace,Terminal");
+});

@@ -11,7 +11,7 @@ import { tmpdir } from "node:os";
 import { delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { Builder, By, Capabilities, Key, until } from "selenium-webdriver";
+import { Builder, By, Capabilities, Key, Origin, until } from "selenium-webdriver";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repo = resolve(here, "..");
@@ -429,6 +429,35 @@ export class Roer {
       const tab = await this.button(name);
       return (await tab.getAttribute("aria-selected")) === "true";
     });
+  }
+
+  /** The stage's tab strip, by name, in the order it shows. */
+  async tabOrder() {
+    return this.driver.executeScript(
+      `return Array.from(document.querySelectorAll('.tabs [role="tab"]')).map((el) => el.innerText.trim());`,
+    );
+  }
+
+  /**
+   * Drags the strip's tab `name` by the pointer onto `onto`, landing on its
+   * left or right edge, in steps as a hand would: the strip reorders on
+   * release, by pointer events rather than HTML drag and drop.
+   */
+  async drag(name, onto, side = "left") {
+    const from = await this.find('.tabs [role="tab"]', name);
+    const to = await this.find('.tabs [role="tab"]', onto);
+    const a = await from.getRect();
+    const b = await to.getRect();
+    const start = { x: Math.round(a.x + a.width / 2), y: Math.round(a.y + a.height / 2) };
+    const end = Math.round(side === "left" ? b.x + 4 : b.x + b.width - 4);
+    const steps = 12;
+    let actions = this.driver.actions({ async: true }).move({ origin: Origin.VIEWPORT, ...start }).press();
+    for (let i = 1; i <= steps; i += 1) {
+      const x = Math.round(start.x + ((end - start.x) * i) / steps);
+      actions = actions.move({ origin: Origin.VIEWPORT, x, y: start.y, duration: 30 });
+    }
+    await actions.release().perform();
+    await sleep(PAUSE);
   }
 
   /** Keeps what there is to see of a failed test, for CI to upload. */
