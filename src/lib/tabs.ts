@@ -120,6 +120,21 @@ export function closeTab(tabs: Tabs, id: string): Tabs {
 }
 
 /**
+ * Puts the open files in `order`, by tab id, as a drag along the strip left
+ * them. Files `order` does not name keep their places after the ones it does;
+ * ids of files that are not open are ignored.
+ */
+export function reorderFiles(tabs: Tabs, order: readonly string[]): Tabs {
+  const rank = new Map(order.map((id, at) => [id, at]));
+  const at = (file: FileTab) => rank.get(tabId(file)) ?? order.length;
+  const files = tabs.files
+    .map((file, index) => ({ file, index }))
+    .sort((a, b) => at(a.file) - at(b.file) || a.index - b.index)
+    .map(({ file }) => file);
+  return files.every((file, index) => file === tabs.files[index]) ? tabs : { ...tabs, files };
+}
+
+/**
  * Drops the file tabs that are not from `root`.
  *
  * A session that ends takes its files with it: a tab holding a path

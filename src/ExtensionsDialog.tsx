@@ -1,3 +1,6 @@
+import { Trash2 } from "lucide-react";
+
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { BUNDLED } from "./extensions/bundled";
@@ -5,11 +8,13 @@ import {
   EXTENSIONS_EVENT,
   listDisabled,
   listExtensions,
+  removeExtension,
   setExtensionEnabled,
   type ExtensionInfo,
 } from "./extensions/loader";
 import { Badge, EmptyState } from "./generative-ui/components";
 import { listen } from "./lib/backend";
+import { confirmAction } from "./lib/confirm";
 import { connectOtherApp, MCP_APP_HOST, otherApps, type OtherApp } from "./lib/otherApps";
 
 /** One row: a bundled extension, or one from disk. */
@@ -50,7 +55,95 @@ const SCOPE_TITLES: Record<Row["scope"], string> = {
  * Workspace tab, and its server stops.
  * `onNewTab` asks the agent for one of the person's own.
  */
-export function ExtensionsDialog({ onClose, onNewTab }: { onClose: () => void; onNewTab?: () => void }) {
+/** Where extensions' tabs are shown (App's tab strip layout, lib/stripLayout.ts). */
+export interface Placement {
+  /** Every Workspace and Project a tab can be kept to. */
+  places: ReadonlyArray<{ key: string; name: string; kind: "Workspace" | "Project" }>;
+  /** The extensions' tabs, loaded ones only. */
+  tabs: ReadonlyArray<{ tabId: string; extension: string; title: string }>;
+  /** Tab id to the places it is kept to; a tab not in it is shown everywhere. */
+  only: Readonly<Record<string, readonly string[]>>;
+  /** Keeps a tab to these places, or, with none or null, shows it everywhere. */
+  place: (tabId: string, keys: readonly string[] | null) => void;
+}
+
+/**
+ * Where one tab is shown. Nothing to say for a tab shown everywhere, only a
+ * way to choose, which comes up with the row's hover; a tab kept to some
+ * Workspaces names them.
+ */
+function TabPlaces({ placement, tabId, label }: { placement: Placement; tabId: string; label?: string }) {
+  const kept = placement.only[tabId];
+  const names = kept
+    ? placement.places.filter((one) => kept.includes(one.key)).map((one) => one.name)
+    : [];
+  const toggle = (key: string, on: boolean) => {
+    const now = new Set(kept ?? []);
+    if (on) now.add(key);
+    else now.delete(key);
+    placement.place(tabId, [...now]);
+  };
+  const group = (kind: "Workspace" | "Project", title: string) => {
+    const list = placement.places.filter((one) => one.kind === kind);
+    if (list.length === 0) return null;
+    return (
+      <fieldset className="ext-places-group">
+        <legend>{title}</legend>
+        {list.map((one) => (
+          <label key={one.key} className="ext-places-option">
+            <input
+              type="checkbox"
+              checked={kept?.includes(one.key) ?? false}
+              onChange={(event) => toggle(one.key, event.target.checked)}
+            />
+            {one.name}
+          </label>
+        ))}
+      </fieldset>
+    );
+  };
+  return (
+    <div className={kept ? "ext-places" : "ext-places quiet"}>
+      {kept ? (
+        <span>
+          {label ? `${label}: shown` : "Shown"} only in {names.length > 0 ? names.join(", ") : "Workspaces that are gone"}
+        </span>
+      ) : null}
+      <Popover>
+        <PopoverTrigger asChild>
+          <button type="button" className="ext-row-link">
+            {kept ? "Change" : label ? `Choose Workspaces for ${label}…` : "Choose Workspaces…"}
+          </button>
+        </PopoverTrigger>
+        <PopoverContent align="start" className="ext-places-picker">
+          <p className="ext-places-hint">Show {label ?? "the tab"} only in:</p>
+          {/* The only part that scrolls: the hint and Show everywhere stay in view. */}
+          <div className="ext-places-list">
+            {group("Workspace", "Workspaces")}
+            {group("Project", "Projects")}
+          </div>
+          <p className="ext-places-hint">None checked: shown in every Workspace.</p>
+          {kept ? (
+            <button type="button" className="ext-row-link" onClick={() => placement.place(tabId, null)}>
+              Show everywhere
+            </button>
+          ) : null}
+        </PopoverContent>
+      </Popover>
+    </div>
+  );
+}
+
+export function ExtensionsDialog({
+  onClose,
+  onNewTab,
+  placement,
+}: {
+  onClose: () => void;
+  onNewTab?: () => void;
+  /** Where each extension's tabs are shown, and the way to choose. */
+  placement?: Placement;
+}) {
   const ref = useRef<HTMLDivElement>(null);
   const [found, setFound] = useState<ExtensionInfo[] | null>(null);
   const [disabled, setDisabled] = useState<ReadonlySet<string>>(new Set());
@@ -126,6 +219,24 @@ export function ExtensionsDialog({ onClose, onNewTab }: { onClose: () => void; o
     }
   };
 
+  /** Takes one of the person's own out of Roer, once asked; built-in ones can only be switched off. */
+  const remove = async (item: Row) => {
+    const sure = await confirmAction(
+      item.scope === "session"
+        ? `Remove ${item.name}? It is unloaded, and its folder ${item.dir ?? ""} is left where it is.`
+        : `Remove ${item.name}? Its tabs, Workspace sections and tools go from every Workspace. Its files are moved to ~/.roer/extensions-removed, not deleted.`,
+      `Remove ${item.name}?`,
+    );
+    if (!sure) return;
+    setError(null);
+    try {
+      await removeExtension(item.id);
+      setFound((current) => current?.filter((one) => one.id !== item.id) ?? current);
+    } catch (cause) {
+      setError(String(cause));
+    }
+  };
+
   const bundled: Row[] = BUNDLED.map(({ id, name, description }) => ({ id, name, description, scope: "bundled", errors: [] }));
   const yours: Row[] = (found ?? []).map((info) => ({
     id: info.id,
@@ -156,6 +267,18 @@ export function ExtensionsDialog({ onClose, onNewTab }: { onClose: () => void; o
             {!on ? <Badge>Off</Badge> : failed ? <Badge tone="danger">Build failed</Badge> : null}
           </div>
           {item.description ? <p className="ext-row-text">{item.description}</p> : null}
+          {on && placement
+            ? placement.tabs
+                .filter((tab) => tab.extension === item.id)
+                .map((tab, _, mine) => (
+                  <TabPlaces
+                    key={tab.tabId}
+                    placement={placement}
+                    tabId={tab.tabId}
+                    label={mine.length > 1 ? tab.title : undefined}
+                  />
+                ))
+            : null}
           {item.dir ? (
             <p className="ext-row-dir" title={item.dir}>
               {item.dir}
@@ -163,6 +286,17 @@ export function ExtensionsDialog({ onClose, onNewTab }: { onClose: () => void; o
           ) : null}
           {failed ? <pre className="ext-row-errors">{item.errors.join("\n")}</pre> : null}
         </div>
+        {item.scope !== "bundled" ? (
+          <button
+            type="button"
+            className="ext-remove"
+            aria-label={`Remove ${item.name}`}
+            title="Remove from Roer"
+            onClick={() => void remove(item)}
+          >
+            <Trash2 size={14} />
+          </button>
+        ) : null}
         <label className="ext-switch" title={on ? "Switch off" : "Switch on"}>
           <input
             type="checkbox"

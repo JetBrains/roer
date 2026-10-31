@@ -544,6 +544,7 @@ fn dispatch(state: &Arc<AppState>, cmd: &str, args: Value, cid: Option<&str>) ->
         "extension_bundle" => call_res!(args, crate::extensions::extension_bundle, "id": String),
         "extension_log" => call!(args, crate::extensions::extension_log, "id": String, "message": String),
         "extensions_disabled" => call!(args, crate::extensions::extensions_disabled,),
+        "extension_remove" => call_res!(args, crate::extensions::extension_remove, "id": String),
         "extension_set_enabled" => {
             call_res!(args, crate::extensions::extension_set_enabled, "id": String, "enabled": bool)
         }

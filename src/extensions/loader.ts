@@ -49,6 +49,9 @@ export const listDisabled = (): Promise<string[]> => invoke("extensions_disabled
 export const setExtensionEnabled = (id: string, enabled: boolean): Promise<void> =>
   invoke("extension_set_enabled", { id, enabled });
 
+/** Takes one out of Roer: its installed copy moves to `~/.roer/extensions-removed`, a session one's pointer goes. Says what it did. */
+export const removeExtension = (id: string): Promise<string> => invoke("extension_remove", { id });
+
 /** Writes to the extension's log, which `roer ext logs` and its agent read. */
 export const logExtension = (id: string, message: string): Promise<void> =>
   invoke<void>("extension_log", { id, message }).catch(() => undefined);

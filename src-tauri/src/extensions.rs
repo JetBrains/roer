@@ -569,6 +569,47 @@ pub fn extension_set_enabled(id: String, enabled: bool) -> Result<(), String> {
     Ok(())
 }
 
+/// Takes an extension out of Roer: its installed copy is moved aside to
+/// `~/.roer/extensions-removed`, where no scan looks, rather than deleted, since
+/// it may be the only copy of someone's code; a session one loses its pointer
+/// and its folder is left where it is. The watcher sees it go and every window
+/// unloads it. A bundled one has nothing on disk and is switched off instead.
+#[tauri::command(async)]
+pub fn extension_remove(id: String) -> Result<String, String> {
+    if !valid_id(&id) {
+        return Err(format!("no such extension: {id}"));
+    }
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or_default();
+    let said = remove_from(&user_dir(), &dev_dir(), &home().join("extensions-removed"), &id, stamp)?;
+    // Not left switched off for a later one with the same id.
+    let _ = switch(&disabled_path(), &id, true);
+    log(&id, "removed");
+    Ok(said)
+}
+
+fn remove_from(user: &Path, dev: &Path, removed: &Path, id: &str, stamp: u64) -> Result<String, String> {
+    let pointer = dev.join(format!("{id}.json"));
+    let installed = user.join(id);
+    let mut gone = Vec::new();
+    if pointer.is_file() {
+        std::fs::remove_file(&pointer).map_err(|e| format!("{}: {e}", pointer.display()))?;
+        gone.push("its session folder is left where it is".to_string());
+    }
+    if installed.is_dir() {
+        std::fs::create_dir_all(removed).map_err(|e| format!("{}: {e}", removed.display()))?;
+        let aside = removed.join(format!("{id}-{stamp}"));
+        std::fs::rename(&installed, &aside).map_err(|e| format!("{}: {e}", installed.display()))?;
+        gone.push(format!("its files are in {}", aside.display()));
+    }
+    if gone.is_empty() {
+        return Err(format!("no extension {id} on disk"));
+    }
+    Ok(format!("Removed {id}: {}.", gone.join(", and ")))
+}
+
 #[tauri::command(async)]
 pub fn extension_bundle(id: String) -> Result<Bundle, String> {
     if !valid_id(&id) {
@@ -680,6 +721,27 @@ mod tests {
         }
         let one_line = "ééééééééé";
         assert!(one_line.ends_with(newer_half(one_line)));
+    }
+
+    #[test]
+    fn removing_moves_the_installed_copy_aside_and_drops_a_session_pointer() {
+        let dir = std::env::temp_dir().join(format!("roer-remove-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let (user, dev, removed) = (dir.join("extensions"), dir.join("extensions-dev"), dir.join("extensions-removed"));
+        std::fs::create_dir_all(user.join("mine")).unwrap();
+        std::fs::write(user.join("mine/app.tsx"), "code").unwrap();
+        std::fs::create_dir_all(&dev).unwrap();
+        std::fs::write(dev.join("wip.json"), "{}").unwrap();
+
+        remove_from(&user, &dev, &removed, "mine", 7).unwrap();
+        assert!(!user.join("mine").exists());
+        assert_eq!(std::fs::read_to_string(removed.join("mine-7/app.tsx")).unwrap(), "code");
+
+        remove_from(&user, &dev, &removed, "wip", 8).unwrap();
+        assert!(!dev.join("wip.json").exists());
+
+        assert!(remove_from(&user, &dev, &removed, "nothing", 9).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
