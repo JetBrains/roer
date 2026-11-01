@@ -3253,7 +3253,7 @@ dependencies = [
 
 [[package]]
 name = "roer"
-version = "0.9.18"
+version = "0.9.19"
 dependencies = [
  "arboard",
  "axum",
