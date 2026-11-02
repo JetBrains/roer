@@ -141,6 +141,8 @@ pub fn run() {
             server::start_browser_server,
             server::copy_browser_link,
             server::open_tab_in_browser,
+            server::stage_announce,
+            server::stage_action_done,
             logfile::app_log,
             files::files_grep,
             files::files_list,

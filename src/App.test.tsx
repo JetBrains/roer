@@ -31,7 +31,7 @@ import { createProject, listProjects } from "./lib/projects";
 import { pickFolder } from "./lib/folderPicker";
 import { reportPluginUiReceipt } from "./lib/pluginUi";
 import { message } from "@tauri-apps/plugin-dialog";
-import { copyBrowserLink, openTabInBrowser, startBrowserServer, type StageAction } from "./lib/browserServer";
+import { announceStage, copyBrowserLink, openTabInBrowser, startBrowserServer, type StageAction } from "./lib/browserServer";
 import { gitReposIn, gitRoot } from "./lib/git";
 import { openUrl } from "./lib/github";
 import { removeExtension, setExtensionEnabled } from "./extensions/loader";
@@ -149,11 +149,14 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({
   message: vi.fn().mockResolvedValue(undefined),
 }));
 
-vi.mock("./lib/browserServer", () => ({
+vi.mock("./lib/browserServer", async () => ({
   startBrowserServer: vi.fn().mockResolvedValue(undefined),
   copyBrowserLink: vi.fn().mockResolvedValue(undefined),
   onBrowserServerMenu: vi.fn().mockResolvedValue(() => undefined),
   openTabInBrowser: vi.fn().mockResolvedValue(undefined),
+  announceStage: vi.fn().mockResolvedValue(undefined),
+  stageActionDone: vi.fn().mockResolvedValue(undefined),
+  tabPagePath: (await vi.importActual<typeof import("./lib/browserServer")>("./lib/browserServer")).tabPagePath,
   onStageAction: vi.fn(async (handler: (action: StageAction) => void) => {
     mocks.stageAction.current = handler;
     return () => undefined;
@@ -1183,11 +1186,28 @@ describe("App", () => {
       render(<App />);
       fireEvent.contextMenu(await screen.findByRole("tab", { name: "one" }));
       fireEvent.click(await screen.findByRole("menuitem", { name: "Open in Browser" }));
-      await waitFor(() => expect(openTabInBrowser).toHaveBeenCalledWith("ext:one/main"));
+      await waitFor(() => expect(openTabInBrowser).toHaveBeenCalledWith("/?tab=ext%3Aone%2Fmain"));
 
       await waitFor(() => expect(mocks.stageAction.current).toBeTypeOf("function"));
       act(() => mocks.stageAction.current?.({ kind: "activateTab", tabId: "ext:two/main" }));
       expect(screen.getByRole("tab", { name: "two" })).toHaveAttribute("aria-selected", "true");
+    });
+
+    it("opens a tab that needs a session in a browser only with one, pinned to it", async () => {
+      render(<App />);
+      fireEvent.contextMenu(await screen.findByRole("tab", { name: "Changes" }));
+      expect(screen.queryByRole("menuitem", { name: "Open in Browser" })).not.toBeInTheDocument();
+      fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
+
+      await teleport();
+      await waitFor(() =>
+        expect(announceStage).toHaveBeenLastCalledWith(expect.objectContaining({ pane: "%3", cwd: "/Users/test/project" })),
+      );
+      fireEvent.contextMenu(screen.getByRole("tab", { name: "Changes" }));
+      fireEvent.click(await screen.findByRole("menuitem", { name: "Open in Browser" }));
+      await waitFor(() => expect(openTabInBrowser).toHaveBeenCalled());
+      const page = new URLSearchParams(String(vi.mocked(openTabInBrowser).mock.calls[0][0]).slice(1));
+      expect([page.get("tab"), page.get("pane"), page.get("cwd")]).toEqual(["changes", "%3", "/Users/test/project"]);
     });
 
     it("switches an extension off, or removes it, from its tab", async () => {
