@@ -14,6 +14,14 @@ CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1 claude --plugin-dir claude-plugin/roer-ui
 # then: /roer a form to file a bug
 ```
 
+`/work-item` draws Roer's work item for the repository and branch the session
+is in, with no turn of Claude's: the item Roer's work-item extension keeps in
+`$ROER_HOME/extension-data/work-item/items.json` (filed under `root\0branch`),
+as a WorkItem in detail with the uncommitted changes as its one change. It
+reads both again every two seconds, so the pane follows `work-item__show`
+calls made anywhere, and opens as wide as a dock may (45% of the terminal).
+A tick or an answer reaches Claude as any press does.
+
 Draws the whole of `roer:catalog/1`, as Roer's panel does, with what a
 terminal cannot do drawn another way:
 

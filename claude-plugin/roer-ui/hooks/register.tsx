@@ -8,7 +8,7 @@
 // can; a component the catalog does not have draws as a dim placeholder.
 
 import { atom, read, update } from 'claude-code'
-import type { Register, RenderChildren } from 'claude-code'
+import type { EngineInterface, Register, RenderChildren } from 'claude-code'
 import type { RoerUiComponent, RoerUiSurface } from '../types'
 import { EMPTY, apply, binding, children, contextOf, own, resolve, setAt, text } from './a2ui'
 import {
@@ -28,6 +28,7 @@ import {
 import type { Comment, Decision, Finding, FindingState, Note, Requirement, SourceRef, Tone } from './workItem'
 import { bashRan, fetchLoad, opened, readLoadData, readLocal, shellCommand } from './local'
 import { toNumber } from './functions'
+import { WORK_ITEM_EVERY_MS, WORK_ITEM_SURFACE, findWorkItem, workItemMessages } from './roerWorkItem'
 import type { Load, LocalAction, RunIo } from './local'
 
 const PANE = 'roer-ui'
@@ -110,6 +111,32 @@ can, and handle presses that need no judgement of yours itself:
   is anything else or starts with -.
 - When a press does reach you, send only what changed (updateDataModel, updateComponents), not a new createSurface.`
 
+// `/work-item`: Roer's work item for this branch, read from Roer's own file and kept up to date on a timer, with
+// no turn of Claude's. What the person ticks or answers reaches Claude as any press in the pane does.
+let watching: { cancel: () => void } | undefined
+let lastDrawn = ''
+/** More than any dock gets: asks for the widest one, which the engine caps at 45% of the terminal. */
+const WORK_ITEM_COLUMNS = 400
+
+async function drawWorkItem($: EngineInterface) {
+  const found = await findWorkItem($)
+  const messages = workItemMessages(found)
+  const drawn = JSON.stringify(messages)
+  if (drawn === lastDrawn) return
+  lastDrawn = drawn
+  await update($, surfaces, before => {
+    // Already on screen as an item: only its data, so what the person opened or ticked in the pane stays.
+    const root = own(before.bySurface, WORK_ITEM_SURFACE)?.components.root
+    const create = (messages[0] as { createSurface: { components: { component: string }[]; dataModel: unknown } }).createSurface
+    const message =
+      root?.component === 'WorkItem' && create.components[0]?.component === 'WorkItem'
+        ? { version: 'v1.0', updateDataModel: { surfaceId: WORK_ITEM_SURFACE, path: '', value: create.dataModel } }
+        : messages[0]
+    const after = apply(before, message)
+    return typeof after === 'string' ? before : after
+  })
+}
+
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.command.register({
@@ -117,6 +144,7 @@ export const register: Register = on => {
       description: "Show Roer's Generative UI in a pane",
       argumentHint: '<what to show>',
     })
+    await $.command.register({ name: 'work-item', description: "Show Roer's work item for this branch in the Roer pane" })
     await $.tool.register({
       name: 'show',
       description: DESCRIPTION,
@@ -131,6 +159,15 @@ export const register: Register = on => {
       description: `The component catalog and pane-side rules for ${TOOL}. Read it before drawing.`,
     })
     return next(e)
+  })
+
+  on('command.run', { command: 'work-item' }, async $ => {
+    lastDrawn = ''
+    await drawWorkItem($)
+    watching ??= $.clock.every(WORK_ITEM_EVERY_MS, () => drawWorkItem($))
+    // As wide as a dock opens (the engine holds it to 45% of the terminal): a work item has diffs and long findings.
+    const opened = await $.ui.open({ id: PANE, title: 'Roer', focus: true, columns: WORK_ITEM_COLUMNS })
+    return { text: opened.isPlaced ? 'Work item shown in the Roer pane; it follows the file Roer keeps.' : `Work item ready; the pane waits to be placed (${opened.reason}).` }
   })
 
   on('command.run', { command: 'roer' }, async ($, e) => {
