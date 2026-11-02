@@ -13,6 +13,9 @@ export type UnlistenFn = () => void;
 let extension = "";
 export const setExtension = (id: string) => void (extension = id);
 
+/** A tab in another app's chat is live, never a saved copy (src/copy/backend.ts says true). */
+export const isSavedCopy = (): boolean => false;
+
 /** No PTYs here: a Channel never hears anything. */
 export class Channel<T = unknown> {
   onmessage: (payload: T) => void = () => {};
