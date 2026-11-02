@@ -529,8 +529,8 @@ fn dispatch(state: &Arc<AppState>, cmd: &str, args: Value, cid: Option<&str>) ->
         "shared_state_set" => {
             let change = crate::shared_state::set(parse(&args, "key")?, parse(&args, "value")?)?;
             crate::events::Sink::emit(&state.bus, crate::shared_state::EVENT, &change);
-            if let Some(app) = APP.get() {
-                crate::events::Sink::emit(app, crate::shared_state::EVENT, &change);
+            if let Some(window) = WINDOW.get() {
+                (window.emit)(crate::shared_state::EVENT, &change);
             }
             Ok(Value::Null)
         }
@@ -959,24 +959,35 @@ impl crate::events::Sink for DesktopWatchSink {
     }
 }
 
-/// The desktop app, once it is up; never set in a standalone `roer-server`,
-/// which has no window to hand a stage action to.
-static APP: OnceLock<tauri::AppHandle> = OnceLock::new();
+/// Roer's window, as the server reaches it: telling it an event, and bringing
+/// it forward. Set once the desktop app is up; never in a standalone
+/// `roer-server`, which has no window.
+///
+/// Closures the app hands over, not its `AppHandle`: nothing the server's own
+/// code calls names the window's runtime, so the server's tests link none of
+/// it (on Windows a test binary that does cannot even start: the UI library
+/// it needs is not loaded there).
+pub(crate) struct Window {
+    pub emit: Box<dyn Fn(&str, &Value) + Send + Sync>,
+    pub focus: Box<dyn Fn() + Send + Sync>,
+}
+
+static WINDOW: OnceLock<Window> = OnceLock::new();
 
 /// What a tab opened in a browser hands the Roer window, as the event
 /// `App` acts on.
 pub const STAGE_ACTION_EVENT: &str = "roer://stage-action";
 
-pub(crate) fn set_app(app: tauri::AppHandle) {
-    let _ = APP.set(app);
+pub(crate) fn set_window(window: Window) {
+    let _ = WINDOW.set(window);
 }
 
 /// Hands `action` to the Roer window and brings it forward, since that is
 /// where it happens: a tab in a browser has no stage of its own.
 fn stage_action(action: Value) -> Result<(), String> {
-    let app = APP.get().ok_or("there is no Roer window here to show it in")?;
-    tauri::Emitter::emit(app, STAGE_ACTION_EVENT, action).map_err(|e| e.to_string())?;
-    crate::handoff::focus(app);
+    let window = WINDOW.get().ok_or("there is no Roer window here to show it in")?;
+    (window.emit)(STAGE_ACTION_EVENT, &action);
+    (window.focus)();
     Ok(())
 }
 

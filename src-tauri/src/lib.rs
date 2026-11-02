@@ -165,7 +165,13 @@ pub fn run() {
         ])
         .setup(|app| {
             menu(app)?;
-            server::set_app(app.handle().clone());
+            let (emitter, focuser) = (app.handle().clone(), app.handle().clone());
+            server::set_window(server::Window {
+                emit: Box::new(move |event, payload| {
+                    let _ = tauri::Emitter::emit(&emitter, event, payload);
+                }),
+                focus: Box::new(move || handoff::focus(&focuser)),
+            });
             cli_link::install();
             handoff::watch(app.handle().clone())?;
             plugin_ui::watch(server::DesktopWatchSink(app.handle().clone()))?;
