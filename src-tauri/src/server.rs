@@ -521,6 +521,17 @@ fn dispatch(state: &Arc<AppState>, cmd: &str, args: Value, cid: Option<&str>) ->
         // its stage: show a tab or a session, start a session.
         "stage_action" => call_res!(args, stage_action, "action": Value),
         "stage_current" => call!(args, stage_current,),
+        // State the window and its browser pages share; a change made here is
+        // told to this server's pages and, inside the app, to the window too.
+        "shared_state_all" => call!(args, crate::shared_state::all,),
+        "shared_state_set" => {
+            let change = crate::shared_state::set(parse(&args, "key")?, parse(&args, "value")?)?;
+            crate::events::Sink::emit(&state.bus, crate::shared_state::EVENT, &change);
+            if let Some(app) = APP.get() {
+                crate::events::Sink::emit(app, crate::shared_state::EVENT, &change);
+            }
+            Ok(Value::Null)
+        }
 
         // Generative UI panel bundles
         "report_plugin_ui_action" => {
@@ -929,6 +940,13 @@ static IN_PROCESS_BUS: OnceLock<Bus> = OnceLock::new();
 /// consumes each record reaches both.
 #[derive(Clone)]
 pub(crate) struct DesktopWatchSink(pub tauri::AppHandle);
+
+impl DesktopWatchSink {
+    /// A shared-state change (see `shared_state`), to the window and the in-process server's pages.
+    pub(crate) fn emit_change(&self, change: &Value) {
+        crate::events::Sink::emit(self, crate::shared_state::EVENT, change);
+    }
+}
 
 impl crate::events::Sink for DesktopWatchSink {
     fn emit<T: serde::Serialize>(&self, event: &str, payload: &T) {

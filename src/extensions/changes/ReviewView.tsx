@@ -18,6 +18,8 @@ import {
   type ReviewThread,
   type Session,
   type ThreadVerdict,
+  onSharedStorage,
+  sharedStorage,
   useSessions,
   useShowSession,
   useStartSession,
@@ -90,7 +92,7 @@ const storeKey = (pr: PrSummary) => `roer:review:${pr.url}`;
 /** Decisions are kept per pull request, so a reload or a session switch does not lose them. */
 function stored(pr: PrSummary): Record<string, Decided> {
   try {
-    const raw = localStorage.getItem(storeKey(pr));
+    const raw = sharedStorage.getItem(storeKey(pr));
     const parsed: unknown = raw ? JSON.parse(raw) : {};
     return typeof parsed === "object" && parsed !== null ? (parsed as Record<string, Decided>) : {};
   } catch {
@@ -100,7 +102,7 @@ function stored(pr: PrSummary): Record<string, Decided> {
 
 function store(pr: PrSummary, decided: Record<string, Decided>): void {
   try {
-    localStorage.setItem(storeKey(pr), JSON.stringify(decided));
+    sharedStorage.setItem(storeKey(pr), JSON.stringify(decided));
   } catch {
     /* kept for as long as the tab is open */
   }
@@ -228,6 +230,16 @@ export function ReviewView({ session, active, branch: other, onSent, onOpenCount
   useEffect(() => {
     if (active) void load();
   }, [active, load, branch]);
+
+  // Decided in another view of the same pull request (Roer's window, a browser page): shown here too.
+  const shownPr = loaded.kind === "ready" ? loaded.pr : null;
+  useEffect(() => {
+    if (!shownPr) return;
+    const key = storeKey(shownPr);
+    return onSharedStorage((changed) => {
+      if (changed === key) setDecided(stored(shownPr));
+    });
+  }, [shownPr]);
 
   const mode = scope ?? picked ?? (loaded.kind === "ready" ? "pr" : loaded.kind === "loading" ? null : "local");
   const pick = (next: "pr" | "local") => (onScope ? onScope(next) : setPicked(next));
