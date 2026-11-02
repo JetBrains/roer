@@ -34,7 +34,7 @@ import type { Scope } from "./extensions/api";
 import { FileView } from "./FileView";
 import { GenerativeUITab } from "./generative-ui/GenerativeUITab";
 import { applyAll, applyMessage } from "./generative-ui/apply";
-import { emptyState, surfaceIdOf, type A2uiMessage, type RenderState } from "./generative-ui/schema";
+import { A2UI_VERSION, emptyState, surfaceIdOf, type A2uiMessage, type RenderState } from "./generative-ui/schema";
 import { AgentsDialog, type AgentsDialogStart } from "./AgentsDialog";
 import { ClaudeSetup } from "./ClaudeSetup";
 import { UpdateNotice } from "./UpdateNotice";
@@ -160,6 +160,7 @@ import { logLine } from "./lib/log";
 import { gitRoot } from "./lib/git";
 import { insideRoot } from "./lib/terminalLinks";
 import { onPluginUi, reportPluginUiReceipt, type PluginUiOutcome } from "./lib/pluginUi";
+import { readLoadData, useLiveLoads } from "./generative-ui/loads";
 
 // Before anything renders: extensions read the host's React and SDK from
 // here, and the bundled ones are tabs from the first frame.
@@ -645,9 +646,40 @@ export function App() {
   useEffect(() => {
     setGenerativeUi({ state: emptyState, surfaceId: "", log: [], live: false });
   }, [session?.pane]);
+  // A view's loadData: read once, and again on its own when it asks to (generative-ui/loads.ts).
+  const generativeUiRef = useRef(generativeUi);
+  generativeUiRef.current = generativeUi;
+  /** The repository the panel's loads read: the stage session's, once it is known. */
+  const loadRootRef = useRef<string | undefined>(undefined);
+  const liveLoads = useLiveLoads(
+    useCallback((load, value) => {
+      setGenerativeUi((current) =>
+        current.live && current.state.surfaces[load.surfaceId]
+          ? {
+              ...current,
+              state: applyMessage(current.state, {
+                version: A2UI_VERSION,
+                updateDataModel: { surfaceId: load.surfaceId, path: load.path, value },
+              }),
+            }
+          : current,
+      );
+    }, []),
+    useCallback((surfaceId: string) => Boolean(generativeUiRef.current.live && generativeUiRef.current.state.surfaces[surfaceId]), []),
+    session?.pane,
+  );
+  const liveLoadsRef = useRef(liveLoads);
+  liveLoadsRef.current = liveLoads;
+
   useEffect(() => {
     let cancelled = false;
     let unlisten: (() => void) | undefined;
+
+    /** Where a record for this pane stands: shown, or why not. */
+    const outcomeOf = (pane: string): PluginUiOutcome => {
+      const onScreen = paneRef.current;
+      return !onScreen ? (stagedRef.current ? "pane-unknown" : "nothing-on-screen") : pane !== onScreen ? "other-pane" : "shown";
+    };
 
     void onPluginUi((record) => {
       // Scoped to this session's pane: a message tagged for a pane nobody is
@@ -664,6 +696,10 @@ export function App() {
           : "shown";
       if (record.id) void reportPluginUiReceipt(record.id, outcome, onScreen).catch(() => {});
       if (outcome !== "shown") return;
+      // Made again: the live loads of the surface it replaces stop, and the ones sent after it start.
+      if ("createSurface" in record.message || "deleteSurface" in record.message) {
+        liveLoadsRef.current.forget(surfaceIdOf(record.message));
+      }
 
       setGenerativeUi((current) => ({
         // The fixture and a live surface are dropped together, not merged —
@@ -675,6 +711,22 @@ export function App() {
       }));
       setEverGenerativeUI(true);
       setGenerativePanelCollapsed(false);
+    }, (record) => {
+      const outcome = outcomeOf(record.pane);
+      const load = readLoadData(record.message);
+      const root = loadRootRef.current;
+      const answer = (said: PluginUiOutcome) => {
+        if (record.id) void reportPluginUiReceipt(record.id, said, paneRef.current).catch(() => {});
+      };
+      if (outcome !== "shown") return answer(outcome);
+      if (load === undefined || typeof load === "string" || !root) {
+        if (typeof load === "string") logLine(`roer: a loadData message was refused: ${load}`);
+        return answer("invalid");
+      }
+      void liveLoadsRef.current.run(load, root).then((problem) => {
+        if (problem) logLine(`roer: a loadData message failed: ${problem}`);
+        answer(problem ? "invalid" : "shown");
+      });
     })
       .then((fn) => {
         if (cancelled) {
@@ -1278,6 +1330,7 @@ export function App() {
     liveCwd: onStage?.cwd,
   });
   const agentState = onStage && runningAgent(onStage) ? onStage.state : undefined;
+  loadRootRef.current = stageSession?.root ?? session?.cwd;
   // What the Workspace tab is about, as its extension sections see it. The
   // same answer keeps the same object, so a section's effects run again only
   // when the Workspace or Project, its repositories or its folder change.

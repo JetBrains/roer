@@ -47,6 +47,29 @@ is required; `null` deletes the key.
 **`deleteSurface`** — removes it. Sending `createSurface` again for a
 surface that is on screen replaces it.
 
+**`loadData`** (Roer's own, after the surface it fills) — sets `path` from
+a file or a git read instead of a value you write out, and with `every`
+(seconds, 1 to 3600) reads it again on its own that often, writing `path`
+only when it changed, until the surface is replaced or gone. Use it for
+what changes without you: a file another tool keeps, the branch's diff. Draw
+the surface once; do not resend it to refresh.
+
+- `file`: under the session's repository, or under `~/.roer`; `~/` is the
+  home folder. `run`: `git` with `diff`, `log`, `show`, `status`,
+  `rev-parse`, `ls-files` or a listing `branch`, in the repository; nothing
+  else runs, and no option that writes a file or runs a program.
+- `as: "json"` parses it, and `pick` (a JSON Pointer; a `/` inside a key is
+  `~1`) takes one part: `null` while nothing is there yet.
+
+```json
+{ "version": "v1.0", "loadData": { "surfaceId": "work-item", "path": "/item", "as": "json", "every": 2,
+  "file": "~/.roer/extension-data/work-item/items.json", "pick": "/~1Users~1me~1roer\u0000main/item" } }
+{ "version": "v1.0", "loadData": { "surfaceId": "review", "path": "/diff", "run": ["git", "diff", "HEAD"], "every": 5 } }
+```
+
+At most 8 run live at once; one that fails keeps its last value. A load
+that cannot be read is answered as not shown.
+
 ## When to draw, and what
 
 Draw when seeing or touching the answer helps more than reading it, and

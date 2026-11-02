@@ -14,6 +14,7 @@ mod extension_servers;
 mod extension_tools;
 mod extensions;
 mod files;
+mod genui_load;
 mod gh;
 mod git;
 mod handoff;
@@ -147,6 +148,7 @@ pub fn run() {
             server::stage_action_done,
             shared_state::shared_state_all,
             shared_state::shared_state_set,
+            genui_load::genui_load,
             logfile::app_log,
             files::files_grep,
             files::files_list,

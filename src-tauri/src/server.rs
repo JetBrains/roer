@@ -523,6 +523,8 @@ fn dispatch(state: &Arc<AppState>, cmd: &str, args: Value, cid: Option<&str>) ->
         "stage_current" => call!(args, stage_current,),
         // State the window and its browser pages share; a change made here is
         // told to this server's pages and, inside the app, to the window too.
+        // A Generative UI view's loadData: a file under the session's repository or Roer's folder, or a git read.
+        "genui_load" => call_res!(args, |cwd: String, run, file| crate::genui_load::genui_load_core(&cwd, run, file), "cwd": String, "run": Option<Vec<String>>, "file": Option<String>),
         "shared_state_all" => call!(args, crate::shared_state::all,),
         "shared_state_set" => {
             let change = crate::shared_state::set(parse(&args, "key")?, parse(&args, "value")?)?;
