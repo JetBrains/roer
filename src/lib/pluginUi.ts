@@ -37,10 +37,31 @@ function isPluginUiRecord(value: unknown): value is PluginUiRecord {
   return typeof v.pane === "string" && isA2uiMessage(v.message);
 }
 
-export const onPluginUi = (handler: (record: PluginUiRecord) => void): Promise<UnlistenFn> =>
+/** A `loadData` message on its way to the panel (`generative-ui/loads.ts`), tagged as any record is. */
+export interface PluginLoadRecord {
+  id?: string;
+  pane: string;
+  message: { version: string; loadData: unknown };
+}
+
+function isPluginLoadRecord(value: unknown): value is PluginLoadRecord {
+  if (typeof value !== "object" || value === null) return false;
+  const v = value as Record<string, unknown>;
+  return typeof v.pane === "string" && typeof v.message === "object" && v.message !== null && "loadData" in v.message;
+}
+
+/** Every record the watcher hands over: A2UI messages to `handler`, `loadData` messages to `onLoad`. */
+export const onPluginUi = (
+  handler: (record: PluginUiRecord) => void,
+  onLoad?: (record: PluginLoadRecord) => void,
+): Promise<UnlistenFn> =>
   listen<PluginUiRecord>("roer://plugin-ui", (event) => {
     if (isPluginUiRecord(event.payload)) {
       handler(event.payload);
+      return;
+    }
+    if (onLoad && isPluginLoadRecord(event.payload)) {
+      onLoad(event.payload);
       return;
     }
     const id = (event.payload as { id?: unknown } | null)?.id;
