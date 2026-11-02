@@ -31,7 +31,7 @@ import { createProject, listProjects } from "./lib/projects";
 import { pickFolder } from "./lib/folderPicker";
 import { reportPluginUiReceipt } from "./lib/pluginUi";
 import { message } from "@tauri-apps/plugin-dialog";
-import { copyBrowserLink, startBrowserServer } from "./lib/browserServer";
+import { copyBrowserLink, openTabInBrowser, startBrowserServer, type StageAction } from "./lib/browserServer";
 import { gitReposIn, gitRoot } from "./lib/git";
 import { openUrl } from "./lib/github";
 import { removeExtension, setExtensionEnabled } from "./extensions/loader";
@@ -39,6 +39,8 @@ import { confirmAction } from "./lib/confirm";
 
 // Shared between the test body and the hoisted module mock below.
 const mocks = vi.hoisted(() => ({
+  // What a tab opened in a browser asks of the stage, as the app was handed it.
+  stageAction: { current: undefined as undefined | ((action: import("./lib/browserServer").StageAction) => void) },
   handoffHandlers: [] as Array<(handoff: unknown) => void>,
   // The same, for what a worktree watch reports.
   changedHandlers: [] as Array<(changed: unknown) => void>,
@@ -116,6 +118,8 @@ vi.mock("./lib/confirm", async (importOriginal) => ({
 }));
 vi.mock("./lib/backend", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./lib/backend")>()),
+  // As in Roer's own window, where a tab's menu offers a browser page.
+  inDesktop: () => true,
   onFileDrag: vi.fn(async (handler: (drag: unknown) => void) => {
     mocks.fileDrag.current = handler;
     return () => undefined;
@@ -149,6 +153,11 @@ vi.mock("./lib/browserServer", () => ({
   startBrowserServer: vi.fn().mockResolvedValue(undefined),
   copyBrowserLink: vi.fn().mockResolvedValue(undefined),
   onBrowserServerMenu: vi.fn().mockResolvedValue(() => undefined),
+  openTabInBrowser: vi.fn().mockResolvedValue(undefined),
+  onStageAction: vi.fn(async (handler: (action: StageAction) => void) => {
+    mocks.stageAction.current = handler;
+    return () => undefined;
+  }),
 }));
 
 vi.mock("./lib/pty", () => ({
@@ -1168,6 +1177,17 @@ describe("App", () => {
       render(<App />);
       await screen.findByRole("tab", { name: "one" });
       expect(order()).toEqual(["two", "one"]);
+    });
+
+    it("opens a tab that needs no session in a browser, and acts on what that page asks", async () => {
+      render(<App />);
+      fireEvent.contextMenu(await screen.findByRole("tab", { name: "one" }));
+      fireEvent.click(await screen.findByRole("menuitem", { name: "Open in Browser" }));
+      await waitFor(() => expect(openTabInBrowser).toHaveBeenCalledWith("ext:one/main"));
+
+      await waitFor(() => expect(mocks.stageAction.current).toBeTypeOf("function"));
+      act(() => mocks.stageAction.current?.({ kind: "activateTab", tabId: "ext:two/main" }));
+      expect(screen.getByRole("tab", { name: "two" })).toHaveAttribute("aria-selected", "true");
     });
 
     it("switches an extension off, or removes it, from its tab", async () => {

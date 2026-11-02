@@ -572,6 +572,61 @@ code {
   max-width: none;
 }
 
+/* One stage tab as a browser page of its own (TabPage): the tab, and a file
+   it opened beside it. */
+.tab-page {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
+.tab-page-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+}
+
+.tab-page-main {
+  flex: 1 1 0;
+  min-width: 0;
+  position: relative;
+  display: flex;
+}
+
+.tab-page-side {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid var(--roer-border);
+  background: var(--roer-bg);
+}
+
+.tab-page-lost {
+  flex: none;
+  padding: 7px 12px;
+  font-size: 12px;
+  color: var(--roer-fg);
+  background: var(--roer-panel);
+  border-bottom: 1px solid var(--roer-accent);
+}
+
+.tab-page-toast {
+  position: absolute;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+  padding: 8px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--roer-border);
+  background: var(--roer-panel);
+  color: var(--roer-fg);
+  font-size: 12px;
+  box-shadow: 0 4px 16px rgb(0 0 0 / 0.25);
+  z-index: 10;
+}
+
 /* Beats the `display` of anything above, so `hidden` really hides. */
 [hidden] {
   display: none !important;

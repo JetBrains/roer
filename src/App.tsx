@@ -61,7 +61,14 @@ import { ShortcutsDialog } from "./ShortcutsDialog";
 import { TerminalView } from "./TerminalView";
 import { WorkspaceSidebar } from "./WorkspaceSidebar";
 import { claudeSetupStatus, onClaudeSetupMenu, type SetupStatus } from "./lib/claudeSetup";
-import { copyBrowserLink, onBrowserServerMenu, startBrowserServer } from "./lib/browserServer";
+import {
+  copyBrowserLink,
+  onBrowserServerMenu,
+  onStageAction,
+  openTabInBrowser,
+  startBrowserServer,
+} from "./lib/browserServer";
+import { inDesktop } from "./lib/backend";
 import { onFilesChanged, type FilesChanged } from "./lib/files";
 import { anyTakesPrompt, defaultTakesPrompt, listAgents, onAgentsMenu, type AgentList } from "./lib/agents";
 import { checkForUpdate, onCheckUpdatesMenu, type UpdateStatus } from "./lib/updates";
@@ -215,6 +222,16 @@ function openInBrowser() {
   void startBrowserServer().catch((cause: unknown) => {
     void message(String(cause), {
       title: "Could not start the browser server",
+      kind: "error",
+    });
+  });
+}
+
+/** A tab's menu "Open in Browser": that tab alone, as a page of its own. */
+function openTabPage(tabId: string) {
+  void openTabInBrowser(tabId).catch((cause: unknown) => {
+    void message(String(cause), {
+      title: "Could not open the tab in a browser",
       kind: "error",
     });
   });
@@ -774,6 +791,10 @@ export function App() {
             </ContextMenuItem>
           ))}
         {split?.side === id ? <ContextMenuItem onSelect={closeBeside}>Back to the stage</ContextMenuItem> : null}
+        {/* A browser page has no session to give a tab, so only a tab that needs none goes there. */}
+        {inDesktop() && extensionTabs.some((tab) => tab.tabId === id && !tab.needsSession) ? (
+          <ContextMenuItem onSelect={() => openTabPage(id)}>Open in Browser</ContextMenuItem>
+        ) : null}
         {isCore(id) ? null : <ContextMenuSeparator />}
         <ContextMenuItem onSelect={() => nudgeTab(id, -1)}>Move left</ContextMenuItem>
         <ContextMenuItem onSelect={() => nudgeTab(id, 1)}>Move right</ContextMenuItem>
@@ -1124,6 +1145,29 @@ export function App() {
     },
     [show],
   );
+  // What a tab opened in a browser asks of the stage (see TabPage): the
+  // window has already come forward, so it happens where it is seen.
+  const stageActsRef = useRef({ activateTab, attach, startSession });
+  stageActsRef.current = { activateTab, attach, startSession };
+  useEffect(() => {
+    if (!inDesktop()) return;
+    let cancelled = false;
+    let unlisten: (() => void) | undefined;
+    void onStageAction((action) => {
+      const acts = stageActsRef.current;
+      if (action.kind === "activateTab") acts.activateTab(action.tabId);
+      else if (action.kind === "showSession") acts.attach(action.pane);
+      else if (action.kind === "startSession") void acts.startSession?.(action.cwd, action.prompt, { pickAgent: action.pickAgent });
+    }).then((stop) => {
+      if (cancelled) stop();
+      else unlisten = stop;
+    });
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, []);
+
   // Cmd+W closes the smallest thing in view: the file tab on top, and on
   // the Terminal the session, released rather than ended, so it is still in
   // the Workspace to come back to. Changes and an extension's tab are views

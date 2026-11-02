@@ -235,6 +235,18 @@ impl Invites {
 struct SessionQuery {
     token: Option<String>,
     code: Option<String>,
+    /// Where to land once authorized, such as one extension's tab
+    /// (`/?tab=…`); `/` without it. Only a path on this server.
+    next: Option<String>,
+}
+
+/// `next` if it is a path on this server, never another origin: `//host`
+/// and `/\\host` are both read as one by browsers.
+fn landing(next: Option<&str>) -> &str {
+    match next {
+        Some(next) if next.starts_with('/') && !next.starts_with("//") && !next.contains('\\') => next,
+        _ => "/",
+    }
 }
 
 /// The one route a browser can reach without already carrying the cookie:
@@ -255,7 +267,7 @@ async fn session(State(state): State<Arc<AppState>>, headers: HeaderMap, Query(q
         },
         _ => return (StatusCode::FORBIDDEN, "bad token").into_response(),
     };
-    let mut res = axum::response::Redirect::to("/").into_response();
+    let mut res = axum::response::Redirect::to(landing(q.next.as_deref())).into_response();
     // The server itself only speaks HTTP; HTTPS means a TLS-terminating
     // proxy in front, and then the cookie must never go out in the clear.
     let https = headers.get("x-forwarded-proto").and_then(|v| v.to_str().ok()) == Some("https");
@@ -505,6 +517,9 @@ fn dispatch(state: &Arc<AppState>, cmd: &str, args: Value, cid: Option<&str>) ->
         // viewing it — fine when they are the same machine (the common
         // case), a known gap otherwise.
         "open_url" => call_res!(args, crate::gh::open_url, "url": String),
+        // An extension's tab in a browser asking the Roer window to act on
+        // its stage: show a tab or a session, start a session.
+        "stage_action" => call_res!(args, stage_action, "action": Value),
 
         // Generative UI panel bundles
         "report_plugin_ui_action" => {
@@ -923,6 +938,37 @@ impl crate::events::Sink for DesktopWatchSink {
     }
 }
 
+/// The desktop app, once it is up; never set in a standalone `roer-server`,
+/// which has no window to hand a stage action to.
+static APP: OnceLock<tauri::AppHandle> = OnceLock::new();
+
+/// What a tab opened in a browser hands the Roer window, as the event
+/// `App` acts on.
+pub const STAGE_ACTION_EVENT: &str = "roer://stage-action";
+
+pub(crate) fn set_app(app: tauri::AppHandle) {
+    let _ = APP.set(app);
+}
+
+/// Hands `action` to the Roer window and brings it forward, since that is
+/// where it happens: a tab in a browser has no stage of its own.
+fn stage_action(action: Value) -> Result<(), String> {
+    let app = APP.get().ok_or("there is no Roer window here to show it in")?;
+    tauri::Emitter::emit(app, STAGE_ACTION_EVENT, action).map_err(|e| e.to_string())?;
+    crate::handoff::focus(app);
+    Ok(())
+}
+
+/// `text` safe inside a query string's value.
+fn encode_query(text: &str) -> String {
+    text.bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => (b as char).to_string(),
+            _ => format!("%{b:02X}"),
+        })
+        .collect()
+}
+
 /// `127.0.0.1` unless overridden — safe by default, but a container or a
 /// remote-machine deployment needs to bind `0.0.0.0` (or a specific
 /// interface) to be reachable at all from outside the loopback interface.
@@ -943,6 +989,16 @@ pub fn default_addr() -> SocketAddr {
 pub async fn start_browser_server() -> Result<(), String> {
     let url = with_running(Started::bootstrap_url).await?;
     crate::gh::open_in_system_browser(&url)
+}
+
+/// Opens one tab of the stage (an extension's, by its strip id) in the
+/// system browser, as a page of its own: the bootstrap link, landing on
+/// `/?tab=…` instead of the whole app.
+#[tauri::command(async)]
+pub async fn open_tab_in_browser(tab: String) -> Result<(), String> {
+    let url = with_running(Started::bootstrap_url).await?;
+    let next = format!("/?tab={}", encode_query(&tab));
+    crate::gh::open_in_system_browser(&format!("{url}&next={}", encode_query(&next)))
 }
 
 /// Starts the in-process server as "Open This Session in a Browser…" does,
@@ -989,6 +1045,20 @@ async fn start_in_app(addr: SocketAddr, explicit: bool) -> std::io::Result<Start
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_landing_stays_on_this_server() {
+        assert_eq!(landing(None), "/");
+        assert_eq!(landing(Some("/?tab=ext%3Adeck%2Fmain")), "/?tab=ext%3Adeck%2Fmain");
+        assert_eq!(landing(Some("//evil.example")), "/");
+        assert_eq!(landing(Some("/\\evil.example")), "/");
+        assert_eq!(landing(Some("https://evil.example")), "/");
+    }
+
+    #[test]
+    fn a_query_value_is_encoded_whole() {
+        assert_eq!(encode_query("/?tab=ext:deck/main"), "%2F%3Ftab%3Dext%3Adeck%2Fmain");
+    }
 
     #[tokio::test]
     async fn a_taken_port_gives_way_to_a_free_one_unless_it_was_asked_for() {
