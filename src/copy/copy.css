@@ -1,0 +1,41 @@
+/* A saved copy of a tab (main.tsx): a banner saying so, and the tab filling the rest. */
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--roer-bg);
+}
+
+.copy-page {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.copy-banner {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  padding: 7px 12px;
+  font-size: 12px;
+  color: var(--roer-fg);
+  background: var(--roer-panel);
+  border-bottom: 1px solid var(--roer-border);
+}
+
+.copy-banner-note {
+  color: var(--roer-muted);
+}
+
+.copy-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  position: relative;
+  display: flex;
+}

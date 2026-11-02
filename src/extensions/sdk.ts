@@ -9,6 +9,8 @@
 export { defineExtension } from "./api";
 export type {
   Activate,
+  CopyCall,
+  CopyOptions,
   Extension,
   Roer,
   Scope,
@@ -26,7 +28,7 @@ export { useCall, useRpc } from "./rpc";
 export type { RpcState } from "./rpc";
 
 // The backend, under either host (desktop app or `roer-server`).
-export { Channel, invoke, listen } from "../lib/backend";
+export { Channel, invoke, isSavedCopy, listen } from "../lib/backend";
 export type { UnlistenFn } from "../lib/backend";
 
 // git, GitHub and files.

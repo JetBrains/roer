@@ -199,6 +199,8 @@ the same way as `react`. Nothing is copied into the extension's build.
 | `DiffPane`, `Spans`, `TerminalView`, `Markdown` | the components the built-ins are made of. `Markdown` is new: the `react-markdown` + GFM setup the pull request's reviews are drawn with |
 | `parseDiff`, `buildTree`/`rows`, `highlight`, `langFor`, `useHotkey`, `shortcutLabel` | helpers |
 | `rpc`, `useRpc` | calls into the extension's own `server.ts` (§5) |
+| `sharedStorage`, `onSharedStorage`, `adoptLocal` | state a tab must read the same in Roer's window and in a browser page of it (§13.2) |
+| `isSavedCopy` | true in a saved copy of the tab (§13.3), so a tab hides what would change something |
 | the `src/components/ui` primitives | buttons, inputs, menus, and Roer's theme tokens |
 
 The SDK is not a frozen contract (§10). Its declarations, though, are what
@@ -622,6 +624,77 @@ whether the client draws MCP Apps (`capabilities.extensions` has
   person would have to name for no reason.
 
 Inside a Roer session nothing changes: the view goes to its own panel.
+
+## 13. Outside Roer's window
+
+A stage tab can leave the window two ways: as a browser page of its own,
+live, or as a saved copy, one HTML file that needs no Roer at all.
+
+### 13.1 A tab in a browser
+
+The tab's menu offers **Open in Browser**. It starts the in-process
+`roer-server` and opens its bootstrap link with `next=/?tab=<strip id>`
+(`/api/session` lands only on a path of its own server), and `main.tsx`
+draws `TabPage` there instead of the app: the tab alone.
+
+- A tab that needs a session is offered only with one on the stage, and the
+  page is pinned to it: `&pane=…&id=…&cwd=…`, the session's id so a later
+  tmux server reusing the pane number is not taken for it. A bar above the
+  tab names it (project · branch · agent). **Follow Roer** shows whatever the
+  stage shows instead; the window tells the server's pages each move
+  (`stage_announce` → `roer://stage`, `stage_current` for a page that starts
+  following). When the session ends the page says so and offers the live ones.
+- `openFile` opens the file beside the tab, in the page. Everything else a tab
+  asks of the stage (`activateTab`, `showSession`, `startSession`) is handed to
+  the window (`stage_action` → `roer://stage-action`), which comes forward to
+  do it while a toast in the page says so. `startSession` hears back
+  (`stage_action_done`): "Roer did not start a session" when no agent could be
+  handed the prompt, else "Started in Roer", and a pinned page offers to switch
+  to the new session once the stage shows it.
+- The page asks after its server every few seconds and says when Roer can no
+  longer be reached, or was started again since (a new token).
+
+### 13.2 Shared storage
+
+The window and a browser page are different origins, each with a
+`localStorage` of its own, so what a tab keeps there is not what the other
+view of it reads. `sharedStorage` is `localStorage`'s three calls over one
+store both reach: `$ROER_HOME/shared-state.json` (`shared_state.rs`),
+read whole before the page draws, so reads stay synchronous, with each change
+told to the window and every page (`roer://shared-state`, heard with
+`onSharedStorage`). `adoptLocal(prefix)` moves what a view kept in its own
+`localStorage` under a prefix into it, once. Changes keeps its review there
+(`roer:review:*`: comments, verdicts, roles, base), so an agent's comments
+and the person's verdicts show in both views. Per-window conveniences (a
+folded panel) stay in `localStorage`.
+
+### 13.3 Save as HTML
+
+The tab's menu, and the browser page, offer **Save as HTML…**: the tab as
+one file that draws without Roer, from the answers it got while it was saved.
+
+- Saving runs the tab in a hidden frame sandboxed to scripts alone
+  (`src/lib/savedCopy.ts`), built from `src/copy/` (`vite.copy.config.ts`,
+  run before the app's build, into `public/roer-copy/`). Its backend asks the
+  saving view for everything, and the view runs only the reads in
+  `src/copy/protocol.ts`'s `READ_ONLY` (git and pull request reads, a file's
+  text). Anything else, a commit, a merge, a message to a session, a shared
+  write, an `extension_rpc` the tab did not list as read-only, is refused
+  before it runs and named after the save. So saving cannot change anything,
+  whatever the tab's code does.
+- What a person would click their way to is fetched too: a tab's
+  `copy.prepare(seen)` is called once it has drawn, with what it fetched so
+  far by command, and fetches the rest with the same calls and arguments the
+  tab would. Changes fetches every uncommitted file's diff and every commit's
+  files and diffs (up to 50 commits), not files whole.
+- The file keeps only the shared-storage values the tab read, without the
+  review's roles (a pane and a session id), and the branch list cut to the
+  branches it shows. It makes no network request. Its backend plays the
+  answers back and says "not in this saved copy" for anything else;
+  `isSavedCopy()` is true there, and Changes hides Commit, Send, Merge,
+  review requests and the pull request form.
+- The page bundles React, the SDK, `roer/ui` and the bundled extensions
+  whole: about 5.8 MB, until it holds only what a tab uses.
 
 ## Open questions
 

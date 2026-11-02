@@ -76,6 +76,7 @@ export class Registry {
             order: tab.order ?? 100,
             needsSession: tab.needsSession ?? true,
             keepAcrossSessions: tab.keepAcrossSessions ?? false,
+            copy: tab.copy ?? {},
           };
           next.tabs.push(entry);
           // Registered during activation, it shows with the load; later, at once.

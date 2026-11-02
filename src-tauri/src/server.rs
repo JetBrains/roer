@@ -1058,6 +1058,16 @@ pub async fn open_tab_in_browser(page: String) -> Result<(), String> {
     crate::gh::open_in_system_browser(&format!("{url}&next={}", encode_query(&page)))
 }
 
+/// Writes a saved copy of a tab ("Save as HTML…") where the person picked in
+/// the save panel. The window's own: a browser page downloads its copy instead.
+#[tauri::command(async)]
+pub fn save_copy_file(path: String, html: String) -> Result<(), String> {
+    if !path.to_ascii_lowercase().ends_with(".html") {
+        return Err(format!("not an HTML file: {path}"));
+    }
+    std::fs::write(&path, html).map_err(|e| format!("{path}: {e}"))
+}
+
 /// Starts the in-process server as "Open This Session in a Browser…" does,
 /// but puts a link on the clipboard instead of opening one: a link with a
 /// one-time code that expires (`Started::invite_url`), not the token, so a

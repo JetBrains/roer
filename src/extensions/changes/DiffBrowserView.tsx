@@ -26,6 +26,7 @@ import {
   type Commit,
   type FileChange,
   type FilesChanged,
+  isSavedCopy,
 } from "roer";
 import type { NewNote, NoteAnswer } from "roer/ui";
 
@@ -660,7 +661,7 @@ export function DiffBrowserView({
           reveal={reveal}
           title={title}
           headerExtra={
-            reviewable && (send || startSession) ? (
+            reviewable && (send || startSession) && !isSavedCopy() ? (
               <ReviewMenu
                 agent={agent}
                 onHere={send ? askForReview : undefined}
@@ -679,7 +680,7 @@ export function DiffBrowserView({
                 </>
               ) : undefined
             ) : isLocalSelected ? (
-              localChanges && localChanges.files.length > 0 ? (
+              localChanges && localChanges.files.length > 0 && !isSavedCopy() ? (
                 <>
                   {asked ? <p className="notice">{asked}</p> : null}
                   <CommitBox

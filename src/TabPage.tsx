@@ -31,6 +31,7 @@ import {
 } from "./lib/browserServer";
 import { baseName, onFilesChanged, type FilesChanged } from "./lib/files";
 import { listSessions, type SessionInfo } from "./lib/pty";
+import { saveTabAsHtml } from "./lib/savedCopy";
 
 /** The strip id a page was opened for, or null for the whole app. */
 export function tabOfPage(search: string = window.location.search): string | null {
@@ -360,6 +361,21 @@ export function TabPage({ tabId, pinned: pinnedAtFirst = null }: { tabId: string
           <span className="tab-page-session" title={session?.root ?? staged?.cwd}>
             {ended ? "Session ended" : (label ?? (staged ? "…" : "No session"))}
           </span>
+          {entry && session ? (
+            <button
+              type="button"
+              className="tab-page-follow"
+              title="The tab as one HTML file that opens without Roer; saving it only reads"
+              onClick={() =>
+                void saveTabAsHtml(entry, { cwd: session.root ?? session.cwd ?? "", root: session.root, branch: session.branch }).then(
+                  (text) => text && say({ text }),
+                  (cause: unknown) => say({ text: `Could not save a copy: ${cause instanceof Error ? cause.message : String(cause)}` }),
+                )
+              }
+            >
+              Save as HTML…
+            </button>
+          ) : null}
           <button
             type="button"
             className={following ? "tab-page-follow on" : "tab-page-follow"}

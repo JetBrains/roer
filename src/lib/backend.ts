@@ -22,6 +22,9 @@ function inTauri(): boolean {
 /** Running in Roer's own window, not a browser tab of `roer-server`. */
 export const inDesktop = inTauri;
 
+/** A saved copy of a tab ("Save as HTML…") says true (`copy/backend.ts`): it shows, and changes nothing. */
+export const isSavedCopy = (): boolean => false;
+
 /**
  * `crypto.randomUUID()` needs a secure context, which a plain-HTTP tab
  * talking to a remote/container `roer-server` is not. `getRandomValues`

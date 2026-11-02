@@ -10,6 +10,7 @@
     "core:window:allow-set-badge-count",
     "dialog:allow-open",
     "dialog:allow-ask",
+    "dialog:allow-save",
     "notification:default"
   ]
 }

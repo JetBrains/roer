@@ -10,6 +10,8 @@
 node_modules/
 dist/
 dist-mcp-app/
+# The saved-copy page, built before the app (vite.copy.config.ts).
+public/roer-copy/
 *.log
 
 # Rust / Tauri

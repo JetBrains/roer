@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && vite build",
+    "build": "tsc --noEmit && npm run build:copy && vite build",
+    "build:copy": "vite build --config vite.copy.config.ts",
     "build:mcp-app": "vite build --config vite.mcp-app.config.ts",
     "preview": "vite preview",
     "test": "vitest run",

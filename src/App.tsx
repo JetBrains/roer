@@ -72,6 +72,7 @@ import {
   tabPagePath,
 } from "./lib/browserServer";
 import { inDesktop } from "./lib/backend";
+import { saveTabAsHtml } from "./lib/savedCopy";
 import { onFilesChanged, type FilesChanged } from "./lib/files";
 import { anyTakesPrompt, defaultTakesPrompt, listAgents, onAgentsMenu, type AgentList } from "./lib/agents";
 import { checkForUpdate, onCheckUpdatesMenu, type UpdateStatus } from "./lib/updates";
@@ -238,6 +239,14 @@ function openTabPage(page: string) {
       kind: "error",
     });
   });
+}
+
+/** A tab's menu "Save as HTML…": the tab as one file, read only, for someone without Roer. */
+function saveTabCopy(...args: Parameters<typeof saveTabAsHtml>) {
+  void saveTabAsHtml(...args).then(
+    (text) => (text ? message(text, { title: "Copy saved", kind: "info" }) : undefined),
+    (cause: unknown) => message(String(cause), { title: "Could not save a copy", kind: "error" }),
+  );
 }
 
 /** The browser button's right-click "Copy Browser Link". */
@@ -806,6 +815,14 @@ export function App() {
             Open in Browser
           </ContextMenuItem>
         ) : null}
+        {(() => {
+          const tab = extensionTabs.find((one) => one.tabId === id);
+          if (!tab || (tab.needsSession && !stageSession)) return null;
+          const at = tab.needsSession && stageSession
+            ? { cwd: stageSession.root ?? stageSession.cwd ?? "", root: stageSession.root, branch: stageSession.branch }
+            : null;
+          return <ContextMenuItem onSelect={() => saveTabCopy(tab, at)}>Save as HTML…</ContextMenuItem>;
+        })()}
         {isCore(id) ? null : <ContextMenuSeparator />}
         <ContextMenuItem onSelect={() => nudgeTab(id, -1)}>Move left</ContextMenuItem>
         <ContextMenuItem onSelect={() => nudgeTab(id, 1)}>Move right</ContextMenuItem>

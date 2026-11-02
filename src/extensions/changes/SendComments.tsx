@@ -1,3 +1,4 @@
+import { isSavedCopy } from "roer";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger } from "roer/ui";
 
 import { ready, undecided, type LocalComment } from "./local";
@@ -62,6 +63,8 @@ export function SendComments({
           </button>
         </>
       ) : null}
+      {/* A saved copy has nowhere to send them. */}
+      {isSavedCopy() ? null : (
       <span className={others.length > 0 ? "split-button send-comments" : "send-comments"}>
         <button
           type="button"
@@ -92,6 +95,7 @@ export function SendComments({
           </DropdownMenu>
         ) : null}
       </span>
+      )}
     </>
   );
 }
