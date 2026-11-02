@@ -23,6 +23,10 @@ let loading: Promise<void> | null = null;
 /** `loadSharedStorage` has finished, whether or not the backend keeps a store. */
 let settled = false;
 
+/** Told every key read: what a saved copy keeps of the store (`src/copy`), and nothing more. */
+let onRead: ((key: string) => void) | null = null;
+export const trackSharedReads = (listener: ((key: string) => void) | null) => void (onRead = listener);
+
 const tell = (key: string) => {
   for (const listener of listeners) listener(key);
 };
@@ -73,6 +77,7 @@ function write(key: string, value: string | null): void {
 
 export const sharedStorage = {
   getItem(key: string): string | null {
+    onRead?.(key);
     if (!shared) {
       try {
         return localStorage.getItem(key);

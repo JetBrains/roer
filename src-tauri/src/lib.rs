@@ -142,6 +142,7 @@ pub fn run() {
             server::start_browser_server,
             server::copy_browser_link,
             server::open_tab_in_browser,
+            server::save_copy_file,
             server::stage_announce,
             server::stage_action_done,
             shared_state::shared_state_all,

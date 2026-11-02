@@ -80,8 +80,28 @@ declare module "roer" {
     /** Keep the component mounted when the stage switches session, instead of
      * starting it over. Default false. */
     keepAcrossSessions?: boolean;
+    /** What a saved copy of the tab ("Save as HTML…") holds beyond what it fetched on its own. */
+    copy?: CopyOptions;
   }
 
+  /** One answer a tab got while a copy of it was being saved. */
+  export interface CopyCall {
+    args: Record<string, unknown>;
+    value: unknown;
+  }
+
+  /**
+   * A saved copy is one HTML file that plays back the answers the tab got while it was saved, and nothing else.
+   * Only reads get through while it is saved: anything that could change something (a commit, a message to a
+   * session, a `server.ts` method not listed in `readOnlyRpc`) is refused before it runs.
+   */
+  export interface CopyOptions {
+    /** Fetches what a person would click their way to, so the copy has it too: called once the tab has drawn,
+     * with what it fetched so far, by command. Use the same calls, with the same arguments, the tab uses. */
+    prepare?: (seen: (command: string) => readonly CopyCall[]) => Promise<void>;
+    /** `server.ts` methods that only read, which a copy may call and keep. Default none. */
+    readOnlyRpc?: readonly string[];
+  }
 
   export interface SectionOptions {
     /** Unique within the extension. */
@@ -256,6 +276,9 @@ declare module "roer" {
   /** The uncommitted changes of the repository holding `cwd`. */
   export function gitChanges(cwd: string): Promise<Changes>;
   export function gitRoot(cwd: string): Promise<string | null>;
+  /** Whether this is a saved copy of the tab ("Save as HTML…"): it plays back what it was saved with and can change
+   * nothing, so hide what would (commit, send, merge) rather than let it fail. */
+  export function isSavedCopy(): boolean;
   /** Where the session in `pane` is now, after any `cd`; `cwd` when that cannot be told. */
   export function resolveDir(cwd?: string, pane?: string): Promise<string>;
   /**

@@ -18,6 +18,7 @@ import {
   type ReviewThread,
   type Session,
   type ThreadVerdict,
+  isSavedCopy,
   onSharedStorage,
   sharedStorage,
   useSessions,
@@ -524,7 +525,7 @@ export function ReviewView({ session, active, branch: other, onSent, onOpenCount
             {refreshing ? "Refreshing…" : "Refresh"}
           </Button>
           {/* The agent's comments are filed under the branch checked out where it runs, so only that one is offered. */}
-          {other ? null : (
+          {other || isSavedCopy() ? null : (
             <ReviewMenu
               className="gen-button"
               agent={agent}
@@ -620,12 +621,12 @@ export function ReviewView({ session, active, branch: other, onSent, onOpenCount
         <Button onClick={() => void load()} disabled={refreshing}>
           {refreshing ? "Refreshing…" : "Refresh"}
         </Button>
-        {ready?.pr.state === "OPEN" ? (
+        {ready?.pr.state === "OPEN" && !isSavedCopy() ? (
           <Button onClick={() => void requestCopilot()} disabled={asking || copilot.waiting}>
             {copilot.waiting ? "Copilot is reviewing…" : "Request Copilot review"}
           </Button>
         ) : null}
-        {ready ? (
+        {ready && !isSavedCopy() ? (
           <Button
             variant="primary"
             onClick={() => void send()}
@@ -649,7 +650,8 @@ export function ReviewView({ session, active, branch: other, onSent, onOpenCount
 
       {loaded.kind === "loading" ? <p className="muted pad">Loading the pull request…</p> : null}
       {loaded.kind === "message" ? <p className="muted pad">{loaded.text}</p> : null}
-      {loaded.kind === "noPr" ? (
+      {loaded.kind === "noPr" && isSavedCopy() ? <p className="muted pad">No pull request when this copy was saved.</p> : null}
+      {loaded.kind === "noPr" && !isSavedCopy() ? (
         // Read again for each branch: a checkout is another pull request to open.
         <OpenPullRequest
           key={`${loaded.dir}\0${other ?? branch ?? ""}`}
@@ -671,12 +673,12 @@ export function ReviewView({ session, active, branch: other, onSent, onOpenCount
           ) : null}
           <div className="pr-summary">
             <Reviews review={ready.review} />
-            <MergeBox
+            {isSavedCopy() ? null : <MergeBox
               key={`${ready.pr.number}:${ready.pr.headRefOid}:${ready.pr.mergeStateStatus ?? ""}`}
               dir={ready.dir}
               pr={ready.pr}
               onMerged={merged}
-            />
+            />}
           </div>
           <DiffView
             patch={ready.diff}

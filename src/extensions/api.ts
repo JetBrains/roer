@@ -38,6 +38,27 @@ export interface TabOptions {
   /** Keep the component mounted when the stage switches session, instead of
    * starting it over. Default false: state from one session never acts on another. */
   keepAcrossSessions?: boolean;
+  /** What a saved copy of the tab ("Save as HTML…") holds beyond what it fetched on its own. */
+  copy?: CopyOptions;
+}
+
+/** One answer a tab got while a copy of it was being saved. */
+export interface CopyCall {
+  args: Record<string, unknown>;
+  value: unknown;
+}
+
+/**
+ * A saved copy plays back the answers the tab got while it was saved, and nothing else. Only reads get through
+ * then: anything that could change something (a commit, a message to a session, a `server.ts` method not listed
+ * here) is refused before it runs.
+ */
+export interface CopyOptions {
+  /** Fetches what a person would click their way to, so the copy has it too: called once the tab has drawn,
+   * with what it fetched so far, by command. Use the same SDK calls, with the same arguments, the tab uses. */
+  prepare?: (seen: (command: string) => readonly CopyCall[]) => Promise<void>;
+  /** `server.ts` methods that only read, which a copy may call and keep. Default none. */
+  readOnlyRpc?: readonly string[];
 }
 
 /** What the Workspace tab is showing: a Workspace, or one Project picked
