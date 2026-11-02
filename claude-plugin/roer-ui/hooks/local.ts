@@ -16,14 +16,29 @@
 // closures register.tsx makes over `$`.
 
 import type { RoerUiSurfaces } from '../types'
-import { absolute, own, resolve } from './a2ui'
+import { absolute, getAt, own, resolve } from './a2ui'
 
 /** Where a load's value comes from: a command's standard output (argv; a
  * file is `cat` of it, so the same permissions decide), or, in a press, a
  * value off the pressed item. */
 export type LoadSource = { run: string[] } | { value: unknown }
 
-export type Load = LoadSource & { surfaceId: string; path: string; as: 'text' | 'json' }
+export type Load = LoadSource & {
+  surfaceId: string
+  path: string
+  as: 'text' | 'json'
+  /** A JSON pointer into what a `json` load printed: only that part fills `path`. */
+  pick?: string
+  /** Seconds between runs of a live load, which the pane runs again on its own (`LiveLoad`). */
+  every?: number
+}
+
+/** The shortest and longest wait between two runs of a live load, in seconds. */
+export const LIVE_EVERY = { min: 1, max: 3600 } as const
+/** How many live loads the pane keeps at once. */
+export const LIVE_MAX = 8
+
+
 
 export type LocalAction = { loads: Load[]; open?: string }
 
@@ -66,7 +81,25 @@ export function readLoad(
   if (as !== 'text' && as !== 'json') return `a load's as is ${JSON.stringify(as)}, not "text" or "json"`
   const sources = ['run', 'file', ...(allowValue ? ['value'] : [])].filter(key => key in wire)
   if (sources.length !== 1) return `a load carries exactly one of ${allowValue ? 'run, file, value' : 'run, file'}`
-  const base = { surfaceId, path: wire.path, as } as const
+  if (wire.pick !== undefined && (typeof wire.pick !== 'string' || (wire.pick !== '' && !wire.pick.startsWith('/')))) {
+    return 'a load\'s pick is a JSON pointer ("" or starting with /)'
+  }
+  if (wire.pick !== undefined && as !== 'json') return 'a load picks from JSON: give it as: "json"'
+  // Only a message's load runs again: a press's runs when it is pressed.
+  if (wire.every !== undefined && allowValue) return 'a press\'s load runs when pressed, not every few seconds'
+  if (
+    wire.every !== undefined &&
+    (typeof wire.every !== 'number' || !Number.isFinite(wire.every) || wire.every < LIVE_EVERY.min || wire.every > LIVE_EVERY.max)
+  ) {
+    return `a load's every is seconds, from ${LIVE_EVERY.min} to ${LIVE_EVERY.max}`
+  }
+  const base = {
+    surfaceId,
+    path: wire.path,
+    as,
+    ...(typeof wire.pick === 'string' ? { pick: wire.pick } : {}),
+    ...(typeof wire.every === 'number' ? { every: wire.every } : {}),
+  } as const
   if ('run' in wire) {
     if (!Array.isArray(wire.run) || wire.run.length === 0) return 'a load\'s run is not a non-empty argv list'
     if (typeof wire.run[0] !== 'string') return 'a load\'s command is written out, never bound to the data model'
@@ -113,17 +146,29 @@ export function readLocal(action: unknown, model: unknown, scope: string, from: 
 
 /** A command's or a file's text as the load asked for it, or why it could
  * not be read that way. */
-export function parsed(load: Load, text: string): { value: unknown } | string {
+export function parsed(load: Pick<Load, 'as' | 'pick'> & LoadSource & { path: string }, text: string): { value: unknown } | string {
   if (load.as === 'text') return { value: text }
+  let value: unknown
   try {
-    return { value: JSON.parse(text) }
+    value = JSON.parse(text)
   } catch {
     return `${describe(load)} did not print JSON`
   }
+  if (load.pick === undefined || load.pick === '') return { value }
+  // Nothing there yet is a value too (null), so a surface bound to an item still to be written says so.
+  return { value: getAt(value, load.pick) ?? null }
+}
+
+/** `~/…` in a file load's path as the home folder: `cat` reads no `~`, a shell would. */
+export function atHome(load: Load, home: string | null): Load {
+  if (!('run' in load) || load.run[0] !== 'cat' || load.run[1] !== '--' || home === null) return load
+  const file = load.run[2]
+  if (file === undefined || !(file === '~' || file.startsWith('~/'))) return load
+  return { ...load, run: ['cat', '--', `${home}${file.slice(1)}`] }
 }
 
 /** A load, as a person reading an error would name it. */
-export const describe = (load: Load): string => ('run' in load ? `\`${shellCommand(load.run)}\`` : load.path)
+export const describe = (load: LoadSource & { path: string }): string => ('run' in load ? `\`${shellCommand(load.run)}\`` : load.path)
 
 /** At most `limit` characters of a command's complaint, on one line. */
 export const brief = (text: string, limit = 300): string => {

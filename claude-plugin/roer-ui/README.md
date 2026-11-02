@@ -14,14 +14,6 @@ CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1 claude --plugin-dir claude-plugin/roer-ui
 # then: /roer a form to file a bug
 ```
 
-`/work-item` draws Roer's work item for the repository and branch the session
-is in, with no turn of Claude's: the item Roer's work-item extension keeps in
-`$ROER_HOME/extension-data/work-item/items.json` (filed under `root\0branch`),
-as a WorkItem in detail with the uncommitted changes as its one change. It
-reads both again every two seconds, so the pane follows `work-item__show`
-calls made anywhere, and opens as wide as a dock may (45% of the terminal).
-A tick or an answer reaches Claude as any press does.
-
 Draws the whole of `roer:catalog/1`, as Roer's panel does, with what a
 terminal cannot do drawn another way:
 
@@ -45,6 +37,13 @@ turn of Claude's, which is where the waiting was (`hooks/local.ts`):
 - A `loadData` message fills a data-model path from a command's output (argv,
   no shell) or a file, so Claude names where a diff or a list comes from
   instead of writing it out.
+- With `every: <seconds>` a load is live: the pane runs it again that often,
+  with no turn, and writes its path when the output changed, until its surface
+  is gone. `pick` takes one part of a JSON output, and a file may start `~/`.
+  A live load runs only while the person's permissions allow it outright (a
+  file as the Read tool would read it, a command as a Bash call would run): one
+  that would ask ran once, and Claude's result says so, so the dialog never
+  opens on a timer. At most 8 at once, kept across a reload of the mod.
 - `createSurface { hidden: true }` keeps a surface without drawing it.
 - A Button's `action.local` opens another surface in place of its own and
   fills loads, off the pressed item, in the pane itself. An `event` beside it
@@ -65,6 +64,21 @@ than 100000 characters of text, so the diffs on screen share about 60000:
 files are open while they fit, one the person opens takes the room first, and
 one that does not fit says so. A file longer than one `Code` takes (10000
 characters) is drawn in pieces, cut between hunks.
+
+Roer's work item for this branch, kept up to date as agents call
+`work-item__show` anywhere, is one surface and one live load (Roer's own
+panel takes the same messages). Items are filed under `<root>\0<branch>`, and
+a pointer spells each `/` in a key as `~1`:
+
+```json
+[{ "version": "v1.0", "createSurface": { "surfaceId": "work-item", "components": [
+   { "id": "root", "component": "WorkItem", "variant": "detail", "title": { "path": "/item/title" },
+     "status": { "path": "/item/status" }, "goal": { "path": "/item/goal" },
+     "requirements": { "path": "/item/requirements" }, "decisions": { "path": "/item/decisions" },
+     "findings": { "path": "/item/findings" }, "sources": { "path": "/item/sources" } }] } },
+ { "version": "v1.0", "loadData": { "surfaceId": "work-item", "path": "/item", "as": "json", "every": 2,
+   "file": "~/.roer/extension-data/work-item/items.json", "pick": "/~1Users~1me~1roer\u0000main/item" } }]
+```
 
 The pane keeps its own state, as Roer's panel does: the tab showing, what is
 expanded or open, a picker's filter, and a work item's ticks and answers.
