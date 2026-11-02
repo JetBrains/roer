@@ -1,5 +1,15 @@
 import { useCallback, useEffect, useState } from "react";
-import { parseDiff, splitPatch, UNTRUSTED_DECIDED, untrustedComment, type DiffNote, type NoteAction, type ThreadVerdict } from "roer";
+import {
+  onSharedStorage,
+  parseDiff,
+  sharedStorage,
+  splitPatch,
+  UNTRUSTED_DECIDED,
+  untrustedComment,
+  type DiffNote,
+  type NoteAction,
+  type ThreadVerdict,
+} from "roer";
 
 /** A comment on a line of the branch's own diff: the person's, or one an agent handed over with `add_comments`. */
 export interface LocalComment {
@@ -28,12 +38,16 @@ export interface CommitRef {
   subject: string;
 }
 
-const listeners = new Set<() => void>();
+/** Where everything a review keeps is stored: shared by Roer's window and its browser pages, so a comment, a
+ * verdict or a role set in one is what the other shows. */
+export const REVIEW_PREFIX = "roer:review:";
 
-/** Called whenever any branch's comments change, by the tab or by an agent's tool call. */
+/** Called whenever any branch's comments or roles change: by the tab, by an agent's tool call, or in another view
+ * of the same review (Roer's window, a browser page). */
 export function onCommentsChanged(listener: () => void): () => void {
-  listeners.add(listener);
-  return () => listeners.delete(listener);
+  return onSharedStorage((key) => {
+    if (key.startsWith(REVIEW_PREFIX)) listener();
+  });
 }
 
 /** Reads, changes and writes back a branch's comments, so a tab and a tool call never write over each other. */
@@ -43,8 +57,8 @@ export function updateComments(
   update: (current: LocalComment[]) => LocalComment[],
 ): LocalComment[] {
   const next = update(storedComments(root, branch));
+  // Storing it tells the listeners.
   storeComments(root, branch, next);
-  for (const listener of listeners) listener();
   return next;
 }
 
@@ -79,7 +93,7 @@ const storeKey = (root: string, branch: string | null) => `roer:review:local:${r
 
 export function storedComments(root: string, branch: string | null): LocalComment[] {
   try {
-    const raw = localStorage.getItem(storeKey(root, branch));
+    const raw = sharedStorage.getItem(storeKey(root, branch));
     const parsed: unknown = raw ? JSON.parse(raw) : [];
     return Array.isArray(parsed) ? (parsed as LocalComment[]) : [];
   } catch {
@@ -89,8 +103,8 @@ export function storedComments(root: string, branch: string | null): LocalCommen
 
 export function storeComments(root: string, branch: string | null, comments: readonly LocalComment[]): void {
   try {
-    if (comments.length === 0) localStorage.removeItem(storeKey(root, branch));
-    else localStorage.setItem(storeKey(root, branch), JSON.stringify(comments));
+    if (comments.length === 0) sharedStorage.removeItem(storeKey(root, branch));
+    else sharedStorage.setItem(storeKey(root, branch), JSON.stringify(comments));
   } catch {
     /* kept for as long as the tab is open */
   }
@@ -117,7 +131,7 @@ const baseKey = (root: string, branch: string | null) => `roer:review:base:${roo
 
 export function storedBase(root: string, branch: string | null): string | undefined {
   try {
-    return localStorage.getItem(baseKey(root, branch)) || undefined;
+    return sharedStorage.getItem(baseKey(root, branch)) || undefined;
   } catch {
     return undefined;
   }
@@ -125,8 +139,8 @@ export function storedBase(root: string, branch: string | null): string | undefi
 
 export function storeBase(root: string, branch: string | null, base: string | undefined): void {
   try {
-    if (base) localStorage.setItem(baseKey(root, branch), base);
-    else localStorage.removeItem(baseKey(root, branch));
+    if (base) sharedStorage.setItem(baseKey(root, branch), base);
+    else sharedStorage.removeItem(baseKey(root, branch));
   } catch {
     /* the default base, then */
   }
@@ -154,7 +168,7 @@ const isHolder = (value: unknown): value is RoleHolder =>
 
 export function storedRoles(root: string, branch: string | null): ReviewRoles {
   try {
-    const parsed = JSON.parse(localStorage.getItem(rolesKey(root, branch)) ?? "{}") as Record<string, unknown> | null;
+    const parsed = JSON.parse(sharedStorage.getItem(rolesKey(root, branch)) ?? "{}") as Record<string, unknown> | null;
     // Anything else, such as a bare pane id kept before ids were, names no one for sure.
     return {
       ...(isHolder(parsed?.asker) ? { asker: parsed.asker } : {}),
@@ -168,11 +182,11 @@ export function storedRoles(root: string, branch: string | null): ReviewRoles {
 /** Changes a branch's roles, and tells the tabs: a tool call names the reviewer while the tab is open. */
 export function updateRoles(root: string, branch: string | null, update: (current: ReviewRoles) => ReviewRoles): void {
   try {
-    localStorage.setItem(rolesKey(root, branch), JSON.stringify(update(storedRoles(root, branch))));
+    // Storing it tells the tabs.
+    sharedStorage.setItem(rolesKey(root, branch), JSON.stringify(update(storedRoles(root, branch))));
   } catch {
     /* the stage's session gets the decisions, then */
   }
-  for (const listener of listeners) listener();
 }
 
 /** Whether `holder` is the live session in its pane: the same session, where its id is known. */

@@ -7,7 +7,17 @@
  * builds as it is. `docs/extensions.md` §2 lists it.
  */
 export { defineExtension } from "./api";
-export type { Activate, Extension, Roer, Scope, SectionOptions, Session, TabOptions, ToolContext, ToolOptions } from "./api";
+export type {
+  Activate,
+  Extension,
+  Roer,
+  Scope,
+  SectionOptions,
+  Session,
+  TabOptions,
+  ToolContext,
+  ToolOptions,
+} from "./api";
 export { useActivateTab, useActive, useOpenFile, useScope, useSession, useSessions, useShowSession, useStartSession } from "./context";
 export type { AgentSession, StartSession } from "./context";
 
@@ -25,6 +35,8 @@ export * from "../lib/github";
 export { fileRead, filesGrep, filesList, filesSearch, onFilesChanged, baseName } from "../lib/files";
 export type { FilesChanged, FileText, GrepHit, Hit, Hits } from "../lib/files";
 export { resolveDir } from "../lib/session";
+// State a tab keeps that must read the same in Roer's window and in a browser page of it.
+export { adoptLocal, onSharedStorage, sharedStorage } from "../lib/sharedStorage";
 
 // What the built-in tabs draw with.
 export { DiffPane } from "../DiffPane";

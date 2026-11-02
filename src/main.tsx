@@ -4,6 +4,7 @@ import { App } from "./App";
 import { TabPage, pinnedOfPage, tabOfPage } from "./TabPage";
 import "./index.css";
 import { logLine, logUncaught } from "./lib/log";
+import { loadSharedStorage } from "./lib/sharedStorage";
 import { applyTheme, storedChoice } from "./lib/theme";
 
 applyTheme(storedChoice());
@@ -13,6 +14,9 @@ logLine(`webview: ${navigator.userAgent}, devicePixelRatio ${window.devicePixelR
 // A browser page opened for one tab of the stage draws that tab alone.
 const tab = tabOfPage();
 
-ReactDOM.createRoot(document.getElementById("root")!).render(
-  <React.StrictMode>{tab ? <TabPage tabId={tab} pinned={pinnedOfPage()} /> : <App />}</React.StrictMode>,
+// Tabs read what they share with the other views synchronously, so it is read before anything draws.
+void loadSharedStorage().finally(() =>
+  ReactDOM.createRoot(document.getElementById("root")!).render(
+    <React.StrictMode>{tab ? <TabPage tabId={tab} pinned={pinnedOfPage()} /> : <App />}</React.StrictMode>,
+  ),
 );

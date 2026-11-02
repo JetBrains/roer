@@ -82,6 +82,7 @@ declare module "roer" {
     keepAcrossSessions?: boolean;
   }
 
+
   export interface SectionOptions {
     /** Unique within the extension. */
     id: string;
@@ -257,6 +258,20 @@ declare module "roer" {
   export function gitRoot(cwd: string): Promise<string | null>;
   /** Where the session in `pane` is now, after any `cd`; `cwd` when that cannot be told. */
   export function resolveDir(cwd?: string, pane?: string): Promise<string>;
+  /**
+   * Like `localStorage`, but shared by Roer's window and every browser page of it: what a tab keeps that must read
+   * the same wherever the tab is open (a review's comments, say). Synchronous; kept in `~/.roer/shared-state.json`.
+   * Keep a person's per-window conveniences (a folded panel) in `localStorage` instead.
+   */
+  export const sharedStorage: {
+    getItem(key: string): string | null;
+    setItem(key: string, value: string): void;
+    removeItem(key: string): void;
+  };
+  /** Called with the key whenever a `sharedStorage` value changes, in this view or another. */
+  export function onSharedStorage(listener: (key: string) => void): () => void;
+  /** Moves this view's `localStorage` values under `prefix` into `sharedStorage`, where it has none yet. */
+  export function adoptLocal(prefix: string): void;
   export function gitCurrentBranch(cwd: string): Promise<string>;
   export function gitBranches(cwd: string): Promise<string[]>;
   /** A file's uncommitted diff, unified. */

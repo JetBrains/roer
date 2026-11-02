@@ -27,6 +27,7 @@ mod process;
 mod projects;
 pub mod pty;
 mod roer;
+mod shared_state;
 pub mod server;
 mod watch;
 mod update_install;
@@ -143,6 +144,8 @@ pub fn run() {
             server::open_tab_in_browser,
             server::stage_announce,
             server::stage_action_done,
+            shared_state::shared_state_all,
+            shared_state::shared_state_set,
             logfile::app_log,
             files::files_grep,
             files::files_list,
