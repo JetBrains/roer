@@ -15,9 +15,12 @@ export type RoerUiSurface = {
   view?: Record<string, unknown>
 }
 export type RoerUiSurfaces = { order: string[]; bySurface: Record<string, RoerUiSurface> }
+/** A live load: a command (or a file, as `cat -- <file>`) the pane runs again every `every` seconds with no turn of
+ * the model's, writing `path` of its surface when what it prints changes; `pick` takes part of a JSON output. */
+export type LiveLoad = { surfaceId: string; path: string; as: 'text' | 'json'; pick?: string; run: string[]; every: number }
 
 declare module 'claude-code' {
   interface PluginState {
-    'roer-ui': { surfaces: RoerUiSurfaces }
+    'roer-ui': { surfaces: RoerUiSurfaces; live: Shaped<LiveLoad[]> }
   }
 }

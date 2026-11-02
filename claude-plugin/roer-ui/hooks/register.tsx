@@ -9,8 +9,8 @@
 
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, RenderChildren } from 'claude-code'
-import type { RoerUiComponent, RoerUiSurface } from '../types'
-import { EMPTY, apply, binding, children, contextOf, own, resolve, setAt, text } from './a2ui'
+import type { LiveLoad, RoerUiComponent, RoerUiSurface } from '../types'
+import { EMPTY, apply, binding, children, contextOf, getAt, own, resolve, setAt, text } from './a2ui'
 import {
   SOURCE_NAMES,
   progressValue,
@@ -26,15 +26,16 @@ import {
   statusTone,
 } from './workItem'
 import type { Comment, Decision, Finding, FindingState, Note, Requirement, SourceRef, Tone } from './workItem'
-import { bashRan, fetchLoad, opened, readLoadData, readLocal, shellCommand } from './local'
+import { LIVE_MAX, atHome, bashRan, describe, fetchLoad, opened, parsed, readLoadData, readLocal, shellCommand } from './local'
 import { toNumber } from './functions'
-import { WORK_ITEM_EVERY_MS, WORK_ITEM_SURFACE, findWorkItem, workItemMessages } from './roerWorkItem'
 import type { Load, LocalAction, RunIo } from './local'
 
 const PANE = 'roer-ui'
 const TOOL = 'mcp__roer-ui__show'
 const GUIDE_TOOL = 'mcp__roer-ui__guide'
 const surfaces = atom({ plugin: 'roer-ui', key: 'surfaces' } as const, EMPTY)
+// Kept in the session's state, so a reload of the mod keeps them running.
+const live = atom({ plugin: 'roer-ui', key: 'live' } as const, [] as LiveLoad[], { shape: 'live-1' })
 
 const CATALOG = `Components (flat list, each { id, component, ...props }; one must have id "root"). Any component takes
 weight (flex-grow inside a Row/Column).
@@ -82,7 +83,7 @@ const DESCRIPTION = `Show or update a UI in the Roer pane of this Claude Code se
 per session: it answers the component catalog and how the pane fetches data and handles presses itself.
 \`messages\` is a list of A2UI v1.0 messages, each { "version": "v1.0", <one body> }: createSurface { surfaceId,
 components, dataModel?, sendDataModel?, hidden? }, updateComponents { surfaceId, components }, updateDataModel
-{ surfaceId, path?, value }, deleteSurface { surfaceId }, loadData { surfaceId, path, run | file, as? }.
+{ surfaceId, path?, value }, deleteSurface { surfaceId }, loadData { surfaceId, path, run | file, as?, pick?, every? }.
 Usually one createSurface with everything inline, then updates to the same surfaceId.
 When the person presses a Button, its event arrives as a prompt starting "[roer-ui]" with the action as JSON
 (and the data model when sendDataModel is true).`
@@ -95,7 +96,11 @@ can, and handle presses that need no judgement of yours itself:
   a command's standard output (argv, no shell, the session's working directory) or a file's text, parsed when as is
   "json". It lands after the messages before it; a command that fails refuses the whole call. For example
   run ["gh", "pr", "list", "--json", "number,title"], as "json", for a list's rows; ["gh", "pr", "diff", "36"] for a
-  DiffView's diff.
+  DiffView's diff. pick (a JSON pointer, with as "json") takes one part of what it printed; a file may start ~/.
+  every: seconds (1 to 3600) makes it live: the pane runs it again that often with no turn of yours and writes path
+  when the output changed, until the surface is gone. Only while the person's permissions allow it outright (a file
+  as Read would read it): one that asks runs once, and your result says so. Use it for what changes on its own (a
+  file another tool writes, CI checks, git diff), and draw the surface once rather than resending it.
 - createSurface { ..., hidden: true } keeps a surface without drawing it, until a press opens it.
 - Button action { local: { open?: surfaceId, load?: [{ path, run | file | value, as?, surfaceId? }] }, event? }:
   pressed, the pane itself draws the surface open names in place of the button's, and fills each load (into open's
@@ -111,30 +116,127 @@ can, and handle presses that need no judgement of yours itself:
   is anything else or starts with -.
 - When a press does reach you, send only what changed (updateDataModel, updateComponents), not a new createSurface.`
 
-// `/work-item`: Roer's work item for this branch, read from Roer's own file and kept up to date on a timer, with
-// no turn of Claude's. What the person ticks or answers reaches Claude as any press in the pane does.
-let watching: { cancel: () => void } | undefined
-let lastDrawn = ''
-/** More than any dock gets: asks for the widest one, which the engine caps at 45% of the terminal. */
-const WORK_ITEM_COLUMNS = 400
+/** When each live load last ran, by surface and path; the module's own, so a reload runs each again at once. */
+const ranAt = new Map<string, number>()
+const liveKey = (load: { surfaceId: string; path: string }) => `${load.surfaceId}\u0000${load.path}`
 
-async function drawWorkItem($: EngineInterface) {
-  const found = await findWorkItem($)
-  const messages = workItemMessages(found)
-  const drawn = JSON.stringify(messages)
-  if (drawn === lastDrawn) return
-  lastDrawn = drawn
+/** The file a load reads, when it is a file load (`cat -- <file>`). */
+const fileOf = (run: readonly string[]): string | undefined => (run[0] === 'cat' && run[1] === '--' && run.length === 3 ? run[2] : undefined)
+
+/** Whether the person's permissions let a live load run with no one asked: a file as the Read tool would read it,
+ * a command as a Bash call would run it. */
+async function allowed($: EngineInterface, run: readonly string[]): Promise<'allow' | 'ask' | 'deny'> {
+  const file = fileOf(run)
+  const checked = file === undefined
+    ? await $.tool.check({ tool: 'Bash', input: { command: shellCommand([...run]) } })
+    : await $.tool.check({ tool: 'Read', input: { file_path: file } })
+  return checked.decision
+}
+
+/** What a live load prints now: a file read as it stands, or the command's output; null when it failed. */
+async function runLive($: EngineInterface, run: readonly string[]): Promise<string | null> {
+  const file = fileOf(run)
+  if (file !== undefined) return $.fs.read(file).catch(() => null)
+  const ran = await $.process.run([...run], { timeoutMs: 60_000 }).catch(() => null)
+  return ran && ran.exitCode === 0 ? ran.stdout : null
+}
+
+/** The home folder, for a file load's `~/`; looked up once. */
+let home: Promise<string | null> | undefined
+async function homeFolder($: EngineInterface): Promise<string | null> {
+  home ??= Promise.resolve()
+    .then(() => $.process.run(['printenv', 'HOME']))
+    .then(ran => (ran.exitCode === 0 && ran.stdout.trim() ? ran.stdout.trim() : null))
+    .catch(() => null)
+  return home
+}
+
+/**
+ * Runs every live load that is due again, with no turn of the model's, and writes its path when what it printed
+ * changed. A load whose surface is gone is dropped. Each run is asked of the person's permissions again, and runs
+ * only while they allow it outright: a live load never opens the permission dialog, so one they changed to ask or
+ * deny stops.
+ */
+async function tickLive($: EngineInterface) {
+  const loads = await read($, live)
+  if (loads.length === 0) return
+  const shown = await read($, surfaces)
+  const now = await $.clock.now()
+  const kept: LiveLoad[] = []
+  const values: Array<{ load: LiveLoad; value: unknown }> = []
+  for (const load of loads) {
+    if (own(shown.bySurface, load.surfaceId) === undefined) continue
+    const last = ranAt.get(liveKey(load)) ?? 0
+    if (now - last < load.every * 1000) {
+      kept.push(load)
+      continue
+    }
+    ranAt.set(liveKey(load), now)
+    if ((await allowed($, load.run)) !== 'allow') continue
+    const text = await runLive($, load.run)
+    kept.push(load)
+    if (text === null) continue
+    const got = parsed({ ...load, run: load.run }, text)
+    if (typeof got !== 'string') values.push({ load, value: got.value })
+  }
+  if (kept.length !== loads.length) await update($, live, () => kept)
+  if (values.length === 0) return
   await update($, surfaces, before => {
-    // Already on screen as an item: only its data, so what the person opened or ticked in the pane stays.
-    const root = own(before.bySurface, WORK_ITEM_SURFACE)?.components.root
-    const create = (messages[0] as { createSurface: { components: { component: string }[]; dataModel: unknown } }).createSurface
-    const message =
-      root?.component === 'WorkItem' && create.components[0]?.component === 'WorkItem'
-        ? { version: 'v1.0', updateDataModel: { surfaceId: WORK_ITEM_SURFACE, path: '', value: create.dataModel } }
-        : messages[0]
-    const after = apply(before, message)
-    return typeof after === 'string' ? before : after
+    let after = before
+    for (const { load, value } of values) {
+      const surface = own(after.bySurface, load.surfaceId)
+      if (surface === undefined) continue
+      // Unchanged output writes nothing, so the pane redraws only when the data moved.
+      if (JSON.stringify(getAt(surface.dataModel, load.path)) === JSON.stringify(value)) continue
+      const next = apply(after, { version: 'v1.0', updateDataModel: { surfaceId: load.surfaceId, path: load.path, value } })
+      if (typeof next !== 'string') after = next
+    }
+    return after
   })
+}
+
+/**
+ * Keeps this call's loads that asked for `every` running, and says what became of each. A surface the call created
+ * again starts with only the live loads the call gives it. Only a load the person's permissions allow outright stays
+ * live: one that asks ran once, and is said so, since a live load never opens the dialog.
+ */
+async function keepLive($: EngineInterface, wire: unknown[], loads: Array<Load | string | undefined>): Promise<string[]> {
+  const created = new Set(
+    wire.flatMap(message => {
+      const body = (message as { createSurface?: { surfaceId?: unknown } }).createSurface
+      return typeof body?.surfaceId === 'string' ? [body.surfaceId] : []
+    }),
+  )
+  const asked = loads.filter((load): load is Load & { run: string[]; every: number } =>
+    load !== undefined && typeof load !== 'string' && 'run' in load && load.every !== undefined,
+  )
+  const notes: string[] = []
+  const adding: LiveLoad[] = []
+  for (const load of asked) {
+    const decision = await allowed($, load.run)
+    if (decision !== 'allow') {
+      const what = fileOf(load.run) === undefined ? 'running it' : 'reading it'
+      notes.push(`${describe(load)} ran once and is not refreshed: your permissions ${decision === 'ask' ? `ask before ${what}` : `deny ${what}`}.`)
+      continue
+    }
+    adding.push({ surfaceId: load.surfaceId, path: load.path, as: load.as, run: load.run, every: load.every, ...(load.pick === undefined ? {} : { pick: load.pick }) })
+  }
+  if (created.size === 0 && adding.length === 0) return notes
+  await update($, live, before => {
+    const kept = before.filter(one => !created.has(one.surfaceId) && !adding.some(add => liveKey(add) === liveKey(one)))
+    const all = [...kept, ...adding]
+    if (all.length > LIVE_MAX) {
+      notes.push(`The pane keeps ${LIVE_MAX} live loads at most; ${all.length - LIVE_MAX} of these ran once and are not refreshed.`)
+    }
+    return all.slice(0, LIVE_MAX)
+  })
+  // Each has just run: its next run is a whole period away.
+  if (adding.length > 0) {
+    const now = await $.clock.now()
+    for (const load of adding) ranAt.set(liveKey(load), now)
+  }
+  if (adding.length > 0) notes.push(`Live: ${adding.map(load => `${describe(load)} every ${load.every}s`).join(', ')}.`)
+  return notes
 }
 
 export const register: Register = on => {
@@ -144,7 +246,8 @@ export const register: Register = on => {
       description: "Show Roer's Generative UI in a pane",
       argumentHint: '<what to show>',
     })
-    await $.command.register({ name: 'work-item', description: "Show Roer's work item for this branch in the Roer pane" })
+    // One clock for every live load: each runs when its own `every` is due.
+    $.clock.every(1000, () => tickLive($))
     await $.tool.register({
       name: 'show',
       description: DESCRIPTION,
@@ -159,15 +262,6 @@ export const register: Register = on => {
       description: `The component catalog and pane-side rules for ${TOOL}. Read it before drawing.`,
     })
     return next(e)
-  })
-
-  on('command.run', { command: 'work-item' }, async $ => {
-    lastDrawn = ''
-    await drawWorkItem($)
-    watching ??= $.clock.every(WORK_ITEM_EVERY_MS, () => drawWorkItem($))
-    // As wide as a dock opens (the engine holds it to 45% of the terminal): a work item has diffs and long findings.
-    const opened = await $.ui.open({ id: PANE, title: 'Roer', focus: true, columns: WORK_ITEM_COLUMNS })
-    return { text: opened.isPlaced ? 'Work item shown in the Roer pane; it follows the file Roer keeps.' : `Work item ready; the pane waits to be placed (${opened.reason}).` }
   })
 
   on('command.run', { command: 'roer' }, async ($, e) => {
@@ -185,7 +279,11 @@ export const register: Register = on => {
     if (!Array.isArray(wire) || wire.length === 0) return { deny: '`messages` needs at least one message' }
     // A loadData stands for the updateDataModel its output becomes. Tried
     // with a stand-in first, so a malformed call runs no command.
-    const loads = wire.map(readLoadData)
+    const read0 = wire.map(readLoadData)
+    // The home folder is asked for only when a file load names it.
+    const needsHome = read0.some(load => load !== undefined && typeof load !== 'string' && 'run' in load && load.run[0] === 'cat' && /^~(\/|$)/.test(load.run[2] ?? ''))
+    const at = needsHome ? await homeFolder($) : null
+    const loads = read0.map(load => (load === undefined || typeof load === 'string' ? load : atHome(load, at)))
     const bad = loads.findIndex(load => typeof load === 'string')
     if (bad >= 0) return { deny: `Nothing was shown: message ${bad + 1}: ${loads[bad] as string}` }
     const asUpdate = (load: Load, value: unknown) => ({ version: 'v1.0', updateDataModel: { surfaceId: load.surfaceId, path: load.path, value } })
@@ -232,9 +330,10 @@ export const register: Register = on => {
       return after
     })
     if (problem !== undefined) return { deny: `Nothing was shown: ${problem}` }
+    const notes = await keepLive($, wire, loads)
     const opened = await $.ui.open({ id: PANE, title: 'Roer' })
     const where = opened.isPlaced ? 'the Roer pane' : `the Roer pane, which is waiting to be placed (${opened.reason})`
-    return { result: `Sent ${messages.length} message(s) to ${where}.` }
+    return { result: [`Sent ${messages.length} message(s) to ${where}.`, ...notes].join(' ') }
   })
 
   on('tool.call', { tool: GUIDE_TOOL }, async () => ({ result: GUIDE }))
