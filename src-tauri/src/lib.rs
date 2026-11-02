@@ -140,6 +140,7 @@ pub fn run() {
             projects::project_delete,
             server::start_browser_server,
             server::copy_browser_link,
+            server::open_tab_in_browser,
             logfile::app_log,
             files::files_grep,
             files::files_list,
@@ -156,6 +157,7 @@ pub fn run() {
         ])
         .setup(|app| {
             menu(app)?;
+            server::set_app(app.handle().clone());
             cli_link::install();
             handoff::watch(app.handle().clone())?;
             plugin_ui::watch(server::DesktopWatchSink(app.handle().clone()))?;

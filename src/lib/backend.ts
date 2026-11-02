@@ -19,6 +19,9 @@ function inTauri(): boolean {
   return "__TAURI_INTERNALS__" in window;
 }
 
+/** Running in Roer's own window, not a browser tab of `roer-server`. */
+export const inDesktop = inTauri;
+
 /**
  * `crypto.randomUUID()` needs a secure context, which a plain-HTTP tab
  * talking to a remote/container `roer-server` is not. `getRandomValues`
@@ -174,6 +177,27 @@ export async function invoke<T>(cmd: string, args: Record<string, unknown> = {})
   const body = (await res.json()) as { ok: true; value: T } | { ok: false; error: string };
   if (!body.ok) throw new Error(body.error);
   return body.value;
+}
+
+/** Whether a browser tab still reaches its server: "up", "unauthorized" when
+ * it answers but no longer takes this browser's cookie (a server started
+ * again since, with a new token), or "down" when nothing answers. */
+export type Reach = "up" | "unauthorized" | "down";
+
+export async function reachServer(): Promise<Reach> {
+  try {
+    // No command: the auth check answers first, and past it an unknown
+    // command is still a 200.
+    const res = await fetch("/api/invoke", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ cmd: "", args: {} }),
+    });
+    if (res.status === 401 || res.status === 403) return "unauthorized";
+    return res.ok ? "up" : "down";
+  } catch {
+    return "down";
+  }
 }
 
 export async function listen<T>(
