@@ -520,6 +520,7 @@ fn dispatch(state: &Arc<AppState>, cmd: &str, args: Value, cid: Option<&str>) ->
         // An extension's tab in a browser asking the Roer window to act on
         // its stage: show a tab or a session, start a session.
         "stage_action" => call_res!(args, stage_action, "action": Value),
+        "stage_current" => call!(args, stage_current,),
 
         // Generative UI panel bundles
         "report_plugin_ui_action" => {
@@ -959,6 +960,42 @@ fn stage_action(action: Value) -> Result<(), String> {
     Ok(())
 }
 
+/// What Roer's stage shows (`{ pane, id, cwd }`, or null with no session),
+/// as the window last announced it: for a browser page that follows the
+/// stage, asked once when it starts following and told after that.
+static STAGE: SyncMutex<Value> = SyncMutex::new(Value::Null);
+
+/// Told to browser pages whenever the stage moves to another session.
+pub const STAGE_EVENT: &str = "roer://stage";
+/// Told to browser pages once the window has done a stage action that asked
+/// to hear back (`request`), with whether it did.
+pub const STAGE_ACTION_DONE_EVENT: &str = "roer://stage-action-done";
+
+/// To the in-process server's pages, if it is running; nobody else listens.
+fn tell_pages(event: &str, payload: &Value) {
+    if let Some(bus) = IN_PROCESS_BUS.get() {
+        crate::events::Sink::emit(bus, event, payload);
+    }
+}
+
+/// The window's own: the stage now shows `stage`.
+#[tauri::command]
+pub fn stage_announce(stage: Value) {
+    *STAGE.lock().unwrap_or_else(|e| e.into_inner()) = stage.clone();
+    tell_pages(STAGE_EVENT, &stage);
+}
+
+/// The window's own: it has done (or could not do) the stage action a
+/// browser page asked to hear back about.
+#[tauri::command]
+pub fn stage_action_done(done: Value) {
+    tell_pages(STAGE_ACTION_DONE_EVENT, &done);
+}
+
+fn stage_current() -> Value {
+    STAGE.lock().unwrap_or_else(|e| e.into_inner()).clone()
+}
+
 /// `text` safe inside a query string's value.
 fn encode_query(text: &str) -> String {
     text.bytes()
@@ -991,14 +1028,16 @@ pub async fn start_browser_server() -> Result<(), String> {
     crate::gh::open_in_system_browser(&url)
 }
 
-/// Opens one tab of the stage (an extension's, by its strip id) in the
-/// system browser, as a page of its own: the bootstrap link, landing on
-/// `/?tab=…` instead of the whole app.
+/// Opens one tab of the stage in the system browser, as a page of its own:
+/// the bootstrap link, landing on `page` (`/?tab=…`, with the session the
+/// tab is pinned to, if any; see `TabPage`) instead of the whole app.
 #[tauri::command(async)]
-pub async fn open_tab_in_browser(tab: String) -> Result<(), String> {
+pub async fn open_tab_in_browser(page: String) -> Result<(), String> {
+    if !page.starts_with("/?tab=") || landing(Some(&page)) != page {
+        return Err(format!("not a tab's page: {page}"));
+    }
     let url = with_running(Started::bootstrap_url).await?;
-    let next = format!("/?tab={}", encode_query(&tab));
-    crate::gh::open_in_system_browser(&format!("{url}&next={}", encode_query(&next)))
+    crate::gh::open_in_system_browser(&format!("{url}&next={}", encode_query(&page)))
 }
 
 /// Starts the in-process server as "Open This Session in a Browser…" does,

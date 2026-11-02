@@ -603,6 +603,54 @@ code {
   background: var(--roer-bg);
 }
 
+.tab-page-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 28px;
+  padding: 0 6px 0 12px;
+  border-bottom: 1px solid var(--roer-border);
+  background: var(--roer-panel);
+  font-size: 12px;
+  color: var(--roer-muted);
+}
+
+.tab-page-session {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--roer-fg);
+}
+
+.tab-page-follow {
+  flex: none;
+  padding: 2px 8px;
+  font-size: 11px;
+  border-radius: 5px;
+}
+
+.tab-page-follow.on {
+  color: var(--roer-accent);
+  border-color: var(--roer-accent);
+}
+
+.tab-page-ended ul {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 12px;
+}
+
+.tab-page-ended li {
+  margin: 4px 0;
+}
+
+.tab-page-toast .link {
+  margin-left: 10px;
+}
+
 .tab-page-lost {
   flex: none;
   padding: 7px 12px;

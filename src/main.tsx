@@ -1,7 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { App } from "./App";
-import { TabPage, tabOfPage } from "./TabPage";
+import { TabPage, pinnedOfPage, tabOfPage } from "./TabPage";
 import "./index.css";
 import { logLine, logUncaught } from "./lib/log";
 import { applyTheme, storedChoice } from "./lib/theme";
@@ -14,5 +14,5 @@ logLine(`webview: ${navigator.userAgent}, devicePixelRatio ${window.devicePixelR
 const tab = tabOfPage();
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
-  <React.StrictMode>{tab ? <TabPage tabId={tab} /> : <App />}</React.StrictMode>,
+  <React.StrictMode>{tab ? <TabPage tabId={tab} pinned={pinnedOfPage()} /> : <App />}</React.StrictMode>,
 );

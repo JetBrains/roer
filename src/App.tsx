@@ -64,9 +64,12 @@ import { claudeSetupStatus, onClaudeSetupMenu, type SetupStatus } from "./lib/cl
 import {
   copyBrowserLink,
   onBrowserServerMenu,
+  announceStage,
   onStageAction,
   openTabInBrowser,
+  stageActionDone,
   startBrowserServer,
+  tabPagePath,
 } from "./lib/browserServer";
 import { inDesktop } from "./lib/backend";
 import { onFilesChanged, type FilesChanged } from "./lib/files";
@@ -228,8 +231,8 @@ function openInBrowser() {
 }
 
 /** A tab's menu "Open in Browser": that tab alone, as a page of its own. */
-function openTabPage(tabId: string) {
-  void openTabInBrowser(tabId).catch((cause: unknown) => {
+function openTabPage(page: string) {
+  void openTabInBrowser(page).catch((cause: unknown) => {
     void message(String(cause), {
       title: "Could not open the tab in a browser",
       kind: "error",
@@ -791,9 +794,17 @@ export function App() {
             </ContextMenuItem>
           ))}
         {split?.side === id ? <ContextMenuItem onSelect={closeBeside}>Back to the stage</ContextMenuItem> : null}
-        {/* A browser page has no session to give a tab, so only a tab that needs none goes there. */}
-        {inDesktop() && extensionTabs.some((tab) => tab.tabId === id && !tab.needsSession) ? (
-          <ContextMenuItem onSelect={() => openTabPage(id)}>Open in Browser</ContextMenuItem>
+        {/* A tab that needs a session takes the stage's along, and stays on it there. */}
+        {inDesktop() && extensionTabs.some((tab) => tab.tabId === id && (!tab.needsSession || session?.pane)) ? (
+          <ContextMenuItem
+            onSelect={() =>
+              openTabPage(
+                tabPagePath(id, extensionTabs.find((tab) => tab.tabId === id)?.needsSession ? stagedNow() : null),
+              )
+            }
+          >
+            Open in Browser
+          </ContextMenuItem>
         ) : null}
         {isCore(id) ? null : <ContextMenuSeparator />}
         <ContextMenuItem onSelect={() => nudgeTab(id, -1)}>Move left</ContextMenuItem>
@@ -1145,6 +1156,21 @@ export function App() {
     },
     [show],
   );
+  /** The stage's session as a browser page names it, once its pane is known. */
+  const stagedNow = () => {
+    if (!session?.pane) return null;
+    const live = browser.allSessions.find((one) => one.pane === session.pane);
+    return { pane: session.pane, id: live?.id, cwd: session.cwd };
+  };
+  // Told to the browser pages that follow the stage (see TabPage), each time it moves.
+  const stagedPane = session?.pane;
+  const stagedCwd = session?.cwd;
+  const stagedId = browser.allSessions.find((one) => one.pane === stagedPane)?.id;
+  useEffect(() => {
+    if (!inDesktop()) return;
+    void announceStage(stagedPane ? { pane: stagedPane, id: stagedId, cwd: stagedCwd } : null).catch(() => undefined);
+  }, [stagedPane, stagedId, stagedCwd]);
+
   // What a tab opened in a browser asks of the stage (see TabPage): the
   // window has already come forward, so it happens where it is seen.
   const stageActsRef = useRef({ activateTab, attach, startSession });
@@ -1157,7 +1183,14 @@ export function App() {
       const acts = stageActsRef.current;
       if (action.kind === "activateTab") acts.activateTab(action.tabId);
       else if (action.kind === "showSession") acts.attach(action.pane);
-      else if (action.kind === "startSession") void acts.startSession?.(action.cwd, action.prompt, { pickAgent: action.pickAgent });
+      else if (action.kind === "startSession") {
+        // No agent here can be handed a prompt: the page hears so rather than that it started.
+        const started = acts.startSession
+          ? acts.startSession(action.cwd, action.prompt, { pickAgent: action.pickAgent }).catch(() => false)
+          : Promise.resolve(false);
+        const request = action.request;
+        if (request) void started.then((ok) => stageActionDone({ request, ok })).catch(() => undefined);
+      }
     }).then((stop) => {
       if (cancelled) stop();
       else unlisten = stop;
