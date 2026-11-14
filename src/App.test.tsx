@@ -1669,7 +1669,7 @@ describe("App", () => {
       await teleport();
       vi.mocked(spawnPty).mockClear();
       goToFile(window);
-      fireEvent.change(await screen.findByRole("combobox"), { target: { value: "importer" } });
+      fireEvent.change(await screen.findByRole("combobox", { name: "Search" }), { target: { value: "importer" } });
       await screen.findByRole("option", { name: /Importer drops rows/ });
     };
     afterEach(() => vi.mocked(listClaudeSessions).mockResolvedValue([]));
@@ -1684,7 +1684,7 @@ describe("App", () => {
 
     it("is resumed on Enter", async () => {
       await find();
-      fireEvent.keyDown(screen.getByRole("combobox"), { key: "Enter" });
+      fireEvent.keyDown(screen.getByRole("combobox", { name: "Search" }), { key: "Enter" });
       await waitFor(() => expect(spawnPty).toHaveBeenCalled());
       expect(vi.mocked(spawnPty).mock.calls[0]?.[0]).toEqual(["resume", "c1"]);
     });
@@ -1696,7 +1696,7 @@ describe("App", () => {
     goToFile(window);
     await screen.findByTestId("go-to-file");
 
-    fireEvent.keyDown(screen.getByRole("combobox"), { key: "Escape" });
+    fireEvent.keyDown(screen.getByRole("combobox", { name: "Search" }), { key: "Escape" });
     expect(screen.queryByTestId("go-to-file")).not.toBeInTheDocument();
   });
 
@@ -1707,7 +1707,7 @@ describe("App", () => {
     goToFile(window);
 
     expect(await screen.findByTestId("go-to-file")).toBeInTheDocument();
-    expect(screen.getByRole("combobox")).toHaveAttribute("placeholder", "Search sessions");
+    expect(screen.getByRole("combobox", { name: "Search" })).toHaveAttribute("placeholder", "Search sessions");
     expect(filesSearch).not.toHaveBeenCalled();
   });
 
@@ -1744,11 +1744,11 @@ describe("App", () => {
   async function pick(name = "App.tsx") {
     goToFile(window);
     await screen.findByTestId("go-to-file");
-    fireEvent.change(screen.getByRole("combobox"), { target: { value: name } });
+    fireEvent.change(screen.getByRole("combobox", { name: "Search" }), { target: { value: name } });
     await waitFor(() =>
-      expect(screen.queryAllByRole("option").length).toBeGreaterThan(0),
+      expect(within(screen.getByRole("listbox", { name: "Sessions and files" })).queryAllByRole("option").length).toBeGreaterThan(0),
     );
-    fireEvent.mouseDown(screen.getAllByRole("option")[0]);
+    fireEvent.mouseDown(within(screen.getByRole("listbox", { name: "Sessions and files" })).getAllByRole("option")[0]);
     await waitFor(() =>
       expect(screen.queryByTestId("go-to-file")).not.toBeInTheDocument(),
     );
@@ -1914,7 +1914,7 @@ describe("App", () => {
 
     expect(await screen.findByText("Recent files")).toBeInTheDocument();
     // The row reads name first, then the directory, as the popup shows it.
-    expect(screen.getByRole("option")).toHaveTextContent("App.tsxsrc/");
+    expect(within(screen.getByRole("listbox", { name: "Sessions and files" })).getByRole("option")).toHaveTextContent("App.tsxsrc/");
   });
 
   it("drops the file tabs when the session ends", async () => {

@@ -21,13 +21,16 @@ export const MAX_FILE_TABS = 8;
 export type StageTab =
   | { kind: "terminal" }
   | { kind: "changes" }
-  | { kind: "file"; root: string; path: string; line?: number };
+  /** `branch` is one no worktree has checked out: the file is read from git as that branch has it, read only.
+   * Without it, the file is the worktree's at `root`, as it is on disk. */
+  | { kind: "file"; root: string; path: string; line?: number; branch?: string };
 
 export type FileTab = StageTab & { kind: "file" };
 
-/** Identity of a tab. Two tabs for one file in one repository is one tab. */
+/** Identity of a tab. Two tabs for one file in one worktree is one tab; the same file on a branch read from git
+ * is another. */
 export const tabId = (tab: StageTab): string =>
-  tab.kind === "file" ? `file:${tab.root}/${tab.path}` : tab.kind;
+  tab.kind === "file" ? `file:${tab.root}/${tab.path}${tab.branch ? `@${tab.branch}` : ""}` : tab.kind;
 
 /** The tab's label: the file name, since the strip has no room for a path. */
 export const tabName = (tab: FileTab): string => baseName(tab.path);

@@ -32,6 +32,9 @@ describe("tabId", () => {
     expect(tabId({ kind: "file", root: "/other", path: "src/App.tsx" })).not.toBe(
       tabId(file("src/App.tsx")),
     );
+    expect(tabId({ kind: "file", root: "/Users/test/project", path: "src/App.tsx", branch: "other" })).not.toBe(
+      tabId(file("src/App.tsx")),
+    );
     expect(tabId({ kind: "terminal" })).toBe("terminal");
   });
 });

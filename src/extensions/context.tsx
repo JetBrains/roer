@@ -10,7 +10,7 @@ import { gitCurrentBranch, gitRoot } from "../lib/git";
 import { useHotkey } from "../lib/keys";
 import { sendToSession } from "../lib/github";
 import { resolveDir } from "../lib/session";
-import type { Scope, Session } from "./api";
+import type { OpenFile, Scope, Session } from "./api";
 
 interface Host {
   /** The extension whose tab this is. */
@@ -23,7 +23,7 @@ interface Host {
   /** Shown and taking the keyboard. Beside the stage, a tab is shown while the
    * terminal has the keys; it takes them once it is clicked. */
   focused: boolean;
-  openFile: (root: string, path: string, line?: number) => void;
+  openFile: OpenFile;
   activateTab: (tabId: string) => void;
   /** Starts a session in `cwd` on `prompt`, with the default agent or the one the person picks; absent where no
    * agent can be handed one. */
@@ -71,7 +71,7 @@ export function useTabHotkey(match: (event: KeyboardEvent) => boolean, handler: 
   );
 }
 
-/** Opens a file of the repository at `root` in a tab of its own. */
+/** Opens a file of the repository at `root` in a tab of its own, on `options.branch` when the view is about one. */
 export const useOpenFile = (): Host["openFile"] => useContext(HostContext).openFile;
 
 /** Brings a tab to the top, by its id ("terminal", "changes", …). */

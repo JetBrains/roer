@@ -12,6 +12,8 @@ export type {
   CopyCall,
   CopyOptions,
   Extension,
+  OpenFile,
+  OpenFileOptions,
   Roer,
   Scope,
   SectionOptions,

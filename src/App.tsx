@@ -35,6 +35,8 @@ import { endedPins, loadPins, pinTab, savePins, type TabPins } from "./lib/tabPi
 import { WorkspaceSections } from "./extensions/WorkspaceSections";
 import type { Scope } from "./extensions/api";
 import { FileView } from "./FileView";
+import type { OpenFileOptions } from "./extensions/api";
+import { fileOnBranch } from "./lib/fileOnBranch";
 import { GenerativeUITab } from "./generative-ui/GenerativeUITab";
 import { applyAll, applyMessage } from "./generative-ui/apply";
 import { A2UI_VERSION, emptyState, surfaceIdOf, type A2uiMessage, type RenderState } from "./generative-ui/schema";
@@ -1224,11 +1226,15 @@ export function App() {
     return at >= 0 && at < 9 ? shortcutLabel.tab(at + 1) : undefined;
   };
 
-  /** Opens a file from Go to File, in a tab of its own. */
-  const openInTab = useCallback((root: string, path: string, line?: number) => {
+  /** Opens a file from Go to File or a view, in a tab of its own; on the branch a view is about, when it names one. */
+  const openInTab = useCallback((root: string, path: string, line?: number, options?: OpenFileOptions) => {
     // A file from another repository is one of the Workspace's other
     // Projects, so the tabs from this one stay open beside it.
-    setTabs((current) => openFile(current, { kind: "file", root, path, line }));
+    if (!options?.branch) {
+      setTabs((current) => openFile(current, { kind: "file", root, path, line }));
+      return;
+    }
+    void fileOnBranch(root, path, line, options.branch).then((tab) => setTabs((current) => openFile(current, tab)));
   }, []);
 
   /** A path the terminal linked (Claude Code's OSC 8), opened in Roer's file
@@ -2239,10 +2245,11 @@ export function App() {
                       role="tab"
                       aria-selected={tabs.active === id}
                       className="tab file"
-                      title={file.path}
+                      title={file.branch ? `${file.path} on ${file.branch}` : file.path}
                       onClick={() => !draggedRef.current && showTab(id)}
                     >
                       {name}
+                      {file.branch ? <span className="tab-branch">@{file.branch}</span> : null}
                     </button>
                     <button
                       type="button"
@@ -2416,6 +2423,7 @@ export function App() {
                     root={file.root}
                     path={file.path}
                     line={file.line}
+                    branch={file.branch}
                     active={tabs.active === id}
                     changed={changed}
                   />
@@ -2497,7 +2505,7 @@ export function App() {
                         ) : ext ? (
                           sessionTab(ext, ext.needsSession ? tabTarget(id) : session?.pane, true, focused)
                         ) : file ? (
-                          <FileView root={file.root} path={file.path} line={file.line} active changed={changed} />
+                          <FileView root={file.root} path={file.path} line={file.line} branch={file.branch} active changed={changed} />
                         ) : live?.pane ? (
                           <TerminalView
                             args={live.args}

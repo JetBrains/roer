@@ -2426,10 +2426,6 @@ button.tree-row.selected {
   user-select: none;
 }
 
-.line .mark::before {
-  content: attr(data-mark);
-}
-
 .line .text {
   padding-right: 12px;
   white-space: pre-wrap;
@@ -2481,16 +2477,8 @@ button.tree-row.selected {
   background: var(--ide-add);
 }
 
-.line.add .mark {
-  color: var(--ide-add-sign);
-}
-
 .line.del {
   background: var(--ide-del);
-}
-
-.line.del .mark {
-  color: var(--ide-del-sign);
 }
 
 /* `\ No newline at end of file` and friends: about the file, not in it. */
@@ -3265,7 +3253,8 @@ button.tab-x:hover {
   overflow: auto;
   font-family: var(--ide-mono);
   font-size: var(--code-font-size, 13px);
-  line-height: var(--code-line-height, 20px);
+  /* The diff's row height, so a file and its diff read alike. */
+  line-height: var(--diff-line-height, 22px);
 }
 
 .file-body:focus-visible {
@@ -3416,6 +3405,60 @@ button.tab-x:hover {
 
 .file-no::before {
   content: attr(data-no);
+}
+
+/* A file's changes as the Changes view's unified diff draws them: the line tinted, no + or -, and the change the
+   arrow keys are on marked with the accent on its left edge. The number column is sticky and so opaque; the tint is
+   laid over its own background. */
+.file-line.add {
+  background: var(--ide-add);
+}
+
+.file-line.add .file-no {
+  background: linear-gradient(var(--ide-add), var(--ide-add)), var(--ide-editor);
+}
+
+.file-line.del {
+  background: var(--ide-del);
+}
+
+.file-line.del .file-no {
+  background: linear-gradient(var(--ide-del), var(--ide-del)), var(--ide-editor);
+}
+
+.file-code[data-text]::before {
+  content: attr(data-text);
+}
+
+.file-line.current .file-no {
+  box-shadow: inset 2px 0 0 var(--ide-accent);
+}
+
+.file-head .keys + .muted {
+  margin-left: 0;
+}
+
+.file-head .file-marking {
+  flex: none;
+  min-width: 0;
+  max-width: 28ch;
+  background: var(--roer-bg);
+  color: var(--roer-fg);
+  border: 1px solid var(--roer-border);
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-size: 11px;
+}
+
+.file-branch {
+  flex: none;
+  color: var(--roer-muted);
+  font-family: var(--ide-mono);
+}
+
+.tab-branch {
+  margin-left: 4px;
+  color: var(--roer-muted);
 }
 
 /* Generative UI prototype -------------------------------------------------

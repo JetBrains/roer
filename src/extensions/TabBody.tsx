@@ -1,6 +1,6 @@
 import { Component, type ErrorInfo, type ReactNode } from "react";
 
-import type { Scope, Session } from "./api";
+import type { OpenFile, Scope, Session } from "./api";
 import { HostProvider, type AgentSession, type StartSession } from "./context";
 import { logExtension } from "./loader";
 import type { StageTabEntry } from "./registry";
@@ -49,7 +49,7 @@ export interface TabBodyProps {
   active: boolean;
   /** Takes the keyboard. Default: whenever it is active. */
   focused?: boolean;
-  openFile: (root: string, path: string, line?: number) => void;
+  openFile: OpenFile;
   activateTab: (tabId: string) => void;
   startSession?: StartSession;
   sessions?: readonly AgentSession[];
