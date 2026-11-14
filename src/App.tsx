@@ -13,6 +13,7 @@ import {
   PanelRightClose,
   PanelRightOpen,
   PanelTop,
+  Pin,
   Plus,
   Puzzle,
   Search,
@@ -29,6 +30,8 @@ import { confirmAction } from "./lib/confirm";
 import { serveTools } from "./extensions/tools";
 import { useBadges, useStageTabs } from "./extensions/registry";
 import { TabBody, type TabBodyProps } from "./extensions/TabBody";
+import { SessionChip, type ChipSession } from "./SessionChip";
+import { endedPins, loadPins, pinTab, savePins, type TabPins } from "./lib/tabPins";
 import { WorkspaceSections } from "./extensions/WorkspaceSections";
 import type { Scope } from "./extensions/api";
 import { FileView } from "./FileView";
@@ -47,6 +50,8 @@ import { NewSessionPicker } from "./NewSessionPicker";
 import { SessionTree } from "./SessionTree";
 import {
   SessionBrowser,
+  attachRequest,
+  checkoutLabel,
   isWorking,
   paneLabel,
   relativeAge,
@@ -142,8 +147,8 @@ import {
   prune,
   ratioAt,
   rects,
+  renamePane,
   saveSplit,
-  sessionOfPane,
   sessionSide,
   setRatio,
   settle,
@@ -196,19 +201,30 @@ interface StripTab {
 /** The side pane's place buttons: the panel the icon fills is where it goes. */
 /** A tab that belongs to a session other than the stage's: the session as
  * the tab sees it is worked out here, as the stage's is in `App`. */
-function BoundTab({
+/**
+ * A tab about one session: the one `given` when `App` already worked it out
+ * (the stage's, or the one you work in), any other worked out here. One
+ * component either way, so a tab that moves between them is not remounted.
+ */
+function SessionTabBody({
+  given,
   staged,
   live,
   changed,
   ...body
-}: Omit<TabBodyProps, "session"> & { staged: OpenRequest; live: SessionInfo | undefined; changed: FilesChanged | null }) {
-  const session = useStageSession(staged, {
+}: Omit<TabBodyProps, "session"> & {
+  given?: TabBodyProps["session"];
+  staged: OpenRequest | null;
+  live: SessionInfo | undefined;
+  changed: FilesChanged | null;
+}) {
+  const own = useStageSession(given === undefined ? staged : null, {
     agent: live ? runningAgent(live) : undefined,
     busy: live?.state === "working",
     changed,
     liveCwd: live?.cwd,
   });
-  return <TabBody {...body} session={session} />;
+  return <TabBody {...body} session={given === undefined ? own : given} />;
 }
 
 const lowerFirst = (text: string): string => text.charAt(0).toLowerCase() + text.slice(1);
@@ -322,6 +338,41 @@ export function App() {
   // The live sessions in panes of their own, by pane: what each one's
   // terminal attaches, and the name its header shows.
   const [sideSessions, setSideSessions] = useState<ReadonlyMap<string, OpenRequest>>(() => new Map());
+  // The session whose terminal was clicked last, when it is one in a pane of
+  // its own; null for the stage's. Tabs that need a session follow it.
+  const [clickedPane, setClickedPane] = useState<string | null>(null);
+  // Tabs pinned to a session instead: see lib/tabPins.ts.
+  const [pins, setPins] = useState<TabPins>(() => loadPins());
+  useEffect(() => savePins(pins), [pins]);
+  // The pane a strip tab just pointed at, lit up for a moment.
+  const [flashed, setFlashed] = useState<string | null>(null);
+  const flashTimer = useRef<number | undefined>(undefined);
+  const flash = useCallback((id: string) => {
+    setFlashed(null);
+    window.requestAnimationFrame(() => setFlashed(id));
+    window.clearTimeout(flashTimer.current);
+    flashTimer.current = window.setTimeout(() => setFlashed(null), 900);
+  }, []);
+  // A word about something that just happened, at the foot of the window.
+  const [toast, setToast] = useState<string | null>(null);
+  const toastTimer = useRef<number | undefined>(undefined);
+  const say = useCallback((text: string) => {
+    setToast(text);
+    window.clearTimeout(toastTimer.current);
+    toastTimer.current = window.setTimeout(() => setToast(null), 4000);
+  }, []);
+  useEffect(() => () => window.clearTimeout(toastTimer.current), []);
+  // The session you work in: the clicked one while it is on screen beside
+  // the stage, the stage's otherwise.
+  const sideActive =
+    clickedPane !== null && clickedPane !== session?.pane && sideSessions.has(clickedPane) && hasPane(split, sessionSide(clickedPane));
+  const activePane = sideActive ? clickedPane : session?.pane;
+  const activeRequest = sideActive ? (sideSessions.get(clickedPane!) ?? null) : null;
+  const splitRef = useRef(split);
+  splitRef.current = split;
+  // Every live session, as last listed. Read through a ref because the panes
+  // are laid out before the list is in this render (see `browser` below).
+  const allLiveRef = useRef<readonly SessionInfo[]>([]);
   const [finding, setFinding] = useState(false);
   const [showingShortcuts, setShowingShortcuts] = useState(false);
   const [showingExtensions, setShowingExtensions] = useState(false);
@@ -468,6 +519,7 @@ export function App() {
     setNotice(null);
     // Attaching the same session twice would throw the side pane's client out.
     if (next.pane) setSplit((current) => dropPane(current, sessionSide(next.pane!)));
+    setClickedPane(null);
     setSession(next);
     // Opening a session is what the list was for; showing it is the point,
     // not another thing to switch to once it's found.
@@ -690,14 +742,14 @@ export function App() {
 
   // Read through a ref for the same reason as `targetRef`: the listener is
   // registered once and cannot close over a render's `session`.
-  paneRef.current = session?.pane;
+  paneRef.current = activePane;
   // The panel's state is global, not keyed by pane, so without this a
   // surface built for pane A stays on screen — and its buttons keep
   // reporting clicks — after the stage moves to pane B. Drop back to the
   // fixture whenever the pane a click would be attributed to changes.
   useEffect(() => {
     setGenerativeUi({ state: emptyState, surfaceId: "", log: [], live: false });
-  }, [session?.pane]);
+  }, [activePane]);
   // A view's loadData: read once, and again on its own when it asks to (generative-ui/loads.ts).
   const generativeUiRef = useRef(generativeUi);
   generativeUiRef.current = generativeUi;
@@ -718,7 +770,7 @@ export function App() {
       );
     }, []),
     useCallback((surfaceId: string) => Boolean(generativeUiRef.current.live && generativeUiRef.current.state.surfaces[surfaceId]), []),
-    session?.pane,
+    activePane,
   );
   const liveLoadsRef = useRef(liveLoads);
   liveLoadsRef.current = liveLoads;
@@ -815,6 +867,9 @@ export function App() {
   const showTab = useCallback((tabId: string) => {
     setTabs((current) => activate(current, tabId));
     setSplit((current) => (hasPane(current, tabId) ? current : focusOn(current, STAGE)));
+    // A tab already open in a pane is focused there; the pane says so, so the
+    // click is seen to have done something.
+    if (hasPane(splitRef.current, tabId)) flash(tabId);
   }, []);
 
   const activateTab = useCallback(
@@ -846,15 +901,17 @@ export function App() {
     if (!splitResizing) saveSplit(split);
   }, [split, splitResizing]);
 
-  /** Puts `id` in a pane of its own at `place` of the pane with the keyboard.
-   * A tab that needs a session, opened next to a pane about one, belongs to
-   * that session rather than following the stage's. */
+  /** Puts `id` in a pane of its own at `place` of the pane with the keyboard. */
   const openBeside = (id: string, place?: SplitPlace) => {
     opened(id);
-    const focus = shownSplit?.focus ?? STAGE;
-    const of = sessionOfPane(focus);
-    const leaf = of && of !== session?.pane && allTabs.find((tab) => tab.tabId === id)?.needsSession ? boundSide(of, id) : id;
-    const next = openPane(tabs, split, leaf, place, focus);
+    const next = openPane(tabs, split, id, place, shownSplit?.focus ?? STAGE);
+    setTabs(next.tabs);
+    setSplit(next.split);
+  };
+  /** Another copy of `tab`, in a pane of its own, about the session in `pane`. */
+  const openCopy = (tab: string, pane: string) => {
+    opened(tab);
+    const next = openPane(tabs, split, boundSide(pane, tab), "right", shownSplit?.focus ?? STAGE);
     setTabs(next.tabs);
     setSplit(next.split);
   };
@@ -867,11 +924,12 @@ export function App() {
     if (!pane || pane === session?.pane) return;
     setSideSessions((current) => new Map(current).set(pane, request));
     openBeside(sessionSide(pane), place);
+    // Its terminal has the keyboard now, so it is the session you work in.
+    setClickedPane(pane);
   };
   /** A session in a pane ended or was released: the pane goes with it. */
   const handleSideExit = useCallback((pane: string) => {
-    // The tabs that belong to it go with it.
-    setSplit((current) => prune(dropPane(current, sessionSide(pane)), (id) => boundOf(id)?.pane !== pane));
+    setSplit((current) => dropPane(current, sessionSide(pane)));
   }, []);
   const closeBeside = (id: string) => {
     // A pane remembered from the last launch never went through `openBeside`.
@@ -880,7 +938,14 @@ export function App() {
     setTabs(next.tabs);
     setSplit(next.split);
   };
-  const focusPane = (id: string) => setSplit((current) => focusOn(current, id));
+  /** Gives `id`'s pane the keyboard. A terminal clicked makes its session the
+   * one you work in, which the tabs that follow it switch to. */
+  const focusPane = (id: string) => {
+    setSplit((current) => focusOn(current, id));
+    const pane = paneOfSide(id);
+    if (pane !== undefined) setClickedPane(pane);
+    else if (id === STAGE && tabsRef.current.active === "terminal") setClickedPane(null);
+  };
 
   const handleSplitResizeStart = (divider: Divider) => (e: React.PointerEvent<HTMLDivElement>) => {
     const body = stageBodyRef.current;
@@ -988,6 +1053,138 @@ export function App() {
 
   // What is beside the stage: an extension's tab, or a file. An extension's
   // that has not loaded (yet) leaves the stage whole until it does.
+  // A session as a tab that is not about the stage's asks for it: the same
+  // object for a pane every time, so a tab about it does not start over.
+  const requestCache = useRef(new Map<string, OpenRequest>());
+  const requestOf = (pane: string): OpenRequest | undefined => {
+    if (session?.pane === pane) return session;
+    const side = sideSessions.get(pane);
+    if (side) return side;
+    const live = allLiveRef.current.find((one) => one.pane === pane);
+    if (!live) return undefined;
+    const cached = requestCache.current.get(pane);
+    if (cached) return cached;
+    const made = attachRequest(live);
+    requestCache.current.set(pane, made);
+    return made;
+  };
+  const sessionName = (live: SessionInfo) => paneLabel(live.title, live.command) || live.session;
+  const pinnedLive = (tab: string) => {
+    const id = pins[tab];
+    return id ? allLiveRef.current.find((live) => live.id === id) : undefined;
+  };
+  /** The session a tab that needs one shows: the one it is pinned to, or the one you work in. */
+  const tabTarget = (tab: string): string | undefined => pinnedLive(tab)?.pane ?? activePane;
+  // Called while drawing, after `browser` below exists.
+  const projectOf = (cwd: string) =>
+    browser.projects.find((project) => cwd === project.path || cwd.startsWith(`${project.path}/`))?.name ??
+    shorten(cwd, browser.status?.home);
+  /**
+   * What a chip offers: the sessions open in Roer's window (the stage's, and
+   * each in a pane of its own), plus the one the tab shows now, which may be
+   * a pinned session that is not. Every live session would be dozens, most of
+   * them never looked at here; another is a row's Show Changes, or the search
+   * popup's, away. One row for a session, whichever of its panes is open.
+   */
+  const chipList = (also?: string): ChipSession[] => {
+    const open = new Set([session?.pane, ...[...sideSessions.keys()].filter((pane) => hasPane(shownSplit, sessionSide(pane))), also]);
+    const rows: ChipSession[] = [];
+    for (const live of browser.allSessions) {
+      if (!live.id || !open.has(live.pane) || rows.some((row) => row.id === live.id)) continue;
+      const stats = browser.stats[live.cwd];
+      rows.push({
+        id: live.id,
+        pane: live.pane,
+        name: sessionName(live),
+        group: projectOf(live.cwd),
+        agent: runningAgent(live),
+        branch: checkoutLabel(stats, null)?.text ?? null,
+        where: live.pane === session?.pane ? "stage" : hasPane(shownSplit, sessionSide(live.pane)) ? "beside" : undefined,
+        changes: stats && stats.files > 0 ? { added: stats.added, deleted: stats.deleted } : null,
+      });
+    }
+    return rows;
+  };
+  const chipOf = (pane: string | undefined) => chipList(pane).find((one) => one.pane === pane);
+  const tabChip = (tab: string, title: string) => (
+    <SessionChip
+      mode={pinnedLive(tab) ? "pinned" : "following"}
+      current={chipOf(tabTarget(tab))}
+      tab={title}
+      sessions={chipList(tabTarget(tab))}
+      onFollow={() => {
+        logLine(`tabs: ${tab} follows the session you work in`);
+        setPins((current) => pinTab(current, tab, null));
+      }}
+      onPin={(one) => {
+        logLine(`tabs: ${tab} pinned to ${one.pane}`);
+        setPins((current) => pinTab(current, tab, one.id));
+      }}
+      onCopy={(one) => {
+        logLine(`tabs: another ${tab} for ${one.pane}`);
+        openCopy(tab, one.pane);
+      }}
+      onOpenChange={(open) => logLine(`tabs: ${tab}'s session menu ${open ? "opened" : "closed"}`)}
+    />
+  );
+  const copyChip = (id: string, tab: string, title: string, pane: string) => (
+    <SessionChip
+      mode="copy"
+      current={chipOf(pane)}
+      tab={title}
+      sessions={chipList(pane)}
+      onPin={(one) => {
+        logLine(`tabs: the ${tab} for ${pane} now shows ${one.pane}`);
+        setSplit((current) => renamePane(current, id, boundSide(one.pane, tab)));
+      }}
+    />
+  );
+  /** A tab's body, about `target`'s session. */
+  const sessionTab = (entry: TabBodyProps["entry"], target: string | undefined, active: boolean, focused: boolean) => (
+    <SessionTabBody
+      given={!target || target === session?.pane ? stageSession : target === activeRequest?.pane ? activeSession : undefined}
+      staged={target ? (requestOf(target) ?? null) : null}
+      live={browser.allSessions.find((one) => one.pane === target)}
+      changed={changed}
+      entry={entry}
+      scope={scope}
+      active={active}
+      focused={focused}
+      openFile={openInTab}
+      activateTab={activateTab}
+      startSession={startSession}
+      sessions={agentSessions}
+      showSession={attach}
+    />
+  );
+  /** Shows `tab` about `live`'s session: where it already is, or pinned to it,
+   * or, when it is pinned to another, in another copy. What a session's +N/−M,
+   * its row's menu and the search popup do. */
+  const showTabFor = (tab: string, live: SessionInfo) => {
+    const entry = extensionTabs.find((one) => one.tabId === tab);
+    if (!entry || !live.id) return;
+    const name = sessionName(live);
+    const copy = boundSide(live.pane, tab);
+    if (hasPane(split, copy)) {
+      focusPane(copy);
+      flash(copy);
+      return;
+    }
+    if (tabTarget(tab) === live.pane) {
+      activateTab(tab);
+      return;
+    }
+    const other = pinnedLive(tab);
+    if (other && other.pane !== live.pane) {
+      openCopy(tab, live.pane);
+      say(`Opened another ${entry.title} for ${name}.`);
+      return;
+    }
+    setPins((current) => pinTab(current, tab, live.id));
+    activateTab(tab);
+    say(`${entry.title} is pinned to ${name}.`);
+  };
+
   const paneExt = (id: string) => extensionTabs.find((tab) => tab.tabId === id);
   const paneFile = (id: string) => tabs.files.find((file) => tabId(file) === id);
   const paneLive = (id: string) => {
@@ -997,8 +1194,7 @@ export function App() {
   /** The session a bound tab belongs to, while it is on screen somewhere. */
   const boundSession = (id: string): OpenRequest | undefined => {
     const pane = boundOf(id)?.pane;
-    if (pane === undefined) return undefined;
-    return sideSessions.get(pane) ?? (session?.pane === pane ? session : undefined);
+    return pane === undefined ? undefined : requestOf(pane);
   };
   // The panes that can be drawn now: one whose extension has not loaded
   // (yet) leaves its room to the others until it does.
@@ -1322,6 +1518,36 @@ export function App() {
 
   // Read through refs, like the hotkeys above: registered once, they must
   // see the list as it is now.
+  allLiveRef.current = browser.allSessions;
+  // A pin whose session has ended lets its tab follow again, and says so; a
+  // copy about it closes. Pins kept from before a restart whose session is
+  // not in the first list are let go quietly.
+  const seenRef = useRef(new Map<string, string>());
+  const checkedRef = useRef(false);
+  const liveKey = browser.allSessions.map((live) => `${live.id}\t${live.pane}`).join("\n");
+  useEffect(() => {
+    const live = browser.allSessions;
+    const ids = new Set(live.map((one) => one.id));
+    const panes = new Set(live.map((one) => one.pane));
+    const first = !checkedRef.current;
+    if (live.length > 0) checkedRef.current = true;
+    const gone =
+      first && live.length > 0
+        ? Object.keys(pins).filter((tab) => !ids.has(pins[tab]))
+        : endedPins(pins, ids, new Set(seenRef.current.keys()));
+    const names = [...new Set(gone.map((tab) => seenRef.current.get(pins[tab])).filter(Boolean))];
+    for (const one of live) seenRef.current.set(one.id, sessionName(one));
+    setSplit((current) => prune(current, (id) => {
+      const bound = boundOf(id);
+      return !bound || panes.has(bound.pane);
+    }));
+    if (gone.length === 0) return;
+    setPins((current) => gone.reduce((acc, tab) => pinTab(acc, tab, null), current));
+    if (first || names.length === 0) return;
+    const titles = gone.map((tab) => allTabs.find((one) => one.tabId === tab)?.title ?? tab);
+    say(`${names.join(" and ")} ended, so ${titles.join(" and ")} ${titles.length === 1 ? "follows" : "follow"} the session you work in again.`);
+    // Only the list's own changes: the pins are read as they are then.
+  }, [liveKey]);
   const liveRef = useRef(browser.allSessions);
   liveRef.current = browser.allSessions;
   const waitingNowRef = useRef(browser.waiting);
@@ -1396,8 +1622,6 @@ export function App() {
   );
   // The text size of whichever pane has the keyboard: the Terminal's, or
   // the code's for anything else on the stage.
-  const splitRef = useRef(split);
-  splitRef.current = split;
   useHotkey(
     isFontStep,
     useCallback((event: KeyboardEvent) => {
@@ -1439,7 +1663,17 @@ export function App() {
     liveCwd: onStage?.cwd,
   });
   const agentState = onStage && runningAgent(onStage) ? onStage.state : undefined;
-  loadRootRef.current = stageSession?.root ?? session?.cwd;
+  // The session you work in, as tabs that follow it see it, when it is not the stage's.
+  const activeLive = activeRequest ? browser.allSessions.find((live) => live.pane === activeRequest.pane) : undefined;
+  const sideStage = useStageSession(activeRequest, {
+    agent: activeLive ? runningAgent(activeLive) : undefined,
+    busy: activeLive?.state === "working",
+    changed,
+    liveCwd: activeLive?.cwd,
+  });
+  const activeSession = activeRequest ? sideStage : stageSession;
+  const activeAgentState = activeRequest ? (activeLive && runningAgent(activeLive) ? activeLive.state : undefined) : agentState;
+  loadRootRef.current = activeSession?.root ?? (activeRequest ?? session)?.cwd;
   // What the Workspace tab is about, as its extension sections see it. The
   // same answer keeps the same object, so a section's effects run again only
   // when the Workspace or Project, its repositories or its folder change.
@@ -1685,6 +1919,21 @@ export function App() {
           show({ args: ["attach", live.pane], cwd: live.cwd, title: live.session, pane: live.pane }),
       };
     }),
+    // A tab that needs a session, for any live one: "changes roer" finds Changes for it.
+    ...extensionTabs
+      .filter((tab) => tab.needsSession)
+      .flatMap((tab) =>
+        browser.allSessions
+          .filter((live) => live.id)
+          .map((live): SessionHit => ({
+            key: `tab:${tab.tabId}:${live.pane}`,
+            name: `${tab.title} for ${sessionName(live)}`,
+            detail: shorten(live.cwd, home),
+            fields: [tab.title, sessionName(live), live.session, live.cwd],
+            onlyAsked: true,
+            open: () => showTabFor(tab.tabId, live),
+          })),
+      ),
     ...browser.claudeSessions.map((past): SessionHit => ({
       key: `resume:${past.id}`,
       name: past.title,
@@ -1881,6 +2130,7 @@ export function App() {
             projects={browser.projectsInView}
             onOpen={show}
             onOpenBeside={openSessionBeside}
+            onShowChanges={(live) => showTabFor("changes", live)}
             onAddProject={browser.projects.length > 0 ? () => browser.openAddProject() : undefined}
           />
         </WorkspaceSidebar>
@@ -1957,6 +2207,15 @@ export function App() {
                     }}
                   >
                     {tab.title}
+                    {(() => {
+                      const pinned = tab.needsSession ? pinnedLive(tab.tabId) : undefined;
+                      return pinned ? (
+                        <span className="tab-pin" title={`Pinned to ${sessionName(pinned)}`}>
+                          <Pin size={10} aria-hidden="true" />
+                          {sessionName(pinned)}
+                        </span>
+                      ) : null;
+                    })()}
                     {badge ? <span className="tab-badge">{badge}</span> : null}
                   </button>,
                 );
@@ -2104,6 +2363,7 @@ export function App() {
                 worktrees={browser.worktrees}
                 onOpen={show}
                 onOpenBeside={openSessionBeside}
+                onShowChanges={(live) => showTabFor("changes", live)}
               />
               {/* Docked under the list rather than at its end, where a long
                 list of sessions would put them out of sight. */}
@@ -2128,22 +2388,23 @@ export function App() {
               the diff is on top of it. */}
             {extensionTabs
               .filter((tab) => everOpened.has(tab.tabId) && !hasPane(shownSplit, tab.tabId))
-              .map((tab) => (
-                <div key={tab.tabId} className="overlay ext-tab" hidden={tabs.active !== tab.tabId}>
-                  <TabBody
-                    entry={tab}
-                    session={stageSession}
-                    scope={scope}
-                    active={tabs.active === tab.tabId}
-                    focused={tabs.active === tab.tabId && mainFocused}
-                    openFile={openInTab}
-                    activateTab={activateTab}
-                    startSession={startSession}
-                    sessions={agentSessions}
-                    showSession={attach}
-                  />
-                </div>
-              ))}
+              .map((tab) =>
+                tab.needsSession ? (
+                  <div key={tab.tabId} className="overlay session-tab" hidden={tabs.active !== tab.tabId}>
+                    <div className="split-head">
+                      <span className="split-title">{tab.title}</span>
+                      {tabChip(tab.tabId, tab.title)}
+                    </div>
+                    <div className="split-body ext-tab">
+                      {sessionTab(tab, tabTarget(tab.tabId), tabs.active === tab.tabId, tabs.active === tab.tabId && mainFocused)}
+                    </div>
+                  </div>
+                ) : (
+                  <div key={tab.tabId} className="overlay ext-tab" hidden={tabs.active !== tab.tabId}>
+                    {sessionTab(tab, session?.pane, tabs.active === tab.tabId, tabs.active === tab.tabId && mainFocused)}
+                  </div>
+                ),
+              )}
 
             {/* Open is mounted, for the same reason: a file tab keeps its scroll
               position while you are away in the terminal. */}
@@ -2196,12 +2457,13 @@ export function App() {
                   return (
                     <div
                       key={id}
-                      className={focused ? "stage-pane side focused" : "stage-pane side"}
+                      className={`stage-pane side${focused ? " focused" : ""}${flashed === id ? " flash" : ""}`}
                       style={rectStyle(rect)}
                       onPointerDownCapture={() => focusPane(id)}
                     >
                       <div className="split-head">
-                        <span className="split-title">{paneName(id)}</span>
+                        <span className="split-title">{bound ? ext?.title : paneName(id)}</span>
+                        {bound && ext ? copyChip(id, bound.tab, ext.title, bound.pane) : ext?.needsSession ? tabChip(id, ext.title) : null}
                         {SPLIT_PLACES.map(({ place: to }) => {
                           const Glyph = PLACE_ICONS[to];
                           const label = placeLabel(to, neighbour);
@@ -2231,33 +2493,9 @@ export function App() {
                       </div>
                       <div className="split-body ext-tab">
                         {bound && ext && of ? (
-                          <BoundTab
-                            staged={of}
-                            live={browser.allSessions.find((one) => one.pane === bound.pane)}
-                            changed={changed}
-                            entry={ext}
-                            scope={scope}
-                            active
-                            focused={focused}
-                            openFile={openInTab}
-                            activateTab={activateTab}
-                            startSession={startSession}
-                            sessions={agentSessions}
-                            showSession={attach}
-                          />
+                          sessionTab(ext, bound.pane, true, focused)
                         ) : ext ? (
-                          <TabBody
-                            entry={ext}
-                            session={stageSession}
-                            scope={scope}
-                            active
-                            focused={focused}
-                            openFile={openInTab}
-                            activateTab={activateTab}
-                            startSession={startSession}
-                            sessions={agentSessions}
-                            showSession={attach}
-                          />
+                          sessionTab(ext, ext.needsSession ? tabTarget(id) : session?.pane, true, focused)
                         ) : file ? (
                           <FileView root={file.root} path={file.path} line={file.line} active changed={changed} />
                         ) : live?.pane ? (
@@ -2308,13 +2546,13 @@ export function App() {
               onChange={(state) => setGenerativeUi((current) => ({ ...current, state }))}
               log={generativeUi.log}
               live={generativeUi.live}
-              pane={session?.pane}
-              cwd={session?.cwd}
+              pane={activePane}
+              cwd={(activeRequest ?? session)?.cwd}
               onLoadBundle={(surfaceId, messages) =>
                 setGenerativeUi({ state: applyAll(messages), surfaceId, log: messages, live: true })
               }
               onOpenFile={openInTab}
-              agentState={agentState}
+              agentState={activeAgentState}
               onOpenTab={activateTab}
               onNewTab={() => setShowingNewTab(true)}
             />
@@ -2435,6 +2673,11 @@ export function App() {
             onOpen={openInTab}
             onClose={() => setFinding(false)}
           />
+        ) : null}
+        {toast ? (
+          <div className="app-toast" role="status">
+            {toast}
+          </div>
         ) : null}
       </main>
     </div>

@@ -386,6 +386,7 @@ export function AssignMenu({
   handleAssign,
   onEnd,
   onBeside,
+  onShowChanges,
   children,
 }: {
   sessionId: string;
@@ -397,13 +398,16 @@ export function AssignMenu({
   /** A live session's Open beside: in a pane of its own, at a place of the
    * pane with the keyboard. Left out for the session that is on the stage. */
   onBeside?: (place: SplitPlace) => void;
+  /** Changes about this session, wherever Changes is: see App's `showTabFor`. */
+  onShowChanges?: () => void;
   children: ReactNode;
 }) {
-  if (workspaces.length === 0 && !assignedTo && !onEnd && !onBeside) return <>{children}</>;
+  if (workspaces.length === 0 && !assignedTo && !onEnd && !onBeside && !onShowChanges) return <>{children}</>;
   return (
     <ContextMenu>
       <ContextMenuTrigger asChild>{children}</ContextMenuTrigger>
       <ContextMenuContent>
+        {onShowChanges ? <ContextMenuItem onSelect={onShowChanges}>Show Changes for this session</ContextMenuItem> : null}
         {onBeside ? (
           <>
             <ContextMenuSub>
@@ -416,9 +420,9 @@ export function AssignMenu({
                 ))}
               </ContextMenuSubContent>
             </ContextMenuSub>
-            {workspaces.length > 0 || assignedTo || onEnd ? <ContextMenuSeparator /> : null}
           </>
         ) : null}
+        {(onBeside || onShowChanges) && (workspaces.length > 0 || assignedTo || onEnd) ? <ContextMenuSeparator /> : null}
         {workspaces.map((workspace) => (
           <ContextMenuItem
             key={workspace.id}
@@ -481,6 +485,8 @@ export type SessionBrowserProps = Pick<
   onOpen: (request: OpenRequest) => void;
   /** Opens a live session in a pane of its own. */
   onOpenBeside?: (request: OpenRequest, place: SplitPlace) => void;
+  /** Shows Changes about a live session. */
+  onShowChanges?: (session: SessionInfo) => void;
 };
 
 /**
@@ -520,6 +526,7 @@ export function SessionBrowser({
   worktrees,
   onOpen,
   onOpenBeside,
+  onShowChanges,
 }: SessionBrowserProps) {
   // What is running, by checkout. Past conversations are a timeline of
   // their own below: there can be hundreds, and they are come back to by
@@ -740,6 +747,7 @@ export function SessionBrowser({
                           ? (place) => onOpenBeside(attachRequest(entry.session), place)
                           : undefined
                       }
+                      onShowChanges={onShowChanges ? () => onShowChanges(entry.session) : undefined}
                     >
                       <span className="workspace-row">
                         <button

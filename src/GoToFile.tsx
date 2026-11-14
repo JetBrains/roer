@@ -55,6 +55,9 @@ export interface SessionHit {
   conversation?: ClaudeSession;
   /** Running in one of Roer's panes: opening it brings it to the stage. */
   live?: boolean;
+  /** Only once something is typed: one of many for each session, which would
+   * crowd out the sessions themselves in the list shown before. */
+  onlyAsked?: boolean;
   open: () => void;
 }
 
@@ -355,7 +358,7 @@ export function GoToFile({
   const { named, spoken } = useMemo(() => {
     if (!query.trim()) {
       return {
-        named: sessions.slice(0, SESSIONS_IDLE).map((session): Row => ({ kind: "session", key: `session:${session.key}`, session })),
+        named: sessions.filter((session) => !session.onlyAsked).slice(0, SESSIONS_IDLE).map((session): Row => ({ kind: "session", key: `session:${session.key}`, session })),
         spoken: [] as Row[],
       };
     }
