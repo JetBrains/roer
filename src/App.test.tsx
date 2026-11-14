@@ -1317,7 +1317,9 @@ describe("App", () => {
       expect(screen.getByRole("tab", { name: "Terminal" })).toHaveAttribute("aria-selected", "true");
       expect(screen.getByRole("separator")).toHaveAttribute("aria-orientation", "vertical");
       expect(closePty).not.toHaveBeenCalled();
-      expect(JSON.parse(localStorage.getItem("roer:split") ?? "null")).toMatchObject({ side: "ext:pager/main", place: "right" });
+      expect(JSON.parse(localStorage.getItem("roer:split") ?? "null")).toMatchObject({
+        root: { axis: "row", first: { leaf: "stage" }, second: { leaf: "ext:pager/main" } },
+      });
     });
 
     it("keeps the tab beside the terminal when its strip button is clicked", async () => {
@@ -1416,7 +1418,9 @@ describe("App", () => {
       fireEvent.click(screen.getByRole("button", { name: "Above the terminal" }));
       expect(screen.getByRole("separator")).toHaveAttribute("aria-orientation", "horizontal");
       expect(screen.getByRole("button", { name: "Above the terminal" })).toHaveAttribute("aria-pressed", "true");
-      expect(JSON.parse(localStorage.getItem("roer:split") ?? "null")).toMatchObject({ place: "above" });
+      expect(JSON.parse(localStorage.getItem("roer:split") ?? "null")).toMatchObject({
+        root: { axis: "column", first: { leaf: "ext:pager/main" }, second: { leaf: "stage" } },
+      });
 
       fireEvent.contextMenu(screen.getByRole("tab", { name: "Pager" }));
       expect(screen.queryByRole("menuitem", { name: "Move above the terminal" })).not.toBeInTheDocument();
@@ -1427,6 +1431,38 @@ describe("App", () => {
       expect(screen.queryByRole("separator")).not.toBeInTheDocument();
       expect(screen.getByRole("tab", { name: "Pager" })).toHaveAttribute("aria-selected", "true");
       expect(localStorage.getItem("roer:split")).toBeNull();
+    });
+
+    it("splits the pane with the keyboard again, for three panes on the stage", async () => {
+      registry.load(
+        "notes",
+        defineExtension((roer) => void roer.stage.registerTab({ id: "main", title: "Notes", component: () => <p data-testid="notes">notes</p>, needsSession: false })),
+      );
+      try {
+        render(<App />);
+        await teleport();
+        await emit({ kind: "output", data: "aGk=" });
+        await openBeside();
+        // The Pager's pane has the keyboard, so Notes goes below it.
+        fireEvent.contextMenu(await screen.findByRole("tab", { name: "Notes" }));
+        fireEvent.click(await screen.findByRole("menuitem", { name: "Open below Pager" }));
+
+        expect(await screen.findByTestId("notes")).toBeVisible();
+        expect(screen.getByTestId("pager")).toBeVisible();
+        expect(screen.getByTestId("terminal")).toBeVisible();
+        expect(screen.getAllByRole("separator").map((one) => one.getAttribute("aria-orientation"))).toEqual([
+          "vertical",
+          "horizontal",
+        ]);
+        expect(closePty).not.toHaveBeenCalled();
+
+        // Closing one gives its room back; the other stays beside the terminal.
+        fireEvent.click(within(screen.getByTestId("pager").closest(".stage-pane")! as HTMLElement).getByRole("button", { name: "Back to the stage" }));
+        expect(screen.getAllByRole("separator")).toHaveLength(1);
+        expect(screen.getByTestId("notes")).toBeVisible();
+      } finally {
+        registry.unload("notes");
+      }
     });
 
     it("comes back as it was left, and goes back to the stage from there", async () => {

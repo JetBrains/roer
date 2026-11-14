@@ -28,7 +28,7 @@ import { removeExtension, setExtensionEnabled, useExternalExtensions } from "./e
 import { confirmAction } from "./lib/confirm";
 import { serveTools } from "./extensions/tools";
 import { useBadges, useStageTabs } from "./extensions/registry";
-import { TabBody } from "./extensions/TabBody";
+import { TabBody, type TabBodyProps } from "./extensions/TabBody";
 import { WorkspaceSections } from "./extensions/WorkspaceSections";
 import type { Scope } from "./extensions/api";
 import { FileView } from "./FileView";
@@ -126,15 +126,31 @@ import {
   type Only,
 } from "./lib/stripLayout";
 import {
-  closeSide,
+  boundOf,
+  boundSide,
+  closePane,
+  dropPane,
+  focusOn,
+  hasPane,
   loadSplit,
-  openSide,
+  neighbourOf,
+  openPane,
+  paneOfSide,
+  placeLabel,
+  placeOf,
+  placePane,
+  prune,
   ratioAt,
+  rects,
   saveSplit,
+  sessionOfPane,
+  sessionSide,
+  setRatio,
   settle,
-  sideFirst,
   SPLIT_PLACES,
-  splitAxis,
+  STAGE,
+  type Divider,
+  type Rect,
   type Split,
   type SplitPlace,
 } from "./lib/split";
@@ -178,6 +194,37 @@ interface StripTab {
 }
 
 /** The side pane's place buttons: the panel the icon fills is where it goes. */
+/** A tab that belongs to a session other than the stage's: the session as
+ * the tab sees it is worked out here, as the stage's is in `App`. */
+function BoundTab({
+  staged,
+  live,
+  changed,
+  ...body
+}: Omit<TabBodyProps, "session"> & { staged: OpenRequest; live: SessionInfo | undefined; changed: FilesChanged | null }) {
+  const session = useStageSession(staged, {
+    agent: live ? runningAgent(live) : undefined,
+    busy: live?.state === "working",
+    changed,
+    liveCwd: live?.cwd,
+  });
+  return <TabBody {...body} session={session} />;
+}
+
+const lowerFirst = (text: string): string => text.charAt(0).toLowerCase() + text.slice(1);
+
+/** A pane's or divider's place on the stage, from its fractions. */
+const rectStyle = (rect: Rect): React.CSSProperties => ({
+  left: `${rect.x * 100}%`,
+  top: `${rect.y * 100}%`,
+  width: `${rect.w * 100}%`,
+  height: `${rect.h * 100}%`,
+});
+const dividerStyle = (divider: Divider): React.CSSProperties =>
+  divider.axis === "row"
+    ? { left: `${divider.at * 100}%`, top: `${divider.box.y * 100}%`, height: `${divider.box.h * 100}%` }
+    : { top: `${divider.at * 100}%`, left: `${divider.box.x * 100}%`, width: `${divider.box.w * 100}%` };
+
 const PLACE_ICONS: Record<SplitPlace, typeof PanelLeft> = {
   left: PanelLeft,
   right: PanelRight,
@@ -270,8 +317,11 @@ export function App() {
   const [session, setSession] = useState<SessionView | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [tabs, setTabs] = useState<Tabs>(noTabs);
-  // A tab beside the stage, if one is: see lib/split.ts.
+  // The panes beside the stage, if there are any: see lib/split.ts.
   const [split, setSplit] = useState<Split | null>(() => loadSplit());
+  // The live sessions in panes of their own, by pane: what each one's
+  // terminal attaches, and the name its header shows.
+  const [sideSessions, setSideSessions] = useState<ReadonlyMap<string, OpenRequest>>(() => new Map());
   const [finding, setFinding] = useState(false);
   const [showingShortcuts, setShowingShortcuts] = useState(false);
   const [showingExtensions, setShowingExtensions] = useState(false);
@@ -416,6 +466,8 @@ export function App() {
     logLine(`stage: roer ${next.args.join(" ")}${next.cwd ? ` in ${next.cwd}` : ""}${next.pane ? ` (pane ${next.pane})` : ""}`);
     stagedRef.current = next;
     setNotice(null);
+    // Attaching the same session twice would throw the side pane's client out.
+    if (next.pane) setSplit((current) => dropPane(current, sessionSide(next.pane!)));
     setSession(next);
     // Opening a session is what the list was for; showing it is the point,
     // not another thing to switch to once it's found.
@@ -762,9 +814,7 @@ export function App() {
    * pane beside it; the side tab itself is focused where it is (`settle`). */
   const showTab = useCallback((tabId: string) => {
     setTabs((current) => activate(current, tabId));
-    setSplit((current) =>
-      current && current.side !== tabId && current.focus !== "main" ? { ...current, focus: "main" } : current,
-    );
+    setSplit((current) => (hasPane(current, tabId) ? current : focusOn(current, STAGE)));
   }, []);
 
   const activateTab = useCallback(
@@ -785,32 +835,54 @@ export function App() {
     if (next.tabs !== tabs) setTabs(next.tabs);
     if (next.split !== split) setSplit(next.split);
   }, [tabs, split]);
-  // A file closed, or gone with its session, takes the split with it.
+  // A file closed, or gone with its session, takes its pane with it.
   useEffect(() => {
-    if (split?.side.startsWith("file:") && !tabs.files.some((file) => tabId(file) === split.side)) setSplit(null);
-  }, [split, tabs.files]);
+    setSplit((current) =>
+      prune(current, (id) => !id.startsWith("file:") || tabs.files.some((file) => tabId(file) === id)),
+    );
+  }, [tabs.files]);
   // Once a drag has ended, not on every pixel of it.
   useEffect(() => {
     if (!splitResizing) saveSplit(split);
   }, [split, splitResizing]);
 
+  /** Puts `id` in a pane of its own at `place` of the pane with the keyboard.
+   * A tab that needs a session, opened next to a pane about one, belongs to
+   * that session rather than following the stage's. */
   const openBeside = (id: string, place?: SplitPlace) => {
     opened(id);
-    const next = openSide(tabs, split, id, place);
+    const focus = shownSplit?.focus ?? STAGE;
+    const of = sessionOfPane(focus);
+    const leaf = of && of !== session?.pane && allTabs.find((tab) => tab.tabId === id)?.needsSession ? boundSide(of, id) : id;
+    const next = openPane(tabs, split, leaf, place, focus);
     setTabs(next.tabs);
     setSplit(next.split);
   };
-  const closeBeside = () => {
-    // A split remembered from the last launch never went through `openBeside`.
-    if (split) opened(split.side);
-    const next = closeSide(tabs, split);
+  /** Moves `id`'s pane to `place` of the other half of its split. */
+  const moveBeside = (id: string, place: SplitPlace) => setSplit((current) => placePane(current, id, place));
+  /** Puts a live session in a pane of its own. The one on the stage is not
+   * offered: one session in two panes would be one client too many. */
+  const openSessionBeside = (request: OpenRequest, place?: SplitPlace) => {
+    const pane = request.pane;
+    if (!pane || pane === session?.pane) return;
+    setSideSessions((current) => new Map(current).set(pane, request));
+    openBeside(sessionSide(pane), place);
+  };
+  /** A session in a pane ended or was released: the pane goes with it. */
+  const handleSideExit = useCallback((pane: string) => {
+    // The tabs that belong to it go with it.
+    setSplit((current) => prune(dropPane(current, sessionSide(pane)), (id) => boundOf(id)?.pane !== pane));
+  }, []);
+  const closeBeside = (id: string) => {
+    // A pane remembered from the last launch never went through `openBeside`.
+    opened(id);
+    const next = closePane(tabs, split, id);
     setTabs(next.tabs);
     setSplit(next.split);
   };
-  const focusPane = (focus: Split["focus"]) =>
-    setSplit((current) => (current && current.focus !== focus ? { ...current, focus } : current));
+  const focusPane = (id: string) => setSplit((current) => focusOn(current, id));
 
-  const handleSplitResizeStart = (e: React.PointerEvent<HTMLDivElement>) => {
+  const handleSplitResizeStart = (divider: Divider) => (e: React.PointerEvent<HTMLDivElement>) => {
     const body = stageBodyRef.current;
     // The primary button only: a right-click on the divider is not a drag.
     if (!body || !split || e.button !== 0) return;
@@ -819,13 +891,12 @@ export function App() {
     const handle = e.currentTarget;
     const pointer = e.pointerId;
     handle.setPointerCapture?.(pointer);
-    const { place } = split;
-    const row = splitAxis(place) === "row";
+    const row = divider.axis === "row";
     setSplitResizing(true);
     const handleMove = (ev: PointerEvent) => {
       const rect = body.getBoundingClientRect();
       const at = row ? (ev.clientX - rect.left) / rect.width : (ev.clientY - rect.top) / rect.height;
-      setSplit((current) => (current ? { ...current, ratio: ratioAt(place, at) } : current));
+      setSplit((current) => setRatio(current, divider.path, ratioAt(divider.axis, divider.box, at)));
     };
     const handleUp = () => {
       setSplitResizing(false);
@@ -848,13 +919,21 @@ export function App() {
       <ContextMenuContent>
         {/* A tab out of reach without a session is not put beside the terminal either. */}
         {(isCore(id) || (allTabs.find((tab) => tab.tabId === id)?.needsSession && !session) ? [] : SPLIT_PLACES)
-          .filter(({ place }) => split?.side !== id || split.place !== place)
-          .map(({ place, label }) => (
-            <ContextMenuItem key={place} onSelect={() => openBeside(id, place)}>
-              {split?.side === id ? "Move" : "Open"} {label.toLowerCase()}
-            </ContextMenuItem>
-          ))}
-        {split?.side === id ? <ContextMenuItem onSelect={closeBeside}>Back to the stage</ContextMenuItem> : null}
+          .filter(({ place }) => !hasPane(shownSplit, id) || placeOf(shownSplit, id) !== place)
+          .map(({ place }) =>
+            hasPane(shownSplit, id) ? (
+              <ContextMenuItem key={place} onSelect={() => moveBeside(id, place)}>
+                Move {lowerFirst(placeLabel(place, paneName(neighbourOf(shownSplit, id))))}
+              </ContextMenuItem>
+            ) : (
+              <ContextMenuItem key={place} onSelect={() => openBeside(id, place)}>
+                Open {lowerFirst(placeLabel(place, paneName(shownSplit?.focus ?? STAGE)))}
+              </ContextMenuItem>
+            ),
+          )}
+        {hasPane(shownSplit, id) ? (
+          <ContextMenuItem onSelect={() => closeBeside(id)}>Back to the stage</ContextMenuItem>
+        ) : null}
         {/* A tab that needs a session takes the stage's along, and stays on it there. */}
         {inDesktop() && extensionTabs.some((tab) => tab.tabId === id && (!tab.needsSession || session?.pane)) ? (
           <ContextMenuItem
@@ -909,10 +988,39 @@ export function App() {
 
   // What is beside the stage: an extension's tab, or a file. An extension's
   // that has not loaded (yet) leaves the stage whole until it does.
-  const sideExt = split ? extensionTabs.find((tab) => tab.tabId === split.side) : undefined;
-  const sideFile = split ? tabs.files.find((file) => tabId(file) === split.side) : undefined;
-  const beside = split && (sideExt || sideFile) ? split : null;
-  const mainFocused = !beside || beside.focus === "main";
+  const paneExt = (id: string) => extensionTabs.find((tab) => tab.tabId === id);
+  const paneFile = (id: string) => tabs.files.find((file) => tabId(file) === id);
+  const paneLive = (id: string) => {
+    const pane = paneOfSide(id);
+    return pane === undefined ? undefined : sideSessions.get(pane);
+  };
+  /** The session a bound tab belongs to, while it is on screen somewhere. */
+  const boundSession = (id: string): OpenRequest | undefined => {
+    const pane = boundOf(id)?.pane;
+    if (pane === undefined) return undefined;
+    return sideSessions.get(pane) ?? (session?.pane === pane ? session : undefined);
+  };
+  // The panes that can be drawn now: one whose extension has not loaded
+  // (yet) leaves its room to the others until it does.
+  const shownSplit = prune(split, (id) => {
+    const bound = boundOf(id);
+    if (bound) return !!(paneExt(bound.tab) && boundSession(id));
+    return !!(paneExt(id) || paneFile(id) || paneLive(id));
+  });
+  const layout = shownSplit ? rects(shownSplit.root) : null;
+  const mainFocused = !shownSplit || shownSplit.focus === STAGE;
+  /** A pane as menus and headers name it; null is several panes. */
+  const paneName = (id: string | null | undefined): string => {
+    if (!id) return "the others";
+    if (id === STAGE) return "the terminal";
+    const bound = boundOf(id);
+    if (bound) {
+      const of = boundSession(id);
+      return `${paneExt(bound.tab)?.title ?? ""} · ${of?.title ?? bound.pane}`;
+    }
+    const live = paneLive(id);
+    return paneExt(id)?.title ?? (paneFile(id) ? tabName(paneFile(id)!) : live ? (live.title ?? live.pane ?? "") : "");
+  };
 
   /** A tab's Cmd+number, for its tooltip: the first nine in the strip have one. */
   const number = (tabId: string): string | undefined => {
@@ -1295,8 +1403,9 @@ export function App() {
     useCallback((event: KeyboardEvent) => {
       const step = fontStep(event);
       if (step === null) return;
-      const side = splitRef.current?.focus === "side" ? splitRef.current.side : null;
-      stepFontSize((side ?? tabsRef.current.active) === "terminal" ? "terminal" : "code", step);
+      const focus = splitRef.current?.focus;
+      const pane = focus && focus !== STAGE ? focus : tabsRef.current.active;
+      stepFontSize(pane === "terminal" || paneOfSide(pane) !== undefined ? "terminal" : "code", step);
     }, []),
   );
   useHotkey(
@@ -1373,7 +1482,7 @@ export function App() {
   const placeTab = (id: string, keys: readonly string[] | null) => {
     keepOnly(setPlaces(onlyTabs, id, keys));
     // A tab not shown here is not beside the stage here either.
-    if (here && keys?.length && !keys.includes(here) && split?.side === id) setSplit(null);
+    if (here && keys?.length && !keys.includes(here)) setSplit((current) => dropPane(current, id));
   };
   /** Everywhere the tab is now, but here. */
   const hideHere = (id: string) => {
@@ -1771,6 +1880,7 @@ export function App() {
             folderInView={browser.folderInView}
             projects={browser.projectsInView}
             onOpen={show}
+            onOpenBeside={openSessionBeside}
             onAddProject={browser.projects.length > 0 ? () => browser.openAddProject() : undefined}
           />
         </WorkspaceSidebar>
@@ -1821,7 +1931,7 @@ export function App() {
                   );
                 }
                 const badge = badges.get(tab.tabId);
-                const beside = split?.side === tab.tabId;
+                const beside = hasPane(shownSplit, tab.tabId);
                 return besideMenu(
                   tab.tabId,
                   <button
@@ -1860,7 +1970,7 @@ export function App() {
                   // buttons; the wrapper is what looks like one tab.
                   <span
                     className={
-                      (tabs.active === id ? "tab-wrap on" : split?.side === id ? "tab-wrap beside" : "tab-wrap") +
+                      (tabs.active === id ? "tab-wrap on" : hasPane(shownSplit, id) ? "tab-wrap beside" : "tab-wrap") +
                       (dragging === id ? " dragging" : "")
                     }
                     {...dragProps(id)}
@@ -1917,20 +2027,17 @@ export function App() {
 
           <div
             ref={stageBodyRef}
-            className={
-              beside
-                ? `stage-body split ${splitAxis(beside.place)}${sideFirst(beside.place) ? " side-first" : ""}${splitResizing ? " resizing" : ""}`
-                : "stage-body"
-            }
+            className={shownSplit ? `stage-body split${splitResizing ? " resizing" : ""}` : "stage-body"}
           >
-          {/* Always this wrapper, split or not: a new parent would remount the
-            terminal, and with it its PTY. */}
+          {/* Always this wrapper, split or not, and every pane beside it a
+            sibling placed by style rather than nested as the tree is: a new
+            parent would remount a terminal, and with it its PTY. */}
           <div
-            className={beside && beside.focus === "main" ? "stage-pane focused" : "stage-pane"}
-            style={beside ? { flexBasis: `${beside.ratio * 100}%` } : undefined}
-            onPointerDownCapture={() => focusPane("main")}
+            className={shownSplit?.focus === STAGE ? "stage-pane focused" : "stage-pane"}
+            style={layout ? rectStyle(layout.panes.find((pane) => pane.id === STAGE)!.rect) : undefined}
+            onPointerDownCapture={() => focusPane(STAGE)}
             // A drop of files focuses the terminal without a press on it.
-            onFocusCapture={() => focusPane("main")}
+            onFocusCapture={() => focusPane(STAGE)}
           >
             {session ? (
               <TerminalView
@@ -1996,6 +2103,7 @@ export function App() {
                 folderInView={browser.folderInView}
                 worktrees={browser.worktrees}
                 onOpen={show}
+                onOpenBeside={openSessionBeside}
               />
               {/* Docked under the list rather than at its end, where a long
                 list of sessions would put them out of sight. */}
@@ -2019,7 +2127,7 @@ export function App() {
               next. The terminal keeps its size too, so nothing reflows when
               the diff is on top of it. */}
             {extensionTabs
-              .filter((tab) => everOpened.has(tab.tabId) && tab !== sideExt)
+              .filter((tab) => everOpened.has(tab.tabId) && !hasPane(shownSplit, tab.tabId))
               .map((tab) => (
                 <div key={tab.tabId} className="overlay ext-tab" hidden={tabs.active !== tab.tabId}>
                   <TabBody
@@ -2039,7 +2147,7 @@ export function App() {
 
             {/* Open is mounted, for the same reason: a file tab keeps its scroll
               position while you are away in the terminal. */}
-            {tabs.files.filter((file) => file !== sideFile).map((file) => {
+            {tabs.files.filter((file) => !hasPane(shownSplit, tabId(file))).map((file) => {
               const id = tabId(file);
               return (
                 <div key={id} className="overlay" hidden={tabs.active !== id}>
@@ -2055,75 +2163,118 @@ export function App() {
             })}
           </div>
 
-          {beside ? (
-            <>
-              <div
-                className="split-divider"
-                role="separator"
-                aria-orientation={splitAxis(beside.place) === "row" ? "vertical" : "horizontal"}
-                title="Drag to resize, double-click to even out"
-                onPointerDown={handleSplitResizeStart}
-                onDoubleClick={() => setSplit((current) => (current ? { ...current, ratio: 0.5 } : current))}
-              />
-              <div
-                className={beside.focus === "side" ? "stage-pane side focused" : "stage-pane side"}
-                onPointerDownCapture={() => focusPane("side")}
-              >
-                <div className="split-head">
-                  <span className="split-title">{sideExt ? sideExt.title : sideFile ? tabName(sideFile) : ""}</span>
-                  {SPLIT_PLACES.map(({ place, label }) => {
-                    const Glyph = PLACE_ICONS[place];
-                    return (
-                      <button
-                        key={place}
-                        type="button"
-                        className={beside.place === place ? "split-tool on" : "split-tool"}
-                        title={label}
-                        aria-label={label}
-                        aria-pressed={beside.place === place}
-                        onClick={() => openBeside(beside.side, place)}
-                      >
-                        <Glyph size={14} />
-                      </button>
-                    );
-                  })}
-                  <button
-                    type="button"
-                    className="split-tool"
-                    title="Back to the stage"
-                    aria-label="Back to the stage"
-                    onClick={closeBeside}
-                  >
-                    ×
-                  </button>
-                </div>
-                <div className="split-body ext-tab">
-                  {sideExt ? (
-                    <TabBody
-                      entry={sideExt}
-                      session={stageSession}
-                      scope={scope}
-                      active
-                      focused={beside.focus === "side"}
-                      openFile={openInTab}
-                      activateTab={activateTab}
-                      startSession={startSession}
-                      sessions={agentSessions}
-                      showSession={attach}
-                    />
-                  ) : sideFile ? (
-                    <FileView
-                      root={sideFile.root}
-                      path={sideFile.path}
-                      line={sideFile.line}
-                      active
-                      changed={changed}
-                    />
-                  ) : null}
-                </div>
-              </div>
-            </>
-          ) : null}
+          {layout?.dividers.map((divider) => (
+            <div
+              key={`divider:${divider.path}`}
+              className={`split-divider ${divider.axis}`}
+              style={dividerStyle(divider)}
+              role="separator"
+              aria-orientation={divider.axis === "row" ? "vertical" : "horizontal"}
+              title="Drag to resize, double-click to even out"
+              onPointerDown={handleSplitResizeStart(divider)}
+              onDoubleClick={() => setSplit((current) => setRatio(current, divider.path, 0.5))}
+            />
+          ))}
+
+          {/* In the order of their ids, not of the tree: a pane added or moved
+            leaves the others where they are in the DOM, which an iframe needs
+            to keep its page and a terminal its PTY. */}
+          {shownSplit && layout
+            ? layout.panes
+                .filter((pane) => pane.id !== STAGE)
+                .sort((a, b) => (a.id < b.id ? -1 : 1))
+                .map(({ id, rect }) => {
+                  const bound = boundOf(id);
+                  const ext = paneExt(bound?.tab ?? id);
+                  const file = paneFile(id);
+                  const live = paneLive(id);
+                  const of = boundSession(id);
+                  const leaves = live || bound;
+                  const focused = shownSplit.focus === id;
+                  const neighbour = paneName(neighbourOf(shownSplit, id));
+                  const place = placeOf(shownSplit, id);
+                  return (
+                    <div
+                      key={id}
+                      className={focused ? "stage-pane side focused" : "stage-pane side"}
+                      style={rectStyle(rect)}
+                      onPointerDownCapture={() => focusPane(id)}
+                    >
+                      <div className="split-head">
+                        <span className="split-title">{paneName(id)}</span>
+                        {SPLIT_PLACES.map(({ place: to }) => {
+                          const Glyph = PLACE_ICONS[to];
+                          const label = placeLabel(to, neighbour);
+                          return (
+                            <button
+                              key={to}
+                              type="button"
+                              className={place === to ? "split-tool on" : "split-tool"}
+                              title={label}
+                              aria-label={label}
+                              aria-pressed={place === to}
+                              onClick={() => moveBeside(id, to)}
+                            >
+                              <Glyph size={14} />
+                            </button>
+                          );
+                        })}
+                        <button
+                          type="button"
+                          className="split-tool"
+                          title={leaves ? "Close this pane" : "Back to the stage"}
+                          aria-label={leaves ? "Close this pane" : "Back to the stage"}
+                          onClick={() => closeBeside(id)}
+                        >
+                          ×
+                        </button>
+                      </div>
+                      <div className="split-body ext-tab">
+                        {bound && ext && of ? (
+                          <BoundTab
+                            staged={of}
+                            live={browser.allSessions.find((one) => one.pane === bound.pane)}
+                            changed={changed}
+                            entry={ext}
+                            scope={scope}
+                            active
+                            focused={focused}
+                            openFile={openInTab}
+                            activateTab={activateTab}
+                            startSession={startSession}
+                            sessions={agentSessions}
+                            showSession={attach}
+                          />
+                        ) : ext ? (
+                          <TabBody
+                            entry={ext}
+                            session={stageSession}
+                            scope={scope}
+                            active
+                            focused={focused}
+                            openFile={openInTab}
+                            activateTab={activateTab}
+                            startSession={startSession}
+                            sessions={agentSessions}
+                            showSession={attach}
+                          />
+                        ) : file ? (
+                          <FileView root={file.root} path={file.path} line={file.line} active changed={changed} />
+                        ) : live?.pane ? (
+                          <TerminalView
+                            args={live.args}
+                            cwd={live.cwd}
+                            onExit={() => handleSideExit(live.pane!)}
+                            onOpenFile={openLinkedFile}
+                            active={focused}
+                            shown
+                          />
+                        ) : null}
+                      </div>
+                    </div>
+                  );
+                })
+            : null}
           </div>
         </section>
 
