@@ -109,7 +109,7 @@ export function TabPage({ tabId, pinned: pinnedAtFirst = null }: { tabId: string
   });
   const sessions: AgentSession[] = (live ?? []).flatMap((one) => {
     const agent = runningAgent(one);
-    return agent ? [{ pane: one.pane, id: one.id, agent, cwd: one.cwd }] : [];
+    return agent ? [{ pane: one.pane, id: one.id, agent, cwd: one.cwd, busy: one.state === "working" }] : [];
   });
 
   useEffect(() => {
@@ -413,7 +413,7 @@ export function TabPage({ tabId, pinned: pinnedAtFirst = null }: { tabId: string
               </button>
             </div>
             <div className="split-body">
-              <FileView root={file.root} path={file.path} line={file.line} branch={file.branch} active changed={changed} />
+              <FileView root={file.root} path={file.path} line={file.line} branch={file.branch} active changed={changed} session={session} sessions={sessions} />
             </div>
           </div>
         ) : null}

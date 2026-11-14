@@ -8,6 +8,7 @@
  * This component owns only the one piece of state nothing outside it cares
  * about — the line saying a click reached the agent.
  */
+import { CommentScope } from "./Commentable";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { AppWindow } from "lucide-react";
 
@@ -97,6 +98,21 @@ export function GenerativeUITab({
   // resolution `DiffBrowserView`/`GoToFile` use, so bundles always come from
   // the project the pane is actually sitting in.
   const [dir, setDir] = useState<string | undefined>(cwd);
+  // The repository the panel's session is in, which a view's threads are kept with.
+  const [repo, setRepo] = useState<string | null>(null);
+  useEffect(() => {
+    if (!dir) {
+      setRepo(null);
+      return;
+    }
+    let cancelled = false;
+    void gitRoot(dir)
+      .catch(() => null)
+      .then((root) => !cancelled && setRepo(root));
+    return () => {
+      cancelled = true;
+    };
+  }, [dir]);
   // An agent's hooks hand it the panel's clicks only at its own steps, so a
   // click made while it sits at its prompt would wait for the person's next
   // message. One nudge starts its turn; more before it does would queue
@@ -427,13 +443,16 @@ export function GenerativeUITab({
       ) : null}
 
       {live && surface ? (
-        <GenerativeSurface
-          surface={surface}
-          dataModel={dataModel}
-          onSetValue={handleSetValue}
-          onAction={handleAction}
-          onOpenFile={handleOpenFile}
-        />
+        // A `Commentable`'s threads are kept with the repository the panel is in, under this surface.
+        <CommentScope root={repo} view={`ui:${surfaceId}`}>
+          <GenerativeSurface
+            surface={surface}
+            dataModel={dataModel}
+            onSetValue={handleSetValue}
+            onAction={handleAction}
+            onOpenFile={handleOpenFile}
+          />
+        </CommentScope>
       ) : (
         <div className="gen-panel-empty gen-text muted">
           <p>

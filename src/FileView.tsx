@@ -1,4 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import type { Session } from "./extensions/api";
+import { ThreadCards, ThreadComposer, useClaimSessions, useThreadSender } from "./Threads";
+import { useFileThreads, type LiveSession, type Thread } from "./lib/threads";
 import { Spans } from "./CodeLine";
 import { Markdown } from "./Markdown";
 import { Picture } from "./Picture";
@@ -64,7 +67,16 @@ export interface FileViewProps {
   /** The last thing a worktree watch reported, so an agent's edit shows
    * without the tab having to be left and come back to. */
   changed?: FilesChanged | null;
+  /** The stage's session: a new thread goes to it when it works in this file's worktree, or no other session does. */
+  session?: Session | null;
+  /** The live sessions an agent runs in: each thread is with one of them, and everything said in it goes there. */
+  sessions?: readonly LiveSession[];
 }
+
+const NO_SESSIONS: readonly LiveSession[] = [];
+
+/** Height to assume for a thread under a line until it has been drawn and measured. */
+const GUESS_NOTE = 120;
 
 interface Line {
   no: number;
@@ -111,7 +123,7 @@ async function marksFor(root: string, path: string, branch: string | undefined, 
  * another tab is on top — so the scroll position and the colouring survive a
  * trip to the terminal.
  */
-export function FileView({ root, path, line, branch, active, changed }: FileViewProps) {
+export function FileView({ root, path, line, branch, active, changed, session, sessions = NO_SESSIONS }: FileViewProps) {
   const [file, setFile] = useState<FileText | null>(null);
   /** A picture's bytes, base64, read instead of its text: null when it is gone. */
   const [picture, setPicture] = useState<string | null | undefined>(undefined);
@@ -314,6 +326,119 @@ export function FileView({ root, path, line, branch, active, changed }: FileView
     return { from, to };
   }, [at, changes, rows]);
 
+  // Threads on the file's lines, each drawn under its last line like a comment in the diff.
+  const threads = useFileThreads(root, path, branch);
+  const sender = useThreadSender({ stage: session, sessions });
+  useClaimSessions(threads, sessions);
+  /** The lines a new comment is being written on; null while none is. Shift-click another line's button to make it
+   * a range. */
+  const [composing, setComposing] = useState<{ from: number; to: number } | null>(null);
+  useEffect(() => setComposing(null), [branch, path, root]);
+  const lineAnchor = (thread: Thread) =>
+    thread.anchors.find((a): a is Extract<Thread["anchors"][number], { kind: "line" }> => a.kind === "line" && a.path === path);
+  const rangeName = (from: number, to: number) => (to > from ? `lines ${from}–${to}` : `line ${from}`);
+  const threadName = (thread: Thread) => {
+    const a = lineAnchor(thread);
+    return a ? rangeName(a.line, a.end ?? a.line) : path;
+  };
+  const pickLine = (no: number, extend: boolean) =>
+    setComposing((current) =>
+      extend && current ? { from: Math.min(current.from, no), to: Math.max(current.to, no, current.from) } : { from: no, to: no },
+    );
+
+  /** What sits under each row: the threads that end on its line, and the comment being written there. */
+  const under = useMemo(() => {
+    const at = new Map<number, { threads: Thread[]; composing: boolean }>();
+    const rowFor = (no: number) => rowOfLine[Math.min(Math.max(no, 1), rowOfLine.length) - 1];
+    for (const thread of threads) {
+      const a = lineAnchor(thread);
+      const row = a ? rowFor(a.end ?? a.line) : undefined;
+      if (row === undefined) continue;
+      const slot = at.get(row) ?? { threads: [], composing: false };
+      slot.threads.push(thread);
+      at.set(row, slot);
+    }
+    if (composing !== null) {
+      const row = rowFor(composing.to);
+      if (row !== undefined) at.set(row, { threads: at.get(row)?.threads ?? [], composing: true });
+    }
+    return at;
+    // `lineAnchor` reads only `path`.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [composing, path, rowOfLine, threads]);
+
+  /** The lines a thread (open) or the comment being written is about, marked in the gutter. */
+  const marked = useMemo(() => {
+    const on = new Set<number>();
+    const mark = (from: number, to: number) => {
+      for (let no = from; no <= to; no += 1) on.add(no);
+    };
+    for (const thread of threads) {
+      const a = lineAnchor(thread);
+      if (a && thread.state === "open") mark(a.line, a.end ?? a.line);
+    }
+    if (composing) mark(composing.from, composing.to);
+    return on;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [composing, path, threads]);
+
+  // Rows are all one height, but what sits under them is not: each block's height, measured once it is drawn.
+  const [measured, setMeasured] = useState<ReadonlyMap<number, number>>(new Map());
+  const anchors = useMemo(() => [...under.keys()].sort((a, b) => a - b), [under]);
+  const extra = (row: number) => measured.get(row) ?? GUESS_NOTE;
+  /** Where a row starts, the blocks above it included. */
+  const rowTop = (row: number) => {
+    let y = row * lineHeight;
+    for (const a of anchors) {
+      if (a >= row) break;
+      y += extra(a);
+    }
+    return y;
+  };
+  const total = rows.length * lineHeight + anchors.reduce((sum, a) => sum + extra(a), 0);
+  /** The row at height `y`: a block counts as its row's. */
+  const rowAt = (y: number) => {
+    let shift = 0;
+    for (const a of anchors) {
+      if (y < (a + 1) * lineHeight + shift) break;
+      shift += extra(a);
+    }
+    return Math.max(0, Math.min(rows.length, Math.floor((y - shift) / lineHeight)));
+  };
+
+  const linesRef = useRef<HTMLDivElement>(null);
+  const measureNotes = useCallback(() => {
+    const blocks = linesRef.current?.querySelectorAll<HTMLElement>(".file-notes[data-row]") ?? [];
+    setMeasured((last) => {
+      let next: Map<number, number> | null = null;
+      for (const block of blocks) {
+        const row = Number(block.dataset.row);
+        const h = block.offsetHeight;
+        if (h > 0 && last.get(row) !== h) (next ??= new Map(last)).set(row, h);
+      }
+      return next ?? last;
+    });
+  }, []);
+  useLayoutEffect(measureNotes);
+  // A card grows as a reply box opens or an answer arrives: measured again then.
+  useEffect(() => {
+    const lines = linesRef.current;
+    if (!lines || typeof ResizeObserver === "undefined") return;
+    const watch = new ResizeObserver(measureNotes);
+    watch.observe(lines);
+    return () => watch.disconnect();
+  }, [measureNotes, file, mode, error]);
+
+  const comment = (range: { from: number; to: number }, text: string) => {
+    const code = lines.slice(range.from - 1, range.to).map((one) => one.text).join("\n");
+    sender.start({
+      root,
+      anchors: [{ kind: "line", path, line: range.from, ...(range.to > range.from ? { end: range.to } : {}), code, ...(branch ? { branch } : {}) }],
+      text,
+    });
+    setComposing(null);
+  };
+
   /** The viewport, read from the box rather than watched: a hidden tab has
    * no size, so this is taken when the tab comes to the front. */
   const measure = useCallback(() => {
@@ -355,11 +480,13 @@ export function FileView({ root, path, line, branch, active, changed }: FileView
     // Clamped here rather than by reading `scrollTop` back: every row is the
     // same height, so the furthest the box can scroll is known, and the
     // window must be drawn for the position it really ends up at.
-    const furthest = Math.max(0, rows.length * lineHeight - box.clientHeight);
-    const middle = (rowOfLine[line - 1] ?? line - 1) * lineHeight - box.clientHeight / 2;
+    const furthest = Math.max(0, total - box.clientHeight);
+    const middle = rowTop(rowOfLine[line - 1] ?? line - 1) - box.clientHeight / 2;
     const target = Math.min(furthest, Math.max(0, middle));
     box.scrollTop = target;
     setTop(target);
+    // `rowTop` and `total` follow `rowOfLine` and the blocks; a block measured later must not scroll again.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active, line, lineHeight, lines.length, path, root, rowOfLine, rows.length]);
 
 
@@ -371,30 +498,27 @@ export function FileView({ root, path, line, branch, active, changed }: FileView
       return;
     event.preventDefault();
     // From where the view is before the keys have been used, so the first press finds the change nearest below.
-    const seen = Math.floor(box.scrollTop / lineHeight);
+    const seen = rowAt(box.scrollTop);
     const next =
       at >= 0
         ? Math.min(changes.length - 1, Math.max(0, at + delta))
         : delta === 1
           ? Math.max(0, changes.findIndex((row) => row >= seen))
-          : Math.max(0, changes.map((row) => row < seen + Math.floor(box.clientHeight / lineHeight)).lastIndexOf(true));
+          : Math.max(0, changes.map((row) => row < rowAt(box.scrollTop + box.clientHeight)).lastIndexOf(true));
     setAt(next);
-    const from = changes[next] * lineHeight;
-    const to = (changes[next + 1] ?? rows.length) * lineHeight;
+    const from = rowTop(changes[next]);
+    const to = rowTop(changes[next + 1] ?? rows.length);
     // Nearest, as the diff scrolls to a change: left alone when it is already in view.
     if (from < box.scrollTop || to > box.scrollTop + box.clientHeight) {
-      const target = Math.max(0, Math.min(from - box.clientHeight / 3, rows.length * lineHeight - box.clientHeight));
+      const target = Math.max(0, Math.min(from - box.clientHeight / 3, total - box.clientHeight));
       box.scrollTop = target;
       setTop(target);
     }
   };
 
   const view = height > 0 ? height : lineHeight * FIRST_SCREEN;
-  const first = Math.max(0, Math.floor(top / lineHeight) - OVERSCAN);
-  const last = Math.min(
-    rows.length,
-    Math.ceil((top + view) / lineHeight) + OVERSCAN,
-  );
+  const first = Math.max(0, rowAt(top) - OVERSCAN);
+  const last = Math.min(rows.length, rowAt(top + view) + 1 + OVERSCAN);
   const window_ = rows.slice(first, last);
 
   // The pictures a Markdown file shows, from the worktree it is in.
@@ -505,34 +629,64 @@ export function FileView({ root, path, line, branch, active, changed }: FileView
         >
           {/* One spacer above and one below, so the scrollbar measures the
               whole file while only the window is in the DOM. */}
-          <div style={{ height: first * lineHeight }} />
-          <div className="file-lines">
+          <div style={{ height: rowTop(first) }} />
+          <div className="file-lines" ref={linesRef}>
             {window_.map((one, i) => {
               const row = first + i;
               const kind = one.kind === "removed" ? " del" : one.added ? " add" : "";
               const on = current && row >= current.from && row < current.to ? " current" : "";
+              const below = under.get(row);
+              const inThread = one.kind === "line" && marked.has(one.no) ? " in-thread" : "";
               return (
-                // The first row of the window, whichever that is: a file opened at line 500 never draws line 1 to
-                // measure.
-                <div className={`file-line${kind}${on}`} key={one.kind === "line" ? one.no : `-${row}`} ref={i === 0 ? probeRef : undefined}>
-                  {/* The number lives in an attribute and is drawn by a `::before`, so it is not in the text flow
-                      at all: a selection dragged down the file cannot pick it up and a copy cannot carry it.
-                      `user-select: none` alone stops the highlight but WebKit still serialises what it skipped. */}
-                  <span className="file-no" data-no={one.kind === "line" ? one.no : ""} />
-                  {one.kind === "removed" ? (
-                    // A removed line is not in the file, so it is not in a copy of it either: drawn, not written.
-                    <code className="file-code" data-text={one.text} />
-                  ) : (
-                    <code className="file-code">
-                      <Spans spans={tokens ? toSpans(tokens[one.no - 1] ?? []) : paint(one.text)} />
-                    </code>
-                  )}
-                </div>
+                <Fragment key={one.kind === "line" ? one.no : `-${row}`}>
+                  {/* The first row of the window, whichever that is: a file opened at line 500 never draws line 1
+                      to measure. */}
+                  <div className={`file-line${kind}${on}${inThread}`} ref={i === 0 ? probeRef : undefined}>
+                    {/* The number lives in an attribute and is drawn by a `::before`, so it is not in the text flow
+                        at all: a selection dragged down the file cannot pick it up and a copy cannot carry it.
+                        `user-select: none` alone stops the highlight but WebKit still serialises what it skipped. */}
+                    <span className="file-no" data-no={one.kind === "line" ? one.no : ""}>
+                      {one.kind === "line" ? (
+                        <button
+                          type="button"
+                          className="line-add"
+                          aria-label={`Comment on line ${one.no}`}
+                          title="Comment on this line, for the session's agent; Shift-click another to take in the lines between"
+                          onClick={(event) => pickLine(one.no, event.shiftKey)}
+                        >
+                          +
+                        </button>
+                      ) : null}
+                    </span>
+                    {one.kind === "removed" ? (
+                      // A removed line is not in the file, so it is not in a copy of it either: drawn, not written.
+                      <code className="file-code" data-text={one.text} />
+                    ) : (
+                      <code className="file-code">
+                        <Spans spans={tokens ? toSpans(tokens[one.no - 1] ?? []) : paint(one.text)} />
+                      </code>
+                    )}
+                  </div>
+                  {below ? (
+                    <div className="file-notes" data-row={row}>
+                      <ThreadCards threads={below.threads} sender={sender} name={threadName} />
+                      {below.composing && composing !== null ? (
+                        <ThreadComposer
+                          root={root}
+                          sender={sender}
+                          name={rangeName(composing.from, composing.to)}
+                          onSubmit={(text) => comment(composing, text)}
+                          onCancel={() => setComposing(null)}
+                        />
+                      ) : null}
+                    </div>
+                  ) : null}
+                </Fragment>
               );
             })}
           </div>
           <div
-            style={{ height: Math.max(0, (rows.length - last) * lineHeight) }}
+            style={{ height: Math.max(0, total - rowTop(last)) }}
           />
         </div>
       )}

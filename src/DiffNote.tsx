@@ -45,11 +45,18 @@ export function NoteComposer({
   line,
   onSubmit,
   onCancel,
+  placeholder = "What should change here?",
+  submitLabel = "Comment",
+  label = `Comment on line ${line}`,
 }: {
   /** Which line it is about, for the field's name. */
   line: number;
   onSubmit: (text: string) => void;
   onCancel: () => void;
+  placeholder?: string;
+  submitLabel?: string;
+  /** The field's name; a comment on the line by default. */
+  label?: string;
 }) {
   const [words, setWords] = useState("");
   const field = useRef<HTMLTextAreaElement>(null);
@@ -69,12 +76,12 @@ export function NoteComposer({
   };
 
   return (
-    <div className="note-card composing" role="group" aria-label={`New comment on line ${line}`}>
+    <div className="note-card composing" role="group" aria-label={`New ${label.charAt(0).toLowerCase()}${label.slice(1)}`}>
       <div className="note-card-ask">
         <textarea
           ref={field}
-          aria-label={`Comment on line ${line}`}
-          placeholder="What should change here?"
+          aria-label={label}
+          placeholder={placeholder}
           rows={2}
           value={words}
           onChange={(e) => setWords(e.target.value)}
@@ -82,7 +89,7 @@ export function NoteComposer({
         />
         <div className="gen-wi-actions">
           <button type="button" className="gen-button primary" disabled={!words.trim()} onClick={submit}>
-            Comment
+            {submitLabel}
           </button>
           <button type="button" className="gen-button borderless" onClick={onCancel}>
             Cancel

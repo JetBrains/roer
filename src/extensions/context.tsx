@@ -90,6 +90,8 @@ export interface AgentSession {
   /** "claude", "codex", … */
   agent: string;
   cwd: string;
+  /** Its agent is working rather than waiting for the person, where that is known. */
+  busy?: boolean;
 }
 
 const NO_SESSIONS: readonly AgentSession[] = [];

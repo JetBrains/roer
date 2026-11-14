@@ -177,6 +177,7 @@ interface Session {
 }
 useOpenFile(): (root: string, path: string, line?: number, options?: { branch?: string }) => void; // a file tab; { branch } opens it on the branch a view is about: its worktree, else read only from git
 useActivateTab(): (tabId: string) => void;
+useThreads(pick, deps): Thread[]; // Roer's comment threads (startThread, replyToThread, setThread, …), answered by agents with threads__answer
 useStartSession(): ((cwd: string, prompt: string, options?: { pickAgent?: boolean }) => Promise<boolean>) | null; // a new session on a prompt; pickAgent asks which agent; false if the picker was closed
 useSessions(): readonly { pane: string; id: string; agent: string; cwd: string }[]; // live sessions with an agent, for sendToSession
 useShowSession(): ((pane: string) => void) | null; // puts another live session on the stage
