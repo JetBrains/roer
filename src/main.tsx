@@ -5,10 +5,12 @@ import { TabPage, pinnedOfPage, tabOfPage } from "./TabPage";
 import "./index.css";
 import { logLine, logUncaught } from "./lib/log";
 import { loadSharedStorage } from "./lib/sharedStorage";
+import { shutNativeMenu } from "./lib/nativeMenu";
 import { applyTheme, storedChoice } from "./lib/theme";
 
 applyTheme(storedChoice());
 logUncaught();
+shutNativeMenu();
 logLine(`webview: ${navigator.userAgent}, devicePixelRatio ${window.devicePixelRatio}`);
 
 // A browser page opened for one tab of the stage draws that tab alone.
