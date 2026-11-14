@@ -169,6 +169,15 @@ export function closePane(tabs: Tabs, split: Split | null, id: string): { tabs: 
   return { tabs: sessionOfPane(id) === undefined ? activate(tabs, id) : tabs, split: dropPane(split, id) };
 }
 
+/** Shows `to` where `from` was, keeping its place, size and the keyboard; a
+ * pane `to` already had goes, its neighbour taking the room. */
+export function renamePane(split: Split | null, from: string, to: string): Split | null {
+  if (!split || from === to || !hasPane(split, from) || !canSplit(to)) return split;
+  const root = without(split.root, to) ?? split.root;
+  const renamed = replace(root, from, () => ({ leaf: to }));
+  return settled(renamed, split.focus === from ? to : split.focus);
+}
+
 /** Keeps the panes whose ids pass `keep`: what can be drawn now. */
 export function prune(split: Split | null, keep: (id: string) => boolean): Split | null {
   if (!split) return null;

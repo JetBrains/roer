@@ -11,7 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "./App";
 import { defineExtension } from "./extensions/api";
-import { useActivateTab, useScope, useTabHotkey } from "./extensions/context";
+import { useActivateTab, useScope, useSession, useTabHotkey } from "./extensions/context";
 import { registry } from "./extensions/registry";
 import { fileRead, filesSearch } from "./lib/files";
 import {
@@ -1283,6 +1283,108 @@ describe("App", () => {
     });
   });
 
+  describe("a tab that needs a session", () => {
+    function Who() {
+      return <p data-testid="who">about {useSession()?.pane ?? "nobody"}</p>;
+    }
+
+    beforeEach(() => {
+      vi.mocked(listSessions).mockResolvedValue([
+        { id: "1", session: "roer", pane: "%3", attached: true, cwd: "/Users/test/project", command: "claude" },
+        { id: "2", session: "other", pane: "%9", attached: false, cwd: "/Users/test/other", command: "zsh" },
+      ]);
+      registry.load(
+        "who",
+        defineExtension((roer) => void roer.stage.registerTab({ id: "main", title: "Who", component: Who, needsSession: true })),
+      );
+    });
+    afterEach(() => {
+      registry.unload("who");
+      vi.mocked(listSessions).mockResolvedValue([]);
+    });
+
+    const openMenu = async (name: RegExp) => {
+      const chip = await screen.findByRole("button", { name });
+      fireEvent.keyDown(chip, { key: "Enter" });
+      return chip;
+    };
+
+    /** The other session, opened beside the stage from its row in the sidebar. */
+    const openOtherBeside = async () => {
+      const row = (await screen.findAllByRole("button")).find((one) => one.title.startsWith("other "));
+      fireEvent.contextMenu(row!);
+      fireEvent.keyDown(await screen.findByRole("menuitem", { name: "Open beside" }), { key: "ArrowRight" });
+      fireEvent.click(await screen.findByRole("menuitem", { name: "To the right" }));
+      await waitFor(() => expect(screen.getAllByTestId("terminal")).toHaveLength(2));
+    };
+
+    it("offers only the sessions open in the window", async () => {
+      render(<App />);
+      await teleport();
+      await emit({ kind: "output", data: "aGk=" });
+      fireEvent.click(await screen.findByRole("tab", { name: "Who" }));
+      await openMenu(/^Following roer$/);
+      expect(await screen.findByRole("menuitem", { name: /Pin to roer/ })).toBeInTheDocument();
+      expect(screen.queryByRole("menuitem", { name: /other/ })).not.toBeInTheDocument();
+    });
+
+    it("says whose it is, and stays on a session it is pinned to", async () => {
+      render(<App />);
+      await teleport();
+      await emit({ kind: "output", data: "aGk=" });
+      await openOtherBeside();
+      fireEvent.pointerDown(screen.getAllByTestId("terminal")[0]);
+      fireEvent.click(await screen.findByRole("tab", { name: "Who" }));
+      expect(await screen.findByTestId("who")).toHaveTextContent("about %3");
+
+      await openMenu(/^Following roer$/);
+      fireEvent.click(await screen.findByRole("menuitem", { name: /Pin to other/ }));
+
+      expect(await screen.findByTestId("who")).toHaveTextContent("about %9");
+      expect(screen.getByRole("button", { name: "Pinned to other" })).toBeInTheDocument();
+      expect(screen.getByRole("tab", { name: /Who/ })).toHaveTextContent("other");
+      expect(JSON.parse(localStorage.getItem("roer:tab-pins") ?? "{}")).toEqual({ "ext:who/main": "2" });
+
+      await openMenu(/^Pinned to other$/);
+      fireEvent.click(await screen.findByRole("menuitem", { name: /Follow the session you work in/ }));
+      expect(await screen.findByTestId("who")).toHaveTextContent("about %3");
+      expect(localStorage.getItem("roer:tab-pins")).toBeNull();
+    });
+
+    it("opens another copy about another session, beside the first", async () => {
+      render(<App />);
+      await teleport();
+      await emit({ kind: "output", data: "aGk=" });
+      await openOtherBeside();
+      fireEvent.pointerDown(screen.getAllByTestId("terminal")[0]);
+      fireEvent.click(await screen.findByRole("tab", { name: "Who" }));
+      await openMenu(/^Following roer$/);
+      fireEvent.click(await screen.findByRole("menuitem", { name: "other" }));
+
+      await waitFor(() => expect(screen.getAllByTestId("who")).toHaveLength(2));
+      expect(screen.getAllByTestId("who").map((one) => one.textContent)).toEqual(
+        expect.arrayContaining(["about %3", "about %9"]),
+      );
+      expect(screen.getAllByRole("separator").length).toBeGreaterThan(0);
+    });
+
+    it("follows the session whose terminal was clicked last", async () => {
+      render(<App />);
+      await teleport();
+      await emit({ kind: "output", data: "aGk=" });
+      await openOtherBeside();
+      // The tab beside both terminals, so clicking them does not cover it.
+      fireEvent.contextMenu(await screen.findByRole("tab", { name: "Who" }));
+      fireEvent.click(await screen.findByRole("menuitem", { name: /^Open below/ }));
+      expect(await screen.findByTestId("who")).toHaveTextContent("about %9");
+
+      fireEvent.pointerDown(screen.getAllByTestId("terminal")[0]);
+      await waitFor(() => expect(screen.getByTestId("who")).toHaveTextContent("about %3"));
+      fireEvent.pointerDown(screen.getAllByTestId("terminal")[1]);
+      await waitFor(() => expect(screen.getByTestId("who")).toHaveTextContent("about %9"));
+    });
+  });
+
   describe("a tab beside the terminal", () => {
     function Pager() {
       const [pressed, setPressed] = useState(0);
@@ -1322,7 +1424,7 @@ describe("App", () => {
       });
     });
 
-    it("keeps the tab beside the terminal when its strip button is clicked", async () => {
+    it("keeps the tab beside the terminal when its strip button is clicked, and lights its pane up", async () => {
       render(<App />);
       await openBeside();
       fireEvent.click(screen.getByRole("tab", { name: "Terminal" }));
@@ -1330,6 +1432,7 @@ describe("App", () => {
 
       expect(screen.getAllByTestId("pager")).toHaveLength(1);
       expect(screen.getByRole("tab", { name: "Terminal" })).toHaveAttribute("aria-selected", "true");
+      await waitFor(() => expect(screen.getByTestId("pager").closest(".stage-pane")).toHaveClass("flash"));
     });
 
     it("gives the tab its keys only while its pane has the keyboard", async () => {

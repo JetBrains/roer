@@ -6426,3 +6426,197 @@ button.tree-add:hover {
 .ext-row-link:hover {
   text-decoration: underline;
 }
+
+/* A tab that needs a session, on the stage: the same head a pane has, so
+   it can say whose it is (SessionChip). */
+.overlay.session-tab {
+  flex-direction: column;
+}
+
+/* Which session a tab is about, and the way to change it. */
+.session-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  max-width: 55%;
+  margin-right: 4px;
+  padding: 1px 7px 1px 6px;
+  border: 1px solid var(--roer-border);
+  border-radius: 999px;
+  background: var(--roer-control);
+  color: var(--roer-fg);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.session-chip:hover,
+.session-chip[data-state="open"],
+.session-chip.pinned {
+  border-color: var(--roer-accent);
+}
+
+.session-chip-mode {
+  color: var(--roer-muted);
+}
+
+.session-chip.pinned .session-chip-mode,
+.session-chip.pinned svg:first-child {
+  color: var(--roer-accent);
+}
+
+.session-chip-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+
+/* A strip tab pinned to a session names it. */
+.tab-pin {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: 5px;
+  color: var(--roer-accent);
+  font-size: 10.5px;
+}
+
+/* The pane a strip tab pointed at, already open there. */
+.stage-body.split > .stage-pane.flash::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  pointer-events: none;
+  border: 2px solid var(--roer-accent);
+  animation: pane-flash 0.9s ease-out forwards;
+}
+
+@keyframes pane-flash {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stage-body.split > .stage-pane.flash::before {
+    animation: none;
+    opacity: 0.6;
+  }
+}
+
+/* A checkout's +N/−M, clicked for its session's Changes. */
+.counts-button {
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 0 4px;
+  background: none;
+  cursor: pointer;
+}
+
+.counts-button:hover {
+  border-color: var(--roer-accent);
+}
+
+/* A word about what just happened, at the foot of the window. */
+.app-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 18px;
+  z-index: 60;
+  max-width: min(520px, 80vw);
+  transform: translateX(-50%);
+  padding: 7px 12px;
+  border-radius: 6px;
+  background: var(--roer-fg);
+  color: var(--roer-bg);
+  font-size: 12.5px;
+  box-shadow: 0 6px 20px var(--roer-shadow);
+}
+
+
+/* The chip's menu: a session in two lines, the task over who runs it on
+   which branch of what, so neither reads as a heading. */
+.session-chip-menu {
+  min-width: 300px;
+  max-width: 380px;
+}
+
+.chip-heading {
+  padding-top: 6px;
+  color: var(--roer-muted);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.chip-row {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: start;
+  width: 100%;
+}
+
+.chip-check {
+  display: flex;
+  padding-top: 2px;
+  color: var(--roer-accent);
+}
+
+.chip-main {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+
+.chip-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--roer-fg);
+}
+
+.chip-detail {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--roer-muted);
+  font-size: 11px;
+}
+
+.chip-side {
+  display: grid;
+  justify-items: end;
+  gap: 1px;
+  font-size: 11px;
+  color: var(--roer-muted);
+  white-space: nowrap;
+}
+
+.chip-counts {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10.5px;
+}
+
+/* Highlighted rows keep their two tones readable. */
+[data-highlighted] .chip-detail,
+[data-highlighted] .chip-side {
+  color: inherit;
+  opacity: 0.8;
+}
+
+.chip-hint {
+  margin: 0;
+  padding: 4px 8px 6px;
+  max-width: 340px;
+  color: var(--roer-muted);
+  font-size: 11px;
+}

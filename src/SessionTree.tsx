@@ -163,6 +163,8 @@ export type SessionTreeProps = Pick<
   onOpen: (request: OpenRequest) => void;
   /** Opens a live session in a pane of its own. */
   onOpenBeside?: (request: OpenRequest, place: SplitPlace) => void;
+  /** Shows Changes about a live session: a row's menu, and a checkout's +N/−M. */
+  onShowChanges?: (session: SessionInfo) => void;
   /** The Add project dialog, offered under the Projects; left out before
    * there is any, when the sidebar offers the first in a button of its own. */
   onAddProject?: () => void;
@@ -195,6 +197,7 @@ export function SessionTree({
   projects,
   onOpen,
   onOpenBeside,
+  onShowChanges,
   onAddProject,
 }: SessionTreeProps) {
   const ordered = orderTree(projects, worktrees, repos, visibleSessions, waiting, folderInView);
@@ -306,6 +309,7 @@ export function SessionTree({
           handleAssign={handleAssign}
           onEnd={() => handleEndSession(session)}
           onBeside={onOpenBeside && !here ? (place) => onOpenBeside(attachRequest(session), place) : undefined}
+          onShowChanges={onShowChanges ? () => onShowChanges(session) : undefined}
         >
           <button
             type="button"
@@ -349,9 +353,21 @@ export function SessionTree({
             <span className={worktree.main ? "tree-branch unfoldable" : "tree-branch linked unfoldable"}>{name}</span>
           )}
           {changes && changes.files > 0 ? (
-            <span className="counts">
-              <span className="plus">+{changes.added}</span> <span className="minus">−{changes.deleted}</span>
-            </span>
+            sessions.length > 0 && onShowChanges ? (
+              // The session on the stage first, if it is one of them: the checkout's changes are its.
+              <button
+                type="button"
+                className="counts counts-button"
+                title={`Show Changes for ${name}`}
+                onClick={() => onShowChanges(sessions.find((one) => one.pane === activePane) ?? sessions[0])}
+              >
+                <span className="plus">+{changes.added}</span> <span className="minus">−{changes.deleted}</span>
+              </button>
+            ) : (
+              <span className="counts">
+                <span className="plus">+{changes.added}</span> <span className="minus">−{changes.deleted}</span>
+              </span>
+            )
           ) : null}
           <button
             type="button"
