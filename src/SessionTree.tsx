@@ -7,10 +7,12 @@ import { useFolded } from "./lib/folded";
 import type { Repo } from "./lib/git";
 import type { Project } from "./lib/projects";
 import type { SessionInfo } from "./lib/pty";
+import type { SplitPlace } from "./lib/split";
 import type { SessionBrowserState } from "./lib/useSessionBrowser";
 import type { Worktree } from "./lib/worktrees";
 import {
   AssignMenu,
+  attachRequest,
   isWorking,
   LiveName,
   liveRank,
@@ -159,6 +161,8 @@ export type SessionTreeProps = Pick<
   /** The Projects in view, whose checkouts the tree is made of. */
   projects: Project[];
   onOpen: (request: OpenRequest) => void;
+  /** Opens a live session in a pane of its own. */
+  onOpenBeside?: (request: OpenRequest, place: SplitPlace) => void;
   /** The Add project dialog, offered under the Projects; left out before
    * there is any, when the sidebar offers the first in a button of its own. */
   onAddProject?: () => void;
@@ -190,6 +194,7 @@ export function SessionTree({
   folderInView,
   projects,
   onOpen,
+  onOpenBeside,
   onAddProject,
 }: SessionTreeProps) {
   const ordered = orderTree(projects, worktrees, repos, visibleSessions, waiting, folderInView);
@@ -221,8 +226,7 @@ export function SessionTree({
   const pickedPane = searching ? found[pickedAt]?.pane : undefined;
   const searchRef = useRef<HTMLInputElement>(null);
 
-  const openSession = (session: SessionInfo) =>
-    onOpen({ args: ["attach", session.pane], cwd: session.cwd, title: session.session, pane: session.pane });
+  const openSession = (session: SessionInfo) => onOpen(attachRequest(session));
 
   const onSearchKey = (event: KeyboardEvent<HTMLInputElement>) => {
     if (event.key === "ArrowDown" || event.key === "ArrowUp") {
@@ -301,6 +305,7 @@ export function SessionTree({
           assignedTo={assignments[session.id]}
           handleAssign={handleAssign}
           onEnd={() => handleEndSession(session)}
+          onBeside={onOpenBeside && !here ? (place) => onOpenBeside(attachRequest(session), place) : undefined}
         >
           <button
             type="button"

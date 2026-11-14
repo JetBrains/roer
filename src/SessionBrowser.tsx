@@ -6,6 +6,9 @@ import {
   ContextMenuContent,
   ContextMenuItem,
   ContextMenuSeparator,
+  ContextMenuSub,
+  ContextMenuSubContent,
+  ContextMenuSubTrigger,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import {
@@ -20,6 +23,7 @@ import type { Worktree } from "./lib/worktrees";
 import type { Project } from "./lib/projects";
 import { FirstProject } from "./FirstProject";
 import type { ClaudeSession, SessionInfo } from "./lib/pty";
+import { SPLIT_PLACES, type SplitPlace } from "./lib/split";
 import type { DirStats, SessionBrowserState } from "./lib/useSessionBrowser";
 import type { Workspace } from "./lib/workspaces";
 import { buildTree, checkoutName, folderLabel } from "./lib/checkouts";
@@ -365,12 +369,23 @@ type SessionEntry =
  * take it out), the same interaction the Workspace/Project rows themselves
  * use for rename/delete.
  */
+const BESIDE_WORDS: Record<SplitPlace, string> = { left: "To the left", right: "To the right", above: "Above", below: "Below" };
+
+/** What opens a live session: attaching its pane. */
+export const attachRequest = (session: SessionInfo): OpenRequest => ({
+  args: ["attach", session.pane],
+  cwd: session.cwd,
+  title: session.session,
+  pane: session.pane,
+});
+
 export function AssignMenu({
   sessionId,
   workspaces,
   assignedTo,
   handleAssign,
   onEnd,
+  onBeside,
   children,
 }: {
   sessionId: string;
@@ -379,13 +394,31 @@ export function AssignMenu({
   handleAssign: (sessionId: string, workspaceId: string | null) => void;
   /** A live session's End session; a past conversation has none. */
   onEnd?: () => void;
+  /** A live session's Open beside: in a pane of its own, at a place of the
+   * pane with the keyboard. Left out for the session that is on the stage. */
+  onBeside?: (place: SplitPlace) => void;
   children: ReactNode;
 }) {
-  if (workspaces.length === 0 && !assignedTo && !onEnd) return <>{children}</>;
+  if (workspaces.length === 0 && !assignedTo && !onEnd && !onBeside) return <>{children}</>;
   return (
     <ContextMenu>
       <ContextMenuTrigger asChild>{children}</ContextMenuTrigger>
       <ContextMenuContent>
+        {onBeside ? (
+          <>
+            <ContextMenuSub>
+              <ContextMenuSubTrigger>Open beside</ContextMenuSubTrigger>
+              <ContextMenuSubContent>
+                {SPLIT_PLACES.map(({ place }) => (
+                  <ContextMenuItem key={place} onSelect={() => onBeside(place)}>
+                    {BESIDE_WORDS[place]}
+                  </ContextMenuItem>
+                ))}
+              </ContextMenuSubContent>
+            </ContextMenuSub>
+            {workspaces.length > 0 || assignedTo || onEnd ? <ContextMenuSeparator /> : null}
+          </>
+        ) : null}
         {workspaces.map((workspace) => (
           <ContextMenuItem
             key={workspace.id}
@@ -446,6 +479,8 @@ export type SessionBrowserProps = Pick<
   | "worktrees"
 > & {
   onOpen: (request: OpenRequest) => void;
+  /** Opens a live session in a pane of its own. */
+  onOpenBeside?: (request: OpenRequest, place: SplitPlace) => void;
 };
 
 /**
@@ -484,6 +519,7 @@ export function SessionBrowser({
   folderInView,
   worktrees,
   onOpen,
+  onOpenBeside,
 }: SessionBrowserProps) {
   // What is running, by checkout. Past conversations are a timeline of
   // their own below: there can be hundreds, and they are come back to by
@@ -699,6 +735,11 @@ export function SessionBrowser({
                       assignedTo={assignments[entry.session.id]}
                       handleAssign={handleAssign}
                       onEnd={() => handleEndSession(entry.session)}
+                      onBeside={
+                        onOpenBeside && entry.session.pane !== activePane
+                          ? (place) => onOpenBeside(attachRequest(entry.session), place)
+                          : undefined
+                      }
                     >
                       <span className="workspace-row">
                         <button
@@ -712,14 +753,7 @@ export function SessionBrowser({
                             .join(" ")}
                           aria-current={entry.session.pane === activePane ? "true" : undefined}
                           title={`${entry.session.session} — ${shorten(entry.session.cwd, status?.home)}`}
-                          onClick={() =>
-                            onOpen({
-                              args: ["attach", entry.session.pane],
-                              cwd: entry.session.cwd,
-                              title: entry.session.session,
-                              pane: entry.session.pane,
-                            })
-                          }
+                          onClick={() => onOpen(attachRequest(entry.session))}
                         >
                           <span className="row-line">
                           <LiveName session={entry.session} />

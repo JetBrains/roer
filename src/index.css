@@ -402,26 +402,9 @@ code {
   position: relative;
 }
 
-/* Split, the stage body lays its panes out side by side (`row`) or one above
-   the other (`column`); whole, the one pane fills it. */
-.stage-body.split {
-  display: flex;
-}
-
-.stage-body.split.column {
-  flex-direction: column;
-}
-
-/* Left of or above the terminal: reversed rather than reordered, so the
-   terminal's pane keeps its place in the DOM and is never remounted. */
-.stage-body.split.row.side-first {
-  flex-direction: row-reverse;
-}
-
-.stage-body.split.column.side-first {
-  flex-direction: column-reverse;
-}
-
+/* Split, every pane is a sibling in the stage body, placed by its own
+   left/top/width/height (see lib/split.ts's `rects`); whole, the one pane
+   fills it. */
 .stage-pane {
   position: relative;
   height: 100%;
@@ -430,15 +413,10 @@ code {
 }
 
 .stage-body.split > .stage-pane {
-  flex: 0 0 auto;
-}
-
-.stage-body.split.column > .stage-pane {
-  height: auto;
+  position: absolute;
 }
 
 .stage-body.split > .stage-pane.side {
-  flex: 1 1 0;
   display: flex;
   flex-direction: column;
   background: var(--roer-bg);
@@ -458,19 +436,20 @@ code {
 }
 
 .split-divider {
-  flex: none;
+  position: absolute;
   background: var(--roer-border);
-  position: relative;
   z-index: 3;
 }
 
-.stage-body.split.row > .split-divider {
+.split-divider.row {
   width: 1px;
+  margin-left: -0.5px;
   cursor: col-resize;
 }
 
-.stage-body.split.column > .split-divider {
+.split-divider.column {
   height: 1px;
+  margin-top: -0.5px;
   cursor: row-resize;
 }
 
@@ -481,7 +460,7 @@ code {
   inset: 0 -4px;
 }
 
-.stage-body.split.column > .split-divider::before {
+.split-divider.column::before {
   inset: -4px 0;
 }
 
@@ -490,7 +469,7 @@ code {
   background: var(--roer-accent);
 }
 
-/* A drag over the terminal or a tab's iframe would lose the pointer. */
+/* A drag over a terminal or a tab's iframe would lose the pointer. */
 .stage-body.split.resizing > .stage-pane {
   pointer-events: none;
   user-select: none;
