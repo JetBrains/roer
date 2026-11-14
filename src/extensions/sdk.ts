@@ -41,6 +41,16 @@ export type { FilesChanged, FileText, GrepHit, Hit, Hits } from "../lib/files";
 export { resolveDir } from "../lib/session";
 // State a tab keeps that must read the same in Roer's window and in a browser page of it.
 export { adoptLocal, onSharedStorage, sharedStorage } from "../lib/sharedStorage";
+export {
+  allThreads,
+  deleteThread,
+  onThreadsChanged,
+  replyToThread,
+  setThread,
+  startThread,
+  useThreads,
+} from "../lib/threads";
+export type { Anchor, Thread, ThreadSession } from "../lib/threads";
 
 // What the built-in tabs draw with.
 export { DiffPane } from "../DiffPane";

@@ -8,6 +8,9 @@ import {
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { FileView } from "./FileView";
+import type { Session } from "./extensions/api";
+import { allThreads, replyToThread, startThread } from "./lib/threads";
+import { sendToSession } from "./lib/github";
 import { fileRead, type FilesChanged, type FileText } from "./lib/files";
 import {
   gitBlob,
@@ -22,6 +25,10 @@ import {
   type Commit,
 } from "./lib/git";
 
+vi.mock("./lib/github", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./lib/github")>()),
+  sendToSession: vi.fn().mockResolvedValue(undefined),
+}));
 vi.mock("./lib/files", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./lib/files")>()),
   fileRead: vi.fn(),
@@ -544,4 +551,156 @@ describe("FileView", () => {
       expect(gitBranchCommits).toHaveBeenCalledWith("/Users/test/project", "other", "main");
     });
   });
+
+  describe("threads", () => {
+    const session = (over: Partial<Session> = {}): Session => ({
+      pane: "%1",
+      root: "/Users/test/project",
+      branch: "feature",
+      agent: "claude",
+      busy: false,
+      changed: null,
+      send: vi.fn().mockResolvedValue(undefined),
+      ...over,
+    });
+
+    beforeEach(() => localStorage.clear());
+
+    it("sends a comment on a line to the session's agent, and shows the agent's answer under the line", async () => {
+      const staged = session();
+      show({ session: staged });
+      await screen.findByText("row2");
+      fireEvent.click(screen.getByRole("button", { name: "Comment on line 2" }));
+      fireEvent.change(screen.getByRole("textbox", { name: "Comment on line 2" }), { target: { value: "Why row2?" } });
+      fireEvent.click(screen.getByRole("button", { name: "Send to claude" }));
+
+      await waitFor(() => expect(staged.send).toHaveBeenCalledTimes(1));
+      const prompt = vi.mocked(staged.send).mock.calls[0][0];
+      expect(prompt).toContain("`src/App.tsx` line 2");
+      expect(prompt).toContain("threads__answer");
+      expect(prompt).toContain("row2");
+      expect(prompt).toContain("Why row2?");
+      const id = allThreads()[0].id;
+      expect(prompt).toContain(`thread "${id}"`);
+      expect(await screen.findByText("claude · waiting for an answer")).toBeInTheDocument();
+
+      // The agent's tool answers.
+      act(() => void replyToThread(id, "Claude", "It is the second row.", false));
+      expect(await screen.findByText("It is the second row.")).toBeInTheDocument();
+      expect(screen.queryByText("claude · waiting for an answer")).not.toBeInTheDocument();
+
+      // A reply goes to it too.
+      fireEvent.click(screen.getByRole("button", { name: "Reply" }));
+      fireEvent.change(screen.getByRole("textbox", { name: "Reply on line 2" }), { target: { value: "Thanks" } });
+      fireEvent.click(screen.getByRole("button", { name: "Reply" }));
+      await waitFor(() => expect(staged.send).toHaveBeenCalledTimes(2));
+      expect(vi.mocked(staged.send).mock.calls[1][0]).toContain("Thanks");
+
+      fireEvent.click(screen.getByRole("button", { name: "Resolve" }));
+      expect(allThreads()[0].state).toBe("resolved");
+    });
+
+    const live = (pane: string, id: string, cwd: string, over: object = {}) => ({ pane, id, agent: "claude", cwd, ...over });
+
+    it("starts a thread with the session working in the file's worktree, and keeps it there when the stage moves", async () => {
+      const stage = session({ pane: "%9", root: "/Users/test/other" });
+      const sessions = [live("%9", "s9", "/Users/test/other"), live("%2", "s2", "/Users/test/project/src")];
+      const { rerender } = show({ session: stage, sessions });
+      await screen.findByText("row1");
+      fireEvent.click(screen.getByRole("button", { name: "Comment on line 1" }));
+      fireEvent.change(screen.getByRole("textbox", { name: "Comment on line 1" }), { target: { value: "Here?" } });
+      fireEvent.click(screen.getByRole("button", { name: "Send to claude · src" }));
+      await waitFor(() => expect(sendToSession).toHaveBeenCalledWith("%2", expect.stringContaining("Here?")));
+      expect(stage.send).not.toHaveBeenCalled();
+      expect(allThreads()[0].session).toMatchObject({ pane: "%2", id: "s2" });
+
+      // The stage shows another session now; the reply still goes to the thread's.
+      const other = session({ pane: "%9", root: "/Users/test/project" });
+      rerender(<FileView root="/Users/test/project" path="src/App.tsx" active session={other} sessions={sessions} />);
+      act(() => void replyToThread(allThreads()[0].id, "Claude", "Yes.", false));
+      fireEvent.click(await screen.findByRole("button", { name: "Reply" }));
+      fireEvent.change(screen.getByRole("textbox", { name: "Reply on line 1" }), { target: { value: "Sure?" } });
+      fireEvent.click(screen.getByRole("button", { name: "Reply" }));
+      await waitFor(() => expect(sendToSession).toHaveBeenCalledWith("%2", expect.stringContaining("Sure?")));
+      expect(other.send).not.toHaveBeenCalled();
+    });
+
+    it("shows an agent's own thread as waiting on the person, and sends the reply back to that agent's session", async () => {
+      const sessions = [live("%4", "s4", "/Users/test/project")];
+      startThread({
+        root: "/Users/test/project",
+        anchors: [{ kind: "line", path: "src/App.tsx", line: 2, code: "row2" }],
+        text: "Is row2 right?",
+        author: "Claude",
+        session: { pane: "%4" },
+      });
+      show({ session: session({ pane: "%9" }), sessions });
+      expect(await screen.findByText("Is row2 right?")).toBeInTheDocument();
+      expect(screen.getByText("claude · project · for you")).toBeInTheDocument();
+      // Its id is kept once it is seen live.
+      await waitFor(() => expect(allThreads()[0].session).toMatchObject({ pane: "%4", id: "s4" }));
+
+      fireEvent.click(screen.getByRole("button", { name: "Reply" }));
+      fireEvent.change(screen.getByRole("textbox", { name: "Reply on line 2" }), { target: { value: "Yes" } });
+      fireEvent.click(screen.getByRole("button", { name: "Reply" }));
+      await waitFor(() => expect(sendToSession).toHaveBeenCalledWith("%4", expect.stringContaining("Yes")));
+    });
+
+    it("moves a thread whose session ended to a live one, telling it the whole thread", async () => {
+      const sessions = [live("%5", "s5", "/Users/test/project")];
+      startThread({
+        root: "/Users/test/project",
+        anchors: [{ kind: "line", path: "src/App.tsx", line: 1, code: "row1" }],
+        text: "First",
+        session: { pane: "%3", id: "gone" },
+      });
+      const staged = session({ pane: "%5" });
+      show({ session: staged, sessions });
+      expect(await screen.findByText("agent · ended: a reply goes to claude · project")).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Reply" }));
+      fireEvent.change(screen.getByRole("textbox", { name: "Reply on line 1" }), { target: { value: "Again" } });
+      fireEvent.click(screen.getByRole("button", { name: "Reply" }));
+      await waitFor(() => expect(staged.send).toHaveBeenCalledTimes(1));
+      expect(allThreads()[0].session).toMatchObject({ pane: "%5", id: "s5" });
+      // New to that session, so it is told the thread from the start.
+      const prompt = vi.mocked(staged.send).mock.calls[0][0];
+      expect(prompt).toContain("This is Roer's thread");
+      expect(prompt).toContain("I wrote: First");
+      expect(prompt).toContain("Again");
+      expect(sendToSession).not.toHaveBeenCalled();
+    });
+
+    it("comments on a range of lines, Shift-clicking its end, and quotes them all", async () => {
+      const staged = session();
+      show({ session: staged });
+      await screen.findByText("row1");
+      fireEvent.click(screen.getByRole("button", { name: "Comment on line 1" }));
+      fireEvent.click(screen.getByRole("button", { name: "Comment on line 3" }), { shiftKey: true });
+      expect(row("row2")).toHaveClass("in-thread");
+      fireEvent.change(screen.getByRole("textbox", { name: "Comment on lines 1–3" }), { target: { value: "All three?" } });
+      fireEvent.click(screen.getByRole("button", { name: "Send to claude" }));
+      await waitFor(() => expect(staged.send).toHaveBeenCalledTimes(1));
+      expect(vi.mocked(staged.send).mock.calls[0][0]).toContain("lines 1–3");
+      expect(vi.mocked(staged.send).mock.calls[0][0]).toContain("row1\nrow2\nrow3");
+      expect(allThreads()[0].anchors[0]).toMatchObject({ kind: "line", line: 1, end: 3 });
+      // Drawn under its last line.
+      expect(row("row3")?.nextElementSibling).toHaveClass("file-notes");
+    });
+
+    it("holds a comment until the agent is free", async () => {
+      const busy = session({ busy: true });
+      const { rerender } = show({ session: busy });
+      await screen.findByText("row1");
+      fireEvent.click(screen.getByRole("button", { name: "Comment on line 1" }));
+      fireEvent.change(screen.getByRole("textbox", { name: "Comment on line 1" }), { target: { value: "Look" } });
+      fireEvent.click(screen.getByRole("button", { name: "Send to claude" }));
+      expect(await screen.findByText("claude · waiting for it to be free")).toBeInTheDocument();
+      expect(busy.send).not.toHaveBeenCalled();
+
+      const free = { ...busy, busy: false };
+      rerender(<FileView root="/Users/test/project" path="src/App.tsx" active session={free} />);
+      await waitFor(() => expect(free.send).toHaveBeenCalledTimes(1));
+    });
+  });
 });
+

@@ -5,6 +5,7 @@
  * being skipped silently, so a catalog gap is a bug you can see, not one an
  * agent can quietly exploit into running something else.
  */
+import { Commentable } from "./Commentable";
 import { Fragment, type CSSProperties, type ReactNode } from "react";
 
 import {
@@ -152,6 +153,13 @@ function renderBody(node: Component, ctx: Ctx, scope: Scope, seen: ReadonlySet<s
       return <List {...common} direction={node.direction} align={node.align}>{children(node.children)}</List>;
     case "Card":
       return <Card {...common}>{child(node.child)}</Card>;
+    case "Commentable":
+      // One part per template item: a list's rows are each their own.
+      return (
+        <Commentable id={scope.item === undefined ? node.id : `${node.id}#${scope.item}`} label={text(node.label)}>
+          {child(node.child)}
+        </Commentable>
+      );
     case "Grid":
       return <Grid {...common} columns={node.columns} minItemWidth={node.minItemWidth}>{children(node.children)}</Grid>;
     case "Divider":

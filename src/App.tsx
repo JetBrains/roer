@@ -35,6 +35,7 @@ import { endedPins, loadPins, pinTab, savePins, type TabPins } from "./lib/tabPi
 import { WorkspaceSections } from "./extensions/WorkspaceSections";
 import type { Scope } from "./extensions/api";
 import { FileView } from "./FileView";
+import { ThreadPeopleContext } from "./Threads";
 import type { OpenFileOptions } from "./extensions/api";
 import { fileOnBranch } from "./lib/fileOnBranch";
 import { GenerativeUITab } from "./generative-ui/GenerativeUITab";
@@ -1450,7 +1451,7 @@ export function App() {
   // The live sessions a tab can send to, such as Changes sending decisions to the session that asked for a review.
   const agentSessions = browser.allSessions.flatMap((live) => {
     const agent = runningAgent(live);
-    return agent ? [{ pane: live.pane, id: live.id, agent, cwd: live.cwd }] : [];
+    return agent ? [{ pane: live.pane, id: live.id, agent, cwd: live.cwd, busy: live.state === "working" }] : [];
   });
 
   const openAgentPicker = useCallback(
@@ -2426,6 +2427,8 @@ export function App() {
                     branch={file.branch}
                     active={tabs.active === id}
                     changed={changed}
+                    session={activeSession}
+                    sessions={agentSessions}
                   />
                 </div>
               );
@@ -2505,7 +2508,7 @@ export function App() {
                         ) : ext ? (
                           sessionTab(ext, ext.needsSession ? tabTarget(id) : session?.pane, true, focused)
                         ) : file ? (
-                          <FileView root={file.root} path={file.path} line={file.line} branch={file.branch} active changed={changed} />
+                          <FileView root={file.root} path={file.path} line={file.line} branch={file.branch} active changed={changed} session={activeSession} sessions={agentSessions} />
                         ) : live?.pane ? (
                           <TerminalView
                             args={live.args}
@@ -2548,22 +2551,25 @@ export function App() {
                 onPointerDown={handleGenerativePanelResizeStart}
               />
             ) : null}
-            <GenerativeUITab
-              state={generativeUi.state}
-              surfaceId={generativeUi.surfaceId}
-              onChange={(state) => setGenerativeUi((current) => ({ ...current, state }))}
-              log={generativeUi.log}
-              live={generativeUi.live}
-              pane={activePane}
-              cwd={(activeRequest ?? session)?.cwd}
-              onLoadBundle={(surfaceId, messages) =>
-                setGenerativeUi({ state: applyAll(messages), surfaceId, log: messages, live: true })
-              }
-              onOpenFile={openInTab}
-              agentState={activeAgentState}
-              onOpenTab={activateTab}
-              onNewTab={() => setShowingNewTab(true)}
-            />
+            {/* Who a view's comments go to: the session the panel follows, or the one working in their repository. */}
+            <ThreadPeopleContext.Provider value={{ stage: activeSession, sessions: agentSessions }}>
+              <GenerativeUITab
+                state={generativeUi.state}
+                surfaceId={generativeUi.surfaceId}
+                onChange={(state) => setGenerativeUi((current) => ({ ...current, state }))}
+                log={generativeUi.log}
+                live={generativeUi.live}
+                pane={activePane}
+                cwd={(activeRequest ?? session)?.cwd}
+                onLoadBundle={(surfaceId, messages) =>
+                  setGenerativeUi({ state: applyAll(messages), surfaceId, log: messages, live: true })
+                }
+                onOpenFile={openInTab}
+                agentState={activeAgentState}
+                onOpenTab={activateTab}
+                onNewTab={() => setShowingNewTab(true)}
+              />
+            </ThreadPeopleContext.Provider>
           </aside>
         ) : null}
 

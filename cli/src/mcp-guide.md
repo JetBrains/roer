@@ -201,6 +201,7 @@ hint or a result only when it applies).
 | `Column` | `children`, `justify?`, `align?` | Same values as `Row`. |
 | `List` | `children`, `direction?`, `align?` | Scrolls when it overflows. `direction` is `vertical` (default) or `horizontal`. |
 | `Card` | `child: id` | One child; wrap several in a `Column`. |
+| `Commentable` | `child: id`, `label?` | A part of the view the person can comment on, for you: a `+` on its corner opens a comment box, and Shift-clicking other parts' makes one comment about all of them. Wrap one component, or a `Column`/`Row` of several to make them one part; `label` is what the comment calls it. The comment comes to you as a prompt naming the parts by `label` and component id; see *Comments* below. |
 | `Grid` | `children`, `columns?`, `minItemWidth?` | The one layout that wraps, for tiles and cards whose count varies. `columns` fixes how many per row; otherwise each item is at least `minItemWidth` px wide and as many fit as will. `Row`/`Column` never wrap. |
 | `Tabs` | `tabs: [{title, child: id}]` | Which tab is active is client-only state. |
 | `Modal` | `trigger: id`, `content: id` | Clicking the trigger opens it; client-only state. |
@@ -269,6 +270,20 @@ screen.
 ```
 
 with the component's `"notes": { "path": "/threads" }`.
+
+## Comments
+
+Wrap the parts of a view worth talking about in `Commentable`: a plan's
+steps, a dashboard's tiles, the boxes of an architecture. Roer keeps the
+threads, not your data model, so there is nothing to send back: a comment
+arrives as a prompt that names the thread, and you answer with the
+`threads__answer` tool. To point the person at parts yourself, call
+`threads__comment` with the `surface` and the component ids in `parts`.
+Inside a template, each item is its own part, `id#index`.
+
+```json
+{ "id": "step2", "component": "Commentable", "label": "Migrate the schema", "child": "step2Card" }
+```
 
 ## Dashboards
 

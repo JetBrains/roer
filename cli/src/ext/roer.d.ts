@@ -157,6 +157,34 @@ declare module "roer" {
    * branch: the file opens in the worktree that has it checked out, or, with none, read only as that branch has
    * it in git. Either way the file's gutter marks what the branch changed. */
   export function useOpenFile(): (root: string, path: string, line?: number, options?: { branch?: string }) => void;
+  /** What a Roer thread is about: lines of a file, or a part of a view by an id the view gives it. */
+  export type Anchor =
+    | { kind: "line"; path: string; line: number; end?: number; code: string; branch?: string }
+    | { kind: "part"; id: string; label?: string };
+  /** A comment on something on screen, with its replies, kept by Roer and answered by an agent through
+   * `threads__answer`. `view` is the view it was left in, e.g. `ext:<id>/<tab>`; absent for a file's lines. */
+  export interface Thread {
+    id: string;
+    root: string;
+    view?: string;
+    viewTitle?: string;
+    anchors: Anchor[];
+    author?: string;
+    session?: { pane: string; id?: string; agent?: string; cwd?: string };
+    text: string;
+    replies: { author: string; text: string }[];
+    state: "open" | "resolved";
+    awaiting?: boolean;
+  }
+  export function allThreads(): Thread[];
+  /** Starts a thread; to send it to an agent, type a prompt naming its id into a session. */
+  export function startThread(thread: Omit<Thread, "id" | "replies" | "state">): Thread;
+  export function replyToThread(id: string, author: string, text: string, mine: boolean): boolean;
+  export function setThread(id: string, change: Partial<Pick<Thread, "state" | "awaiting" | "session">>): void;
+  export function deleteThread(id: string): void;
+  export function onThreadsChanged(listener: () => void): () => void;
+  /** The threads `pick` keeps, kept in step with every change, the agents' answers included. */
+  export function useThreads(pick: (thread: Thread) => boolean, deps: readonly unknown[]): Thread[];
   /** Brings a tab to the top: "sessions", "terminal", "changes", or an extension's `ext:<id>/<tab>`. */
   export function useActivateTab(): (tabId: string) => void;
   /** Starts a session in `cwd` on `prompt` and puts it on the stage: with the default agent, or, with `pickAgent`

@@ -107,6 +107,9 @@ export type Component =
   | Variant<"Column", { children: ChildList; justify?: Justify; align?: Align }>
   | Variant<"List", { children: ChildList; direction?: "vertical" | "horizontal"; align?: Align }>
   | Variant<"Card", { child: ComponentId }>
+  /** Roer's own: a part of the view the person can comment on, for the session's agent, in a thread it answers.
+   * Wrap one component, or a `Column`/`Row` of several to make them one part. */
+  | Variant<"Commentable", { child: ComponentId; label?: DynamicString }>
   /** Roer's own: the one layout that wraps, for tiles and cards whose count
    * varies. `Row`/`Column` stay strictly linear. */
   | Variant<"Grid", { children: ChildList; columns?: number; minItemWidth?: number }>
