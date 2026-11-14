@@ -1,7 +1,7 @@
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { useState } from "react";
 
-import type { Scope, Session } from "./api";
+import type { OpenFile, Scope, Session } from "./api";
 import { HostProvider, type AgentSession, type StartSession } from "./context";
 import { useWorkspaceSections } from "./registry";
 import { Catch } from "./TabBody";
@@ -11,7 +11,7 @@ export interface WorkspaceSectionsProps {
   session: Session | null;
   /** The Workspace tab is on top. */
   active: boolean;
-  openFile: (root: string, path: string, line?: number) => void;
+  openFile: OpenFile;
   activateTab: (tabId: string) => void;
   startSession?: StartSession;
   sessions?: readonly AgentSession[];

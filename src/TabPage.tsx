@@ -14,6 +14,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { FileView } from "./FileView";
+import type { OpenFileOptions } from "./extensions/api";
+import { fileOnBranch } from "./lib/fileOnBranch";
 import { runningAgent } from "./SessionBrowser";
 import { TabBody } from "./extensions/TabBody";
 import { useStageSession, type AgentSession } from "./extensions/context";
@@ -60,6 +62,8 @@ interface OpenFile {
   root: string;
   path: string;
   line?: number;
+  /** A branch no worktree has checked out, read from git. */
+  branch?: string;
 }
 
 interface Toast {
@@ -243,7 +247,10 @@ export function TabPage({ tabId, pinned: pinnedAtFirst = null }: { tabId: string
     [say],
   );
 
-  const openFile = useCallback((root: string, path: string, line?: number) => setFile({ root, path, line }), []);
+  const openFile = useCallback((root: string, path: string, line?: number, options?: OpenFileOptions) => {
+    if (!options?.branch) setFile({ root, path, line });
+    else void fileOnBranch(root, path, line, options.branch).then(setFile);
+  }, []);
   const activateTab = useCallback(
     (id: string) => void inRoer({ kind: "activateTab", tabId: id }, "Shown in Roer"),
     [inRoer],
@@ -406,7 +413,7 @@ export function TabPage({ tabId, pinned: pinnedAtFirst = null }: { tabId: string
               </button>
             </div>
             <div className="split-body">
-              <FileView root={file.root} path={file.path} line={file.line} active changed={changed} />
+              <FileView root={file.root} path={file.path} line={file.line} branch={file.branch} active changed={changed} />
             </div>
           </div>
         ) : null}

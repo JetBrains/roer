@@ -175,7 +175,7 @@ interface Session {
   changed: FilesChanged | null;         // the latest worktree watch batch
   send(text: string, opts?: { submit?: boolean }): Promise<void>; // type into the pane
 }
-useOpenFile(): (path: string, line?: number) => void;
+useOpenFile(): (root: string, path: string, line?: number, options?: { branch?: string }) => void; // a file tab; { branch } opens it on the branch a view is about: its worktree, else read only from git
 useActivateTab(): (tabId: string) => void;
 useStartSession(): ((cwd: string, prompt: string, options?: { pickAgent?: boolean }) => Promise<boolean>) | null; // a new session on a prompt; pickAgent asks which agent; false if the picker was closed
 useSessions(): readonly { pane: string; id: string; agent: string; cwd: string }[]; // live sessions with an agent, for sendToSession

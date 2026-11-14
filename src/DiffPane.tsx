@@ -212,6 +212,30 @@ function LineNotes({ line }: { line?: DiffLine }) {
   );
 }
 
+/** Page Up and Down, Space and Shift+Space, Home and End, as a scrolled box takes them; null for any other key,
+ * with a modifier, or from a control that has its own use for it. */
+export function pageScroll(event: KeyboardEvent, box: HTMLElement | null): (() => void) | null {
+  if (!box || event.altKey || event.metaKey || event.ctrlKey) return null;
+  const from = event.target instanceof HTMLElement ? event.target : null;
+  if (from?.closest("button, input, textarea, select, a, [contenteditable]")) return null;
+  // A page less a line or two, so the last thing read stays on screen.
+  const pageBy = Math.max(box.clientHeight - 40, 40);
+  const by: Record<string, number | "top" | "bottom"> = {
+    PageDown: pageBy,
+    PageUp: -pageBy,
+    " ": event.shiftKey ? -pageBy : pageBy,
+    Home: "top",
+    End: "bottom",
+  };
+  const move = by[event.key];
+  if (move === undefined || (event.shiftKey && event.key !== " ")) return null;
+  return () => {
+    if (move === "top") box.scrollTop = 0;
+    else if (move === "bottom") box.scrollTop = box.scrollHeight;
+    else box.scrollTop += move;
+  };
+}
+
 /** What `git diff` prints: one column, a marker per line, both numbers. */
 function Unified({ hunk }: { hunk: Hunk }) {
   return (
@@ -221,12 +245,8 @@ function Unified({ hunk }: { hunk: Hunk }) {
           <div className={`line ${line.kind}`}>
             <span className="no" data-no={line.oldNo ?? ""} />
             <span className="no" data-no={line.newNo ?? ""} />
-            <span
-              className="mark"
-              data-mark={
-                line.kind === "add" ? "+" : line.kind === "del" ? "-" : ""
-              }
-            />
+            {/* No + or -: the tint says it. The column stays as the room the comment button sits in. */}
+            <span className="mark" />
             <span className="text">
               <AddNote line={line} />
               <Code line={line} side={line.kind === "del" ? "old" : "new"} />
@@ -701,6 +721,14 @@ export function DiffPane({
       if (noteOrder.length === 0) return;
       event.preventDefault();
       stepNote(comment);
+      return;
+    }
+    // The page keys scroll the diff, as they scroll a file: the panel has the keyboard, not the box that scrolls,
+    // so the browser would not. Not from a button or a field, where Space and the rest are theirs.
+    const page = pageScroll(event, diffRef.current);
+    if (page) {
+      event.preventDefault();
+      page();
       return;
     }
     const step: Record<string, () => void> = {

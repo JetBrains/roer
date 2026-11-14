@@ -9,7 +9,18 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { FileView } from "./FileView";
 import { fileRead, type FilesChanged, type FileText } from "./lib/files";
-import { gitBlob } from "./lib/git";
+import {
+  gitBlob,
+  gitBranchCommits,
+  gitBranchDiff,
+  gitChanges,
+  gitCommitDiff,
+  gitCommitFiles,
+  gitCurrentBranch,
+  gitDefaultBase,
+  gitDiff,
+  type Commit,
+} from "./lib/git";
 
 vi.mock("./lib/files", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./lib/files")>()),
@@ -18,6 +29,14 @@ vi.mock("./lib/files", async (importOriginal) => ({
 vi.mock("./lib/git", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./lib/git")>()),
   gitBlob: vi.fn(),
+  gitBranchCommits: vi.fn(),
+  gitBranchDiff: vi.fn(),
+  gitChanges: vi.fn(),
+  gitCommitDiff: vi.fn(),
+  gitCommitFiles: vi.fn(),
+  gitCurrentBranch: vi.fn(),
+  gitDefaultBase: vi.fn(),
+  gitDiff: vi.fn(),
 }));
 
 const read = vi.mocked(fileRead);
@@ -55,9 +74,32 @@ const show = (props: Partial<Parameters<typeof FileView>[0]> = {}) =>
     />,
   );
 
+const commit = (hash: string, subject: string): Commit => ({
+  hash,
+  short: hash.slice(0, 7),
+  author: "A",
+  date: 0,
+  subject,
+  body: "",
+});
+
+/** A `git diff` of src/App.tsx that adds line 2 and replaces line 3, as the branch diff has it. */
+const branchPatch =
+  "diff --git a/src/App.tsx b/src/App.tsx\n--- a/src/App.tsx\n+++ b/src/App.tsx\n@@ -1,2 +1,3 @@\n row1\n+row2\n-old3\n+row3\n";
+
+const row = (text: string) => screen.getByText(text).closest(".file-line");
+
 beforeEach(() => {
   vi.clearAllMocks();
   read.mockResolvedValue(numbered(3));
+  vi.mocked(gitDefaultBase).mockResolvedValue("main");
+  vi.mocked(gitCurrentBranch).mockResolvedValue("feature");
+  vi.mocked(gitBranchCommits).mockResolvedValue([]);
+  vi.mocked(gitCommitFiles).mockResolvedValue([]);
+  vi.mocked(gitBranchDiff).mockResolvedValue({ root: "/Users/test/project", base: "main", commits: 0, diff: "", from: "HEAD" });
+  vi.mocked(gitChanges).mockResolvedValue({ root: "/Users/test/project", branch: "feature", commit: "abc", files: [] });
+  vi.mocked(gitDiff).mockResolvedValue("");
+  vi.mocked(gitCommitDiff).mockResolvedValue("");
 });
 
 describe("FileView", () => {
@@ -206,7 +248,8 @@ describe("FileView", () => {
     );
     const drawn = document.querySelectorAll(".file-line").length;
 
-    expect(spaced / 20 + drawn).toBe(1000);
+    // 22 is the row height the view guesses before it has measured one: the diff's.
+    expect(spaced / 22 + drawn).toBe(1000);
   });
 
   it("colours the code with the language's own grammar", async () => {
@@ -396,5 +439,109 @@ describe("FileView", () => {
     // No blink through "Reading…", which would take the scroll with it.
     expect(screen.queryByText("Reading…")).not.toBeInTheDocument();
     expect(screen.getByText("row1")).toBeInTheDocument();
+  });
+
+  describe("change marks", () => {
+    it("marks what the whole branch changed, by default", async () => {
+      vi.mocked(gitBranchDiff).mockResolvedValue({ root: "/Users/test/project", base: "main", commits: 1, diff: branchPatch, from: "f0" });
+      show();
+      await waitFor(() => expect(row("row2")).toHaveClass("add"));
+      expect(row("row3")).toHaveClass("add");
+      expect(row("row1")).not.toHaveClass("add");
+      // What the branch took out is drawn where it was, above the line that replaced it, and not as file text.
+      const removed = document.querySelector(".file-line.del");
+      expect(removed?.querySelector("[data-text]")).toHaveAttribute("data-text", "old3");
+      expect(removed?.nextElementSibling).toBe(row("row3"));
+      expect(removed?.textContent).toBe("");
+      expect(gitBranchDiff).toHaveBeenCalledWith("/Users/test/project", undefined, undefined);
+      expect(screen.getByRole("combobox", { name: "Changes to mark" })).toHaveValue("all");
+    });
+
+    it("marks only what is not committed under Local changes", async () => {
+      vi.mocked(gitChanges).mockResolvedValue({
+        root: "/Users/test/project",
+        branch: "feature",
+        commit: "abc",
+        files: [{ path: "src/App.tsx", staged: ".", unstaged: "M", added: 1, deleted: 0, binary: false, counted: true }],
+      });
+      vi.mocked(gitDiff).mockResolvedValue("@@ -1,2 +1,3 @@\n row1\n row2\n+row3\n");
+      show();
+      await screen.findByText("row1");
+      fireEvent.change(screen.getByRole("combobox", { name: "Changes to mark" }), { target: { value: "local" } });
+      await waitFor(() => expect(row("row3")).toHaveClass("add"));
+      expect(gitDiff).toHaveBeenCalledWith("/Users/test/project", "src/App.tsx", false);
+    });
+
+    it("lists the branch's commits that touched the file, and shows the file as one left it", async () => {
+      vi.mocked(gitBranchCommits).mockResolvedValue([commit("aaaaaaa1", "Touch it"), commit("bbbbbbb2", "Elsewhere")]);
+      vi.mocked(gitCommitFiles).mockImplementation(async (_root, hash) =>
+        hash === "aaaaaaa1"
+          ? [{ path: "src/App.tsx", staged: "M", unstaged: ".", added: 1, deleted: 0, binary: false, counted: true }]
+          : [],
+      );
+      vi.mocked(gitBlob).mockResolvedValue(btoa("then1\nthen2\n"));
+      vi.mocked(gitCommitDiff).mockResolvedValue("@@ -1 +1,2 @@\n then1\n+then2\n");
+      show();
+      const picker = screen.getByRole("combobox", { name: "Changes to mark" });
+      expect(await screen.findByRole("option", { name: "aaaaaaa Touch it" })).toBeInTheDocument();
+      expect(screen.queryByRole("option", { name: "bbbbbbb Elsewhere" })).not.toBeInTheDocument();
+      expect(gitBranchCommits).toHaveBeenCalledWith("/Users/test/project", "feature", "main");
+
+      fireEvent.change(picker, { target: { value: "aaaaaaa1" } });
+      await waitFor(() => expect(row("then2")).toHaveClass("add"));
+      expect(gitBlob).toHaveBeenCalledWith("/Users/test/project", "src/App.tsx", "aaaaaaa1");
+      expect(gitCommitDiff).toHaveBeenCalledWith("/Users/test/project", "aaaaaaa1", "src/App.tsx");
+    });
+
+    it("steps through the changes with the arrow keys, as the Changes view does, and scrolls without any", async () => {
+      read.mockResolvedValue(numbered(5));
+      vi.mocked(gitBranchDiff).mockResolvedValue({
+        root: "/Users/test/project",
+        base: "main",
+        commits: 1,
+        diff: "diff --git a/src/App.tsx b/src/App.tsx\n--- a/src/App.tsx\n+++ b/src/App.tsx\n@@ -1,5 +1,5 @@\n row1\n+row2\n-was\n row3\n row4\n+row5\n-was5\n",
+        from: "f0",
+      });
+      show();
+      await waitFor(() => expect(row("row2")).toHaveClass("add"));
+      expect(screen.getByText("↑↓ change")).toBeInTheDocument();
+      const body = document.querySelector(".file-body")!;
+      expect(body).toHaveFocus();
+
+      fireEvent.keyDown(body, { key: "ArrowDown" });
+      expect(row("row2")).toHaveClass("current");
+      // Only the change itself, not the unchanged lines after it.
+      expect(row("row3")).not.toHaveClass("current");
+      fireEvent.keyDown(body, { key: "ArrowDown" });
+      expect(row("row5")).toHaveClass("current");
+      expect(row("row2")).not.toHaveClass("current");
+      // The last change is as far as Down goes.
+      fireEvent.keyDown(body, { key: "ArrowDown" });
+      expect(row("row5")).toHaveClass("current");
+      fireEvent.keyDown(body, { key: "ArrowUp" });
+      expect(row("row2")).toHaveClass("current");
+    });
+
+    it("leaves the arrow keys to scroll a file with no changes", async () => {
+      show();
+      await screen.findByText("row1");
+      const body = document.querySelector(".file-body")!;
+      const event = new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true });
+      body.dispatchEvent(event);
+      expect(event.defaultPrevented).toBe(false);
+      expect(screen.queryByText("↑↓ change")).not.toBeInTheDocument();
+    });
+
+    it("reads a branch no worktree has from git, read only, with no local changes to pick", async () => {
+      vi.mocked(gitBlob).mockResolvedValue(btoa("there1\n"));
+      show({ branch: "other" });
+      expect(await screen.findByText("there1")).toBeInTheDocument();
+      expect(read).not.toHaveBeenCalled();
+      expect(gitBlob).toHaveBeenCalledWith("/Users/test/project", "src/App.tsx", "other");
+      expect(screen.getByText("other · read only")).toBeInTheDocument();
+      expect(screen.queryByRole("option", { name: "Local changes" })).not.toBeInTheDocument();
+      await waitFor(() => expect(gitBranchDiff).toHaveBeenCalledWith("/Users/test/project", undefined, "other"));
+      expect(gitBranchCommits).toHaveBeenCalledWith("/Users/test/project", "other", "main");
+    });
   });
 });

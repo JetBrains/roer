@@ -153,8 +153,10 @@ declare module "roer" {
   export function useScope(): Scope | null;
   /** Whether this tab is shown: on top of the stage, or beside it. Take the keyboard only while it is. */
   export function useActive(): boolean;
-  /** Opens a file of the repository at `root` in a tab of its own. */
-  export function useOpenFile(): (root: string, path: string, line?: number) => void;
+  /** Opens a file of the repository at `root` in a tab of its own. Pass `{ branch }` from a view about a
+   * branch: the file opens in the worktree that has it checked out, or, with none, read only as that branch has
+   * it in git. Either way the file's gutter marks what the branch changed. */
+  export function useOpenFile(): (root: string, path: string, line?: number, options?: { branch?: string }) => void;
   /** Brings a tab to the top: "sessions", "terminal", "changes", or an extension's `ext:<id>/<tab>`. */
   export function useActivateTab(): (tabId: string) => void;
   /** Starts a session in `cwd` on `prompt` and puts it on the stage: with the default agent, or, with `pickAgent`
