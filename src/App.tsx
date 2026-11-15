@@ -35,6 +35,7 @@ import { endedPins, loadPins, pinTab, savePins, type TabPins } from "./lib/tabPi
 import { WorkspaceSections } from "./extensions/WorkspaceSections";
 import type { Scope } from "./extensions/api";
 import { FileView } from "./FileView";
+import { NeedsYou } from "./NeedsYou";
 import { ThreadPeopleContext } from "./Threads";
 import type { OpenFileOptions } from "./extensions/api";
 import { fileOnBranch } from "./lib/fileOnBranch";
@@ -1231,11 +1232,13 @@ export function App() {
   const openInTab = useCallback((root: string, path: string, line?: number, options?: OpenFileOptions) => {
     // A file from another repository is one of the Workspace's other
     // Projects, so the tabs from this one stay open beside it.
+    // A new `seq` each time, so asking for the same thread again shows it again.
+    const reveal = options?.thread ? { reveal: { thread: options.thread, seq: Date.now() } } : {};
     if (!options?.branch) {
-      setTabs((current) => openFile(current, { kind: "file", root, path, line }));
+      setTabs((current) => openFile(current, { kind: "file", root, path, line, ...reveal }));
       return;
     }
-    void fileOnBranch(root, path, line, options.branch).then((tab) => setTabs((current) => openFile(current, tab)));
+    void fileOnBranch(root, path, line, options.branch).then((tab) => setTabs((current) => openFile(current, { ...tab, ...reveal })));
   }, []);
 
   /** A path the terminal linked (Claude Code's OSC 8), opened in Roer's file
@@ -2117,6 +2120,16 @@ export function App() {
           handleRenameProject={browser.handleRenameProject}
           handleDeleteProject={browser.handleDeleteProject}
         >
+          <NeedsYou
+            sessions={browser.allSessions}
+            waiting={browser.waiting}
+            activePane={browser.activePane}
+            onOpenSession={(session) =>
+              show({ args: ["attach", session.pane], cwd: session.cwd, title: session.session, pane: session.pane })
+            }
+            onOpenFile={openInTab}
+            people={{ stage: activeSession, sessions: agentSessions }}
+          />
           <SessionTree
             status={browser.status}
             workspaces={browser.workspaces}
@@ -2425,6 +2438,7 @@ export function App() {
                     path={file.path}
                     line={file.line}
                     branch={file.branch}
+                    reveal={file.reveal}
                     active={tabs.active === id}
                     changed={changed}
                     session={activeSession}
@@ -2508,7 +2522,7 @@ export function App() {
                         ) : ext ? (
                           sessionTab(ext, ext.needsSession ? tabTarget(id) : session?.pane, true, focused)
                         ) : file ? (
-                          <FileView root={file.root} path={file.path} line={file.line} branch={file.branch} active changed={changed} session={activeSession} sessions={agentSessions} />
+                          <FileView root={file.root} path={file.path} line={file.line} branch={file.branch} reveal={file.reveal} active changed={changed} session={activeSession} sessions={agentSessions} />
                         ) : live?.pane ? (
                           <TerminalView
                             args={live.args}

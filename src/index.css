@@ -6809,3 +6809,152 @@ button.tree-add:hover {
   color: var(--roer-muted);
   font-size: 11px;
 }
+
+/* Everything waiting on the person, across sessions, at the top of the sidebar: rows like the session tree's,
+   each with what it is about under it. A thread opens in place to be read and answered. */
+.needs-you {
+  margin: 4px 8px 8px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--roer-border);
+}
+
+.needs-you h2 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 4px 6px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--roer-muted);
+}
+
+.needs-you-count {
+  min-width: 16px;
+  padding: 0 5px;
+  border-radius: 8px;
+  background: var(--roer-accent);
+  color: #fff;
+  font-size: 10px;
+  line-height: 16px;
+  text-align: center;
+}
+
+.needs-you ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+button.needs-you-row {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  row-gap: 3px;
+  padding: 4px 6px;
+  border: none;
+  border-radius: 5px;
+  background: none;
+  text-align: left;
+  font-size: 12px;
+}
+
+button.needs-you-row .row-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+/* One line, however long the session's title: the title gives way, cut short, and the rest keeps its size. */
+button.needs-you-row .row-line > * {
+  flex: none;
+  white-space: nowrap;
+}
+
+button.needs-you-row .row-line > strong {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+button.needs-you-row .row-line > .needs-you-place {
+  flex: 0 1 auto;
+}
+
+button.needs-you-row:hover,
+button.needs-you-row.open {
+  background: var(--roer-hover);
+}
+
+button.needs-you-row .tree-note {
+  min-width: 0;
+  padding-left: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--roer-muted);
+}
+
+.needs-you-place {
+  margin-left: auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--ide-mono);
+  font-size: 11px;
+  color: var(--roer-muted);
+}
+
+.needs-you-thread {
+  padding: 2px 4px 6px 13px;
+}
+
+.needs-you-thread .note-card {
+  margin: 4px 0;
+}
+
+/* A thread asked for from Needs you, so the eye finds it where it was scrolled to. */
+.thread.flash .note-card {
+  animation: thread-flash 1.6s ease-out;
+}
+
+@keyframes thread-flash {
+  0%,
+  30% {
+    box-shadow: 0 0 0 2px var(--roer-accent);
+  }
+  100% {
+    box-shadow: 0 0 0 2px transparent;
+  }
+}
+
+.needs-you-fold {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-transform: inherit;
+  letter-spacing: inherit;
+  cursor: pointer;
+}
+
+/* All of them, however many: in a box of its own, so the sessions stay in sight under it. */
+.needs-you ul.all {
+  max-height: 40vh;
+  overflow-y: auto;
+}
+
+.needs-you-more {
+  margin: 2px 0 0 6px;
+  font-size: 11px;
+}

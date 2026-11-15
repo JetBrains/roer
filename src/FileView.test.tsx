@@ -687,6 +687,23 @@ describe("FileView", () => {
       expect(row("row3")?.nextElementSibling).toHaveClass("file-notes");
     });
 
+    it("brings a thread asked for into view and flashes it, again each time it is asked for", async () => {
+      read.mockResolvedValue(numbered(200));
+      const thread = startThread({
+        root: "/Users/test/project",
+        anchors: [{ kind: "line", path: "src/App.tsx", line: 150, end: 152, code: "row150" }],
+        text: "Down here",
+      });
+      const { rerender } = show({ reveal: { thread: thread.id, seq: 1 } });
+      await waitFor(() => expect(document.querySelector(".thread.flash")).toBeInTheDocument());
+      const body = document.querySelector(".file-body") as HTMLElement;
+      expect(body.scrollTop).toBeGreaterThan(0);
+
+      body.scrollTop = 0;
+      rerender(<FileView root="/Users/test/project" path="src/App.tsx" active reveal={{ thread: thread.id, seq: 2 }} />);
+      await waitFor(() => expect(body.scrollTop).toBeGreaterThan(0));
+    });
+
     it("holds a comment until the agent is free", async () => {
       const busy = session({ busy: true });
       const { rerender } = show({ session: busy });

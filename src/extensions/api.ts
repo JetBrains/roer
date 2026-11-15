@@ -13,6 +13,8 @@ export interface OpenFileOptions {
   /** The branch the view is about: the file opens in the worktree that has it checked out, or, with none, read
    * from git as that branch has it. Without it, the worktree at `root` as it is. */
   branch?: string;
+  /** A thread on the file to bring into view, by its id: its card is scrolled to and flashed. */
+  thread?: string;
 }
 
 export type OpenFile = (root: string, path: string, line?: number, options?: OpenFileOptions) => void;
