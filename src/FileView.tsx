@@ -1,7 +1,8 @@
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
-import type { Session } from "./extensions/api";
+import type { OpenFile, Session } from "./extensions/api";
 import { ThreadCards, ThreadComposer, useClaimSessions, useThreadSender } from "./Threads";
-import { useFileThreads, type LiveSession, type Thread } from "./lib/threads";
+import { isObjectId } from "./lib/fileOnBranch";
+import { placeByCode, placeThrough, useFileThreads, type LiveSession, type Placed, type Thread } from "./lib/threads";
 import { Spans } from "./CodeLine";
 import { Markdown } from "./Markdown";
 import { Picture } from "./Picture";
@@ -10,6 +11,7 @@ import { parseDiff, splitPatch } from "./lib/diff";
 import { fileRead, type FilesChanged, type FileText } from "./lib/files";
 import {
   gitBlob,
+  gitBlobDiff,
   gitBranchCommits,
   gitBranchDiff,
   gitChanges,
@@ -18,6 +20,7 @@ import {
   gitCurrentBranch,
   gitDefaultBase,
   gitDiff,
+  gitSnapshot,
   isUntracked,
   type Commit,
 } from "./lib/git";
@@ -73,6 +76,8 @@ export interface FileViewProps {
   sessions?: readonly LiveSession[];
   /** A thread to bring into view and flash, each time `seq` changes: Open from Needs you. */
   reveal?: { thread: string; seq: number };
+  /** Opens a file in a tab of its own: where an outdated thread's View as written goes. */
+  onOpenFile?: OpenFile;
 }
 
 const NO_SESSIONS: readonly LiveSession[] = [];
@@ -125,7 +130,7 @@ async function marksFor(root: string, path: string, branch: string | undefined, 
  * another tab is on top — so the scroll position and the colouring survive a
  * trip to the terminal.
  */
-export function FileView({ root, path, line, branch, active, changed, session, sessions = NO_SESSIONS, reveal }: FileViewProps) {
+export function FileView({ root, path, line, branch, active, changed, session, sessions = NO_SESSIONS, reveal, onOpenFile }: FileViewProps) {
   const [file, setFile] = useState<FileText | null>(null);
   /** A picture's bytes, base64, read instead of its text: null when it is gone. */
   const [picture, setPicture] = useState<string | null | undefined>(undefined);
@@ -336,8 +341,59 @@ export function FileView({ root, path, line, branch, active, changed, session, s
    * a range. */
   const [composing, setComposing] = useState<{ from: number; to: number } | null>(null);
   useEffect(() => setComposing(null), [branch, path, root]);
-  const lineAnchor = (thread: Thread) =>
+  /** A thread's anchor as it was written. */
+  const writtenAnchor = (thread: Thread) =>
     thread.anchors.find((a): a is Extract<Thread["anchors"][number], { kind: "line" }> => a.kind === "line" && a.path === path);
+
+  // Each thread belongs to the content it was written on (its blob): it is moved from there to what is on screen
+  // through the diff between the two, and is outdated when that diff changed its lines. One with no blob, or whose
+  // blob git has since pruned, is found by its words.
+  const [onScreen, setOnScreen] = useState<string | null>(null);
+  const anyBlob = threads.some((thread) => writtenAnchor(thread)?.blob);
+  useEffect(() => {
+    if (!file || !anyBlob) return;
+    let cancelled = false;
+    void gitSnapshot(root, path, rev)
+      .catch(() => null)
+      .then((blob) => !cancelled && setOnScreen(blob));
+    return () => {
+      cancelled = true;
+    };
+    // `writtenAnchor` reads only `path`.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [file, anyBlob, root, path, rev]);
+  const [placed, setPlaced] = useState<ReadonlyMap<string, Placed>>(new Map());
+  useEffect(() => {
+    if (!file) return;
+    let cancelled = false;
+    const texts = lines.map((one) => one.text);
+    void Promise.all(
+      threads.map(async (thread): Promise<[string, Placed] | null> => {
+        const a = writtenAnchor(thread);
+        if (!a) return null;
+        const end = a.end ?? a.line;
+        if (a.blob && onScreen) {
+          if (a.blob === onScreen) return [thread.id, { line: a.line, end, outdated: false }];
+          const diff = await gitBlobDiff(root, a.blob, onScreen).catch(() => null);
+          if (diff !== null) return [thread.id, placeThrough(diff, a.line, end)];
+        }
+        return [thread.id, placeByCode(a.code, texts, a.line, end)];
+      }),
+    ).then((all) => {
+      if (!cancelled) setPlaced(new Map(all.filter((one): one is [string, Placed] => one !== null)));
+    });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [file, lines, threads, onScreen, root]);
+  /** A thread's anchor where it is in the content on screen. */
+  const lineAnchor = (thread: Thread) => {
+    const a = writtenAnchor(thread);
+    const at = a && placed.get(thread.id);
+    return a && at ? { ...a, line: at.line, end: at.end } : a;
+  };
+  const outdated = (thread: Thread) => placed.get(thread.id)?.outdated ?? false;
   const rangeName = (from: number, to: number) => (to > from ? `lines ${from}–${to}` : `line ${from}`);
   const threadName = (thread: Thread) => {
     const a = lineAnchor(thread);
@@ -367,7 +423,7 @@ export function FileView({ root, path, line, branch, active, changed, session, s
     return at;
     // `lineAnchor` reads only `path`.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [composing, path, rowOfLine, threads]);
+  }, [composing, path, rowOfLine, threads, placed]);
 
   /** The lines a thread (open) or the comment being written is about, marked in the gutter. */
   const marked = useMemo(() => {
@@ -382,7 +438,7 @@ export function FileView({ root, path, line, branch, active, changed, session, s
     if (composing) mark(composing.from, composing.to);
     return on;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [composing, path, threads]);
+  }, [composing, path, threads, placed]);
 
   // Rows are all one height, but what sits under them is not: each block's height, measured once it is drawn.
   const [measured, setMeasured] = useState<ReadonlyMap<number, number>>(new Map());
@@ -431,14 +487,26 @@ export function FileView({ root, path, line, branch, active, changed, session, s
     return () => watch.disconnect();
   }, [measureNotes, file, mode, error]);
 
-  const comment = (range: { from: number; to: number }, text: string) => {
+  const comment = async (range: { from: number; to: number }, text: string) => {
     const code = lines.slice(range.from - 1, range.to).map((one) => one.text).join("\n");
+    setComposing(null);
+    // The content it is written on, so it can be found again however the file changes.
+    const blob = await gitSnapshot(root, path, rev).catch(() => null);
     sender.start({
       root,
-      anchors: [{ kind: "line", path, line: range.from, ...(range.to > range.from ? { end: range.to } : {}), code, ...(branch ? { branch } : {}) }],
+      anchors: [
+        {
+          kind: "line",
+          path,
+          line: range.from,
+          ...(range.to > range.from ? { end: range.to } : {}),
+          code,
+          ...(branch ? { branch } : {}),
+          ...(blob ? { blob } : {}),
+        },
+      ],
       text,
     });
-    setComposing(null);
   };
 
   /** The viewport, read from the box rather than watched: a hidden tab has
@@ -552,7 +620,9 @@ export function FileView({ root, path, line, branch, active, changed, session, s
     const box = boxRef.current;
     if (!reveal || !box || !active || rows.length === 0 || revealed.current === reveal.seq) return;
     const thread = threads.find((one) => one.id === reveal.thread);
-    const a = thread && lineAnchor(thread);
+    // Where it is now, once it has been placed, not where it was written.
+    if (!thread || !placed.has(thread.id)) return;
+    const a = lineAnchor(thread);
     if (!a) return;
     revealed.current = reveal.seq;
     const row = rowOfLine[Math.min(a.end ?? a.line, rowOfLine.length) - 1] ?? 0;
@@ -565,7 +635,7 @@ export function FileView({ root, path, line, branch, active, changed, session, s
     setFlash(thread.id);
     // `rowTop`, `total` and `lineAnchor` follow the rows and the threads, which are here.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [reveal, active, rows, rowOfLine, threads, lineHeight]);
+  }, [reveal, active, rows, rowOfLine, threads, lineHeight, placed]);
 
   useEffect(() => {
     if (!flash) return;
@@ -584,7 +654,7 @@ export function FileView({ root, path, line, branch, active, changed, session, s
         <span className="file-path">{path}</span>
         {branch ? (
           <span className="file-branch" title={`Read from git as ${branch} has it; no worktree has it checked out`}>
-            {branch} · read only
+            {isObjectId(branch) ? "as written" : branch} · read only
           </span>
         ) : null}
         {!asPicture ? (
@@ -700,7 +770,27 @@ export function FileView({ root, path, line, branch, active, changed, session, s
                   </div>
                   {below ? (
                     <div className="file-notes" data-row={row}>
-                      <ThreadCards threads={below.threads} sender={sender} name={threadName} seeing={active} flash={flash} />
+                      <ThreadCards
+                        threads={below.threads}
+                        sender={sender}
+                        name={threadName}
+                        seeing={active}
+                        flash={flash}
+                        tagFor={(thread) => (outdated(thread) ? "outdated" : undefined)}
+                        extra={(thread) => {
+                          const a = writtenAnchor(thread);
+                          return outdated(thread) && a?.blob && onOpenFile ? (
+                            <button
+                              type="button"
+                              className="gen-button borderless thread-reply"
+                              title="The file as it was when this was written, with the thread on its lines"
+                              onClick={() => onOpenFile(root, path, a.line, { branch: a.blob, thread: thread.id })}
+                            >
+                              View as written
+                            </button>
+                          ) : null;
+                        }}
+                      />
                       {below.composing && composing !== null ? (
                         <ThreadComposer
                           root={root}

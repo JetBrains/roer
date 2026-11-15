@@ -3,7 +3,7 @@
  * each prompt to the session its thread is with when that session is free. Where a view keeps its threads and what
  * they are anchored to is the view's own; see `lib/threads`.
  */
-import { createContext, useContext, useEffect, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 
 import { NoteCard, NoteComposer, type NoteAnswer } from "./DiffNote";
 import type { Session } from "./extensions/api";
@@ -156,6 +156,8 @@ export function ThreadCards({
   name,
   seeing = true,
   flash = null,
+  tagFor,
+  extra,
 }: {
   threads: readonly Thread[];
   sender: ThreadSender;
@@ -165,6 +167,10 @@ export function ThreadCards({
   seeing?: boolean;
   /** A thread just asked for, drawn flashing so the eye finds it. */
   flash?: string | null;
+  /** A word put before a thread's status on its corner, e.g. "outdated". */
+  tagFor?: (thread: Thread) => string | undefined;
+  /** More under a thread's card, e.g. a way to see it on the content it was written on. */
+  extra?: (thread: Thread) => ReactNode;
 }) {
   const [replying, setReplying] = useState<string | null>(null);
   // An answer on screen is an answer read: it leaves "Needs you".
@@ -183,7 +189,12 @@ export function ThreadCards({
         const with_ = sender.isLive(thread.session) ? (liveOf(thread.session, sender.sessions) ?? thread.session) : sender.targetFor(thread.root);
         return (
           <div key={thread.id} className={thread.id === flash ? "thread flash" : "thread"} data-thread={thread.id}>
-            <NoteCard note={threadNote(thread, sender.statusOf(thread), name(thread))} actions={THREAD_ACTIONS} onAnswer={answer} />
+            <NoteCard
+              note={threadNote(thread, [tagFor?.(thread), sender.statusOf(thread)].filter(Boolean).join(" · "), name(thread))}
+              actions={THREAD_ACTIONS}
+              onAnswer={answer}
+            />
+            {extra?.(thread)}
             {thread.state === "resolved" ? null : replying === thread.id ? (
               <NoteComposer
                 line={0}

@@ -159,7 +159,7 @@ declare module "roer" {
   export function useOpenFile(): (root: string, path: string, line?: number, options?: { branch?: string }) => void;
   /** What a Roer thread is about: lines of a file, or a part of a view by an id the view gives it. */
   export type Anchor =
-    | { kind: "line"; path: string; line: number; end?: number; code: string; branch?: string }
+    | { kind: "line"; path: string; line: number; end?: number; code: string; branch?: string; blob?: string }
     | { kind: "part"; id: string; label?: string };
   /** A comment on something on screen, with its replies, kept by Roer and answered by an agent through
    * `threads__answer`. `view` is the view it was left in, e.g. `ext:<id>/<tab>`; absent for a file's lines. */
@@ -356,6 +356,11 @@ declare module "roer" {
   /** A file's bytes, base64, as `rev` has it (`HEAD`, a commit, `abc123^`), or as the worktree has it without one.
    * null when there is no such file there. Up to 20 MB. */
   export function gitBlob(root: string, path: string, rev?: string): Promise<string | null>;
+  /** The blob a file's content is, as `rev` has it or as the worktree has it now (stored, so it can be diffed
+   * later); null when there is no such file. What a thread keeps as the content it was written on. */
+  export function gitSnapshot(root: string, path: string, rev?: string): Promise<string | null>;
+  /** What changed from one blob to another, as `git diff -U0`. */
+  export function gitBlobDiff(root: string, from: string, to: string): Promise<string>;
   export function isUntracked(file: FileChange): boolean;
   /** One letter for a change: M, A, D, R, ? … */
   export function statusLetter(file: FileChange): string;

@@ -24,6 +24,9 @@ export type Anchor =
       code: string;
       /** A branch no worktree has checked out, when the file was read from git at it. */
       branch?: string;
+      /** The blob of the content it was written on: a thread belongs to the revision it was left on, and is moved
+       * from it to what is on screen through the diff between the two. */
+      blob?: string;
     }
   | {
       kind: "part";
@@ -176,7 +179,11 @@ export function useThreads(pick: (thread: Thread) => boolean, deps: readonly unk
 /** The threads on one file's lines in one worktree (on `branch`, for one read from git). */
 export const useFileThreads = (root: string, path: string, branch: string | undefined): Thread[] =>
   useThreads(
-    (t) => t.root === root && !t.view && t.anchors.some((a) => a.kind === "line" && a.path === path && a.branch === branch),
+    (t) =>
+      t.root === root &&
+      !t.view &&
+      // On the branch the tab shows, or, in a tab showing the content a thread was written on, that thread.
+      t.anchors.some((a) => a.kind === "line" && a.path === path && (a.branch === branch || (!!branch && a.blob === branch))),
     [root, path, branch],
   );
 
@@ -275,4 +282,55 @@ export function replyPrompt(thread: Thread, text: string, whole = false): string
       ]
     : [`I replied in Roer's thread "${thread.id}":`];
   return [...before, "", text, "", `Answer with the ${ANSWER_TOOL} tool, thread "${thread.id}".`].join("\n");
+}
+
+/** Where a line thread is in the content on screen, and whether its lines are still what it was written on. */
+export interface Placed {
+  line: number;
+  end: number;
+  outdated: boolean;
+}
+
+/**
+ * Moves a thread's lines from the content it was written on to the content on screen, through the diff between
+ * them (`git diff -U0`, so hunks only). Lines no hunk touched move by what was added and removed above them; a hunk
+ * that changed any of them, or put lines between them, makes the thread outdated, left where its first line went.
+ */
+export function placeThrough(diff: string, line: number, end: number): Placed {
+  let shift = 0;
+  let outdated = false;
+  for (const header of diff.split("\n").filter((one) => one.startsWith("@@"))) {
+    const m = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/.exec(header);
+    if (!m) continue;
+    const oldStart = Number(m[1]);
+    const oldCount = m[2] === undefined ? 1 : Number(m[2]);
+    const newCount = m[4] === undefined ? 1 : Number(m[4]);
+    if (oldCount === 0) {
+      // `-5,0` adds lines after line 5: above the thread, between its lines, or after it.
+      if (oldStart < line) shift += newCount;
+      else if (oldStart < end) outdated = true;
+    } else {
+      // `-5,2` changes lines 5 and 6: above the thread, over any of its lines, or after it.
+      const last = oldStart + oldCount - 1;
+      if (last < line) shift += newCount - oldCount;
+      else if (oldStart <= end) outdated = true;
+    }
+  }
+  return { line: Math.max(1, line + shift), end: Math.max(1, end + shift), outdated };
+}
+
+/** A thread's lines found by their words, for one whose content can no longer be diffed: where they are nearest to
+ * where they were, or outdated where they were when the words are nowhere. */
+export function placeByCode(code: string, lines: readonly string[], line: number, end: number): Placed {
+  const want = code.split("\n");
+  const at = (start: number) => want.every((text, i) => lines[start - 1 + i] === text);
+  if (!code.trim() || at(line)) return { line, end, outdated: false };
+  for (let step = 1; step < lines.length; step += 1) {
+    for (const start of [line - step, line + step]) {
+      if (start >= 1 && start + want.length - 1 <= lines.length && at(start)) {
+        return { line: start, end: start + want.length - 1, outdated: false };
+      }
+    }
+  }
+  return { line, end, outdated: true };
 }

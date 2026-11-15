@@ -641,8 +641,75 @@ fn blob(root: &str, path: &str, rev: Option<&str>) -> Result<Option<Vec<u8>>, St
     if out.truncated {
         return Err(format!("{path} is too large to show"));
     }
+    if !out.success && is_object_id(rev) {
+        // A blob itself, as a thread names the content it was written on.
+        let out = run_bounded(root, &["cat-file", "blob", rev], MAX_BLOB_BYTES)?;
+        if out.truncated {
+            return Err(format!("{path} is too large to show"));
+        }
+        return Ok(out.success.then_some(out.stdout));
+    }
     // Not in that revision: added after it, or deleted before.
     Ok(out.success.then_some(out.stdout))
+}
+
+/// A whole object id, SHA-1 or SHA-256, and nothing a revision expression could also be read as.
+fn is_object_id(text: &str) -> bool {
+    (text.len() == 40 || text.len() == 64) && text.bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+}
+
+/// The blob a file's content is: as `rev` has it, or as the worktree has it now, which is written into the
+/// repository's objects so it can be diffed against later. A thread keeps it as the content it was written on;
+/// `None` when there is no such file. An unreferenced blob lasts until `git gc` prunes it (two weeks by default),
+/// after which a thread finds its lines by their words instead.
+#[tauri::command(async)]
+pub fn git_snapshot(root: String, path: String, rev: Option<String>) -> Result<Option<String>, String> {
+    if let Some(rev) = rev.as_deref().filter(|r| !r.is_empty()) {
+        if rev.starts_with('-') {
+            return Err(format!("not a revision: {rev}"));
+        }
+        if is_object_id(rev) && run_text(&root, &["cat-file", "-t", rev]).as_deref() == Some("blob") {
+            return Ok(Some(rev.to_string()));
+        }
+        return Ok(run_text(&root, &["rev-parse", "--verify", "--quiet", &format!("{rev}:{path}")]));
+    }
+    if !Path::new(&root).join(&path).is_file() {
+        return Ok(None);
+    }
+    // Checked to be inside the worktree, then named relative to it, since git runs there: Windows' canonical form
+    // (`\\?\C:\...`) is not a path git can open.
+    let full = crate::files::resolve(&root, &path)?;
+    let base = Path::new(&root).canonicalize().map_err(|e| format!("could not read {root}: {e}"))?;
+    let inside = full.strip_prefix(&base).map_err(|_| format!("{path} is outside the repository"))?;
+    let inside = inside.to_string_lossy().replace('\\', "/");
+    // The bytes as they are, not as a clean filter would store them: that is what the file view shows.
+    run_text(&root, &["hash-object", "-w", "--no-filters", "--", &inside])
+        .map(Some)
+        .ok_or_else(|| format!("could not store {path}"))
+}
+
+/// What changed from one blob to another, with no context: what a thread's lines are moved through, from the
+/// content it was written on to the content on screen.
+#[tauri::command(async)]
+pub fn git_blob_diff(root: String, from: String, to: String) -> Result<String, String> {
+    if !is_object_id(&from) || !is_object_id(&to) {
+        return Err("not object ids".to_string());
+    }
+    let mut args = vec!["diff", "--no-color", "-U0"];
+    args.extend(NO_DRIVERS);
+    args.extend([from.as_str(), to.as_str()]);
+    let out = run_bounded(&root, &args, MAX_DIFF_BYTES)?;
+    if !out.success || out.truncated {
+        return Err("could not diff the two".to_string());
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+/// A git command's trimmed output, or `None` when it failed or said nothing.
+fn run_text(dir: &str, args: &[&str]) -> Option<String> {
+    let out = command(dir, args).stdin(Stdio::null()).output().ok()?;
+    let text = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    (out.status.success() && !text.is_empty()).then_some(text)
 }
 
 /// Everything a branch has changed since it left its base, as one patch: its
@@ -1220,7 +1287,7 @@ fn count_lines(path: &Path) -> (Option<u32>, bool) {
 #[cfg(test)]
 mod tests {
     use super::{
-        blob, branch_commits, branch_diff, branches, changes, git_branch_diff, git_checked_out, git_commit_all, commit_files, count_lines, git, git_commit_diff,
+        blob, branch_commits, branch_diff, branches, git_blob_diff, git_snapshot, changes, git_branch_diff, git_checked_out, git_commit_all, commit_files, count_lines, git, git_commit_diff,
         git_diff, git_root, numstat, parse_name_status, parse_status, push_upstream, repo, repos_in, root,
         upstream_status, Stat, Upstream, MAX_DIFF_BYTES,
     };
@@ -1243,6 +1310,33 @@ mod tests {
         assert_eq!(blob(&s, "gone.png", None).unwrap(), None, "not in the worktree");
         assert!(blob(&s, "pic.png", Some("--output=/tmp/x")).is_err(), "never an option");
         assert_eq!(blob(&s, "../outside.png", None).unwrap(), None, "outside the worktree");
+    }
+
+    #[test]
+    fn a_snapshot_names_the_content_a_thread_was_written_on_and_diffs_against_another() {
+        let dir = scratch("git-snapshot");
+        let s = dir.to_string_lossy().to_string();
+        init(&s);
+        write(&dir, "a.ts", "one\ntwo\nthree\n");
+        must(&s, &["add", "a.ts"]);
+        commit(&s, "first");
+        write(&dir, "a.ts", "zero\none\ntwo\nthree\n");
+
+        // Uncommitted content gets a blob of its own, written so it lasts.
+        let now = git_snapshot(s.clone(), "a.ts".into(), None).unwrap().unwrap();
+        let then = git_snapshot(s.clone(), "a.ts".into(), Some("HEAD".into())).unwrap().unwrap();
+        assert_ne!(now, then);
+        assert_eq!(blob(&s, "a.ts", Some(&now)).unwrap(), Some(b"zero\none\ntwo\nthree\n".to_vec()), "read back by its id");
+        assert_eq!(git_snapshot(s.clone(), "a.ts".into(), Some(now.clone())).unwrap(), Some(now.clone()), "a blob is itself");
+
+        let diff = git_blob_diff(s.clone(), then.clone(), now.clone()).unwrap();
+        assert!(diff.contains("@@ -0,0 +1 @@"), "{diff}");
+        assert!(diff.contains("+zero"), "{diff}");
+
+        assert_eq!(git_snapshot(s.clone(), "gone.ts".into(), None).unwrap(), None);
+        assert_eq!(git_snapshot(s.clone(), "gone.ts".into(), Some("HEAD".into())).unwrap(), None);
+        assert!(git_snapshot(s.clone(), "a.ts".into(), Some("--output=x".into())).is_err(), "never an option");
+        assert!(git_blob_diff(s.clone(), "HEAD".into(), now).is_err(), "only object ids");
     }
 
     #[test]

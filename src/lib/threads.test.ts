@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { allThreads, askPrompt, forYou, markSeen, pickSession, placeOf, replyPrompt, replyToThread, startThread } from "./threads";
+import { allThreads, askPrompt, forYou, markSeen, pickSession, placeByCode, placeOf, placeThrough, replyPrompt, replyToThread, startThread } from "./threads";
 
 beforeEach(() => localStorage.clear());
 
@@ -83,3 +83,26 @@ describe("threads", () => {
   });
 });
 
+
+describe("placing a thread", () => {
+  it("moves lines no hunk touched by what was added and removed above them", () => {
+    expect(placeThrough("@@ -0,0 +1,2 @@\n+a\n+b\n", 5, 6)).toEqual({ line: 7, end: 8, outdated: false });
+    expect(placeThrough("@@ -2 +1,0 @@\n-x\n", 5, 5)).toEqual({ line: 4, end: 4, outdated: false });
+    expect(placeThrough("@@ -9 +9 @@\n-x\n+y\n", 5, 6)).toEqual({ line: 5, end: 6, outdated: false });
+  });
+
+  it("is outdated when a hunk changed its lines, or put lines between them", () => {
+    expect(placeThrough("@@ -5 +5 @@\n-x\n+y\n", 4, 6).outdated).toBe(true);
+    expect(placeThrough("@@ -4,0 +5 @@\n+between\n", 4, 6).outdated).toBe(true);
+    // Added right after its last line, or right before its first: still its lines.
+    expect(placeThrough("@@ -6,0 +7 @@\n+after\n", 4, 6).outdated).toBe(false);
+    expect(placeThrough("@@ -3,0 +4 @@\n+before\n", 4, 6)).toEqual({ line: 5, end: 7, outdated: false });
+  });
+
+  it("finds lines by their words, nearest first, when there is nothing to diff", () => {
+    const lines = ["a", "x", "y", "b", "x", "y"];
+    expect(placeByCode("x\ny", lines, 5, 6)).toEqual({ line: 5, end: 6, outdated: false });
+    expect(placeByCode("x\ny", lines, 3, 4)).toEqual({ line: 2, end: 3, outdated: false });
+    expect(placeByCode("gone", lines, 3, 3)).toEqual({ line: 3, end: 3, outdated: true });
+  });
+});

@@ -85,6 +85,15 @@ export const gitBranchDiff = (cwd: string, base?: string, head?: string): Promis
 export const gitBlob = (root: string, path: string, rev?: string): Promise<string | null> =>
   invoke("git_blob", { root, path, rev: rev ?? null });
 
+/** The blob a file's content is: as `rev` has it, or as the worktree has it now, which is stored so it can be
+ * diffed against later. What a thread keeps as the content it was written on; null when there is no such file. */
+export const gitSnapshot = (root: string, path: string, rev?: string): Promise<string | null> =>
+  invoke("git_snapshot", { root, path, rev: rev ?? null });
+
+/** What changed from one blob to another, as `git diff -U0`: what a thread's lines are moved through. */
+export const gitBlobDiff = (root: string, from: string, to: string): Promise<string> =>
+  invoke("git_blob_diff", { root, from, to });
+
 /** One commit, as much as the branch-diff view names it by. */
 export interface Commit {
   hash: string;

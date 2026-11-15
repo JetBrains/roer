@@ -38,7 +38,7 @@ import { FileView } from "./FileView";
 import { NeedsYou } from "./NeedsYou";
 import { ThreadPeopleContext } from "./Threads";
 import type { OpenFileOptions } from "./extensions/api";
-import { fileOnBranch } from "./lib/fileOnBranch";
+import { fileOnBranch, isObjectId } from "./lib/fileOnBranch";
 import { GenerativeUITab } from "./generative-ui/GenerativeUITab";
 import { applyAll, applyMessage } from "./generative-ui/apply";
 import { A2UI_VERSION, emptyState, surfaceIdOf, type A2uiMessage, type RenderState } from "./generative-ui/schema";
@@ -2259,11 +2259,11 @@ export function App() {
                       role="tab"
                       aria-selected={tabs.active === id}
                       className="tab file"
-                      title={file.branch ? `${file.path} on ${file.branch}` : file.path}
+                      title={file.branch ? `${file.path} ${isObjectId(file.branch) ? "as a thread was written on it" : `on ${file.branch}`}` : file.path}
                       onClick={() => !draggedRef.current && showTab(id)}
                     >
                       {name}
-                      {file.branch ? <span className="tab-branch">@{file.branch}</span> : null}
+                      {file.branch ? <span className="tab-branch">{isObjectId(file.branch) ? "as written" : `@${file.branch}`}</span> : null}
                     </button>
                     <button
                       type="button"
@@ -2439,6 +2439,7 @@ export function App() {
                     line={file.line}
                     branch={file.branch}
                     reveal={file.reveal}
+                    onOpenFile={openInTab}
                     active={tabs.active === id}
                     changed={changed}
                     session={activeSession}
@@ -2522,7 +2523,18 @@ export function App() {
                         ) : ext ? (
                           sessionTab(ext, ext.needsSession ? tabTarget(id) : session?.pane, true, focused)
                         ) : file ? (
-                          <FileView root={file.root} path={file.path} line={file.line} branch={file.branch} reveal={file.reveal} active changed={changed} session={activeSession} sessions={agentSessions} />
+                          <FileView
+                            root={file.root}
+                            path={file.path}
+                            line={file.line}
+                            branch={file.branch}
+                            reveal={file.reveal}
+                            onOpenFile={openInTab}
+                            active
+                            changed={changed}
+                            session={activeSession}
+                            sessions={agentSessions}
+                          />
                         ) : live?.pane ? (
                           <TerminalView
                             args={live.args}
