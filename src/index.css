@@ -3471,36 +3471,81 @@ button.tab-x:hover {
   box-shadow: inset -2px 0 0 var(--ide-accent);
 }
 
-/* A part of a view that takes comments: its button in the corner while it is hovered, an outline while it is
-   picked for a comment, or about the thread open on another part. */
-.gen-commentable {
+/* Every component of a view is wrapped so Comment mode can pick it; the wrapper takes no box, so the layout is
+   the same with it. */
+.gen-part {
+  display: contents;
+}
+
+/* Comments on a view's parts. Off, only the counts on parts with threads; in Comment mode the pointer outlines the
+   part it is on and a click picks it. Outlines and counts are drawn over the view, never in it. */
+.gen-comment-scope {
   position: relative;
-  border-radius: 6px;
-  outline: 1px solid transparent;
-  outline-offset: 3px;
-  transition: outline-color 80ms ease-out;
 }
 
-.gen-commentable.picked,
-.gen-commentable.showing {
-  outline-color: var(--roer-accent);
+.gen-comment-scope.commenting,
+.gen-comment-scope.commenting * {
+  cursor: crosshair;
 }
 
-.gen-commentable.linked {
-  outline: 1px dashed var(--roer-accent);
-}
-
-.gen-comment-tools {
+.gen-comment-toggle {
   position: absolute;
-  top: -8px;
-  right: -8px;
-  z-index: 2;
-  display: flex;
-  gap: 4px;
+  top: 0;
+  right: 0;
+  z-index: 3;
+  padding: 2px 8px;
+  border: 1px solid var(--roer-border);
+  border-radius: 4px;
+  background: var(--roer-bg);
+  color: var(--roer-muted);
+  font-size: 11px;
+  cursor: pointer;
 }
 
-.gen-comment-add,
+.gen-comment-scope.commenting .gen-comment-toggle,
+.gen-comment-scope.commenting .gen-comment-count,
+.gen-comment-scope.commenting .gen-comments,
+.gen-comment-scope.commenting .gen-comments * {
+  cursor: auto;
+}
+
+.gen-comment-toggle[aria-pressed="true"] {
+  border-color: var(--roer-accent);
+  background: var(--roer-accent);
+  color: #fff;
+}
+
+.gen-part-overlays {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.gen-part-outline {
+  position: absolute;
+  margin: -3px;
+  padding: 3px;
+  box-sizing: content-box;
+  border-radius: 6px;
+}
+
+.gen-part-outline.hovered {
+  outline: 1px dashed color-mix(in srgb, var(--roer-accent) 70%, transparent);
+  background: color-mix(in srgb, var(--roer-accent) 6%, transparent);
+}
+
+.gen-part-outline.picked {
+  outline: 2px solid var(--roer-accent);
+  background: color-mix(in srgb, var(--roer-accent) 10%, transparent);
+}
+
+.gen-part-outline.linked {
+  outline: 1px solid var(--roer-accent);
+}
+
 .gen-comment-count {
+  position: absolute;
+  z-index: 2;
   min-width: 18px;
   height: 18px;
   padding: 0 4px;
@@ -3513,29 +3558,29 @@ button.tab-x:hover {
   cursor: pointer;
 }
 
-/* The + only while the part is hovered or picked; a count of threads always. */
-.gen-comment-add {
-  opacity: 0;
-  transition: opacity 80ms ease-out;
-}
-
-.gen-commentable:hover > .gen-comment-tools .gen-comment-add,
-.gen-commentable.picked > .gen-comment-tools .gen-comment-add,
-.gen-comment-add:focus-visible {
-  opacity: 1;
-}
-
-.gen-comment-count[aria-pressed="true"],
-.gen-comment-add:hover {
+.gen-comment-count[aria-pressed="true"] {
   background: var(--roer-accent);
   color: #fff;
 }
 
-.gen-comment-threads .note-card {
-  margin: 8px 0 4px;
+/* Where comments are written and read: under the view, in view while it scrolls. */
+.gen-comments {
+  position: sticky;
+  bottom: 0;
+  z-index: 3;
+  margin-top: 12px;
+  padding: 8px 0;
+  border-top: 1px solid var(--roer-border);
+  background: var(--roer-bg);
+  max-height: 45vh;
+  overflow: auto;
 }
 
-.gen-comment-threads .thread-reply {
+.gen-comments .note-card {
+  margin: 6px 0 4px;
+}
+
+.gen-comments .thread-reply {
   margin: 0 0 4px;
 }
 
