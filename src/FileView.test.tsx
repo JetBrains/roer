@@ -21,7 +21,9 @@ import {
   gitCommitFiles,
   gitCurrentBranch,
   gitDefaultBase,
+  gitBlobDiff,
   gitDiff,
+  gitSnapshot,
   type Commit,
 } from "./lib/git";
 
@@ -44,6 +46,8 @@ vi.mock("./lib/git", async (importOriginal) => ({
   gitCurrentBranch: vi.fn(),
   gitDefaultBase: vi.fn(),
   gitDiff: vi.fn(),
+  gitSnapshot: vi.fn(),
+  gitBlobDiff: vi.fn(),
 }));
 
 const read = vi.mocked(fileRead);
@@ -107,6 +111,8 @@ beforeEach(() => {
   vi.mocked(gitChanges).mockResolvedValue({ root: "/Users/test/project", branch: "feature", commit: "abc", files: [] });
   vi.mocked(gitDiff).mockResolvedValue("");
   vi.mocked(gitCommitDiff).mockResolvedValue("");
+  vi.mocked(gitSnapshot).mockResolvedValue(null);
+  vi.mocked(gitBlobDiff).mockResolvedValue("");
 });
 
 describe("FileView", () => {
@@ -702,6 +708,55 @@ describe("FileView", () => {
       body.scrollTop = 0;
       rerender(<FileView root="/Users/test/project" path="src/App.tsx" active reveal={{ thread: thread.id, seq: 2 }} />);
       await waitFor(() => expect(body.scrollTop).toBeGreaterThan(0));
+    });
+
+    const A = "a".repeat(40);
+    const B = "b".repeat(40);
+
+    it("keeps the blob a comment was written on", async () => {
+      vi.mocked(gitSnapshot).mockResolvedValue(A);
+      show({ session: session() });
+      await screen.findByText("row1");
+      fireEvent.click(screen.getByRole("button", { name: "Comment on line 2" }));
+      fireEvent.change(screen.getByRole("textbox", { name: "Comment on line 2" }), { target: { value: "Hm" } });
+      fireEvent.click(screen.getByRole("button", { name: "Send to claude" }));
+      await waitFor(() => expect(allThreads()[0]?.anchors[0]).toMatchObject({ line: 2, blob: A }));
+      expect(gitSnapshot).toHaveBeenCalledWith("/Users/test/project", "src/App.tsx", undefined);
+    });
+
+    it("moves a thread through what changed since it was written", async () => {
+      // Written on row2 of A; two lines were added at the top since.
+      read.mockResolvedValue(text({ text: "new1\nnew2\nrow1\nrow2\nrow3\n", lines: 5 }));
+      vi.mocked(gitSnapshot).mockResolvedValue(B);
+      vi.mocked(gitBlobDiff).mockResolvedValue("@@ -0,0 +1,2 @@\n+new1\n+new2\n");
+      startThread({ root: "/Users/test/project", anchors: [{ kind: "line", path: "src/App.tsx", line: 2, code: "row2", blob: A }], text: "Here" });
+      show({ session: session() });
+      await waitFor(() => expect(row("row2")?.nextElementSibling).toHaveClass("file-notes"));
+      expect(gitBlobDiff).toHaveBeenCalledWith("/Users/test/project", A, B);
+      expect(screen.queryByText(/outdated/)).not.toBeInTheDocument();
+    });
+
+    it("marks a thread outdated when its lines changed, and opens it as written", async () => {
+      read.mockResolvedValue(text({ text: "row1\nROW2\nrow3\n", lines: 3 }));
+      vi.mocked(gitSnapshot).mockResolvedValue(B);
+      vi.mocked(gitBlobDiff).mockResolvedValue("@@ -2 +2 @@\n-row2\n+ROW2\n");
+      const thread = startThread({
+        root: "/Users/test/project",
+        anchors: [{ kind: "line", path: "src/App.tsx", line: 2, code: "row2", blob: A }],
+        text: "Here",
+      });
+      const onOpenFile = vi.fn();
+      show({ session: session(), onOpenFile });
+      expect(await screen.findByText(/^outdated · /)).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "View as written" }));
+      expect(onOpenFile).toHaveBeenCalledWith("/Users/test/project", "src/App.tsx", 2, { branch: A, thread: thread.id });
+    });
+
+    it("finds a thread with no blob by its words", async () => {
+      read.mockResolvedValue(text({ text: "x\nrow1\nrow2\n", lines: 3 }));
+      startThread({ root: "/Users/test/project", anchors: [{ kind: "line", path: "src/App.tsx", line: 2, code: "row2" }], text: "Here" });
+      show({ session: session() });
+      await waitFor(() => expect(row("row2")?.nextElementSibling).toHaveClass("file-notes"));
     });
 
     it("holds a comment until the agent is free", async () => {

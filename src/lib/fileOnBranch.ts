@@ -6,6 +6,9 @@
 import type { FileTab } from "./tabs";
 import { listWorktrees } from "./worktrees";
 
+/** A whole object id: the content a thread was written on, given in place of a branch. */
+export const isObjectId = (text: string): boolean => /^[0-9a-f]{40}([0-9a-f]{24})?$/.test(text);
+
 export async function fileOnBranch(
   root: string,
   path: string,
@@ -14,6 +17,8 @@ export async function fileOnBranch(
 ): Promise<FileTab> {
   const tab: FileTab = { kind: "file", root, path, ...(line === undefined ? {} : { line }) };
   if (!branch) return tab;
+  // A blob (the content a thread was written on) is the same in every checkout: read where the tab already is.
+  if (isObjectId(branch)) return { ...tab, branch };
   const worktrees = await listWorktrees(root).catch(() => []);
   const checkedOut = worktrees.find((one) => one.branch === branch && !one.missing);
   if (checkedOut) return { ...tab, root: checkedOut.path };

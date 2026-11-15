@@ -1,4 +1,15 @@
-import { allThreads, defineExtension, fileRead, gitRoot, replyToThread, resolveDir, setThread, startThread, type Anchor } from "roer";
+import {
+  allThreads,
+  defineExtension,
+  fileRead,
+  gitRoot,
+  gitSnapshot,
+  replyToThread,
+  resolveDir,
+  setThread,
+  startThread,
+  type Anchor,
+} from "roer";
 
 /** A trimmed string argument, or "" when it is not one. */
 const text = (value: unknown) => (typeof value === "string" ? value.trim() : "");
@@ -86,7 +97,16 @@ export default defineExtension((roer) => {
       const lines = file.text.replace(/\n$/, "").split("\n");
       const end = Math.max(line, count(args.end) || line);
       if (end > lines.length) throw new Error(`${path} has ${lines.length} lines`);
-      const anchor: Anchor = { kind: "line", path, line, ...(end > line ? { end } : {}), code: lines.slice(line - 1, end).join("\n") };
+      // The content it is written on, so the file tab can find its lines however the file changes.
+      const blob = await gitSnapshot(root, path).catch(() => null);
+      const anchor: Anchor = {
+        kind: "line",
+        path,
+        line,
+        ...(end > line ? { end } : {}),
+        code: lines.slice(line - 1, end).join("\n"),
+        ...(blob ? { blob } : {}),
+      };
       const thread = startThread({ root, anchors: [anchor], text: words, author, ...session });
       return `Left your comment on ${path}:${line}${end > line ? `-${end}` : ""} as thread "${thread.id}"; the user sees it when they open the file in Roer. Their reply comes to you as a prompt naming the thread.`;
     },

@@ -413,7 +413,7 @@ export function TabPage({ tabId, pinned: pinnedAtFirst = null }: { tabId: string
               </button>
             </div>
             <div className="split-body">
-              <FileView root={file.root} path={file.path} line={file.line} branch={file.branch} active changed={changed} session={session} sessions={sessions} />
+              <FileView root={file.root} path={file.path} line={file.line} branch={file.branch} active changed={changed} session={session} sessions={sessions} onOpenFile={openFile} />
             </div>
           </div>
         ) : null}

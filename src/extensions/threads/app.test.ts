@@ -1,4 +1,4 @@
-import { fileRead, gitRoot, resolveDir } from "roer";
+import { fileRead, gitRoot, gitSnapshot, resolveDir } from "roer";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { allThreads, startThread } from "../../lib/threads";
@@ -9,6 +9,7 @@ vi.mock("roer", async (importOriginal) => ({
   ...(await importOriginal<typeof import("roer")>()),
   fileRead: vi.fn(),
   gitRoot: vi.fn(),
+  gitSnapshot: vi.fn(),
   resolveDir: vi.fn(),
 }));
 
@@ -22,6 +23,7 @@ beforeEach(() => {
   localStorage.clear();
   vi.mocked(resolveDir).mockResolvedValue("/repo/src");
   vi.mocked(gitRoot).mockResolvedValue("/repo");
+  vi.mocked(gitSnapshot).mockResolvedValue("c".repeat(40));
   vi.mocked(fileRead).mockResolvedValue({ text: "a\nb\nc\n", lines: 3, truncated: false, binary: false, bytes: 6 });
 });
 
@@ -41,7 +43,7 @@ describe("the threads tools", () => {
     );
     expect(allThreads()[0]).toMatchObject({
       root: "/repo",
-      anchors: [{ kind: "line", path: "a.ts", line: 2, end: 3, code: "b\nc" }],
+      anchors: [{ kind: "line", path: "a.ts", line: 2, end: 3, code: "b\nc", blob: "c".repeat(40) }],
       author: "Claude",
       session: { pane: "%4", cwd: "/repo/src" },
     });
