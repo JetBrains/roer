@@ -13,7 +13,7 @@ FROM node:24-trixie-slim AS frontend
 WORKDIR /src
 COPY package.json package-lock.json ./
 RUN npm ci
-COPY index.html tsconfig.json vite.config.ts components.json ./
+COPY index.html tsconfig.json vite.config.ts vite.copy.config.ts components.json ./
 COPY src src
 RUN npm run build
 
@@ -24,6 +24,8 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
 COPY cli cli
+# The CLI embeds the extension builder and server it shares with the app.
+COPY src-tauri/src/extension_build.ts src-tauri/src/extension_server.ts src-tauri/src/
 # `roer` finds its tmux config and skills beside itself, laid out as in the
 # Linux CLI download (release.yml).
 COPY scripts/roer-tmux.conf /opt/roer/roer-tmux.conf
