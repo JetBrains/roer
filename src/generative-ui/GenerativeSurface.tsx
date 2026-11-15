@@ -5,8 +5,7 @@
  * being skipped silently, so a catalog gap is a bug you can see, not one an
  * agent can quietly exploit into running something else.
  */
-import { Commentable } from "./Commentable";
-import { Fragment, type CSSProperties, type ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 
 import {
   Arrow,
@@ -127,7 +126,33 @@ function renderNode(
   }
   if (node.visible !== undefined && evaluate(node.visible, ctx.dataModel, scope) !== true) return null;
   const seen = new Set(ancestors).add(visit);
-  return <Fragment key={key}>{renderBody(node, ctx, scope, seen)}</Fragment>;
+  // Every component is a part the person can pick in Comment mode, by its id (one per template item). The wrapper
+  // takes no box of its own, so the layout is the same with it; `Commentable` makes its subtree one part.
+  return (
+    <div
+      key={key}
+      className="gen-part"
+      data-part={scope.item === undefined ? node.id : `${node.id}#${scope.item}`}
+      data-part-label={partLabel(node, ctx, scope)}
+      {...(node.component === "Commentable" ? { "data-part-group": "" } : {})}
+    >
+      {renderBody(node, ctx, scope, seen)}
+    </div>
+  );
+}
+
+/** What a part is called in a comment: a `Commentable`'s label, else the words the component shows, else its only
+ * child's (a button by its label), else its kind and id. */
+function partLabel(node: Component, ctx: Ctx, scope: Scope, depth = 0): string {
+  const fields = node as unknown as Record<string, unknown>;
+  for (const key of ["label", "title", "text", "name"]) {
+    if (fields[key] === undefined) continue;
+    const words = asString(evaluate(fields[key], ctx.dataModel, scope)).replace(/\s+/g, " ").trim();
+    if (words) return words.length > 60 ? `${words.slice(0, 59)}…` : words;
+  }
+  const only = typeof fields.child === "string" ? ctx.components[fields.child] : undefined;
+  if (only && depth < 3) return partLabel(only, ctx, scope, depth + 1);
+  return `${node.component} ${node.id}`;
 }
 
 function renderBody(node: Component, ctx: Ctx, scope: Scope, seen: ReadonlySet<string>): ReactNode {
@@ -154,12 +179,8 @@ function renderBody(node: Component, ctx: Ctx, scope: Scope, seen: ReadonlySet<s
     case "Card":
       return <Card {...common}>{child(node.child)}</Card>;
     case "Commentable":
-      // One part per template item: a list's rows are each their own.
-      return (
-        <Commentable id={scope.item === undefined ? node.id : `${node.id}#${scope.item}`} label={text(node.label)}>
-          {child(node.child)}
-        </Commentable>
-      );
+      // Its wrapper is the part; the child is drawn as it is.
+      return child(node.child);
     case "Grid":
       return <Grid {...common} columns={node.columns} minItemWidth={node.minItemWidth}>{children(node.children)}</Grid>;
     case "Divider":
