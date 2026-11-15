@@ -1,3 +1,4 @@
+import { forYou, useThreads } from "./lib/threads";
 import { ChevronDown, ChevronRight, Plus } from "lucide-react";
 import { useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 
@@ -201,6 +202,10 @@ export function SessionTree({
   onAddProject,
 }: SessionTreeProps) {
   const ordered = orderTree(projects, worktrees, repos, visibleSessions, waiting, folderInView);
+  // Threads waiting on the person, counted on the row of the session each is with.
+  const forYouThreads = useThreads(forYou, []);
+  const threadsFor = (session: SessionInfo) =>
+    forYouThreads.filter((thread) => thread.session?.pane === session.pane && (!thread.session.id || thread.session.id === session.id)).length;
   const [query, setQuery] = useState("");
   const searching = query.trim() !== "";
   const tree = filterTree(ordered, query, folderInView && folderLabel(folderInView));
@@ -328,6 +333,11 @@ export function SessionTree({
                 title={`Waiting to be sent to its agent: ${held.map((request) => request.label).join("; ")}. Open the session, then + in the tab strip to send or cancel.`}
               >
                 {held.length === 1 ? "1 queued" : `${held.length} queued`}
+              </span>
+            ) : null}
+            {threadsFor(session) > 0 ? (
+              <span className="tree-state needs" title="Threads where its agent answered or asked you: see Needs you above">
+                {threadsFor(session)} for you
               </span>
             ) : null}
             </span>

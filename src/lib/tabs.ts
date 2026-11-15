@@ -23,7 +23,15 @@ export type StageTab =
   | { kind: "changes" }
   /** `branch` is one no worktree has checked out: the file is read from git as that branch has it, read only.
    * Without it, the file is the worktree's at `root`, as it is on disk. */
-  | { kind: "file"; root: string; path: string; line?: number; branch?: string };
+  | {
+      kind: "file";
+      root: string;
+      path: string;
+      line?: number;
+      branch?: string;
+      /** A thread to bring into view and flash, asked for anew each time `seq` changes. */
+      reveal?: { thread: string; seq: number };
+    };
 
 export type FileTab = StageTab & { kind: "file" };
 
@@ -79,12 +87,16 @@ export function openFile(tabs: Tabs, tab: FileTab): Tabs {
   const id = tabId(tab);
   if (tabs.files.some((file) => tabId(file) === id)) {
     return {
-      // A fresh line number is the one thing a reopen carries over; without
-      // one the tab keeps the line it was left at.
+      // A fresh line number, or a thread to show, is what a reopen carries
+      // over; without one the tab keeps the line it was left at.
       files:
-        tab.line === undefined
+        tab.line === undefined && tab.reveal === undefined
           ? tabs.files
-          : tabs.files.map((file) => (tabId(file) === id ? { ...file, line: tab.line } : file)),
+          : tabs.files.map((file) =>
+              tabId(file) === id
+                ? { ...file, ...(tab.line === undefined ? {} : { line: tab.line }), ...(tab.reveal ? { reveal: tab.reveal } : {}) }
+                : file,
+            ),
       used: touch(tabs.used, id),
       active: id,
     };

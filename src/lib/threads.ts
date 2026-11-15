@@ -70,6 +70,34 @@ export interface Thread {
   state: "open" | "resolved";
   /** The last word is the person's, and it has gone to the agent: an answer is due. */
   awaiting?: boolean;
+  /** How many of its messages (the first and the replies) the person has seen; absent counts their own as seen. */
+  seen?: number;
+}
+
+/** The first message and every reply. */
+export const messagesIn = (thread: Thread): number => 1 + thread.replies.length;
+
+/** The thread waits on the person: an agent spoke last, and they have not seen it yet. */
+export function forYou(thread: Thread): boolean {
+  if (thread.state !== "open") return false;
+  const last = thread.replies.at(-1)?.author ?? (thread.author ? thread.author : "You");
+  if (last === "You") return false;
+  return (thread.seen ?? (thread.author ? 0 : 1)) < messagesIn(thread);
+}
+
+/** The person has seen every message in thread `id`. */
+export function markSeen(id: string): void {
+  updateThreads((current) =>
+    current.map((thread) => (thread.id === id && thread.seen !== messagesIn(thread) ? { ...thread, seen: messagesIn(thread) } : thread)),
+  );
+}
+
+/** Where a thread is, in a few words for a list: the file and its lines, or the view's parts. */
+export function placeOf(thread: Thread): string {
+  const line = thread.anchors.find((a): a is Extract<Anchor, { kind: "line" }> => a.kind === "line");
+  if (line) return `${line.path.split("/").pop()}:${line.line}${line.end && line.end > line.line ? `–${line.end}` : ""}`;
+  const parts = thread.anchors.flatMap((a) => (a.kind === "part" ? [a.label ?? a.id] : []));
+  return parts.length > 0 ? parts.join(", ") : (thread.viewTitle ?? thread.view ?? "");
 }
 
 const KEY = "roer:threads";
@@ -104,7 +132,8 @@ export const onThreadsChanged = (listener: () => void): (() => void) =>
 const newId = (): string => `t${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 
 export function startThread(thread: Omit<Thread, "id" | "replies" | "state">): Thread {
-  const started: Thread = { ...thread, id: newId(), replies: [], state: "open" };
+  // The person has read their own; an agent's is for them to see.
+  const started: Thread = { ...thread, id: newId(), replies: [], state: "open", seen: thread.author ? 0 : 1 };
   updateThreads((current) => [...current, started]);
   return started;
 }
@@ -116,7 +145,9 @@ export function replyToThread(id: string, author: string, text: string, mine: bo
     current.map((thread) => {
       if (thread.id !== id) return thread;
       found = true;
-      return { ...thread, state: "open", awaiting: mine, replies: [...thread.replies, { author, text }] };
+      const replies = [...thread.replies, { author, text }];
+      // Their own reply means they have read everything above it.
+      return { ...thread, state: "open", awaiting: mine, replies, ...(mine ? { seen: 1 + replies.length } : {}) };
     }),
   );
   return found;

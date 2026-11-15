@@ -71,6 +71,8 @@ export interface FileViewProps {
   session?: Session | null;
   /** The live sessions an agent runs in: each thread is with one of them, and everything said in it goes there. */
   sessions?: readonly LiveSession[];
+  /** A thread to bring into view and flash, each time `seq` changes: Open from Needs you. */
+  reveal?: { thread: string; seq: number };
 }
 
 const NO_SESSIONS: readonly LiveSession[] = [];
@@ -123,7 +125,7 @@ async function marksFor(root: string, path: string, branch: string | undefined, 
  * another tab is on top — so the scroll position and the colouring survive a
  * trip to the terminal.
  */
-export function FileView({ root, path, line, branch, active, changed, session, sessions = NO_SESSIONS }: FileViewProps) {
+export function FileView({ root, path, line, branch, active, changed, session, sessions = NO_SESSIONS, reveal }: FileViewProps) {
   const [file, setFile] = useState<FileText | null>(null);
   /** A picture's bytes, base64, read instead of its text: null when it is gone. */
   const [picture, setPicture] = useState<string | null | undefined>(undefined);
@@ -542,6 +544,35 @@ export function FileView({ root, path, line, branch, active, changed, session, s
   };
   const message = note();
 
+  // A thread asked for from Needs you: its card scrolled to, a third of the way down, and flashed. After the line
+  // target above, so the thread wins; once per `seq`, so asking again shows it again.
+  const [flash, setFlash] = useState<string | null>(null);
+  const revealed = useRef<number | null>(null);
+  useEffect(() => {
+    const box = boxRef.current;
+    if (!reveal || !box || !active || rows.length === 0 || revealed.current === reveal.seq) return;
+    const thread = threads.find((one) => one.id === reveal.thread);
+    const a = thread && lineAnchor(thread);
+    if (!a) return;
+    revealed.current = reveal.seq;
+    const row = rowOfLine[Math.min(a.end ?? a.line, rowOfLine.length) - 1] ?? 0;
+    // The card sits under its last line: show the lines' start and the card under them where they fit.
+    const from = rowTop(rowOfLine[a.line - 1] ?? row);
+    const card = rowTop(row) + lineHeight;
+    const target = Math.max(0, Math.min(card - box.clientHeight / 3 > from ? from - lineHeight : card - box.clientHeight / 3, total - box.clientHeight));
+    box.scrollTop = target;
+    setTop(target);
+    setFlash(thread.id);
+    // `rowTop`, `total` and `lineAnchor` follow the rows and the threads, which are here.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reveal, active, rows, rowOfLine, threads, lineHeight]);
+
+  useEffect(() => {
+    if (!flash) return;
+    const done = window.setTimeout(() => setFlash(null), 1600);
+    return () => window.clearTimeout(done);
+  }, [flash]);
+
   // Like the Changes view's diff: the keys are on the file as soon as its tab is on top.
   useEffect(() => {
     if (active) boxRef.current?.focus({ preventScroll: true });
@@ -669,7 +700,7 @@ export function FileView({ root, path, line, branch, active, changed, session, s
                   </div>
                   {below ? (
                     <div className="file-notes" data-row={row}>
-                      <ThreadCards threads={below.threads} sender={sender} name={threadName} />
+                      <ThreadCards threads={below.threads} sender={sender} name={threadName} seeing={active} flash={flash} />
                       {below.composing && composing !== null ? (
                         <ThreadComposer
                           root={root}

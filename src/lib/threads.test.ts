@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { allThreads, askPrompt, pickSession, replyPrompt, replyToThread, startThread } from "./threads";
+import { allThreads, askPrompt, forYou, markSeen, pickSession, placeOf, replyPrompt, replyToThread, startThread } from "./threads";
 
 beforeEach(() => localStorage.clear());
 
@@ -62,4 +62,24 @@ describe("threads", () => {
     expect(pickSession("/elsewhere", { pane: "%1", root: "/other" }, sessions)).toMatchObject({ pane: "%1" });
     expect(pickSession("/elsewhere", null, sessions)).toBeUndefined();
   });
+
+  it("waits on the person once an agent speaks, until they have seen it or replied", () => {
+    const mine = onLine();
+    expect(forYou(allThreads()[0])).toBe(false);
+    replyToThread(mine.id, "Claude", "Because.", false);
+    expect(forYou(allThreads()[0])).toBe(true);
+    markSeen(mine.id);
+    expect(forYou(allThreads()[0])).toBe(false);
+    replyToThread(mine.id, "Claude", "Also this.", false);
+    expect(forYou(allThreads()[0])).toBe(true);
+    replyToThread(mine.id, "You", "Thanks", true);
+    expect(forYou(allThreads()[0])).toBe(false);
+  });
+
+  it("waits on the person with a thread an agent started, and says where it is", () => {
+    const theirs = startThread({ root: "/repo", anchors: [{ kind: "line", path: "src/a.ts", line: 3, end: 5, code: "" }], text: "Hm?", author: "Claude" });
+    expect(forYou(theirs)).toBe(true);
+    expect(placeOf(theirs)).toBe("a.ts:3–5");
+  });
 });
+

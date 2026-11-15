@@ -12,7 +12,9 @@ import { sendToSession } from "./lib/github";
 import {
   askPrompt,
   deleteThread,
+  forYou,
   liveOf,
+  markSeen,
   pickSession,
   replyPrompt,
   replyToThread,
@@ -152,13 +154,24 @@ export function ThreadCards({
   threads,
   sender,
   name,
+  seeing = true,
+  flash = null,
 }: {
   threads: readonly Thread[];
   sender: ThreadSender;
   /** What the reply box is about, for its label, e.g. "line 4". */
   name: (thread: Thread) => string;
+  /** Whether they are in front of the person, which is what makes a new answer seen; a hidden tab's are not. */
+  seeing?: boolean;
+  /** A thread just asked for, drawn flashing so the eye finds it. */
+  flash?: string | null;
 }) {
   const [replying, setReplying] = useState<string | null>(null);
+  // An answer on screen is an answer read: it leaves "Needs you".
+  useEffect(() => {
+    if (!seeing || document.visibilityState === "hidden") return;
+    for (const thread of threads) if (forYou(thread)) markSeen(thread.id);
+  }, [seeing, threads]);
   const answer = ({ note, action }: NoteAnswer) => {
     if (!note.id) return;
     if (action === "delete") deleteThread(note.id);
@@ -169,7 +182,7 @@ export function ThreadCards({
       {threads.map((thread) => {
         const with_ = sender.isLive(thread.session) ? (liveOf(thread.session, sender.sessions) ?? thread.session) : sender.targetFor(thread.root);
         return (
-          <div key={thread.id} className="thread">
+          <div key={thread.id} className={thread.id === flash ? "thread flash" : "thread"} data-thread={thread.id}>
             <NoteCard note={threadNote(thread, sender.statusOf(thread), name(thread))} actions={THREAD_ACTIONS} onAnswer={answer} />
             {thread.state === "resolved" ? null : replying === thread.id ? (
               <NoteComposer
