@@ -1,11 +1,14 @@
 name: macOS 14
 
-# Whether Roer runs on macOS 14, its floor. The tmux it bundles is built for
-# macOS 15, which macOS does not hold a command-line tool to, and the app is
-# built against a newer SDK than 14's, so only running it there tells: this
-# bundles the app exactly as a release does, then runs that bundle's tmux,
-# roer and app with a session on macOS 14. Apple silicon only: no free runner
-# has macOS 14 on Intel.
+# Whether Roer still runs on macOS 14, its floor. GitHub retired its macOS 14
+# runners on 2026-11-02, so this can no longer run there. It bundles the app
+# exactly as a release does, then checks the floor where it can be read: the
+# app's LSMinimumSystemVersion and the macOS version roer-app and roer are
+# built for must be 14.0 or lower (tmux, which macOS does not hold a
+# command-line tool to, up to fetch-tmux.sh's TMUX_MAX_MINOS, shown to run on
+# 14). Then it runs that bundle's tmux, roer and app with a session on the
+# oldest macOS GitHub has. What it cannot catch is a call to an API newer
+# than 14 that only fails there. Apple silicon only.
 
 on:
   # A new tmux or a new build target, the likeliest ways to raise the floor.
@@ -42,31 +45,51 @@ jobs:
       retention_days: 3
 
   run:
-    name: Run on macOS 14
+    name: Floor, and run on the oldest macOS
     needs: bundle
-    runs-on: macos-14
+    # The oldest macOS GitHub runs; 14 was retired on 2026-11-02.
+    runs-on: macos-15
     timeout-minutes: 15
     env:
       APP: ${{ github.workspace }}/Roer.app
     steps:
-      - name: The runner is macOS 14
-        run: |
-          sw_vers
-          [ "$(sw_vers -productVersion | cut -d. -f1)" = 14 ]
+      - name: The runner
+        run: sw_vers
+
+      # Only for fetch-tmux.sh's TMUX_MAX_MINOS.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: .github/macos
+          persist-credentials: false
 
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: macos-14-bundle
 
       - name: Unpack the app bundle
+        run: tar -xzf Roer.app.tar.gz
+
+      - name: The bundle is for macOS 14
         run: |
-          tar -xzf Roer.app.tar.gz
-          /usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$APP/Contents/Info.plist"
+          set -euo pipefail
+          FLOOR=14.0
+          TMUX_MAX_MINOS=$(sed -n 's/^TMUX_MAX_MINOS=//p' .github/macos/fetch-tmux.sh)
+          # Whether $1 is $2 or older, as macOS versions compare.
+          within() { [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | tail -1)" = "$2" ]; }
+          failed=0
+          plist=$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$APP/Contents/Info.plist")
+          echo "LSMinimumSystemVersion: $plist"
+          within "$plist" "$FLOOR" || { echo "::error::Finder would refuse Roer on macOS $FLOOR: LSMinimumSystemVersion is $plist"; failed=1; }
           for bin in roer-app roer tmux; do
+            limit=$FLOOR
+            [ "$bin" = tmux ] && limit=$TMUX_MAX_MINOS
             for arch in arm64 x86_64; do
-              echo "$bin $arch: macOS $(otool -arch "$arch" -l "$APP/Contents/MacOS/$bin" | awk '/LC_BUILD_VERSION/ { found = 1 } found && $1 == "minos" { print $2; exit }')"
+              minos=$(otool -arch "$arch" -l "$APP/Contents/MacOS/$bin" | awk '/LC_BUILD_VERSION/ { found = 1 } found && $1 == "minos" { print $2; exit }')
+              echo "$bin $arch: macOS $minos"
+              within "$minos" "$limit" || { echo "::error::$bin ($arch) is built for macOS $minos, newer than $limit"; failed=1; }
             done
           done
+          exit "$failed"
 
       - name: tmux runs sessions
         run: |
