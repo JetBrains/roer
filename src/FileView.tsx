@@ -410,11 +410,20 @@ export function FileView({ root, path, line, branch, active, changed, session, s
       extend && current ? { from: Math.min(current.from, no), to: Math.max(current.to, no, current.from) } : { from: no, to: no },
     );
 
+  // Resolved threads fold away under a count in the head, so a file read often does not fill up with old talk; one
+  // asked for from Needs you is drawn all the same.
+  const [showResolved, setShowResolved] = useState(false);
+  const resolved = threads.filter((thread) => thread.state === "resolved").length;
+  const drawn = useMemo(
+    () => (showResolved ? threads : threads.filter((thread) => thread.state !== "resolved" || thread.id === reveal?.thread)),
+    [reveal?.thread, showResolved, threads],
+  );
+
   /** What sits under each row: the threads that end on its line, and the comment being written there. */
   const under = useMemo(() => {
     const at = new Map<number, { threads: Thread[]; composing: boolean }>();
     const rowFor = (no: number) => rowOfLine[Math.min(Math.max(no, 1), rowOfLine.length) - 1];
-    for (const thread of threads) {
+    for (const thread of drawn) {
       const a = lineAnchor(thread);
       const row = a ? rowFor(a.end ?? a.line) : undefined;
       if (row === undefined) continue;
@@ -429,7 +438,7 @@ export function FileView({ root, path, line, branch, active, changed, session, s
     return at;
     // `lineAnchor` reads only `path`.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [composing, path, rowOfLine, threads, placed]);
+  }, [composing, path, rowOfLine, drawn, placed]);
 
   /** The lines a thread (open) or the comment being written is about, marked in the gutter. */
   const marked = useMemo(() => {
@@ -662,6 +671,17 @@ export function FileView({ root, path, line, branch, active, changed, session, s
           <span className="file-branch" title={`Read from git as ${branch} has it; no worktree has it checked out`}>
             {isObjectId(branch) ? "as written" : branch} · read only
           </span>
+        ) : null}
+        {resolved > 0 ? (
+          <button
+            type="button"
+            className="gen-button borderless file-resolved"
+            aria-pressed={showResolved}
+            title={showResolved ? "Fold the resolved threads away" : "Show the resolved threads under their lines"}
+            onClick={() => setShowResolved((on) => !on)}
+          >
+            {showResolved ? `Hide ${resolved} resolved` : `${resolved} resolved`}
+          </button>
         ) : null}
         {!asPicture ? (
           <select
