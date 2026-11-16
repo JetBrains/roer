@@ -152,6 +152,8 @@ struct Bounded {
     stdout: Vec<u8>,
     stderr: Vec<u8>,
     success: bool,
+    /// Its exit code; none when a signal ended it.
+    code: Option<i32>,
     /// Git had more to say and was stopped.
     truncated: bool,
 }
@@ -199,6 +201,7 @@ fn bounded(mut command: Command, limit: usize) -> Result<Bounded, String> {
         stdout,
         stderr: rest.stderr,
         success: rest.status.success(),
+        code: rest.status.code(),
         truncated,
     })
 }
@@ -534,16 +537,33 @@ const FIELD_SEP: &str = "\x1f";
 /// a reviewer steps through them in, not the order `git log` prints by
 /// default.
 #[tauri::command(async)]
-pub fn git_branch_commits(root: String, branch: String, base: String) -> Result<Vec<Commit>, String> {
-    branch_commits(&root, &branch, &base)
+pub fn git_branch_commits(root: String, branch: String, base: String, path: Option<String>) -> Result<Vec<Commit>, String> {
+    match path.as_deref().filter(|p| !p.is_empty()) {
+        Some(path) => branch_commits_touching(&root, &branch, &base, Some(path)),
+        None => branch_commits(&root, &branch, &base),
+    }
 }
 
 fn branch_commits(root: &str, branch: &str, base: &str) -> Result<Vec<Commit>, String> {
+    branch_commits_touching(root, branch, base, None)
+}
+
+/// The branch's commits, or with `path` only those that touched it (a rename to or from it included), in one
+/// `git log` rather than one call per commit.
+fn branch_commits_touching(root: &str, branch: &str, base: &str, path: Option<&str>) -> Result<Vec<Commit>, String> {
+    if branch.starts_with('-') || base.starts_with('-') {
+        return Err("not a branch".to_string());
+    }
     // Against the same ref as the branch's whole diff, so the two agree on what the branch has.
     let base = base_ref(root, base).unwrap_or_else(|| base.to_string());
     let format = format!("%H{FIELD_SEP}%h{FIELD_SEP}%an{FIELD_SEP}%at{FIELD_SEP}%s{FIELD_SEP}%b{RECORD_SEP}");
     let range = format!("{base}..{branch}");
-    let out = git(root, &["log", "--reverse", &format!("--format={format}"), &range])?;
+    let format = format!("--format={format}");
+    let mut args = vec!["log", "--reverse", format.as_str(), range.as_str()];
+    if let Some(path) = path {
+        args.extend(["--", path]);
+    }
+    let out = git(root, &args)?;
     Ok(out.split(RECORD_SEP).map(str::trim).filter(|record| !record.is_empty()).filter_map(parse_commit).collect())
 }
 
@@ -686,6 +706,55 @@ pub fn git_snapshot(root: String, path: String, rev: Option<String>) -> Result<O
     run_text(&root, &["hash-object", "-w", "--no-filters", "--", &inside])
         .map(Some)
         .ok_or_else(|| format!("could not store {path}"))
+}
+
+/// What changed from a blob to `path` as it is on disk now, with no context: [`git_blob_diff`] for a worktree's
+/// file, which needs no blob of the file stored first. The blob is copied out to a temp file and `--no-index`
+/// diffs the two, so nothing is written into the repository however often the file changes.
+#[tauri::command(async)]
+pub fn git_blob_diff_file(root: String, from: String, path: String) -> Result<String, String> {
+    if !is_object_id(&from) {
+        return Err("not an object id".to_string());
+    }
+    // Checked to be inside the worktree, then named relative to it (see `git_snapshot`).
+    let full = crate::files::resolve(&root, &path)?;
+    let base = Path::new(&root).canonicalize().map_err(|e| format!("could not read {root}: {e}"))?;
+    let inside = full.strip_prefix(&base).map_err(|_| format!("{path} is outside the repository"))?;
+    let inside = inside.to_string_lossy().replace('\\', "/");
+    let old = run(&root, &["cat-file", "blob", &from])?;
+    if !old.status.success() {
+        return Err(format!("no blob {from}"));
+    }
+    let copy = TempFile::new("roer-blob")?;
+    std::fs::write(&copy.0, &old.stdout).map_err(|e| format!("could not copy the blob out: {e}"))?;
+    let copied = copy.0.to_string_lossy().into_owned();
+    let mut args = vec!["diff", "--no-index", "--no-color", "-U0"];
+    args.extend(NO_DRIVERS);
+    args.extend(["--", copied.as_str(), inside.as_str()]);
+    let out = run_bounded(&root, &args, MAX_DIFF_BYTES)?;
+    // `--no-index` exits 1 when the two differ, which is the answer, not a failure; what it says on stderr (a
+    // line-ending warning, on Windows) is no failure either.
+    if out.truncated || !matches!(out.code, Some(0 | 1)) {
+        return Err(format!("could not diff the two: {}", String::from_utf8_lossy(&out.stderr).trim()));
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+/// A file in the temp folder, removed when dropped.
+struct TempFile(PathBuf);
+
+impl TempFile {
+    fn new(prefix: &str) -> Result<TempFile, String> {
+        static COUNT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+        let n = COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Ok(TempFile(std::env::temp_dir().join(format!("{prefix}-{}-{n}", std::process::id()))))
+    }
+}
+
+impl Drop for TempFile {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
 }
 
 /// What changed from one blob to another, with no context: what a thread's lines are moved through, from the
@@ -1287,7 +1356,7 @@ fn count_lines(path: &Path) -> (Option<u32>, bool) {
 #[cfg(test)]
 mod tests {
     use super::{
-        blob, branch_commits, branch_diff, branches, git_blob_diff, git_snapshot, changes, git_branch_diff, git_checked_out, git_commit_all, commit_files, count_lines, git, git_commit_diff,
+        blob, branch_commits, branch_diff, branches, git_blob_diff, git_blob_diff_file, git_branch_commits, git_snapshot, changes, git_branch_diff, git_checked_out, git_commit_all, commit_files, count_lines, git, git_commit_diff,
         git_diff, git_root, numstat, parse_name_status, parse_status, push_upstream, repo, repos_in, root,
         upstream_status, Stat, Upstream, MAX_DIFF_BYTES,
     };
@@ -1337,6 +1406,15 @@ mod tests {
         assert_eq!(git_snapshot(s.clone(), "gone.ts".into(), Some("HEAD".into())).unwrap(), None);
         assert!(git_snapshot(s.clone(), "a.ts".into(), Some("--output=x".into())).is_err(), "never an option");
         assert!(git_blob_diff(s.clone(), "HEAD".into(), now).is_err(), "only object ids");
+
+        // Against the file on disk, with no blob of it stored.
+        let against_disk = git_blob_diff_file(s.clone(), then.clone(), "a.ts".into()).unwrap();
+        assert!(against_disk.contains("@@ -0,0 +1 @@"), "{against_disk}");
+        assert!(against_disk.contains("+zero"), "{against_disk}");
+        write(&dir, "a.ts", "one\ntwo\nthree\n");
+        assert_eq!(git_blob_diff_file(s.clone(), then.clone(), "a.ts".into()).unwrap(), "", "the same content");
+        assert!(git_blob_diff_file(s.clone(), "HEAD".into(), "a.ts".into()).is_err(), "only object ids");
+        assert!(git_blob_diff_file(s.clone(), then, "../outside".into()).is_err(), "never outside the repository");
     }
 
     #[test]
@@ -1827,6 +1905,15 @@ mod tests {
         assert_eq!(subjects, ["second commit", "third commit"]);
         assert!(commits[0].hash.starts_with(&commits[0].short));
         assert!(!commits[0].author.is_empty());
+
+        // Only those that touched a file, in one call: what a file tab's picker offers.
+        let touching: Vec<_> = git_branch_commits(at.clone(), "feature".into(), "main".into(), Some("b.txt".into()))
+            .expect("commits")
+            .into_iter()
+            .map(|c| c.subject)
+            .collect();
+        assert_eq!(touching, ["third commit"]);
+        assert!(git_branch_commits(at.clone(), "--output=x".into(), "main".into(), None).is_err(), "never an option");
 
         std::fs::remove_dir_all(&dir).unwrap();
     }

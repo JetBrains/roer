@@ -94,6 +94,10 @@ export const gitSnapshot = (root: string, path: string, rev?: string): Promise<s
 export const gitBlobDiff = (root: string, from: string, to: string): Promise<string> =>
   invoke("git_blob_diff", { root, from, to });
 
+/** What changed from a blob to `path` as it is on disk, as `git diff -U0`; stores nothing in the repository. */
+export const gitBlobDiffFile = (root: string, from: string, path: string): Promise<string> =>
+  invoke("git_blob_diff_file", { root, from, path });
+
 /** One commit, as much as the branch-diff view names it by. */
 export interface Commit {
   hash: string;
@@ -121,12 +125,13 @@ export const gitDefaultBase = (cwd: string): Promise<string> => invoke("git_defa
 export const gitCurrentBranch = (cwd: string): Promise<string> =>
   invoke("git_current_branch", { cwd });
 
-/** Every commit `branch` has that `base` does not, oldest first. */
+/** Every commit `branch` has that `base` does not, oldest first; with `path`, only those that touched it. */
 export const gitBranchCommits = (
   root: string,
   branch: string,
   base: string,
-): Promise<Commit[]> => invoke("git_branch_commits", { root, branch, base });
+  path?: string,
+): Promise<Commit[]> => invoke("git_branch_commits", path === undefined ? { root, branch, base } : { root, branch, base, path });
 
 /** The files one commit touched, diffed against its own parent. */
 export const gitCommitFiles = (root: string, commit: string): Promise<FileChange[]> =>

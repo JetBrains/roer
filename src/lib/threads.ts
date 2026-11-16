@@ -77,7 +77,18 @@ export interface Thread {
   seen?: number;
   /** When its worktree or branch was first found gone (ms); absent while it is there. See `sweepThreads`. */
   goneSince?: number;
+  /** What is still to be typed into its session, oldest first: kept with the thread, so whichever view is open
+   * sends it once the session is free, and none is lost with the view it was written in. */
+  outbox?: Outgoing[];
+  /** A send that failed is tried again from then (ms), each time a little later; `tries` counts the failures. */
+  retryAt?: number;
+  tries?: number;
+  /** A view is typing it now (ms): no other takes the same one meanwhile. */
+  sendingSince?: number;
 }
+
+/** One prompt waiting for a thread's session: the thread itself, or one of the person's replies. */
+export type Outgoing = { kind: "ask" } | { kind: "reply"; text: string };
 
 /** The first message and every reply. */
 export const messagesIn = (thread: Thread): number => 1 + thread.replies.length;
@@ -158,7 +169,17 @@ export function replyToThread(id: string, author: string, text: string, mine: bo
   return found;
 }
 
-export function setThread(id: string, change: Partial<Pick<Thread, "state" | "awaiting" | "session">>): void {
+/** Queues `item` to be typed into thread `id`'s session. */
+export function queueOnThread(id: string, item: Outgoing): void {
+  updateThreads((current) =>
+    current.map((thread) => (thread.id === id ? { ...thread, outbox: [...(thread.outbox ?? []), item] } : thread)),
+  );
+}
+
+export function setThread(
+  id: string,
+  change: Partial<Pick<Thread, "state" | "awaiting" | "session" | "outbox" | "retryAt" | "tries" | "sendingSince">>,
+): void {
   updateThreads((current) => current.map((thread) => (thread.id === id ? { ...thread, ...change } : thread)));
 }
 
@@ -179,14 +200,27 @@ export function useThreads(pick: (thread: Thread) => boolean, deps: readonly unk
 }
 
 /** The threads on one file's lines in one worktree (on `branch`, for one read from git). */
-export const useFileThreads = (root: string, path: string, branch: string | undefined): Thread[] =>
+export const useFileThreads = (
+  root: string,
+  path: string,
+  branch: string | undefined,
+  /** For a worktree's own file: the branch it has checked out, and every checkout of its repository. */
+  here?: { branch?: string; checkouts: readonly string[] },
+): Thread[] =>
   useThreads(
     (t) =>
-      t.root === root &&
       !t.view &&
-      // On the branch the tab shows, or, in a tab showing the content a thread was written on, that thread.
-      t.anchors.some((a) => a.kind === "line" && a.path === path && (a.branch === branch || (!!branch && a.blob === branch))),
-    [root, path, branch],
+      t.anchors.some(
+        (a) =>
+          a.kind === "line" &&
+          a.path === path &&
+          // On the branch the tab shows, or, in a tab showing the content a thread was written on, that thread.
+          ((t.root === root && (a.branch === branch || (!!branch && a.blob === branch))) ||
+            // Left on this checkout's branch, read from git in another checkout of the repository before this one
+            // had it checked out.
+            (!!here?.branch && a.branch === here.branch && t.root !== root && here.checkouts.includes(t.root))),
+      ),
+    [root, path, branch, here?.branch, here?.checkouts],
   );
 
 /** The threads left in one view of one repository. */

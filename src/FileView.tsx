@@ -15,12 +15,13 @@ import { fileRead, type FilesChanged, type FileText } from "./lib/files";
 import {
   gitBlob,
   gitBlobDiff,
+  gitBlobDiffFile,
   gitBranchCommits,
   gitBranchDiff,
   gitChanges,
   gitCommitDiff,
-  gitCommitFiles,
   gitCurrentBranch,
+  gitRepo,
   gitDefaultBase,
   gitDiff,
   gitSnapshot,
@@ -157,6 +158,19 @@ export function FileView({ root, path, line, branch, active, changed, session, s
   const [commits, setCommits] = useState<Commit[] | null>(null);
   /** What "All changes" is compared with, for its tooltip. */
   const [base, setBase] = useState("");
+  /** The branch this checkout has, and every checkout of its repository: a thread left on that branch, read from
+   * git in another checkout before this one had it, is this file's too. */
+  const [checkedOut, setCheckedOut] = useState<string | undefined>(undefined);
+  const [checkouts, setCheckouts] = useState<readonly string[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    gitRepo(root)
+      .then((repo) => !cancelled && setCheckouts(repo?.worktrees ?? []))
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [root]);
   // A commit is shown as it left the file; otherwise the branch, or the worktree's file as it is on disk.
   const rev = marking.kind === "commit" ? marking.hash : branch;
 
@@ -230,24 +244,19 @@ export function FileView({ root, path, line, branch, active, changed, session, s
   }, [active, asPicture, branch, path, reload, rev, root]);
 
   // The branch's commits that touched this file, for the picker: read when the tab comes to the front, since the
-  // session behind it may have committed while it was away. Not on every save the watch reports: that is one git
-  // call per commit, and a save makes no commit.
+  // session behind it may have committed while it was away. Not on every save the watch reports: a save makes no
+  // commit.
   useEffect(() => {
     if (!active || asPicture) return;
     let cancelled = false;
     void (async () => {
       const to = await gitDefaultBase(root);
       const head = branch ?? (await gitCurrentBranch(root));
-      const all = to && head && head !== to ? await gitBranchCommits(root, head, to) : [];
-      const touched = await Promise.all(
-        all.map(async (commit) => {
-          const files = await gitCommitFiles(root, commit.hash);
-          return files.some((one) => one.path === path || one.renamedFrom === path);
-        }),
-      );
+      const touched = to && head && head !== to ? await gitBranchCommits(root, head, to, path) : [];
       if (cancelled) return;
       setBase(to);
-      setCommits(all.filter((_, i) => touched[i]));
+      if (!branch) setCheckedOut(head || undefined);
+      setCommits(touched);
     })().catch(() => {
       if (!cancelled) setCommits([]);
     });
@@ -339,7 +348,7 @@ export function FileView({ root, path, line, branch, active, changed, session, s
   // Threads on the file's lines, each drawn under its last line like a comment in the diff.
   // Comments can be switched off in Settings (Experimental): then the file shows none, and offers none.
   const commentsOn = useCommentsOn();
-  const fileThreads = useFileThreads(root, path, branch);
+  const fileThreads = useFileThreads(root, path, branch, branch ? undefined : { branch: checkedOut, checkouts });
   const threads = commentsOn ? fileThreads : NO_THREADS;
   const sender = useThreadSender({ stage: session, sessions });
   useClaimSessions(threads, sessions);
@@ -354,10 +363,13 @@ export function FileView({ root, path, line, branch, active, changed, session, s
   // Each thread belongs to the content it was written on (its blob): it is moved from there to what is on screen
   // through the diff between the two, and is outdated when that diff changed its lines. One with no blob, or whose
   // blob git has since pruned, is found by its words.
+  // What is on screen, for moving threads through what changed since they were written. The file on disk is diffed
+  // against directly, storing nothing; a revision (a branch, a commit, a blob) has its blob already.
   const [onScreen, setOnScreen] = useState<string | null>(null);
   const anyBlob = threads.some((thread) => writtenAnchor(thread)?.blob);
   useEffect(() => {
-    if (!file || !anyBlob) return;
+    setOnScreen(null);
+    if (!anyBlob || !rev) return;
     let cancelled = false;
     void gitSnapshot(root, path, rev)
       .catch(() => null)
@@ -367,20 +379,34 @@ export function FileView({ root, path, line, branch, active, changed, session, s
     };
     // `writtenAnchor` reads only `path`.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [file, anyBlob, root, path, rev]);
+  }, [anyBlob, root, path, rev]);
+  // Placed again only when something that moves a thread changes: the file, or a thread's anchor, not every reply
+  // or seen count written anywhere.
+  const anchorsKey = JSON.stringify(
+    threads.map((thread) => {
+      const a = writtenAnchor(thread);
+      return [thread.id, a?.blob, a?.line, a?.end, a?.code];
+    }),
+  );
+  const threadsRef = useRef(threads);
+  threadsRef.current = threads;
   const [placed, setPlaced] = useState<ReadonlyMap<string, Placed>>(new Map());
   useEffect(() => {
     if (!file) return;
+    // A revision's blob is still being read: placing by its old one would draw threads where they are not.
+    if (rev && anyBlob && !onScreen) return;
     let cancelled = false;
     const texts = lines.map((one) => one.text);
     void Promise.all(
-      threads.map(async (thread): Promise<[string, Placed] | null> => {
+      threadsRef.current.map(async (thread): Promise<[string, Placed] | null> => {
         const a = writtenAnchor(thread);
         if (!a) return null;
         const end = a.end ?? a.line;
-        if (a.blob && onScreen) {
+        if (a.blob) {
           if (a.blob === onScreen) return [thread.id, { line: a.line, end, outdated: false }];
-          const diff = await gitBlobDiff(root, a.blob, onScreen).catch(() => null);
+          const diff = await (rev ? (onScreen ? gitBlobDiff(root, a.blob, onScreen) : Promise.reject()) : gitBlobDiffFile(root, a.blob, path)).catch(
+            () => null,
+          );
           if (diff !== null) return [thread.id, placeThrough(diff, a.line, end)];
         }
         return [thread.id, placeByCode(a.code, texts, a.line, end)];
@@ -391,8 +417,9 @@ export function FileView({ root, path, line, branch, active, changed, session, s
     return () => {
       cancelled = true;
     };
+    // `threads` is read through its ref: `anchorsKey` is what of it moves them.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [file, lines, threads, onScreen, root]);
+  }, [file, lines, anchorsKey, onScreen, root, path, rev]);
   /** A thread's anchor where it is in the content on screen. */
   const lineAnchor = (thread: Thread) => {
     const a = writtenAnchor(thread);
@@ -516,7 +543,9 @@ export function FileView({ root, path, line, branch, active, changed, session, s
           line: range.from,
           ...(range.to > range.from ? { end: range.to } : {}),
           code,
-          ...(branch ? { branch } : {}),
+          // A tab showing a thread's content as written has a blob for its branch: the comment is on that content,
+          // which `blob` says, and on no branch.
+          ...(branch && !isObjectId(branch) ? { branch } : {}),
           ...(blob ? { blob } : {}),
         },
       ],
@@ -549,17 +578,14 @@ export function FileView({ root, path, line, branch, active, changed, session, s
     if (isMarkdown && line) setMode("raw");
   }, [isMarkdown, line, path, root]);
 
-  // The line a `path:42` query asked for, put in the middle of the view.
+  // The line a `path:42` query asked for, put in the middle of the view. The rows above it can still change after
+  // (the gutter's marks put removed lines in): it is put there again then, unless the view was scrolled since.
+  const jumpedTop = useRef<number | null>(null);
   useEffect(() => {
     const box = boxRef.current;
     const want = `${root}/${path}:${line ?? ""}`;
-    if (
-      !box ||
-      !active ||
-      !line ||
-      lines.length === 0 ||
-      scrolledTo.current === want
-    )
+    if (!box || !active || !line || lines.length === 0) return;
+    if (scrolledTo.current === want && (jumpedTop.current === null || Math.abs(box.scrollTop - jumpedTop.current) > 1))
       return;
     scrolledTo.current = want;
     // Clamped here rather than by reading `scrollTop` back: every row is the
@@ -569,6 +595,7 @@ export function FileView({ root, path, line, branch, active, changed, session, s
     const middle = rowTop(rowOfLine[line - 1] ?? line - 1) - box.clientHeight / 2;
     const target = Math.min(furthest, Math.max(0, middle));
     box.scrollTop = target;
+    jumpedTop.current = box.scrollTop;
     setTop(target);
     // `rowTop` and `total` follow `rowOfLine` and the blocks; a block measured later must not scroll again.
     // eslint-disable-next-line react-hooks/exhaustive-deps

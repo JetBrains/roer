@@ -79,6 +79,7 @@ pub fn run() {
             git::git_blob,
             git::git_snapshot,
             git::git_blob_diff,
+            git::git_blob_diff_file,
             git::git_branch_diff,
             git::git_commit_all,
             git::git_upstream_status,

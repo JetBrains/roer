@@ -7,10 +7,10 @@ beforeEach(() => localStorage.clear());
 
 const DAY = 24 * 60 * 60 * 1000;
 
-/** A disk where only `roots` are repositories, each with its branches. */
+/** A disk where only `roots` are repositories, each with the branches (local or a remote's) that have a.ts. */
 const disk = (roots: Record<string, string[]>): Probe => ({
   root: vi.fn(async (dir: string) => (dir in roots ? dir : null)),
-  branches: vi.fn(async (dir: string) => roots[dir] ?? []),
+  onBranch: vi.fn(async (dir: string, branch: string) => (roots[dir] ?? []).includes(branch)),
 });
 
 const onFile = (root: string, branch?: string) =>
@@ -51,17 +51,31 @@ describe("sweepThreads", () => {
     expect(allThreads()[0].id).toBe(thread.id);
   });
 
-  it("marks a thread left on a branch that was deleted, not one on a branch still there", async () => {
+  it("marks a thread left on a branch that was deleted, not one on a branch still there, a remote's too", async () => {
     const deleted = onFile("/repo", "old-feature");
     const there = onFile("/repo", "main");
-    await sweepThreads(1000, disk({ "/repo": ["main"] }));
+    const remote = onFile("/repo", "origin/review");
+    await sweepThreads(1000, disk({ "/repo": ["main", "origin/review"] }));
     expect(allThreads().find((one) => one.id === deleted.id)!.goneSince).toBe(1000);
     expect(allThreads().find((one) => one.id === there.id)!.goneSince).toBeUndefined();
+    expect(allThreads().find((one) => one.id === remote.id)!.goneSince).toBeUndefined();
+  });
+
+  it("keeps a thread left in a tab showing a thread as written, which has no branch", async () => {
+    startThread({
+      root: "/repo",
+      anchors: [{ kind: "line", path: "a.ts", line: 1, code: "x", blob: "a".repeat(40) }],
+      text: "On the old content",
+    });
+    const probe = disk({ "/repo": ["main"] });
+    await sweepThreads(1000, probe);
+    expect(allThreads()[0].goneSince).toBeUndefined();
+    expect(probe.onBranch).not.toHaveBeenCalled();
   });
 
   it("leaves everything as it is when git cannot be asked, and writes nothing when nothing changed", async () => {
     onFile("/repo");
-    const failing: Probe = { root: vi.fn().mockRejectedValue(new Error("no git")), branches: vi.fn() };
+    const failing: Probe = { root: vi.fn().mockRejectedValue(new Error("no git")), onBranch: vi.fn() };
     await sweepThreads(1000, failing);
     expect(allThreads()[0].goneSince).toBeUndefined();
 

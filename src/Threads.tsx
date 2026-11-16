@@ -10,17 +10,21 @@ import type { Session } from "./extensions/api";
 import type { DiffNote } from "./lib/diff";
 import { sendToSession } from "./lib/github";
 import {
+  allThreads,
   askPrompt,
   deleteThread,
   forYou,
   liveOf,
   markSeen,
   pickSession,
+  queueOnThread,
   replyPrompt,
   replyToThread,
   sessionLabel,
   setThread,
   startThread,
+  updateThreads,
+  useThreads,
   type LiveSession,
   type Thread,
   type ThreadSession,
@@ -43,40 +47,95 @@ const THREAD_ACTIONS = [
   { label: "Delete", value: "delete" },
 ];
 
+/** A view mid-send holds a thread this long at most; past it, a send that never came back is taken as lost. */
+const CLAIM_FOR = 60_000;
+/** How long a failed send waits before it is tried again: doubling from this, up to `RETRY_MAX`. */
+const RETRY_FIRST = 15_000;
+const RETRY_MAX = 5 * 60_000;
+/** How often the outbox is looked at with nothing else happening: a session coming free, a retry falling due. */
+const OUTBOX_TICK = 3_000;
+
+const sessionOf = (live: LiveSession): ThreadSession => ({ pane: live.pane, id: live.id, agent: live.agent, cwd: live.cwd });
+
+/** Where thread `thread`'s next prompt goes now: its own session while that is there, else the one a new thread
+ * would go to, which is told the whole thread. */
+function destinationOf(thread: Thread, { stage, sessions = NO_SESSIONS }: ThreadPeople) {
+  const own = thread.session;
+  const ownThere = !!own && (!!liveOf(own, sessions) || (stage?.pane === own.pane && !!stage.agent));
+  if (own && ownThere) return { to: own, moved: false };
+  const to = pickSession(thread.root, stage, sessions);
+  return to ? { to, moved: true } : null;
+}
+
+/**
+ * Types each thread's waiting prompts into its session when that session is free, oldest first; the threads waiting
+ * on another session do not hold one up. The outbox is kept with the threads, so any view sending them, or the
+ * app's own, sends what another view queued; a view claims a thread while it types, so two never send the same.
+ */
+export function useThreadOutbox(people: ThreadPeople, on = true): void {
+  const peopleRef = useRef(people);
+  peopleRef.current = people;
+  const sending = useRef(false);
+  const [tick, setTick] = useState(0);
+  const pending = useThreads((thread) => (thread.outbox?.length ?? 0) > 0, []);
+
+  useEffect(() => {
+    if (!on || pending.length === 0) return;
+    const every = window.setInterval(() => setTick((n) => n + 1), OUTBOX_TICK);
+    return () => window.clearInterval(every);
+  }, [on, pending.length]);
+
+  useEffect(() => {
+    if (!on || sending.current) return;
+    const { stage, sessions = NO_SESSIONS } = peopleRef.current;
+    const now = Date.now();
+    for (const thread of allThreads()) {
+      const item = thread.outbox?.[0];
+      if (!item) continue;
+      if (thread.sendingSince !== undefined && now - thread.sendingSince < CLAIM_FOR) continue;
+      if (thread.retryAt !== undefined && now < thread.retryAt) continue;
+      const where = destinationOf(thread, peopleRef.current);
+      if (!where) continue;
+      const { to, moved } = where;
+      const live = liveOf(to, sessions);
+      const staged = stage?.pane === to.pane && !!stage.agent;
+      const free = live ? !live.busy && !(staged && stage.busy) : staged && !stage.busy;
+      if (!free) continue;
+
+      const prompt = item.kind === "ask" ? askPrompt(thread) : replyPrompt(thread, item.text, moved);
+      sending.current = true;
+      setThread(thread.id, { sendingSince: now, ...(moved ? { session: to } : {}) });
+      const typed = staged ? stage.send(prompt) : sendToSession(to.pane, prompt);
+      typed
+        .then(() =>
+          updateThreads((current) =>
+            current.map((one) => {
+              if (one.id !== thread.id) return one;
+              const { sendingSince: _s, retryAt: _r, tries: _t, ...rest } = one;
+              const outbox = (one.outbox ?? []).slice(1);
+              return { ...rest, awaiting: true, session: live ? sessionOf(live) : to, ...(outbox.length > 0 ? { outbox } : { outbox: undefined }) };
+            }),
+          ),
+        )
+        .catch((cause: unknown) => {
+          console.error("roer: could not send a comment to its session", cause);
+          const tries = (thread.tries ?? 0) + 1;
+          setThread(thread.id, { sendingSince: undefined, tries, retryAt: Date.now() + Math.min(RETRY_FIRST * 2 ** (tries - 1), RETRY_MAX) });
+        })
+        .finally(() => {
+          sending.current = false;
+          setTick((n) => n + 1);
+        });
+      return;
+    }
+  }, [on, pending, people.stage, people.sessions, tick]);
+}
+
 /** Starting, replying to and sending threads, for one view. */
 export function useThreadSender({ stage, sessions = NO_SESSIONS }: ThreadPeople) {
-  const [outbox, setOutbox] = useState<{ thread: string; prompt: string; to: ThreadSession }[]>([]);
-  const sending = useRef(false);
+  useThreadOutbox({ stage, sessions });
 
-  // Each prompt typed into its own session when that one is free; the others wait without holding it up.
-  useEffect(() => {
-    if (sending.current) return;
-    const next = outbox.find((one) => {
-      const live = liveOf(one.to, sessions);
-      const staged = stage?.pane === one.to.pane && !!stage.agent;
-      return live ? !live.busy && !(staged && stage.busy) : staged && !stage.busy;
-    });
-    if (!next) return;
-    sending.current = true;
-    const live = liveOf(next.to, sessions);
-    const typed = stage?.pane === next.to.pane ? stage.send(next.prompt) : sendToSession(next.to.pane, next.prompt);
-    typed
-      .then(() => {
-        setThread(next.thread, {
-          awaiting: true,
-          session: live ? { pane: live.pane, id: live.id, agent: live.agent, cwd: live.cwd } : next.to,
-        });
-        setOutbox((current) => current.filter((one) => one !== next));
-      })
-      .catch((cause: unknown) => console.error("roer: could not send a comment to its session", cause))
-      .finally(() => {
-        sending.current = false;
-      });
-  }, [stage, sessions, outbox]);
-
-  const queued = new Set(outbox.map((one) => one.thread));
-  const send = (thread: string, prompt: string, to: ThreadSession) =>
-    setOutbox((current) => [...current, { thread, prompt, to }]);
+  const queued = (thread: Thread) => (thread.outbox?.length ?? 0) > 0;
 
   /** Whether a thread's session is still there; without a list (a test, an old page) the stage's counts. */
   const isLive = (with_: ThreadSession | undefined) =>
@@ -96,7 +155,11 @@ export function useThreadSender({ stage, sessions = NO_SESSIONS }: ThreadPeople)
         const next = targetFor(thread.root);
         return `${label} · ended: a reply goes to ${next ? sessionLabel(next) : "no one"}`;
       }
-      if (queued.has(thread.id)) return `${label} · waiting for it to be free`;
+      if (queued(thread)) {
+        if (thread.retryAt !== undefined) return `${label} · could not send it, trying again`;
+        if (!destinationOf(thread, { stage, sessions })) return "waiting for a session in this repository";
+        return `${label} · waiting for it to be free`;
+      }
       if (thread.awaiting) return `${label} · waiting for an answer`;
       if (thread.author && thread.replies.every((one) => one.author !== "You")) return `${label} · for you`;
       return label;
@@ -104,20 +167,15 @@ export function useThreadSender({ stage, sessions = NO_SESSIONS }: ThreadPeople)
     /** Starts the person's thread and sends it to the session it is with. */
     start(thread: Omit<Thread, "id" | "replies" | "state" | "session">): Thread {
       const to = targetFor(thread.root);
-      const started = startThread({ ...thread, ...(to ? { session: to } : {}) });
-      if (to) send(started.id, askPrompt(started), to);
-      return started;
+      // Queued with it: sent once its session is free, or once there is a session for its repository at all.
+      return startThread({ ...thread, ...(to ? { session: to } : {}), outbox: [{ kind: "ask" }] });
     },
     /** The person's reply. A thread whose session ended goes on with the one a new thread would go to, told the
      * whole of it. */
     reply(thread: Thread, text: string): void {
-      replyToThread(thread.id, "You", text, true);
-      const moved = !isLive(thread.session);
-      const to = moved ? targetFor(thread.root) : thread.session;
-      if (!to) return;
-      if (moved) setThread(thread.id, { session: to });
-      const replies = [...thread.replies, { author: "You", text }];
-      send(thread.id, replyPrompt({ ...thread, replies }, text, moved), to);
+      // Not yet due an answer: that is once it has been typed into a session.
+      replyToThread(thread.id, "You", text, false);
+      queueOnThread(thread.id, { kind: "reply", text });
     },
   };
 }
