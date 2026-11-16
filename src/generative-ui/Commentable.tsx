@@ -7,6 +7,7 @@
  * The threads are Roer's (`lib/threads`), kept per repository and view. A view drawn where there is no repository
  * to keep them with (another app's chat) has no toggle and no counts.
  */
+import { useCommentsOn } from "../lib/experimental";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from "react";
 
 import { ThreadCards, ThreadComposer, useClaimSessions, useThreadPeople, useThreadSender } from "../Threads";
@@ -80,6 +81,7 @@ export function CommentScope({
   title?: string;
   children: ReactNode;
 }) {
+  const on = useCommentsOn();
   const people = useThreadPeople();
   const threads = useViewThreads(root, view);
   const sender = useThreadSender(people);
@@ -178,7 +180,7 @@ export function CommentScope({
     return () => watch.disconnect();
   }, [measure]);
 
-  if (!root) return <>{children}</>;
+  if (!root || !on) return <>{children}</>;
 
   const outline = (id: string, kind: string) => {
     const box = boxes.get(id);

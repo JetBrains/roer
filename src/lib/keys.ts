@@ -141,7 +141,7 @@ export const ACTIONS: ReadonlyArray<[ActionId, string]> = [
   ["nextCommit", "Next commit"],
   ["prevComment", "Previous comment"],
   ["nextComment", "Next comment"],
-  ["shortcuts", "Keyboard shortcuts"],
+  ["shortcuts", "Settings"],
 ];
 
 // The person's own keys, by action, over the defaults; and who to tell when

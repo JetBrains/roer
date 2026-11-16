@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 
+import { setCommentsOn, useCommentsOn } from "./lib/experimental";
 import { bindKey, resetKeybindings } from "./lib/keybindings";
 import {
   ACTIONS,
@@ -16,15 +17,18 @@ import {
 } from "./lib/keys";
 
 /**
- * Every keyboard shortcut on one sheet, each one the person can move to a
- * key of their own: Change, then the keys. `tabs` are the strip's, in
- * order; their numbers are a pattern rather than one key, and stay put.
+ * Settings: every keyboard shortcut on one sheet, each one the person can
+ * move to a key of their own (Change, then the keys), and the experimental
+ * features, each with a switch. `tabs` are the strip's, in order; their
+ * numbers are a pattern rather than one key, and stay put.
  */
-export function ShortcutsDialog({ tabs = [], onClose }: { tabs?: readonly string[]; onClose: () => void }) {
+export function SettingsDialog({ tabs = [], onClose }: { tabs?: readonly string[]; onClose: () => void }) {
   useKeymap();
   const ref = useRef<HTMLDivElement>(null);
   const [recording, setRecordingFor] = useState<ActionId | null>(null);
   const [problem, setProblem] = useState<{ action: ActionId; text: string } | null>(null);
+  const commentsOn = useCommentsOn();
+  const [experimentProblem, setExperimentProblem] = useState<string | null>(null);
 
   useEffect(() => {
     const back = document.activeElement;
@@ -109,13 +113,14 @@ export function ShortcutsDialog({ tabs = [], onClose }: { tabs?: readonly string
         className="popup shortcuts"
         role="dialog"
         aria-modal="true"
-        aria-label="Keyboard shortcuts"
+        aria-label="Settings"
         tabIndex={-1}
         onKeyDown={(event) => {
           if (event.key === "Escape" && !recording) onClose();
         }}
       >
-        <h2>Keyboard shortcuts</h2>
+        <h2>Settings</h2>
+        <h3>Keyboard shortcuts</h3>
         <dl>
           {before.map((action) => row(action, actions.get(action)!))}
           {tabs.slice(0, 9).map((tab, i) => (
@@ -151,6 +156,30 @@ export function ShortcutsDialog({ tabs = [], onClose }: { tabs?: readonly string
             </button>
           ) : null}
         </p>
+        <h3>Experimental</h3>
+        <div className="setting">
+          <div>
+            <div>Comments and Needs you</div>
+            <p className="muted">
+              Comment on a file&apos;s lines or a view&apos;s parts for a session&apos;s agent, and see what agents
+              wait on you at the top of the sidebar. Off, comments are kept, and come back when it is on again.
+            </p>
+            {experimentProblem ? <p className="shortcut-problem">{experimentProblem}</p> : null}
+          </div>
+          <label className="ext-switch" title={commentsOn ? "Switch off" : "Switch on"}>
+            <input
+              type="checkbox"
+              role="switch"
+              aria-label="Comments and Needs you"
+              checked={commentsOn}
+              onChange={(event) => {
+                setExperimentProblem(null);
+                setCommentsOn(event.target.checked).catch((cause: unknown) => setExperimentProblem(`Not kept: ${String(cause)}`));
+              }}
+            />
+            <span aria-hidden="true" />
+          </label>
+        </div>
       </div>
     </div>
   );

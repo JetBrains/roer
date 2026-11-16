@@ -5796,6 +5796,34 @@ button.danger:hover {
   font-size: 11px;
 }
 
+/* A section of Settings: Keyboard shortcuts, Experimental. */
+.popup.shortcuts h3 {
+  margin: 16px 0 6px;
+  font-size: 12px;
+  color: var(--roer-muted);
+  font-weight: 600;
+}
+
+.popup.shortcuts h2 + h3 {
+  margin-top: 4px;
+}
+
+/* One experimental feature: what it is, and its switch. */
+.popup.shortcuts .setting {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 6px 0;
+  border-top: 1px solid var(--ide-border);
+  font-size: 12px;
+}
+
+.popup.shortcuts .setting p {
+  margin: 3px 0 0;
+  font-size: 11px;
+}
+
 /* The Extensions dialog: every extension, and a switch for each. */
 .popup.extensions {
   align-self: flex-start;

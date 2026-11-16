@@ -36,6 +36,7 @@ import { WorkspaceSections } from "./extensions/WorkspaceSections";
 import type { Scope } from "./extensions/api";
 import { FileView } from "./FileView";
 import { NeedsYou } from "./NeedsYou";
+import { useCommentsOn } from "./lib/experimental";
 import { ThreadPeopleContext } from "./Threads";
 import type { OpenFileOptions } from "./extensions/api";
 import { fileOnBranch, isObjectId } from "./lib/fileOnBranch";
@@ -66,7 +67,7 @@ import {
 import { ExtensionsDialog } from "./ExtensionsDialog";
 import { NewTabDialog } from "./NewTabDialog";
 import { useAskAgent } from "./lib/askAgent";
-import { ShortcutsDialog } from "./ShortcutsDialog";
+import { SettingsDialog } from "./SettingsDialog";
 import { TerminalView } from "./TerminalView";
 import { WorkspaceSidebar } from "./WorkspaceSidebar";
 import { claudeSetupStatus, onClaudeSetupMenu, type SetupStatus } from "./lib/claudeSetup";
@@ -448,6 +449,7 @@ export function App() {
   }, [sidebarCollapsed]);
   const [themeChoice, setThemeChoice] = useThemeChoice();
   const [notificationsOn, setNotificationsOn] = useNotificationsOn();
+  const commentsOn = useCommentsOn();
   // Unlike `sidebarCollapsed`, this is never persisted: the panel is a side
   // column now, not a tab, so it should only ever claim space when there is
   // something to show, freshly each launch — a live message expands it
@@ -2073,8 +2075,8 @@ export function App() {
         <button
           type="button"
           className="shortcuts-toggle"
-          aria-label="Keyboard shortcuts"
-          title={`Keyboard shortcuts (${shortcutLabel.shortcuts()})`}
+          aria-label="Settings"
+          title={`Settings (${shortcutLabel.shortcuts()})`}
           aria-pressed={showingShortcuts}
           onClick={() => setShowingShortcuts((open) => !open)}
         >
@@ -2120,6 +2122,7 @@ export function App() {
           handleRenameProject={browser.handleRenameProject}
           handleDeleteProject={browser.handleDeleteProject}
         >
+          {commentsOn ? (
           <NeedsYou
             sessions={browser.allSessions}
             waiting={browser.waiting}
@@ -2130,6 +2133,7 @@ export function App() {
             onOpenFile={openInTab}
             people={{ stage: activeSession, sessions: agentSessions }}
           />
+          ) : null}
           <SessionTree
             status={browser.status}
             workspaces={browser.workspaces}
@@ -2697,7 +2701,7 @@ export function App() {
             onClose={() => setShowingNewSection(false)}
           />
         ) : null}
-        {showingShortcuts ? <ShortcutsDialog tabs={strip.slice(0, 9).map((tab) => tab.title)} onClose={() => setShowingShortcuts(false)} /> : null}
+        {showingShortcuts ? <SettingsDialog tabs={strip.slice(0, 9).map((tab) => tab.title)} onClose={() => setShowingShortcuts(false)} /> : null}
 
         {finding ? (
           <GoToFile
