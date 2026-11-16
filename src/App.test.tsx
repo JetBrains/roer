@@ -537,12 +537,12 @@ describe("App", () => {
 
   it("opens the keyboard shortcuts from the title bar's gear, and closes them again", async () => {
     render(<App />);
-    const gear = await screen.findByRole("button", { name: "Keyboard shortcuts" });
+    const gear = await screen.findByRole("button", { name: "Settings" });
     fireEvent.click(gear);
-    expect(screen.getByRole("dialog", { name: "Keyboard shortcuts" })).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "Settings" })).toBeInTheDocument();
     expect(gear).toHaveAttribute("aria-pressed", "true");
     fireEvent.click(gear);
-    expect(screen.queryByRole("dialog", { name: "Keyboard shortcuts" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Settings" })).not.toBeInTheDocument();
   });
 
   it("turns notifications off and on from the title bar, remembering it", async () => {
@@ -1897,7 +1897,7 @@ describe("App", () => {
     await waitFor(() => expect(spawnPty).toHaveBeenCalled());
 
     fireEvent.keyDown(window, { code: "Slash", key: "/", metaKey: true });
-    expect(await screen.findByRole("dialog", { name: "Keyboard shortcuts" })).toBeInTheDocument();
+    expect(await screen.findByRole("dialog", { name: "Settings" })).toBeInTheDocument();
     fireEvent.keyDown(window, { code: "KeyW", key: "w", metaKey: true });
 
     expect(screen.getByTestId("terminal")).toBeInTheDocument();

@@ -3,17 +3,18 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { invoke } from "./lib/backend";
 import { setCustomChords } from "./lib/keys";
-import { ShortcutsDialog } from "./ShortcutsDialog";
+import { SettingsDialog } from "./SettingsDialog";
 
 vi.mock("./lib/backend", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./lib/backend")>()),
   invoke: vi.fn(async () => undefined),
+  listen: vi.fn(async () => () => undefined),
 }));
 
 const press = (init: KeyboardEventInit) => fireEvent.keyDown(window, init);
 const keyOf = (name: string) => screen.getByText(name).closest("div")!.querySelector("kbd")!;
 
-describe("ShortcutsDialog", () => {
+describe("SettingsDialog", () => {
   afterEach(() => {
     setCustomChords({});
     vi.mocked(invoke).mockClear();
@@ -21,7 +22,7 @@ describe("ShortcutsDialog", () => {
 
   it("moves a shortcut to the keys pressed next, keeps it, and puts it back", async () => {
     const onClose = vi.fn();
-    render(<ShortcutsDialog tabs={["Workspace", "Terminal"]} onClose={onClose} />);
+    render(<SettingsDialog tabs={["Workspace", "Terminal"]} onClose={onClose} />);
     expect(keyOf("New session")).toHaveTextContent("⌘T");
     expect(keyOf("Terminal")).toHaveTextContent("⌘2");
 
@@ -46,7 +47,7 @@ describe("ShortcutsDialog", () => {
 
   it("says why keys are refused, waits for others, and Escape leaves it as it was", () => {
     const onClose = vi.fn();
-    render(<ShortcutsDialog onClose={onClose} />);
+    render(<SettingsDialog onClose={onClose} />);
 
     fireEvent.click(screen.getByRole("button", { name: "Change the key for New session" }));
     press({ key: "o", code: "KeyO", metaKey: true, shiftKey: true });
@@ -57,14 +58,34 @@ describe("ShortcutsDialog", () => {
     press({ key: "Escape", code: "Escape" });
     expect(keyOf("New session")).toHaveTextContent("⌘T");
     expect(onClose).not.toHaveBeenCalled();
-    expect(invoke).not.toHaveBeenCalled();
+    expect(invoke).not.toHaveBeenCalledWith("keybindings_set", expect.anything());
   });
 
   it("puts every one back at once", async () => {
     setCustomChords({ newSession: { meta: true, ctrl: false, alt: false, shift: false, code: "KeyK" } });
-    render(<ShortcutsDialog onClose={vi.fn()} />);
+    render(<SettingsDialog onClose={vi.fn()} />);
     fireEvent.click(screen.getByRole("button", { name: "Put every one back" }));
     expect(keyOf("New session")).toHaveTextContent("⌘T");
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("keybindings_set", { bindings: {} }));
+  });
+
+  it("switches comments and Needs you off and on, through the threads extension", async () => {
+    let off: string[] = [];
+    vi.mocked(invoke).mockImplementation((async (command: string, args?: { id: string; enabled: boolean }) => {
+      if (command === "extensions_disabled") return off;
+      if (command === "extension_set_enabled") off = args!.enabled ? off.filter((id) => id !== args!.id) : [...off, args!.id];
+      return undefined;
+    }) as typeof invoke);
+    render(<SettingsDialog onClose={vi.fn()} />);
+    const toggle = screen.getByRole("switch", { name: "Comments and Needs you" });
+    expect(toggle).toBeChecked();
+
+    fireEvent.click(toggle);
+    await waitFor(() => expect(toggle).not.toBeChecked());
+    expect(invoke).toHaveBeenCalledWith("extension_set_enabled", { id: "threads", enabled: false });
+
+    fireEvent.click(toggle);
+    await waitFor(() => expect(toggle).toBeChecked());
+    expect(off).toEqual([]);
   });
 });

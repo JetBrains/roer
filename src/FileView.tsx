@@ -2,7 +2,10 @@ import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, use
 import type { OpenFile, Session } from "./extensions/api";
 import { ThreadCards, ThreadComposer, useClaimSessions, useThreadSender } from "./Threads";
 import { isObjectId } from "./lib/fileOnBranch";
+import { useCommentsOn } from "./lib/experimental";
 import { placeByCode, placeThrough, useFileThreads, type LiveSession, type Placed, type Thread } from "./lib/threads";
+
+const NO_THREADS: readonly Thread[] = [];
 import { Spans } from "./CodeLine";
 import { Markdown } from "./Markdown";
 import { Picture } from "./Picture";
@@ -334,7 +337,10 @@ export function FileView({ root, path, line, branch, active, changed, session, s
   }, [at, changes, rows]);
 
   // Threads on the file's lines, each drawn under its last line like a comment in the diff.
-  const threads = useFileThreads(root, path, branch);
+  // Comments can be switched off in Settings (Experimental): then the file shows none, and offers none.
+  const commentsOn = useCommentsOn();
+  const fileThreads = useFileThreads(root, path, branch);
+  const threads = commentsOn ? fileThreads : NO_THREADS;
   const sender = useThreadSender({ stage: session, sessions });
   useClaimSessions(threads, sessions);
   /** The lines a new comment is being written on; null while none is. Shift-click another line's button to make it
@@ -747,7 +753,7 @@ export function FileView({ root, path, line, branch, active, changed, session, s
                         at all: a selection dragged down the file cannot pick it up and a copy cannot carry it.
                         `user-select: none` alone stops the highlight but WebKit still serialises what it skipped. */}
                     <span className="file-no" data-no={one.kind === "line" ? one.no : ""}>
-                      {one.kind === "line" ? (
+                      {one.kind === "line" && commentsOn ? (
                         <button
                           type="button"
                           className="line-add"

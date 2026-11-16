@@ -1,3 +1,4 @@
+import { useCommentsOn } from "./lib/experimental";
 import { forYou, useThreads } from "./lib/threads";
 import { ChevronDown, ChevronRight, Plus } from "lucide-react";
 import { useRef, useState, type KeyboardEvent, type ReactNode } from "react";
@@ -204,8 +205,9 @@ export function SessionTree({
   const ordered = orderTree(projects, worktrees, repos, visibleSessions, waiting, folderInView);
   // Threads waiting on the person, counted on the row of the session each is with.
   const forYouThreads = useThreads(forYou, []);
+  const commentsOn = useCommentsOn();
   const threadsFor = (session: SessionInfo) =>
-    forYouThreads.filter((thread) => thread.session?.pane === session.pane && (!thread.session.id || thread.session.id === session.id)).length;
+    !commentsOn ? 0 : forYouThreads.filter((thread) => thread.session?.pane === session.pane && (!thread.session.id || thread.session.id === session.id)).length;
   const [query, setQuery] = useState("");
   const searching = query.trim() !== "";
   const tree = filterTree(ordered, query, folderInView && folderLabel(folderInView));
