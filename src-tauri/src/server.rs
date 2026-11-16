@@ -377,12 +377,13 @@ fn dispatch(state: &Arc<AppState>, cmd: &str, args: Value, cid: Option<&str>) ->
         "git_current_branch" => call_res!(args, crate::git::git_current_branch, "cwd": String),
         "git_default_base" => call_res!(args, crate::git::git_default_base, "cwd": String),
         "git_branch_commits" => {
-            call_res!(args, crate::git::git_branch_commits, "root": String, "branch": String, "base": String)
+            call_res!(args, crate::git::git_branch_commits, "root": String, "branch": String, "base": String, "path": Option<String>)
         }
         "git_commit_files" => call_res!(args, crate::git::git_commit_files, "root": String, "commit": String),
         "git_blob" => call_res!(args, crate::git::git_blob, "root": String, "path": String, "rev": Option<String>),
         "git_snapshot" => call_res!(args, crate::git::git_snapshot, "root": String, "path": String, "rev": Option<String>),
         "git_blob_diff" => call_res!(args, crate::git::git_blob_diff, "root": String, "from": String, "to": String),
+        "git_blob_diff_file" => call_res!(args, crate::git::git_blob_diff_file, "root": String, "from": String, "path": String),
         "git_commit_diff" => {
             call_res!(args, crate::git::git_commit_diff, "root": String, "commit": String, "path": String)
         }

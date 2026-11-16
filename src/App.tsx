@@ -38,7 +38,7 @@ import { FileView } from "./FileView";
 import { NeedsYou } from "./NeedsYou";
 import { useCommentsOn } from "./lib/experimental";
 import { useThreadSweep } from "./lib/threadSweep";
-import { ThreadPeopleContext } from "./Threads";
+import { ThreadPeopleContext, useThreadOutbox } from "./Threads";
 import type { OpenFileOptions } from "./extensions/api";
 import { fileOnBranch, isObjectId } from "./lib/fileOnBranch";
 import { GenerativeUITab } from "./generative-ui/GenerativeUITab";
@@ -1686,6 +1686,8 @@ export function App() {
     liveCwd: activeLive?.cwd,
   });
   const activeSession = activeRequest ? sideStage : stageSession;
+  // Comments queued in any view go out from here too, so none waits on the view it was written in staying open.
+  useThreadOutbox({ stage: activeSession, sessions: agentSessions }, commentsOn);
   const activeAgentState = activeRequest ? (activeLive && runningAgent(activeLive) ? activeLive.state : undefined) : agentState;
   loadRootRef.current = activeSession?.root ?? (activeRequest ?? session)?.cwd;
   // What the Workspace tab is about, as its extension sections see it. The

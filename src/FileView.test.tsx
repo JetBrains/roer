@@ -22,7 +22,9 @@ import {
   gitCurrentBranch,
   gitDefaultBase,
   gitBlobDiff,
+  gitBlobDiffFile,
   gitDiff,
+  gitRepo,
   gitSnapshot,
   type Commit,
 } from "./lib/git";
@@ -48,6 +50,8 @@ vi.mock("./lib/git", async (importOriginal) => ({
   gitDiff: vi.fn(),
   gitSnapshot: vi.fn(),
   gitBlobDiff: vi.fn(),
+  gitBlobDiffFile: vi.fn(),
+  gitRepo: vi.fn(),
 }));
 
 const read = vi.mocked(fileRead);
@@ -113,6 +117,8 @@ beforeEach(() => {
   vi.mocked(gitCommitDiff).mockResolvedValue("");
   vi.mocked(gitSnapshot).mockResolvedValue(null);
   vi.mocked(gitBlobDiff).mockResolvedValue("");
+  vi.mocked(gitBlobDiffFile).mockResolvedValue("");
+  vi.mocked(gitRepo).mockResolvedValue(null);
 });
 
 describe("FileView", () => {
@@ -486,11 +492,9 @@ describe("FileView", () => {
     });
 
     it("lists the branch's commits that touched the file, and shows the file as one left it", async () => {
-      vi.mocked(gitBranchCommits).mockResolvedValue([commit("aaaaaaa1", "Touch it"), commit("bbbbbbb2", "Elsewhere")]);
-      vi.mocked(gitCommitFiles).mockImplementation(async (_root, hash) =>
-        hash === "aaaaaaa1"
-          ? [{ path: "src/App.tsx", staged: "M", unstaged: ".", added: 1, deleted: 0, binary: false, counted: true }]
-          : [],
+      // Asked for the commits that touched the file, git leaves the others out.
+      vi.mocked(gitBranchCommits).mockImplementation(async (_root, _branch, _base, path) =>
+        path === "src/App.tsx" ? [commit("aaaaaaa1", "Touch it")] : [commit("aaaaaaa1", "Touch it"), commit("bbbbbbb2", "Elsewhere")],
       );
       vi.mocked(gitBlob).mockResolvedValue(btoa("then1\nthen2\n"));
       vi.mocked(gitCommitDiff).mockResolvedValue("@@ -1 +1,2 @@\n then1\n+then2\n");
@@ -498,7 +502,8 @@ describe("FileView", () => {
       const picker = screen.getByRole("combobox", { name: "Changes to mark" });
       expect(await screen.findByRole("option", { name: "aaaaaaa Touch it" })).toBeInTheDocument();
       expect(screen.queryByRole("option", { name: "bbbbbbb Elsewhere" })).not.toBeInTheDocument();
-      expect(gitBranchCommits).toHaveBeenCalledWith("/Users/test/project", "feature", "main");
+      expect(gitBranchCommits).toHaveBeenCalledWith("/Users/test/project", "feature", "main", "src/App.tsx");
+      expect(gitCommitFiles).not.toHaveBeenCalled();
 
       fireEvent.change(picker, { target: { value: "aaaaaaa1" } });
       await waitFor(() => expect(row("then2")).toHaveClass("add"));
@@ -554,7 +559,7 @@ describe("FileView", () => {
       expect(screen.getByText("other · read only")).toBeInTheDocument();
       expect(screen.queryByRole("option", { name: "Local changes" })).not.toBeInTheDocument();
       await waitFor(() => expect(gitBranchDiff).toHaveBeenCalledWith("/Users/test/project", undefined, "other"));
-      expect(gitBranchCommits).toHaveBeenCalledWith("/Users/test/project", "other", "main");
+      expect(gitBranchCommits).toHaveBeenCalledWith("/Users/test/project", "other", "main", "src/App.tsx");
     });
   });
 
@@ -729,7 +734,6 @@ describe("FileView", () => {
     });
 
     const A = "a".repeat(40);
-    const B = "b".repeat(40);
 
     it("keeps the blob a comment was written on", async () => {
       vi.mocked(gitSnapshot).mockResolvedValue(A);
@@ -745,19 +749,19 @@ describe("FileView", () => {
     it("moves a thread through what changed since it was written", async () => {
       // Written on row2 of A; two lines were added at the top since.
       read.mockResolvedValue(text({ text: "new1\nnew2\nrow1\nrow2\nrow3\n", lines: 5 }));
-      vi.mocked(gitSnapshot).mockResolvedValue(B);
-      vi.mocked(gitBlobDiff).mockResolvedValue("@@ -0,0 +1,2 @@\n+new1\n+new2\n");
+      vi.mocked(gitBlobDiffFile).mockResolvedValue("@@ -0,0 +1,2 @@\n+new1\n+new2\n");
       startThread({ root: "/Users/test/project", anchors: [{ kind: "line", path: "src/App.tsx", line: 2, code: "row2", blob: A }], text: "Here" });
       show({ session: session() });
       await waitFor(() => expect(row("row2")?.nextElementSibling).toHaveClass("file-notes"));
-      expect(gitBlobDiff).toHaveBeenCalledWith("/Users/test/project", A, B);
+      // Against the file on disk: nothing of it is stored to diff with.
+      expect(gitBlobDiffFile).toHaveBeenCalledWith("/Users/test/project", A, "src/App.tsx");
+      expect(gitSnapshot).not.toHaveBeenCalled();
       expect(screen.queryByText(/outdated/)).not.toBeInTheDocument();
     });
 
     it("marks a thread outdated when its lines changed, and opens it as written", async () => {
       read.mockResolvedValue(text({ text: "row1\nROW2\nrow3\n", lines: 3 }));
-      vi.mocked(gitSnapshot).mockResolvedValue(B);
-      vi.mocked(gitBlobDiff).mockResolvedValue("@@ -2 +2 @@\n-row2\n+ROW2\n");
+      vi.mocked(gitBlobDiffFile).mockResolvedValue("@@ -2 +2 @@\n-row2\n+ROW2\n");
       const thread = startThread({
         root: "/Users/test/project",
         anchors: [{ kind: "line", path: "src/App.tsx", line: 2, code: "row2", blob: A }],
@@ -768,6 +772,39 @@ describe("FileView", () => {
       expect(await screen.findByText(/^outdated · /)).toBeInTheDocument();
       fireEvent.click(screen.getByRole("button", { name: "View as written" }));
       expect(onOpenFile).toHaveBeenCalledWith("/Users/test/project", "src/App.tsx", 2, { branch: A, thread: thread.id });
+    });
+
+    it("keeps a comment left on a thread's content as written on that content, not on a branch named by its blob", async () => {
+      vi.mocked(gitBlob).mockResolvedValue(btoa("row1\nrow2\nrow3\n"));
+      vi.mocked(gitSnapshot).mockResolvedValue(A);
+      show({ branch: A, session: session() });
+      await screen.findByText("row2");
+      fireEvent.click(screen.getByRole("button", { name: "Comment on line 2" }));
+      fireEvent.change(screen.getByRole("textbox", { name: "Comment on line 2" }), { target: { value: "Then?" } });
+      fireEvent.click(screen.getByRole("button", { name: "Send to claude" }));
+      await waitFor(() => expect(allThreads()[0]?.anchors[0]).toMatchObject({ line: 2, blob: A }));
+      expect(allThreads()[0].anchors[0]).not.toHaveProperty("branch");
+    });
+
+    it("shows a thread left on this checkout's branch from another checkout, before this one had it", async () => {
+      vi.mocked(gitRepo).mockResolvedValue({
+        root: "/Users/test/project",
+        main: "/Users/test/main",
+        worktrees: ["/Users/test/main", "/Users/test/project"],
+      });
+      startThread({
+        root: "/Users/test/main",
+        anchors: [{ kind: "line", path: "src/App.tsx", line: 2, code: "row2", branch: "feature" }],
+        text: "From the main checkout",
+      });
+      startThread({
+        root: "/Users/test/main",
+        anchors: [{ kind: "line", path: "src/App.tsx", line: 2, code: "row2", branch: "other" }],
+        text: "On another branch",
+      });
+      show({ session: session() });
+      expect(await screen.findByText("From the main checkout")).toBeInTheDocument();
+      expect(screen.queryByText("On another branch")).not.toBeInTheDocument();
     });
 
     it("finds a thread with no blob by its words", async () => {
