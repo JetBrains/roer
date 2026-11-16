@@ -9,7 +9,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { FileView } from "./FileView";
 import type { Session } from "./extensions/api";
-import { allThreads, replyToThread, startThread } from "./lib/threads";
+import { allThreads, replyToThread, setThread, startThread } from "./lib/threads";
 import { sendToSession } from "./lib/github";
 import { fileRead, type FilesChanged, type FileText } from "./lib/files";
 import {
@@ -604,6 +604,24 @@ describe("FileView", () => {
 
       fireEvent.click(screen.getByRole("button", { name: "Resolve" }));
       expect(allThreads()[0].state).toBe("resolved");
+    });
+
+    it("folds resolved threads away under a count in the head, and shows them again from it", async () => {
+      const done = startThread({
+        root: "/Users/test/project",
+        anchors: [{ kind: "line", path: "src/App.tsx", line: 1, code: "row1" }],
+        text: "Settled long ago",
+      });
+      act(() => setThread(done.id, { state: "resolved" }));
+      startThread({ root: "/Users/test/project", anchors: [{ kind: "line", path: "src/App.tsx", line: 2, code: "row2" }], text: "Still open" });
+      show({ session: session() });
+      expect(await screen.findByText("Still open")).toBeInTheDocument();
+      expect(screen.queryByText("Settled long ago")).not.toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole("button", { name: "1 resolved" }));
+      expect(await screen.findByText("Settled long ago")).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Hide 1 resolved" }));
+      expect(screen.queryByText("Settled long ago")).not.toBeInTheDocument();
     });
 
     const live = (pane: string, id: string, cwd: string, over: object = {}) => ({ pane, id, agent: "claude", cwd, ...over });

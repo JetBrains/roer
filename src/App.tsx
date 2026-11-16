@@ -37,6 +37,7 @@ import type { Scope } from "./extensions/api";
 import { FileView } from "./FileView";
 import { NeedsYou } from "./NeedsYou";
 import { useCommentsOn } from "./lib/experimental";
+import { useThreadSweep } from "./lib/threadSweep";
 import { ThreadPeopleContext } from "./Threads";
 import type { OpenFileOptions } from "./extensions/api";
 import { fileOnBranch, isObjectId } from "./lib/fileOnBranch";
@@ -450,6 +451,7 @@ export function App() {
   const [themeChoice, setThemeChoice] = useThemeChoice();
   const [notificationsOn, setNotificationsOn] = useNotificationsOn();
   const commentsOn = useCommentsOn();
+  useThreadSweep(commentsOn);
   // Unlike `sidebarCollapsed`, this is never persisted: the panel is a side
   // column now, not a tab, so it should only ever claim space when there is
   // something to show, freshly each launch — a live message expands it

@@ -75,6 +75,8 @@ export interface Thread {
   awaiting?: boolean;
   /** How many of its messages (the first and the replies) the person has seen; absent counts their own as seen. */
   seen?: number;
+  /** When its worktree or branch was first found gone (ms); absent while it is there. See `sweepThreads`. */
+  goneSince?: number;
 }
 
 /** The first message and every reply. */
@@ -82,7 +84,7 @@ export const messagesIn = (thread: Thread): number => 1 + thread.replies.length;
 
 /** The thread waits on the person: an agent spoke last, and they have not seen it yet. */
 export function forYou(thread: Thread): boolean {
-  if (thread.state !== "open") return false;
+  if (thread.state !== "open" || thread.goneSince !== undefined) return false;
   const last = thread.replies.at(-1)?.author ?? (thread.author ? thread.author : "You");
   if (last === "You") return false;
   return (thread.seen ?? (thread.author ? 0 : 1)) < messagesIn(thread);
