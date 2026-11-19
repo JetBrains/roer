@@ -1,8 +1,8 @@
-import { act, fireEvent, render, renderHook, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, renderHook, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { sendToSession } from "./lib/github";
-import { allThreads, replyToThread, startThread, useThreads, type LiveSession } from "./lib/threads";
+import { allThreads, deleteThread, replyToThread, startThread, useThreads, type LiveSession } from "./lib/threads";
 import { ThreadCards, useThreadOutbox, useThreadSender, type ThreadPeople } from "./Threads";
 
 vi.mock("./lib/github", async (importOriginal) => ({
@@ -115,6 +115,68 @@ describe("thread cards", () => {
     ]);
     fireEvent.click(screen.getByRole("button", { name: "Reply" }));
     expect(screen.getByRole("button", { name: "Reply" })).toHaveAttribute("aria-keyshortcuts");
+  });
+
+  it("draws a view an agent answered with in the thread, and sends a press in it as the person's reply", () => {
+    const thread = started();
+    const ui = [
+      {
+        version: "v1.0",
+        createSurface: {
+          surfaceId: "greet",
+          components: [
+            { id: "root", component: "Column", children: ["name", "wave"] },
+            { id: "name", component: "TextField", label: "Your name", value: { path: "/name" } },
+            { id: "wave", component: "Button", child: "wave-label", action: { event: { name: "wave", context: { name: { path: "/name" } } } } },
+            { id: "wave-label", component: "Text", text: "Wave back" },
+          ],
+          dataModel: { name: "" },
+        },
+      },
+    ];
+    act(() => void replyToThread(thread.id, "Claude", "Say hi:", false, ui));
+    render(<Cards />);
+    const view = screen.getByRole("group", { name: "The agent's view" });
+    fireEvent.change(within(view).getByRole("textbox", { name: "Your name" }), { target: { value: "Ann" } });
+    fireEvent.click(within(view).getByRole("button", { name: "Wave back" }));
+    const mine = allThreads()[0].replies.at(-1)!;
+    expect(mine.author).toBe("You");
+    expect(mine.text).toContain("Pressed `wave` in your view: event `wave`.");
+    expect(mine.text).toContain('"name": "Ann"');
+    expect(allThreads()[0].outbox).toEqual([{ kind: "reply", text: mine.text }]);
+  });
+
+  it("keeps what was typed in a view when another thread changes", () => {
+    const thread = started();
+    const ui = [
+      {
+        version: "v1.0",
+        createSurface: {
+          surfaceId: "form",
+          components: [{ id: "root", component: "TextField", label: "Your name", value: { path: "/name" } }],
+          dataModel: { name: "" },
+        },
+      },
+    ];
+    act(() => void replyToThread(thread.id, "Claude", "Fill in:", false, ui));
+    render(<Cards />);
+    fireEvent.change(screen.getByRole("textbox", { name: "Your name" }), { target: { value: "Ann" } });
+    // Another thread gets an answer: every thread is read again.
+    const other = startThread({ root: ROOT, anchors: [onLine], text: "Other?", session: { pane: "%4", id: "s4" } });
+    act(() => void replyToThread(other.id, "Claude", "Yes.", false));
+    expect(screen.getByRole("textbox", { name: "Your name" })).toHaveValue("Ann");
+  });
+
+  it("forgets collapsed threads once they are deleted", () => {
+    const gone = started();
+    const kept = started();
+    render(<Cards />);
+    for (const button of screen.getAllByRole("button", { name: "Collapse the comment" })) fireEvent.click(button);
+    act(() => void deleteThread(gone.id));
+    // Written again (one opened by hand): the deleted one is dropped from the record.
+    fireEvent.click(screen.getByRole("button", { name: "Expand the comment" }));
+    expect(Object.keys(JSON.parse(localStorage.getItem("roer:threads-collapsed") ?? "{}"))).toEqual([]);
+    expect(allThreads().map((one) => one.id)).toEqual([kept.id]);
   });
 
   it("replies on R while the thread has the keyboard, not while typing", () => {

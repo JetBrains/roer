@@ -37,6 +37,18 @@ describe("the threads tools", () => {
     await expect(tool("answer").run({ thread: "nope", text: "x" }, {})).rejects.toThrow('No thread "nope"');
   });
 
+  it("answers with a view drawn in the thread, and refuses one that is not A2UI messages", async () => {
+    const thread = startThread({ root: "/repo", anchors: [{ kind: "part", id: "x" }], text: "Show me?" });
+    const ui = [{ version: "v1.0", createSurface: { surfaceId: "hi", components: [{ id: "root", component: "Text", text: "Hi" }] } }];
+    expect(await tool("answer").run({ thread: thread.id, text: "Here.", ui }, {})).toContain("with its view");
+    expect(allThreads()[0].replies).toEqual([{ author: "Agent", text: "Here.", ui }]);
+    await expect(tool("answer").run({ thread: thread.id, text: "x", ui: [{ html: "<b>" }] }, {})).rejects.toThrow("A2UI v1.0");
+    await expect(
+      tool("answer").run({ thread: thread.id, text: "x", ui: [{ version: "v1.0", deleteSurface: { surfaceId: "hi" } }] }, {}),
+    ).rejects.toThrow("createSurface");
+    expect(allThreads()[0].replies).toHaveLength(1);
+  });
+
   it("lets an agent start a thread on a range of a file's lines, with its own session", async () => {
     expect(await tool("comment").run({ path: "./a.ts", line: 2, end: 3, text: "These?", author: "Claude" }, { pane: "%4" })).toContain(
       "a.ts:2-3",

@@ -7168,3 +7168,80 @@ button.needs-you-row .tree-note {
   margin: 2px 0 0 6px;
   font-size: 11px;
 }
+
+/* A ```mermaid block in Markdown, drawn: as wide as its text at most, scaled down to fit, its source a click away. */
+.md-mermaid {
+  margin: 6px 0;
+}
+
+.md-mermaid-svg {
+  overflow-x: auto;
+}
+
+.md-mermaid-svg svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+.md-mermaid-toggle {
+  font-size: 11px;
+}
+
+.md-mermaid.drawing pre {
+  opacity: 0.6;
+}
+
+/* A view an agent answered a thread with, under its words: boxed off from the talk, at the card's width, and
+   scrolled past a few hundred pixels so it never takes the file over. */
+.thread-view {
+  margin-top: 6px;
+  max-height: 420px;
+  overflow: auto;
+  padding: 10px;
+  border: 1px solid var(--ide-border);
+  border-radius: 6px;
+  background: var(--ide-editor);
+  font-family: ui-sans-serif, system-ui, sans-serif;
+}
+
+.thread-view-empty {
+  margin: 4px 0 0;
+  font-size: 12px;
+}
+
+/* A picture, video or sound from the web, not fetched until asked for: where it is from, and Show. */
+.remote-media {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 100%;
+  margin: 2px 0;
+  padding: 6px 10px;
+  border: 1px dashed var(--roer-border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--roer-fg);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.remote-media:hover,
+.remote-media:focus-visible {
+  border-color: var(--roer-accent);
+}
+
+.remote-media-what {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.remote-media-show {
+  flex: none;
+  color: var(--roer-accent);
+  font-weight: 600;
+}

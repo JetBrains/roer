@@ -44,6 +44,8 @@ export { adoptLocal, onSharedStorage, sharedStorage } from "../lib/sharedStorage
 export {
   allThreads,
   deleteThread,
+  newThreadId,
+  useChangesReveal,
   onThreadsChanged,
   replyToThread,
   setThread,

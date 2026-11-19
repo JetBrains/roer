@@ -49,7 +49,7 @@ export interface DiffNote {
   /** Who wrote it. A note with an author is a comment, and its text is markdown. */
   author?: string;
   /** The rest of the conversation under it, oldest first. */
-  replies?: { author: string; text: string }[];
+  replies?: { author: string; text: string; ui?: unknown[] }[];
   /** A word on its corner, such as "outdated". */
   tag?: string;
   /** An https link to where the note lives, such as the thread on GitHub. */

@@ -1,10 +1,12 @@
-import { useEffect, useState, type ReactNode } from "react";
-import ReactMarkdown, { type Options } from "react-markdown";
+import { Children, isValidElement, useEffect, useMemo, useState, type ReactNode } from "react";
+import ReactMarkdown, { defaultUrlTransform, type Options } from "react-markdown";
 import rehypeRaw from "rehype-raw";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import remarkGfm from "remark-gfm";
 
 import { isRemote } from "./lib/blob";
+import { MermaidBlock } from "./MermaidBlock";
+import { RemoteMedia } from "./RemoteMedia";
 import { Picture } from "./Picture";
 import { openUrl } from "./lib/github";
 import { termPattern } from "./lib/marks";
@@ -83,6 +85,22 @@ function SourcedImage({
   return <Picture src={url} alt={alt ?? ""} width={width} height={height} />;
 }
 
+/** Links and sources as react-markdown keeps them (no `javascript:` and the like), and a picture's `data:image/…` too. */
+const urlTransform: NonNullable<Options["urlTransform"]> = (url, key, node) =>
+  key === "src" && node.tagName === "img" && /^data:image\//i.test(url) ? url : defaultUrlTransform(url);
+
+/** GitHub's cleaning, with pictures carried in the text itself (`data:`) let through: they reach no one. Only an
+ * `<img>` takes a `src`, and only a `data:image/…` one is drawn (`RemoteMedia`). */
+const SCHEMA = { ...defaultSchema, protocols: { ...defaultSchema.protocols, src: [...(defaultSchema.protocols?.src ?? []), "data"] } };
+
+/** The source of a fenced block's code when it is Mermaid's, else null. */
+function mermaidSource(inner: ReactNode): string | null {
+  if (!isValidElement<{ className?: string; children?: ReactNode }>(inner)) return null;
+  if (!/(^|\s)language-mermaid(\s|$)/.test(inner.props.className ?? "")) return null;
+  const text = Children.toArray(inner.props.children).join("");
+  return text.replace(/\n$/, "");
+}
+
 /**
  * Markdown as GitHub writes it, raw HTML included. The HTML is cleaned with GitHub's own schema (no
  * scripts, no event handlers, no styles), because whoever can comment writes it. A link opens in the
@@ -106,14 +124,17 @@ export function Markdown({
   image?: ImageSource;
 }) {
   const classes = [BASE, ...(className ?? "").split(/\s+/).filter((c) => c && c !== BASE)].join(" ");
-  return (
-    <div className={classes}>
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        rehypePlugins={
-          [rehypeRaw, [rehypeSanitize, defaultSchema], ...(marks?.length ? [[rehypeMarks, marks]] : [])] as Options["rehypePlugins"]
-        }
-        components={{
+  // Made once for the same `images` and `image`: a new object would be new component types to React, and every
+  // render would mount the whole text again, redrawing its diagrams and reloading its pictures, which a thread
+  // getting a reply would show as the text blinking and changing height.
+  const components = useMemo(
+    () => ({
+          // A ```mermaid block is drawn as its diagram, as GitHub draws one.
+          // Not where nothing is to be drawn but text: a conversation's, which shows no pictures either.
+          pre: ({ children: inner }: { children?: ReactNode }) => {
+            const source = images ? mermaidSource(inner) : null;
+            return source === null ? <pre>{inner}</pre> : <MermaidBlock source={source} />;
+          },
           a: ({ href, children: text }: { href?: string; children?: ReactNode }) => (
             <a
               href={href}
@@ -125,27 +146,40 @@ export function Markdown({
               {text}
             </a>
           ),
-          ...(images && image
+          // A picture from the web is a placeholder until asked for, whoever wrote the text: a file under review, a
+          // thread, a comment. One carried in the text (`data:image/…`) shows; one the repository holds is read
+          // through `image`.
+          ...(images
             ? {
-                img: ({ src, alt, width, height }: { src?: string; alt?: string; width?: number | string; height?: number | string }) =>
-                  src && isRemote(src) ? (
-                    <a
-                      href={src}
-                      title={src}
-                      onClick={(e) => {
-                        e.preventDefault();
-                        void openUrl(src);
-                      }}
-                    >
-                      [image{alt ? `: ${alt}` : ""}]
-                    </a>
-                  ) : (
+                img: ({ src, alt, width, height }: { src?: string; alt?: string; width?: number | string; height?: number | string }) => {
+                  if (!src) return <span className="muted">[image{alt ? `: ${alt}` : ""}]</span>;
+                  if (isRemote(src)) {
+                    return (
+                      <RemoteMedia src={src} alt={alt}>
+                        <Picture src={src} alt={alt ?? ""} width={width} height={height} />
+                      </RemoteMedia>
+                    );
+                  }
+                  return image ? (
                     <SourcedImage src={src} alt={alt} width={width} height={height} source={image} />
-                  ),
+                  ) : (
+                    <span className="muted">[image{alt ? `: ${alt}` : ""}]</span>
+                  );
+                },
               }
-            : {}),
-          ...(images ? {} : { img: ({ alt }: { alt?: string }) => <span className="muted">[image{alt ? `: ${alt}` : ""}]</span> }),
-        }}
+            : { img: ({ alt }: { alt?: string }) => <span className="muted">[image{alt ? `: ${alt}` : ""}]</span> }),
+    }),
+    [images, image],
+  );
+  return (
+    <div className={classes}>
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        rehypePlugins={
+          [rehypeRaw, [rehypeSanitize, SCHEMA], ...(marks?.length ? [[rehypeMarks, marks]] : [])] as Options["rehypePlugins"]
+        }
+        components={components}
+        urlTransform={urlTransform}
       >
         {children}
       </ReactMarkdown>

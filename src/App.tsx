@@ -2135,6 +2135,7 @@ export function App() {
               show({ args: ["attach", session.pane], cwd: session.cwd, title: session.session, pane: session.pane })
             }
             onOpenFile={openInTab}
+            onOpenChanges={() => activateTab("changes")}
             people={{ stage: activeSession, sessions: agentSessions }}
           />
           ) : null}

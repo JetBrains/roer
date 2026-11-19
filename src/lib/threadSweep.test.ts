@@ -22,6 +22,24 @@ const onFile = (root: string, branch?: string) =>
   });
 
 describe("sweepThreads", () => {
+  it("keeps a thread on a removed line, or on a commit, though the branch no longer has the file", async () => {
+    const removed = startThread({
+      root: "/repo",
+      anchors: [{ kind: "line", path: "a.ts", line: 1, code: "x", branch: "spec", side: "old" }],
+      text: "Why remove it?",
+    });
+    const onCommit = startThread({
+      root: "/repo",
+      anchors: [{ kind: "line", path: "a.ts", line: 1, code: "x", branch: "spec", commit: { hash: "h", short: "h", subject: "s" } }],
+      text: "This one?",
+    });
+    // The repository is there; its `spec` deleted a.ts.
+    const probe = disk({ "/repo": ["main"] });
+    await sweepThreads(1000, probe);
+    for (const id of [removed.id, onCommit.id]) expect(allThreads().find((one) => one.id === id)!.goneSince).toBeUndefined();
+    expect(probe.onBranch).not.toHaveBeenCalled();
+  });
+
   it("marks a thread whose worktree is gone, takes it off Needs you, and deletes it once gone long enough", async () => {
     const kept = onFile("/repo");
     const gone = onFile("/worktrees/done");

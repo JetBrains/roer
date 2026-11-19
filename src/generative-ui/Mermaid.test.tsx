@@ -63,11 +63,14 @@ describe("Mermaid", () => {
     );
   });
 
-  it("draws with dagre, and a diagram cannot ask for ELK, which the app leaves out", async () => {
+  it("draws with dagre, and a diagram can ask neither for ELK, which the app leaves out, nor for its own looks", async () => {
     render(<Mermaid source={"---\nconfig:\n  layout: elk\n---\nflowchart LR; cart --> pay"} />);
     expect(await screen.findByText("Paid?")).toBeInTheDocument();
     expect(mermaid.initialize).toHaveBeenCalledWith(
-      expect.objectContaining({ layout: "dagre", secure: ["secure", "securityLevel", "layout"] }),
+      expect.objectContaining({
+        layout: "dagre",
+        secure: ["secure", "securityLevel", "layout", "theme", "themeVariables", "themeCSS", "fontFamily", "altFontFamily", "darkMode"],
+      }),
     );
     // Only drawn: nothing to click on without `onComment`.
     expect(screen.queryByRole("button", { name: /Comment on/ })).toBeNull();

@@ -21,6 +21,7 @@ import {
 } from "radix-ui";
 
 import { openUrl } from "../lib/github";
+import { drawsAtOnce, RemoteMedia } from "../RemoteMedia";
 
 import type { Align, Justify } from "./schema";
 
@@ -249,14 +250,17 @@ export function Image({
   fit?: "contain" | "cover" | "fill" | "none" | "scaleDown";
   variant?: "icon" | "avatar" | "smallFeature" | "mediumFeature" | "largeFeature" | "header";
 }) {
+  // From the web, it waits to be asked for: an agent wrote the view, and must not learn when it is read.
   return (
-    <img
-      {...common}
-      className={`gen-image ${variant ?? "mediumFeature"}`}
-      style={{ ...style, objectFit: fit === "scaleDown" ? "scale-down" : fit }}
-      src={url}
-      alt={description ?? ""}
-    />
+    <RemoteMedia src={url} alt={description}>
+      <img
+        {...common}
+        className={`gen-image ${variant ?? "mediumFeature"}`}
+        style={{ ...style, objectFit: fit === "scaleDown" ? "scale-down" : fit }}
+        src={url}
+        alt={description ?? ""}
+      />
+    </RemoteMedia>
   );
 }
 
@@ -277,13 +281,20 @@ export function Icon({ name, ...common }: Common & { name: string | { svgPath: s
 }
 
 export function Video({ url, posterUrl, ...common }: Common & { url: string; posterUrl?: string }) {
-  return <video {...common} className="gen-image" src={url} poster={posterUrl || undefined} controls />;
+  // Its poster is fetched with it: one ask shows both. A poster from the web on an inline video waits all the same.
+  return (
+    <RemoteMedia src={drawsAtOnce(url) && posterUrl ? posterUrl : url} kind="video">
+      <video {...common} className="gen-image" src={url} poster={posterUrl || undefined} controls />
+    </RemoteMedia>
+  );
 }
 
 export function AudioPlayer({ url, description, ...common }: Common & { url: string; description?: string }) {
   return (
     <figure {...common} className="gen-audio">
-      <audio src={url} controls />
+      <RemoteMedia src={url} kind="audio" alt={description}>
+        <audio src={url} controls />
+      </RemoteMedia>
       {description ? <figcaption className="gen-text muted">{description}</figcaption> : null}
     </figure>
   );

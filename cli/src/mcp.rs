@@ -305,7 +305,8 @@ impl Server<'_> {
                     the sequence of A2UI v1.0 messages to send: usually one createSurface with the components and \
                     data model inline, later updateComponents / updateDataModel for the same surfaceId. The \
                     messages and the whole component catalog are in this server's instructions, and also as a \
-                    resource ({CATALOG_URI}) if those arrived truncated."),
+                    resource ({CATALOG_URI}) if those arrived truncated. To answer a Roer thread with a view, give \
+                    the same messages to threads__answer as `ui` instead: it is drawn in the thread."),
                 "inputSchema": {
                     "type": "object",
                     "properties": {

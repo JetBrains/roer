@@ -86,9 +86,13 @@ export async function sweepThreads(now = Date.now(), probe: Probe = git): Promis
   return deleted;
 }
 
-/** The branch and file each of a thread's lines were read from, for one left in a tab showing a branch from git. */
+/** The branch and file each of a thread's lines were read from, for one left in a tab showing a branch from git. A
+ * removed line, or a line as a commit left it, is about a file the branch may no longer have: that it is gone from
+ * the branch says nothing about the thread, which goes with its worktree alone. */
 function branchesOf(thread: Thread): [string, string][] {
-  return thread.anchors.flatMap((a): [string, string][] => (a.kind === "line" && a.branch ? [[a.branch, a.path]] : []));
+  return thread.anchors.flatMap((a): [string, string][] =>
+    a.kind === "line" && a.branch && !a.side && !a.commit ? [[a.branch, a.path]] : [],
+  );
 }
 
 /** How often a window sweeps: soon after it opens, then every hour. */
