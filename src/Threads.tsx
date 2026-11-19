@@ -3,7 +3,7 @@
  * each prompt to the session its thread is with when that session is free. Where a view keeps its threads and what
  * they are anchored to is the view's own; see `lib/threads`.
  */
-import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent, type ReactNode } from "react";
 
 import { NoteCard, NoteComposer, type NoteAnswer } from "./DiffNote";
 import type { Session } from "./extensions/api";
@@ -16,6 +16,7 @@ import {
   forYou,
   liveOf,
   markSeen,
+  messagesIn,
   pickSession,
   queueOnThread,
   replyPrompt,
@@ -160,7 +161,7 @@ export function useThreadSender({ stage, sessions = NO_SESSIONS }: ThreadPeople)
         if (!destinationOf(thread, { stage, sessions })) return "waiting for a session in this repository";
         return `${label} · waiting for it to be free`;
       }
-      if (thread.awaiting) return `${label} · waiting for an answer`;
+      if (thread.awaiting) return `${label} · ${liveOf(thread.session, sessions)?.busy ? "working on it" : "waiting for an answer"}`;
       if (thread.author && thread.replies.every((one) => one.author !== "You")) return `${label} · for you`;
       return label;
     },
@@ -169,6 +170,11 @@ export function useThreadSender({ stage, sessions = NO_SESSIONS }: ThreadPeople)
       const to = targetFor(thread.root);
       // Queued with it: sent once its session is free, or once there is a session for its repository at all.
       return startThread({ ...thread, ...(to ? { session: to } : {}), outbox: [{ kind: "ask" }] });
+    },
+    /** The thread's session for a live pane: the one a prompt about it was just typed into by its view. */
+    pinned(pane: string): ThreadSession {
+      const live = sessions.find((one) => one.pane === pane);
+      return live ? sessionOf(live) : { pane, ...(stage?.pane === pane && stage.agent ? { agent: stage.agent, cwd: stage.cwd } : {}) };
     },
     /** The person's reply. A thread whose session ended goes on with the one a new thread would go to, told the
      * whole of it. */
@@ -193,6 +199,63 @@ export function useClaimSessions(threads: readonly Thread[], sessions: readonly 
     }
   }, [threads, sessions]);
 }
+
+/**
+ * The threads collapsed by hand, each with how many messages it had then: one that gets a new message opens again,
+ * so an answer is never left folded away. Kept in this browser across views and launches, like a diff's layout.
+ */
+const COLLAPSED_KEY = "roer:threads-collapsed";
+const collapsedListeners = new Set<() => void>();
+/** The last value read and what it parsed to: the same object while the stored text is the same. */
+let collapsedRead: { raw: string | null; value: Record<string, number> } = { raw: null, value: {} };
+
+function collapsedAll(): Record<string, number> {
+  let raw: string | null = null;
+  try {
+    raw = localStorage.getItem(COLLAPSED_KEY);
+  } catch {
+    return collapsedRead.value;
+  }
+  if (raw === collapsedRead.raw) return collapsedRead.value;
+  let value: Record<string, number> = {};
+  try {
+    const parsed: unknown = JSON.parse(raw ?? "{}");
+    if (parsed && typeof parsed === "object") value = parsed as Record<string, number>;
+  } catch {
+    /* unreadable: nothing collapsed */
+  }
+  collapsedRead = { raw, value };
+  return value;
+}
+
+function setCollapsed(thread: Thread, on: boolean): void {
+  const { [thread.id]: _, ...rest } = collapsedAll();
+  const next = on ? { ...rest, [thread.id]: messagesIn(thread) } : rest;
+  const raw = JSON.stringify(next);
+  collapsedRead = { raw, value: next };
+  try {
+    localStorage.setItem(COLLAPSED_KEY, raw);
+  } catch {
+    /* kept for as long as the window is open */
+  }
+  for (const listener of collapsedListeners) listener();
+}
+
+const subscribeCollapsed = (listener: () => void) => {
+  collapsedListeners.add(listener);
+  return () => collapsedListeners.delete(listener);
+};
+
+/** Whether `thread` is collapsed: by hand, and nothing said in it since. */
+const isCollapsed = (all: Record<string, number>, thread: Thread) => all[thread.id] !== undefined && all[thread.id] >= messagesIn(thread);
+
+/** Whether a key press is the person's own reply shortcut: R alone, not typed into a field. */
+const isReplyKey = (event: KeyboardEvent<HTMLElement>) =>
+  event.key.toLowerCase() === "r" &&
+  !event.metaKey &&
+  !event.ctrlKey &&
+  !event.altKey &&
+  !(event.target instanceof HTMLElement && event.target.closest("input, textarea, select, [contenteditable]"));
 
 /** A thread as the diff's comment card draws it, with where it stands as the tag on its corner. */
 function threadNote(thread: Thread, status: string, at: string): DiffNote {
@@ -231,6 +294,7 @@ export function ThreadCards({
   extra?: (thread: Thread) => ReactNode;
 }) {
   const [replying, setReplying] = useState<string | null>(null);
+  const collapsed = useSyncExternalStore(subscribeCollapsed, collapsedAll);
   // An answer on screen is an answer read: it leaves "Needs you".
   useEffect(() => {
     if (!seeing || document.visibilityState === "hidden") return;
@@ -245,15 +309,32 @@ export function ThreadCards({
     <>
       {threads.map((thread) => {
         const with_ = sender.isLive(thread.session) ? (liveOf(thread.session, sender.sessions) ?? thread.session) : sender.targetFor(thread.root);
+        const folded = isCollapsed(collapsed, thread);
+        const canReply = thread.state !== "resolved";
         return (
-          <div key={thread.id} className={thread.id === flash ? "thread flash" : "thread"} data-thread={thread.id}>
+          <div
+            key={thread.id}
+            className={thread.id === flash ? "thread flash" : "thread"}
+            data-thread={thread.id}
+            // Focused by a click in it, by Tab, or by stepping to it: R then replies, as the Reply button says.
+            tabIndex={-1}
+            onKeyDown={(event) => {
+              if (!canReply || replying === thread.id || !isReplyKey(event)) return;
+              event.preventDefault();
+              event.stopPropagation();
+              if (folded) setCollapsed(thread, false);
+              setReplying(thread.id);
+            }}
+          >
             <NoteCard
               note={threadNote(thread, [tagFor?.(thread), sender.statusOf(thread)].filter(Boolean).join(" · "), name(thread))}
               actions={THREAD_ACTIONS}
               onAnswer={answer}
+              collapsed={folded && replying !== thread.id}
+              onToggle={() => setCollapsed(thread, !folded)}
             />
-            {extra?.(thread)}
-            {thread.state === "resolved" ? null : replying === thread.id ? (
+            {folded && replying !== thread.id ? null : extra?.(thread)}
+            {!canReply || (folded && replying !== thread.id) ? null : replying === thread.id ? (
               <NoteComposer
                 line={0}
                 label={`Reply on ${name(thread)}`}
@@ -266,7 +347,14 @@ export function ThreadCards({
                 onCancel={() => setReplying(null)}
               />
             ) : (
-              <button type="button" className="gen-button borderless thread-reply" onClick={() => setReplying(thread.id)}>
+              <button
+                type="button"
+                className="gen-button borderless thread-reply"
+                title="Reply (R)"
+                aria-label="Reply"
+                aria-keyshortcuts="R"
+                onClick={() => setReplying(thread.id)}
+              >
                 Reply
               </button>
             )}

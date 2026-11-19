@@ -13,7 +13,9 @@ import type { Extension } from "./api";
 import { syncBundled } from "./bundled";
 import { registry, type Registry } from "./registry";
 
-export const EXTENSIONS_EVENT = "roer://extensions";
+import { EXTENSIONS_EVENT, listDisabled, setExtensionEnabled } from "./enabled";
+
+export { EXTENSIONS_EVENT, listDisabled, setExtensionEnabled };
 
 /** One extension on disk and how its last build went (`extensions.rs`). */
 export interface ExtensionInfo {
@@ -42,12 +44,6 @@ interface Bundle {
 
 export const listExtensions = (): Promise<ExtensionInfo[]> => invoke("extensions_list");
 
-/** The ids switched off, bundled ones included. */
-export const listDisabled = (): Promise<string[]> => invoke("extensions_disabled");
-
-/** Switches one on or off; every window loads or unloads it once the backend has written it down. */
-export const setExtensionEnabled = (id: string, enabled: boolean): Promise<void> =>
-  invoke("extension_set_enabled", { id, enabled });
 
 /** Takes one out of Roer: its installed copy moves to `~/.roer/extensions-removed`, a session one's pointer goes. Says what it did. */
 export const removeExtension = (id: string): Promise<string> => invoke("extension_remove", { id });

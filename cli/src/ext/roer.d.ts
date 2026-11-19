@@ -159,7 +159,19 @@ declare module "roer" {
   export function useOpenFile(): (root: string, path: string, line?: number, options?: { branch?: string }) => void;
   /** What a Roer thread is about: lines of a file, or a part of a view by an id the view gives it. */
   export type Anchor =
-    | { kind: "line"; path: string; line: number; end?: number; code: string; branch?: string; blob?: string }
+    | {
+        kind: "line";
+        path: string;
+        line: number;
+        end?: number;
+        code: string;
+        branch?: string;
+        blob?: string;
+        /** A removed line, counted in the file before the change; shown in Changes alone. */
+        side?: "old";
+        /** The commit it was left on, its lines counted as that commit left the file; shown in Changes alone. */
+        commit?: { hash: string; short: string; subject: string };
+      }
     | { kind: "part"; id: string; label?: string };
   /** A comment on something on screen, with its replies, kept by Roer and answered by an agent through
    * `threads__answer`. `view` is the view it was left in, e.g. `ext:<id>/<tab>`; absent for a file's lines. */
@@ -172,19 +184,47 @@ declare module "roer" {
     author?: string;
     session?: { pane: string; id?: string; agent?: string; cwd?: string };
     text: string;
+    /** A question, answered and nothing changed for it, or a change to make; unset, as its words say. */
+    intent?: "ask" | "change";
     replies: { author: string; text: string }[];
     state: "open" | "resolved";
     awaiting?: boolean;
   }
   export function allThreads(): Thread[];
-  /** Starts a thread; to send it to an agent, type a prompt naming its id into a session. */
-  export function startThread(thread: Omit<Thread, "id" | "replies" | "state">): Thread;
+  /** Starts a thread; to send it to an agent, type a prompt naming its id into a session. `replies` are the
+   * conversation so far, e.g. the person's decision under an agent's comment. */
+  export function startThread(thread: Omit<Thread, "id" | "replies" | "state"> & { replies?: Thread["replies"] }): Thread;
   export function replyToThread(id: string, author: string, text: string, mine: boolean): boolean;
   export function setThread(id: string, change: Partial<Pick<Thread, "state" | "awaiting" | "session">>): void;
   export function deleteThread(id: string): void;
   export function onThreadsChanged(listener: () => void): () => void;
   /** The threads `pick` keeps, kept in step with every change, the agents' answers included. */
   export function useThreads(pick: (thread: Thread) => boolean, deps: readonly unknown[]): Thread[];
+  /** Starting threads and sending them to agents, as Roer's file view does. `start` queues a thread to its
+   * repository's session, typed in once that is free; `pinned` names the live session in a pane, for a thread a
+   * view sent itself. */
+  export function useThreadSender(people: { stage?: Session | null; sessions?: readonly AgentSession[] }): ThreadSender;
+  export interface ThreadSender {
+    start(thread: Omit<Thread, "id" | "replies" | "state" | "session">): Thread;
+    reply(thread: Thread, text: string): void;
+    pinned(pane: string): NonNullable<Thread["session"]>;
+    statusOf(thread: Thread): string;
+  }
+  /** Threads' cards as Roer draws them: each with its replies, a Reply box, Resolve and Delete, and where it
+   * stands on its corner. `seeing` marks an answer on screen as read. */
+  export function ThreadCards(props: {
+    threads: readonly Thread[];
+    sender: ThreadSender;
+    name: (thread: Thread) => string;
+    seeing?: boolean;
+    flash?: string | null;
+    tagFor?: (thread: Thread) => string | undefined;
+    extra?: (thread: Thread) => ReactNode;
+  }): ReactNode;
+  /** Keeps the session id of a thread an agent started once its pane is seen live. */
+  export function useClaimSessions(threads: readonly Thread[], sessions: readonly AgentSession[]): void;
+  /** Whether comments (threads, Needs you) are switched on in Settings. */
+  export function useCommentsOn(): boolean;
   /** Brings a tab to the top: "sessions", "terminal", "changes", or an extension's `ext:<id>/<tab>`. */
   export function useActivateTab(): (tabId: string) => void;
   /** Starts a session in `cwd` on `prompt` and puts it on the stage: with the default agent, or, with `pickAgent`
@@ -551,6 +591,8 @@ declare module "roer" {
     answer?: string;
     /** This note's own answers, in place of the `noteActions` the diff offers every note. */
     actions?: NoteAction[];
+    /** Done with: drawn folded to one line with this word (e.g. "resolved") until opened. */
+    folded?: string;
   }
 
   export interface NoteAction {
@@ -588,6 +630,12 @@ declare module "roer" {
     /** A file whole on either side, base64 (`gitBlob`), null where it does not exist: with it a picture is shown as
      * one, and a Markdown file can be read rendered, its pictures included. */
     loadFile?: (path: string, side: "old" | "new") => Promise<string | null>;
+    /** Lets the person comment on any line; draw what comes back as one of `notes`. */
+    onAddNote?: (note: import("roer/ui").NewNote) => void;
+    /** Several ways to submit such a comment, the first the default; the one picked comes as the note's `action`. */
+    composeActions?: readonly { label: string; value: string; title?: string }[];
+    /** Draws a note in place of its card, e.g. as `ThreadCards`; undefined keeps the card. */
+    renderNote?: (note: DiffNote) => ReactNode | undefined;
   }): ReactNode;
 
   // ---------------------------------------------------------------- keys
@@ -864,6 +912,8 @@ declare module "roer/ui" {
     line: number;
     side: "old" | "new";
     text: string;
+    /** The `composeActions` value it was submitted with. */
+    action?: string;
   }
 
   export type NoteAction = import("roer").NoteAction;

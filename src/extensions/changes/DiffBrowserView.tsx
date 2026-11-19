@@ -26,13 +26,25 @@ import {
   type Commit,
   type FileChange,
   type FilesChanged,
+  type DiffNote,
+  type Thread,
   isSavedCopy,
 } from "roer";
 import type { NewNote, NoteAnswer } from "roer/ui";
 
 import { CommitBox } from "./CommitBox";
 import { ReviewMenu } from "./ReviewMenu";
-import { answered, commentNote, lineInFile, newCommentId, reviewRequestPrompt, type LocalComment } from "./local";
+import { answered, commentNote, lineInFile, newCommentId, placeInDiff, reviewRequestPrompt, type LocalComment } from "./local";
+
+/** A comment written in the diff, ready to be kept or asked: its line's code read from the slot's diff. */
+export type WrittenComment = Omit<LocalComment, "id">;
+
+/** How a comment written in the diff goes on, when the branch's comments are threads: kept for the review, or
+ * asked now. */
+const COMPOSE_ACTIONS = [
+  { label: "Add to review", value: "review", title: "Keep it with the review: Send sends them all, as one task" },
+  { label: "Ask", value: "ask", title: "Ask it now, as a question: the answer comes back in its thread, and no file is changed" },
+];
 
 export interface DiffBrowserViewProps {
   /** Where to put the base picker, Refresh and the commit stepper: the bar of the tab around it. Without it they
@@ -46,6 +58,12 @@ export interface DiffBrowserViewProps {
   pane?: string;
   /** Whether the view is on top, which is when it takes the keyboard. */
   active: boolean;
+  /** The threads on the branch's lines: drawn on the slot they belong to, as the comments are. */
+  threads?: readonly Thread[];
+  /** Draws a thread's card, and whether its line reads otherwise now. */
+  renderThread?: (thread: Thread, outdated: boolean) => ReactNode;
+  /** Asks a comment now, as a thread of its own; with it, a comment is kept for the review or asked. */
+  onAsk?: (comment: WrittenComment) => void;
   /** The last thing a worktree watch reported, so the local-changes slot
    * does not have to be left and come back to before it moves. */
   changed?: FilesChanged | null;
@@ -104,6 +122,9 @@ export function DiffBrowserView({
   changed,
   comments,
   onComments,
+  threads,
+  renderThread,
+  onAsk,
   agent = "the agent",
   send,
   startSession,
@@ -440,6 +461,79 @@ export function DiffBrowserView({
 
   const files = isAll ? wholeChanges : isLocalSelected ? localChanges?.files ?? null : commitFiles;
 
+  // The threads of the slot on screen, as the comments are: a commit's on that commit, the rest on the code as it is.
+  const slotThreads = useMemo(
+    () =>
+      (threads ?? []).filter((t) => {
+        const a = t.anchors[0];
+        if (a?.kind !== "line") return false;
+        return isLocalSelected || isAll ? !a.commit : !!commit && a.commit?.hash === commit.hash;
+      }),
+    [threads, isLocalSelected, isAll, commit],
+  );
+  // Each found again on the slot's diff by its code: the agent's edits move the lines under a thread.
+  const [placed, setPlaced] = useState<ReadonlyMap<string, { line: number; outdated: boolean }>>(new Map());
+  const placing = slotThreads
+    .map((t) => {
+      const a = t.anchors[0] as Extract<Thread["anchors"][number], { kind: "line" }>;
+      return `${t.id}\0${a.path}\0${a.line}\0${a.side ?? ""}\0${a.code}`;
+    })
+    .join("\n");
+  useEffect(() => {
+    let gone = false;
+    const byPath = new Map<string, Thread[]>();
+    for (const t of slotThreads) {
+      const a = t.anchors[0] as Extract<Thread["anchors"][number], { kind: "line" }>;
+      if (files?.some((f) => f.path === a.path)) byPath.set(a.path, [...(byPath.get(a.path) ?? []), t]);
+    }
+    void Promise.all(
+      [...byPath].map(async ([path, list]) => {
+        const file = files?.find((f) => f.path === path);
+        const text = await loadDiff(path, file ? isUntracked(file) : false).catch(() => null);
+        return list.map((t) => {
+          const a = t.anchors[0] as Extract<Thread["anchors"][number], { kind: "line" }>;
+          return [t.id, text === null ? { line: a.line, outdated: false } : placeInDiff(text, a.code, a.line, a.side ?? "new")] as const;
+        });
+      }),
+    ).then((all) => !gone && setPlaced(new Map(all.flat())));
+    return () => {
+      gone = true;
+    };
+    // `placing` is what of the threads moves them; their replies do not.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [placing, files, loadDiff]);
+
+  const threadNotes = useMemo(
+    () =>
+      slotThreads.flatMap((t): DiffNote[] => {
+        const a = t.anchors[0] as Extract<Thread["anchors"][number], { kind: "line" }>;
+        // Only on a file the slot changed: one it did not is not on screen to be pointed at.
+        if (!files?.some((f) => f.path === a.path)) return [];
+        return [
+          {
+            id: t.id,
+            path: a.path,
+            line: placed.get(t.id)?.line ?? a.line,
+            ...(a.side === "old" ? { side: "old" as const } : {}),
+            author: t.author ?? "You",
+            text: t.text,
+            replies: t.replies,
+            ...(t.state === "resolved" ? { folded: "resolved" } : {}),
+          },
+        ];
+      }),
+    [slotThreads, placed, files],
+  );
+  const allNotes = useMemo(() => [...notes, ...threadNotes], [notes, threadNotes]);
+  const renderNote = useCallback(
+    (note: DiffNote) => {
+      const thread = note.id ? slotThreads.find((t) => t.id === note.id) : undefined;
+      return thread && renderThread ? renderThread(thread, placed.get(thread.id)?.outdated ?? false) : undefined;
+    },
+    [slotThreads, renderThread, placed],
+  );
+
+
   // A comment asked for from outside: its slot first, its commit's or the branch as a whole, then the comment, once
   // that slot's own files are in.
   const [toReveal, setToReveal] = useState<{
@@ -461,17 +555,21 @@ export function DiffBrowserView({
       ? toReveal.reveal
       : undefined;
   const addComment = useCallback(
-    (note: NewNote) => {
+    ({ action, ...note }: NewNote) => {
       if (!onComments) return;
       const file = files?.find((f) => f.path === note.path);
-      const on = isLocalSelected || !commit ? undefined : { hash: commit.hash, short: commit.short, subject: commit.subject };
+      const on = isLocalSelected || isAll || !commit ? undefined : { hash: commit.hash, short: commit.short, subject: commit.subject };
       // The words on the line, read from its diff, are how the agent finds it once numbers move.
       void loadDiff(note.path, file ? isUntracked(file) : false)
         .then((text) => lineInFile(text, note.line, note.side))
         .catch(() => "")
-        .then((code) => onComments((current) => [...current, { id: newCommentId(), ...note, code, ...(on ? { commit: on } : {}) }]));
+        .then((code) => {
+          const written: WrittenComment = { ...note, code, ...(on ? { commit: on } : {}) };
+          if (action === "ask" && onAsk) onAsk(written);
+          else onComments((current) => [...current, { id: newCommentId(), ...written }]);
+        });
     },
-    [onComments, files, isLocalSelected, commit, loadDiff],
+    [onComments, onAsk, files, isLocalSelected, isAll, commit, loadDiff],
   );
   const answer = useCallback(
     (one: NoteAnswer) => onComments?.((current) => answered(current, one)),
@@ -711,9 +809,11 @@ export function DiffBrowserView({
               : "This commit touched no files."
           }
           defaultLayout={isLocalSelected ? "split" : undefined}
-          notes={onComments ? notes : undefined}
+          notes={onComments ? allNotes : undefined}
           onNoteAnswer={onComments ? answer : undefined}
           onAddNote={onComments ? addComment : undefined}
+          composeActions={onComments && onAsk ? COMPOSE_ACTIONS : undefined}
+          renderNote={renderThread ? renderNote : undefined}
           data-testid="changes"
           aria-label="Diff"
         />

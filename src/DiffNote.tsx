@@ -9,12 +9,14 @@
  * a work item's findings follow.
  */
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { ChevronDown, ChevronRight } from "lucide-react";
 
 import { Markdown } from "./Markdown";
 import type { DiffNote, NoteAction } from "./lib/diff";
 
 export type { NoteAction };
 import { openUrl } from "./lib/github";
+import { isMac } from "./lib/keys";
 
 
 /** A note answered: `action` is an action's `value`, or "" to take it back. */
@@ -40,6 +42,15 @@ export function isCardNote(note: DiffNote, actions?: readonly NoteAction[]): boo
   return isComment(note) || (note.id !== undefined && ((note.actions ?? actions)?.length ?? 0) > 0);
 }
 
+/** One way to submit a comment being written: a button each, the first the primary one and ⌘↵'s. */
+export interface ComposeAction {
+  label: string;
+  /** What is reported with the words. */
+  value: string;
+  /** The button's tooltip: what it does with the comment. */
+  title?: string;
+}
+
 /** A comment being written on a line, before it is a note. */
 export function NoteComposer({
   line,
@@ -48,23 +59,29 @@ export function NoteComposer({
   placeholder = "What should change here?",
   submitLabel = "Comment",
   label = `Comment on line ${line}`,
+  actions,
 }: {
   /** Which line it is about, for the field's name. */
   line: number;
-  onSubmit: (text: string) => void;
+  /** The words, and the `value` of the action they were submitted with, when there are `actions`. */
+  onSubmit: (text: string, action?: string) => void;
   onCancel: () => void;
   placeholder?: string;
   submitLabel?: string;
   /** The field's name; a comment on the line by default. */
   label?: string;
+  /** Several ways to submit it, in place of the one `submitLabel` button. */
+  actions?: readonly ComposeAction[];
 }) {
   const [words, setWords] = useState("");
   const field = useRef<HTMLTextAreaElement>(null);
   useEffect(() => field.current?.focus(), []);
 
-  const submit = () => {
-    if (words.trim()) onSubmit(words.trim());
+  const submit = (action?: string) => {
+    if (words.trim()) onSubmit(words.trim(), action ?? actions?.[0]?.value);
   };
+  // The key the field submits with, on the button it presses.
+  const keys = <kbd className="note-keys">{isMac() ? "⌘↵" : "Ctrl+↵"}</kbd>;
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     // The diff around it steps on the arrow keys; typing here must not.
     event.stopPropagation();
@@ -88,9 +105,35 @@ export function NoteComposer({
           onKeyDown={onKeyDown}
         />
         <div className="gen-wi-actions">
-          <button type="button" className="gen-button primary" disabled={!words.trim()} onClick={submit}>
-            {submitLabel}
-          </button>
+          {actions && actions.length > 0 ? (
+            actions.map((action, i) => (
+              <button
+                key={action.value}
+                type="button"
+                className={i === 0 ? "gen-button primary" : "gen-button"}
+                title={action.title}
+                aria-label={action.label}
+                aria-keyshortcuts={i === 0 ? (isMac() ? "Meta+Enter" : "Control+Enter") : undefined}
+                disabled={!words.trim()}
+                onClick={() => submit(action.value)}
+              >
+                {action.label}
+                {i === 0 ? keys : null}
+              </button>
+            ))
+          ) : (
+            <button
+              type="button"
+              className="gen-button primary"
+              aria-label={submitLabel}
+              aria-keyshortcuts={isMac() ? "Meta+Enter" : "Control+Enter"}
+              disabled={!words.trim()}
+              onClick={() => submit()}
+            >
+              {submitLabel}
+              {keys}
+            </button>
+          )}
           <button type="button" className="gen-button borderless" onClick={onCancel}>
             Cancel
           </button>
@@ -105,12 +148,18 @@ export function NoteCard({
   actions: offered,
   onAnswer,
   file,
+  collapsed = false,
+  onToggle,
 }: {
   note: DiffNote;
   actions?: readonly NoteAction[];
   onAnswer?: (answer: NoteAnswer) => void;
   /** It heads the file rather than sitting under a line. */
   file?: boolean;
+  /** Drawn as its head alone, the first line of its text in it; `onToggle` opens it again. */
+  collapsed?: boolean;
+  /** Offers a caret in the head that collapses the card and opens it again. */
+  onToggle?: () => void;
 }) {
   const [own, setOwn] = useState<Own | null>(null);
   const [editing, setEditing] = useState(false);
@@ -161,7 +210,45 @@ export function NoteCard({
   };
 
   const url = note.url?.startsWith("https://") ? note.url : undefined;
-  const classes = ["note-card", file ? "file" : "", note.tone ?? "", decided && !editing ? "settled" : ""];
+  // Whose words they are: the person's own, or someone else's (an agent, a reviewer), told apart by colour.
+  const whose = (author: string | undefined) => (author === undefined ? "" : author === "You" ? "mine" : "theirs");
+  const classes = [
+    "note-card",
+    whose(note.author),
+    file ? "file" : "",
+    note.tone ?? "",
+    decided && !editing ? "settled" : "",
+    collapsed ? "collapsed" : "",
+  ];
+  const caret = onToggle ? (
+    <button
+      type="button"
+      className="note-card-caret"
+      aria-expanded={!collapsed}
+      aria-label={collapsed ? "Expand the comment" : "Collapse the comment"}
+      title={collapsed ? "Expand" : "Collapse"}
+      onClick={onToggle}
+    >
+      {collapsed ? <ChevronRight size={14} strokeWidth={2.25} /> : <ChevronDown size={14} strokeWidth={2.25} />}
+    </button>
+  ) : null;
+
+  if (collapsed) {
+    const replies = note.replies?.length ?? 0;
+    return (
+      <div className={classes.filter(Boolean).join(" ")} role="note" aria-label={note.author ? `Comment by ${note.author}` : "Note"} data-note={noteKey(note)}>
+        <div className="note-card-head">
+          {caret}
+          {note.author ? <strong>{note.author}</strong> : null}
+          <button type="button" className="note-card-summary" title="Expand" onClick={onToggle}>
+            {note.text.split("\n")[0]}
+          </button>
+          {replies > 0 ? <span className="muted">{replies === 1 ? "1 reply" : `${replies} replies`}</span> : null}
+          {note.tag ? <span className="pr-tag">{note.tag}</span> : null}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div
@@ -170,8 +257,9 @@ export function NoteCard({
       aria-label={note.author ? `Comment by ${note.author}` : "Note"}
       data-note={noteKey(note)}
     >
-      {note.author || note.tag || url ? (
+      {note.author || note.tag || url || caret ? (
         <div className="note-card-head">
+          {caret}
           {note.author ? <strong>{note.author}</strong> : null}
           {note.tag ? <span className="pr-tag">{note.tag}</span> : null}
           <span className="note-card-spacer" />
@@ -184,7 +272,7 @@ export function NoteCard({
       ) : null}
       {isComment(note) ? <Markdown className="file-markdown note-card-md">{note.text}</Markdown> : <p>{note.text}</p>}
       {note.replies?.map((reply, i) => (
-        <div key={i} className="note-card-reply">
+        <div key={i} className={`note-card-reply ${whose(reply.author)}`}>
           <strong>{reply.author}</strong>
           <Markdown className="file-markdown note-card-md">{reply.text}</Markdown>
         </div>

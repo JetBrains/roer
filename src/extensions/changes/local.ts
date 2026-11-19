@@ -6,6 +6,7 @@ import {
   splitPatch,
   UNTRUSTED_DECIDED,
   untrustedComment,
+  type Anchor,
   type DiffNote,
   type NoteAction,
   type ThreadVerdict,
@@ -260,6 +261,33 @@ export function lineInFile(fileDiff: string, line: number, side: "old" | "new"):
   return "";
 }
 
+/**
+ * Where a thread's line is in one file's diff: at its number while that line still reads as the thread's code,
+ * else the drawn line on the same side nearest to it that does, else where it was, outdated. A line the diff does
+ * not draw at all is left where it was: the diff heads its file with it.
+ */
+export function placeInDiff(
+  fileDiff: string,
+  code: string,
+  line: number,
+  side: "old" | "new",
+): { line: number; outdated: boolean } {
+  const want = code.split("\n")[0] ?? "";
+  const drawn = new Map<number, string>();
+  for (const hunk of parseDiff(fileDiff).hunks) {
+    for (const l of hunk.lines) {
+      const no = side === "old" ? (l.kind === "del" ? l.oldNo : undefined) : l.kind === "del" ? undefined : l.newNo;
+      if (no !== undefined) drawn.set(no, l.text);
+    }
+  }
+  if (!want.trim() || drawn.get(line) === want) return { line, outdated: false };
+  let best: number | undefined;
+  for (const [no, text] of drawn) if (text === want && (best === undefined || Math.abs(no - line) < Math.abs(best - line))) best = no;
+  if (best !== undefined) return { line: best, outdated: false };
+  // Its words are nowhere in the diff: changed under it when its line is drawn reading otherwise.
+  return { line, outdated: drawn.has(line) };
+}
+
 /** The comments once one is answered: deleted, or an agent's decided on, or its decision taken back. */
 export function answered(
   current: readonly LocalComment[],
@@ -328,9 +356,37 @@ function fence(code: string): string {
   return ticks;
 }
 
+const ANSWER_TOOL = "threads__answer";
+
+/** A comment as a Roer thread is anchored: its line, counted where the comment counted it, with the code on it. */
+export function anchorOf(comment: LocalComment, branch?: string): Anchor {
+  return {
+    kind: "line",
+    path: comment.path,
+    line: comment.line,
+    code: comment.code,
+    ...(comment.side === "old" ? { side: "old" as const } : {}),
+    ...(comment.commit ? { commit: comment.commit } : {}),
+    // A branch no checkout here has is read from git.
+    ...(branch ? { branch } : {}),
+  };
+}
+
+/** The person's decision on an agent's comment, as their reply in its thread. */
+export function decisionText(verdict: ThreadVerdict | undefined): string {
+  if (verdict?.kind === "accept") return "Accepted: make this change.";
+  if (verdict?.kind === "instruct") return verdict.text.trim();
+  return "Declined: leave the code as it is.";
+}
+
 /** A prompt for the session's agent: each comment, at its line, with the line's code to find it by. The
  * person's comments go in as instructions; an agent's go in with the person's decision on it. */
-export function localReviewPrompt(base: string, comments: readonly LocalComment[]): string {
+export function localReviewPrompt(
+  base: string,
+  comments: readonly LocalComment[],
+  /** Each comment's Roer thread, by the comment's id, where the comments go on as threads: the agent answers in each. */
+  threads?: ReadonlyMap<string, string>,
+): string {
   // Without a base the tab cannot say how far back the comments reach, so the prompt does not guess.
   const since = base ? ` since it left ${base}, uncommitted work included` : "";
   const own = comments.some((comment) => !comment.author);
@@ -352,11 +408,18 @@ export function localReviewPrompt(base: string, comments: readonly LocalComment[
         ]
       : []),
     "Don't commit: I'll look at the changes again first.",
+    ...(threads && threads.size > 0
+      ? [
+          `Each comment is a thread in Roer, named under it. When you are done, answer in every one with the ${ANSWER_TOOL} tool, thread by thread: what you changed for it, or why you left the code as it is. I read the answers where I left the comments.`,
+        ]
+      : []),
   ];
   comments.forEach((comment, i) => {
     const where = comment.side === "old" ? `${comment.path}, removed line ${comment.line}` : `${comment.path}:${comment.line}`;
     const on = comment.commit ? ` in commit ${comment.commit.short} ("${comment.commit.subject}")` : "";
     parts.push("", `## ${i + 1}. ${where}${on}`);
+    const thread = threads?.get(comment.id);
+    if (thread) parts.push(`Thread "${thread}".`);
     if (comment.code.trim()) {
       const f = fence(comment.code);
       parts.push(f, comment.code, f);

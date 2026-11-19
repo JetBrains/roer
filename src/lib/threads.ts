@@ -27,6 +27,10 @@ export type Anchor =
       /** The blob of the content it was written on: a thread belongs to the revision it was left on, and is moved
        * from it to what is on screen through the diff between the two. */
       blob?: string;
+      /** A line the change removed, counted in the file as it was before: left in Changes, shown there alone. */
+      side?: "old";
+      /** The commit it was left on in Changes, its lines counted as that commit left the file; shown there alone. */
+      commit?: { hash: string; short: string; subject: string };
     }
   | {
       kind: "part";
@@ -69,6 +73,9 @@ export interface Thread {
   author?: string;
   session?: ThreadSession;
   text: string;
+  /** What the person wants: an answer to a question, which leaves the code alone, or a change made. A thread left
+   * without saying, as a file's are, is a change or a question as its words say. */
+  intent?: "ask" | "change";
   replies: { author: string; text: string }[];
   state: "open" | "resolved";
   /** The last word is the person's, and it has gone to the agent: an answer is due. */
@@ -147,9 +154,11 @@ export const onThreadsChanged = (listener: () => void): (() => void) =>
 
 const newId = (): string => `t${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 
-export function startThread(thread: Omit<Thread, "id" | "replies" | "state">): Thread {
-  // The person has read their own; an agent's is for them to see.
-  const started: Thread = { ...thread, id: newId(), replies: [], state: "open", seen: thread.author ? 0 : 1 };
+export function startThread(thread: Omit<Thread, "id" | "replies" | "state"> & { replies?: Thread["replies"] }): Thread {
+  const replies = thread.replies ?? [];
+  // The person has read their own, and every reply of theirs under it; an agent's is for them to see.
+  const seen = thread.author ? (replies.length > 0 && replies.every((one) => one.author === "You") ? 1 + replies.length : 0) : 1;
+  const started: Thread = { ...thread, id: newId(), replies, state: "open", seen };
   updateThreads((current) => [...current, started]);
   return started;
 }
@@ -215,6 +224,9 @@ export const useFileThreads = (
           a.kind === "line" &&
           a.path === path &&
           // On the branch the tab shows, or, in a tab showing the content a thread was written on, that thread.
+          // A removed line, or a line as a commit left it, is not in the file as it is: those are Changes' alone.
+          !a.side &&
+          !a.commit &&
           ((t.root === root && (a.branch === branch || (!!branch && a.blob === branch))) ||
             // Left on this checkout's branch, read from git in another checkout of the repository before this one
             // had it checked out.
@@ -270,13 +282,16 @@ function fence(code: string): string {
 
 export const ANSWER_TOOL = "threads__answer";
 
-const lines = (a: Extract<Anchor, { kind: "line" }>) => (a.end && a.end > a.line ? `lines ${a.line}–${a.end}` : `line ${a.line}`);
+const lines = (a: Extract<Anchor, { kind: "line" }>) =>
+  `${a.side === "old" ? "removed " : ""}${a.end && a.end > a.line ? `lines ${a.line}–${a.end}` : `line ${a.line}`}`;
 
 /** What a thread is about, as the agent is told: each anchor, with its code for a file's lines. */
 export function whereOf(thread: Thread): string[] {
   const out: string[] = [];
   const at = (a: Anchor) =>
-    a.kind === "line" ? `\`${a.path}\` ${lines(a)}${a.branch ? ` as the branch \`${a.branch}\` has it` : ""}` : `"${a.label ?? a.id}" (\`${a.id}\`)`;
+    a.kind === "line"
+      ? `\`${a.path}\` ${lines(a)}${a.commit ? ` as commit ${a.commit.short} ("${a.commit.subject}") left it` : a.branch ? ` as the branch \`${a.branch}\` has it` : ""}`
+      : `"${a.label ?? a.id}" (\`${a.id}\`)`;
   const view = thread.view ? ` in my Roer view "${thread.viewTitle ?? thread.view}" (\`${thread.view}\`)` : "";
   out.push(`${thread.anchors.length > 1 ? "These, together" : "This"}${view}, in ${thread.root}:`);
   for (const a of thread.anchors) {
@@ -297,7 +312,9 @@ export function askPrompt(thread: Thread): string {
     "",
     thread.text,
     "",
-    `Do what it asks, then answer in the thread with the ${ANSWER_TOOL} tool, thread "${thread.id}": what you did, or your answer to my question.` +
+    (thread.intent === "ask"
+      ? `This is a question: answer it in the thread with the ${ANSWER_TOOL} tool, thread "${thread.id}". Don't change any files for it; if it calls for a change, say what you would change and I'll ask for it.`
+      : `Do what it asks, then answer in the thread with the ${ANSWER_TOOL} tool, thread "${thread.id}": what you did, or your answer to my question.`) +
       (thread.anchors.some((a) => a.kind === "line")
         ? " Line numbers are as the file was when I wrote it; if they have moved, find the spot by the quoted code."
         : ""),

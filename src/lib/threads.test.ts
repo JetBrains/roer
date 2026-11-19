@@ -1,6 +1,7 @@
+import { renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { allThreads, askPrompt, forYou, markSeen, pickSession, placeByCode, placeOf, placeThrough, replyPrompt, replyToThread, startThread } from "./threads";
+import { allThreads, askPrompt, forYou, markSeen, pickSession, placeByCode, placeOf, placeThrough, replyPrompt, replyToThread, startThread, useFileThreads } from "./threads";
 
 beforeEach(() => localStorage.clear());
 
@@ -83,6 +84,44 @@ describe("threads", () => {
   });
 });
 
+
+describe("a thread left in Changes", () => {
+  it("asks a question as one: answered in the thread, with no file changed for it", () => {
+    const thread = startThread({ ...onLine(), intent: "ask" });
+    const prompt = askPrompt(thread);
+    expect(prompt).toContain("This is a question");
+    expect(prompt).toContain("Don't change any files for it");
+    expect(prompt).not.toContain("Do what it asks");
+  });
+
+  it("names a removed line, and a commit's line as that commit left it", () => {
+    const removed = startThread({ root: "/repo", anchors: [{ kind: "line", path: "a.ts", line: 4, code: "gone", side: "old" }], text: "Why?" });
+    expect(askPrompt(removed)).toContain("`a.ts` removed line 4");
+    const commit = { hash: "abc1234def", short: "abc1234", subject: "Add y" };
+    const onCommit = startThread({ root: "/repo", anchors: [{ kind: "line", path: "a.ts", line: 9, code: "y", commit }], text: "Why?" });
+    expect(askPrompt(onCommit)).toContain('`a.ts` line 9 as commit abc1234 ("Add y") left it');
+  });
+
+  it("starts with the person's decision under an agent's comment, which is theirs and seen", () => {
+    const thread = startThread({ ...onLine(), author: "Codex", replies: [{ author: "You", text: "Keep it." }] });
+    expect(thread.replies).toEqual([{ author: "You", text: "Keep it." }]);
+    expect(forYou(thread)).toBe(false);
+    replyToThread(thread.id, "Claude", "Kept.", false);
+    expect(forYou(allThreads().find((one) => one.id === thread.id)!)).toBe(true);
+  });
+
+  it("keeps a removed line's thread, and a commit's, out of the file's own tab", () => {
+    onLine();
+    startThread({ root: "/repo", anchors: [{ kind: "line", path: "src/a.ts", line: 3, code: "x", side: "old" }], text: "Removed." });
+    startThread({
+      root: "/repo",
+      anchors: [{ kind: "line", path: "src/a.ts", line: 3, code: "x", commit: { hash: "h", short: "h", subject: "s" } }],
+      text: "On a commit.",
+    });
+    const { result } = renderHook(() => useFileThreads("/repo", "src/a.ts", undefined));
+    expect(result.current.map((t) => t.text)).toEqual(["Why one?"]);
+  });
+});
 
 describe("placing a thread", () => {
   it("moves lines no hunk touched by what was added and removed above them", () => {

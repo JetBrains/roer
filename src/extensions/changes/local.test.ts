@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { answered, forCheckout, localReviewPrompt, type LocalComment } from "./local";
+import { anchorOf, answered, forCheckout, localReviewPrompt, placeInDiff, type LocalComment } from "./local";
 
 const comment = (over: Partial<LocalComment>): LocalComment => ({
   id: "c1",
@@ -54,5 +54,40 @@ describe("forCheckout", () => {
       expect(forCheckout("Do it.", reviewed, there)).toMatch(/^This is about the branch `feat` of the repository at `\/repo`, which is not where you are now\./);
     }
     expect(forCheckout("Do it.", { root: "/repo", branch: null }, { root: "/other", branch: null })).toMatch(/^This is about the repository at `\/repo`/);
+  });
+});
+
+describe("comments as threads", () => {
+  it("names each comment's thread, and asks for an answer in every one", () => {
+    const prompt = localReviewPrompt("origin/main", [comment({}), comment({ id: "c2", line: 9 })], new Map([["c1", "t1"], ["c2", "t2"]]));
+    expect(prompt).toMatch(/## 1\. src\/a\.ts:3\nThread "t1"\./);
+    expect(prompt).toMatch(/## 2\. src\/a\.ts:9\nThread "t2"\./);
+    expect(prompt).toContain("answer in every one with the threads__answer tool");
+    expect(localReviewPrompt("origin/main", [comment({})])).not.toContain("threads__answer");
+  });
+
+  it("anchors a thread where the comment was: its side, its commit, and a branch read from git", () => {
+    const commit = { hash: "abc", short: "abc", subject: "s" };
+    expect(anchorOf(comment({ side: "old", commit }), "spec")).toEqual({
+      kind: "line",
+      path: "src/a.ts",
+      line: 3,
+      code: "let x = 1",
+      side: "old",
+      commit,
+      branch: "spec",
+    });
+  });
+
+  const diff = ["@@ -1,3 +1,5 @@", " one", "+added", "+more", " let x = 1", " three", ""].join("\n");
+
+  it("finds a thread's line again by its code once lines above it moved", () => {
+    expect(placeInDiff(diff, "let x = 1", 2, "new")).toEqual({ line: 4, outdated: false });
+    expect(placeInDiff(diff, "let x = 1", 4, "new")).toEqual({ line: 4, outdated: false });
+  });
+
+  it("is outdated where its words are gone from a line the diff still draws, and left alone where it draws none", () => {
+    expect(placeInDiff(diff, "let x = 2", 4, "new")).toEqual({ line: 4, outdated: true });
+    expect(placeInDiff(diff, "let x = 2", 40, "new")).toEqual({ line: 40, outdated: false });
   });
 });

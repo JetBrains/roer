@@ -61,6 +61,8 @@ export interface DiffNote {
   answer?: string;
   /** This note's own answers, in place of the ones the diff offers every note. */
   actions?: NoteAction[];
+  /** It is done with (resolved, decided): drawn folded to one line saying so, e.g. "resolved", until opened. */
+  folded?: string;
 }
 
 /** One way a note can be answered. */

@@ -1,9 +1,9 @@
-import { act, renderHook, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, renderHook, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { sendToSession } from "./lib/github";
-import { allThreads, type LiveSession } from "./lib/threads";
-import { useThreadOutbox, useThreadSender, type ThreadPeople } from "./Threads";
+import { allThreads, replyToThread, startThread, useThreads, type LiveSession } from "./lib/threads";
+import { ThreadCards, useThreadOutbox, useThreadSender, type ThreadPeople } from "./Threads";
 
 vi.mock("./lib/github", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./lib/github")>()),
@@ -78,5 +78,55 @@ describe("the thread outbox", () => {
     const thread = allThreads().find((one) => one.id === id)!;
     expect(thread.awaiting).toBeFalsy();
     expect(thread.outbox).toEqual([{ kind: "ask" }, { kind: "reply", text: "Again" }]);
+  });
+});
+
+describe("thread cards", () => {
+  function Cards({ sessions = [live(false)] }: { sessions?: LiveSession[] }) {
+    const sender = useThreadSender({ sessions });
+    const threads = useThreads(() => true, []);
+    return <ThreadCards threads={threads} sender={sender} name={() => "line 1"} />;
+  }
+  const started = () => startThread({ root: ROOT, anchors: [onLine], text: "Why one?\nIt was two.", session: { pane: "%4", id: "s4" } });
+
+  it("collapses to its head and first line, kept so, until something new is said in it", () => {
+    const thread = started();
+    render(<Cards />);
+    fireEvent.click(screen.getByRole("button", { name: "Collapse the comment" }));
+    expect(screen.queryByText(/It was two/)).toBeNull();
+    expect(screen.getByRole("button", { name: "Why one?" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Reply" })).toBeNull();
+
+    // An answer opens it again, so it is never left folded away.
+    act(() => void replyToThread(thread.id, "Claude", "Because.", false));
+    expect(screen.getByText("Because.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Collapse the comment" })).toBeInTheDocument();
+  });
+
+  it("tells the person's words from the agent's, and shows the key a reply is sent with", () => {
+    const thread = started();
+    act(() => void replyToThread(thread.id, "Claude", "Because.", false));
+    act(() => void replyToThread(thread.id, "You", "Thanks.", true));
+    const { container } = render(<Cards />);
+    expect(container.querySelector(".note-card")).toHaveClass("mine");
+    expect([...container.querySelectorAll(".note-card-reply")].map((one) => one.className)).toEqual([
+      "note-card-reply theirs",
+      "note-card-reply mine",
+    ]);
+    fireEvent.click(screen.getByRole("button", { name: "Reply" }));
+    expect(screen.getByRole("button", { name: "Reply" })).toHaveAttribute("aria-keyshortcuts");
+  });
+
+  it("replies on R while the thread has the keyboard, not while typing", () => {
+    started();
+    const { container } = render(<Cards />);
+    const thread = container.querySelector<HTMLElement>("[data-thread]")!;
+    thread.focus();
+    fireEvent.keyDown(thread, { key: "r" });
+    const box = screen.getByRole("textbox", { name: "Reply on line 1" });
+    fireEvent.change(box, { target: { value: "r" } });
+    fireEvent.keyDown(box, { key: "r" });
+    expect(screen.getAllByRole("textbox")).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "Reply" })).toBeInTheDocument();
   });
 });

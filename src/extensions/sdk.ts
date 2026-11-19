@@ -51,6 +51,10 @@ export {
   useThreads,
 } from "../lib/threads";
 export type { Anchor, Thread, ThreadSession } from "../lib/threads";
+// Threads' cards and their sending, as the file view draws and sends them; on or off with Settings' comments switch.
+export { ThreadCards, useClaimSessions, useThreadSender } from "../Threads";
+export type { ThreadSender } from "../Threads";
+export { useCommentsOn } from "../lib/experimental";
 
 // What the built-in tabs draw with.
 export { DiffPane } from "../DiffPane";

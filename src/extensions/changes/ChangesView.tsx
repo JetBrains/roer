@@ -1,23 +1,44 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   baseName,
   buildTree,
+  deleteThread,
   fileOrder,
   gitBranches,
   gitCurrentBranch,
   gitRoot,
   resolveDir,
+  startThread,
+  ThreadCards,
   useActivateTab,
+  useClaimSessions,
+  useCommentsOn,
   useSessions,
   useShowSession,
   useStartSession,
+  useThreadSender,
+  useThreads,
   type FileChange,
   type Session,
+  type Thread,
 } from "roer";
 import { Button, EmptyState } from "roer/ui";
 
-import { DiffBrowserView } from "./DiffBrowserView";
-import { acceptRest, canAsk, localReviewPrompt, ready, storedBase, undecided, holderOf, updateRoles, useBranchComments, useReviewRoles } from "./local";
+import { DiffBrowserView, type WrittenComment } from "./DiffBrowserView";
+import {
+  acceptRest,
+  anchorOf,
+  canAsk,
+  decisionText,
+  localReviewPrompt,
+  ready,
+  storedBase,
+  undecided,
+  holderOf,
+  updateRoles,
+  useBranchComments,
+  useReviewRoles,
+} from "./local";
 import { SendComments } from "./SendComments";
 import { ReviewView } from "./ReviewView";
 import { agentTitle, deliver, sendTargets, targetName, type Target } from "./targets";
@@ -108,6 +129,37 @@ export function ChangesView({ session, active, onSent, onOpenCount }: ChangesVie
   const roles = useReviewRoles(where?.root ?? null, branch, sessions);
   const targets = sendTargets(roles, session, sessions);
 
+  // With comments on (Settings), what is sent goes on as threads: each on its line, with the agent's answer under
+  // it. Switched off, a comment is done with once it is sent, as before there were threads.
+  const threadsOn = useCommentsOn();
+  const sender = useThreadSender({ stage: session, sessions });
+  const threadRoot = threadsOn ? (where?.root ?? null) : null;
+  // The branch's threads: on the checkout's own files, or, for a branch not checked out, on that branch read from git.
+  const threads = useThreads(
+    (t) => !!threadRoot && !t.view && t.root === threadRoot && t.anchors[0]?.kind === "line" && (t.anchors[0].branch ?? undefined) === elsewhere,
+    [threadRoot, elsewhere],
+  );
+  useClaimSessions(threads, sessions);
+  const ask = useCallback(
+    (comment: WrittenComment) => {
+      if (!where) return;
+      sender.start({ root: where.root, anchors: [anchorOf({ id: "", ...comment }, elsewhere)], text: comment.text, intent: "ask" });
+    },
+    [where, elsewhere, sender],
+  );
+  const renderThread = (thread: Thread, outdated: boolean) => (
+    <ThreadCards
+      threads={[thread]}
+      sender={sender}
+      seeing={active && scope === "branch"}
+      name={(one) => {
+        const a = one.anchors[0];
+        return a?.kind === "line" ? `${a.side === "old" ? "removed line" : "line"} ${a.line}` : "the comment";
+      }}
+      tagFor={() => (outdated ? "outdated" : undefined)}
+    />
+  );
+
   // The first comment still to decide, shown on the Branch view: on the branch as a whole before those on a commit,
   // and in the order its tree lists the files, top line first.
   const [showComment, setShowComment] = useState<{ id: string; seq: number } | undefined>(undefined);
@@ -128,16 +180,36 @@ export function ChangesView({ session, active, onSent, onOpenCount }: ChangesVie
     if (!where || sent.length === 0) return;
     setSending(true);
     setSaid(null);
+    // Each goes on as a thread with the session it is sent to, waiting for its answer: the person's own as what to
+    // do, an agent's with their decision as their reply.
+    const started = threadsOn
+      ? sent.map((c) => {
+          const thread = startThread({
+            root: where.root,
+            anchors: [anchorOf(c, elsewhere)],
+            text: c.text,
+            ...(c.author ? { author: c.author, replies: [{ author: "You", text: decisionText(c.verdict) }] } : { intent: "change" as const }),
+            session: sender.pinned(target.pane),
+            awaiting: true,
+          });
+          return [c.id, thread.id] as const;
+        })
+      : [];
     try {
-      const prompt = localReviewPrompt(storedBase(where.root, branch) ?? "", sent);
+      const prompt = localReviewPrompt(storedBase(where.root, branch) ?? "", sent, threadsOn ? new Map(started) : undefined);
       await deliver(target, prompt, { session, root: where.root, branch });
-      // Sent comments are done with: the agent is about to move the lines they sat on.
+      // Sent comments leave the review: they go on in their threads, or, without threads, are done with.
       update((current) => current.filter((c) => !sent.some((one) => one.id === c.id)));
-      setSaid(`Sent ${sent.length} ${sent.length === 1 ? "comment" : "comments"} to ${targetName(target, session?.pane)}.`);
-      // Where it went comes up, so the agent can be seen taking them on.
-      if (target.pane !== session?.pane) showSession?.(target.pane);
-      onSent?.();
+      const count = `${sent.length} ${sent.length === 1 ? "comment" : "comments"}`;
+      // The tab stays where it is: the answers come back to the threads, and Needs you says when one is in.
+      setSaid(
+        threadsOn
+          ? `Sent ${count} to ${targetName(target, session?.pane)}. ${sent.length === 1 ? "Its answer shows" : "Their answers show"} on ${sent.length === 1 ? "its line" : "their lines"}.`
+          : `Sent ${count} to ${targetName(target, session?.pane)}.`,
+      );
     } catch (cause) {
+      // Not sent: they stay comments, to send again.
+      for (const [, id] of started) deleteThread(id);
       setSaid(String(cause));
     } finally {
       setSending(false);
@@ -250,6 +322,9 @@ export function ChangesView({ session, active, onSent, onOpenCount }: ChangesVie
           changed={session?.changed}
           comments={comments}
           onComments={where ? update : undefined}
+          threads={threadsOn ? threads : undefined}
+          renderThread={threadsOn ? renderThread : undefined}
+          onAsk={threadsOn && where ? ask : undefined}
           agent={agent}
           send={session && canAsk(session) ? session.send : undefined}
           startSession={startSession}

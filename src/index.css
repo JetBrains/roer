@@ -2473,6 +2473,81 @@ button.tree-row.selected {
   color: #fff;
 }
 
+/* While the comments are hidden: how many a line has, at its end, where the + never is. Pressed, the comments show
+   under the line until it is pressed again. */
+.line-dot {
+  position: absolute;
+  top: 1px;
+  right: 4px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border: 1px solid color-mix(in srgb, var(--roer-accent) 55%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--roer-accent) 14%, var(--ide-editor));
+  color: var(--roer-accent);
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  font-size: 10.5px;
+  font-weight: 600;
+  line-height: 14px;
+  cursor: pointer;
+}
+
+.line-dot:hover,
+.line-dot:focus-visible,
+.line-dot.open {
+  border-color: var(--roer-accent);
+  background: var(--roer-accent);
+  color: #fff;
+}
+
+/* A comment done with (resolved, decided), folded to one line until it is opened. */
+.note-folded {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  width: calc(100% - 96px);
+  margin: 2px 12px 4px 84px;
+  padding: 2px 8px;
+  border: 0;
+  border-left: 2px solid var(--ide-gutter);
+  border-radius: 0 6px 6px 0;
+  background: transparent;
+  color: var(--ide-gutter);
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.note-folded.file {
+  width: calc(100% - 24px);
+  margin: 6px 12px;
+}
+
+.note-folded:hover {
+  background: var(--ide-head);
+  color: var(--ide-text);
+}
+
+.note-folded-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.note-unfolded {
+  display: flex;
+  flex-direction: column;
+}
+
+.note-unfolded > .note-fold {
+  align-self: flex-start;
+  margin: -6px 0 6px 84px;
+}
+
 .line.add {
   background: var(--ide-add);
 }
@@ -2583,6 +2658,39 @@ button.tree-row.selected {
 .note-card-reply {
   padding-top: 6px;
   border-top: 1px solid var(--roer-border);
+}
+
+/* Whose words: the person's in the accent, anyone else's (an agent, a reviewer) in violet, on the card's edge, on
+   each reply's, and on the name over it. A finding's tone keeps its own edge. */
+.note-card.theirs:not(.warn):not(.error) {
+  border-left-color: var(--roer-series-7);
+}
+
+.note-card.theirs > .note-card-head > strong,
+.note-card-reply.theirs > strong {
+  color: var(--roer-series-7);
+}
+
+.note-card-reply.mine,
+.note-card-reply.theirs {
+  margin-top: 2px;
+  padding: 4px 8px;
+  border-top: 0;
+  border-left: 2px solid var(--ide-accent);
+  border-radius: 0 4px 4px 0;
+}
+
+.note-card-reply.theirs {
+  border-left-color: var(--roer-series-7);
+  background: color-mix(in srgb, var(--roer-series-7) 9%, transparent);
+}
+
+/* The key a comment box submits with, on its button. */
+.note-keys {
+  margin-left: 6px;
+  font-family: inherit;
+  font-size: 10.5px;
+  opacity: 0.75;
 }
 
 .note-card-ask {
@@ -3464,6 +3572,80 @@ button.tab-x:hover {
 
 .file-notes .thread-reply {
   margin: -2px 0 4px calc(5ch + 12px);
+}
+
+/* A thread's caret, before its author: collapses the card to its head, and opens it again. */
+.note-card-caret {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  margin-left: -2px;
+  padding: 0;
+  border: 1px solid var(--ide-border);
+  border-radius: 5px;
+  background: var(--ide-editor);
+  color: var(--ide-text);
+  cursor: pointer;
+}
+
+.note-card-caret:hover,
+.note-card-caret:focus-visible {
+  border-color: var(--ide-accent);
+  background: color-mix(in srgb, var(--ide-accent) 14%, var(--ide-editor));
+  color: var(--ide-accent);
+}
+
+.note-card.collapsed {
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+
+/* The collapsed card's first line: as wide as the head has room for, cut off with an ellipsis. */
+.note-card-summary {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ide-text);
+  font: inherit;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+/* A thread with the keyboard (stepped to, clicked in): R replies to it. */
+.thread:focus {
+  outline: none;
+}
+
+.thread:focus-visible > .note-card,
+.thread:focus > .note-card {
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--ide-accent) 45%, transparent);
+}
+
+/* A thread in a diff (Changes) replies from under its card, which sits past both numbers. */
+.diff .thread {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.diff .thread > .note-card {
+  align-self: stretch;
+}
+
+.diff .thread-reply {
+  margin: -4px 0 6px 84px;
+}
+
+.diff .thread > .note-card.composing {
+  margin-top: 0;
 }
 
 /* The lines an open thread, or the comment being written, is about: the accent down their numbers' edge. */
