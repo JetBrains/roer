@@ -8,7 +8,7 @@
  */
 import { useSyncExternalStore } from "react";
 
-import { EXTENSIONS_EVENT, listDisabled, setExtensionEnabled } from "../extensions/loader";
+import { EXTENSIONS_EVENT, listDisabled, setExtensionEnabled } from "../extensions/enabled";
 import { listen } from "./backend";
 
 export const COMMENTS_EXTENSION = "threads";

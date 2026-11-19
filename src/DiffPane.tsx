@@ -14,7 +14,7 @@ import {
 import { PanelLeftClose, PanelLeftOpen } from "lucide-react";
 
 import { Spans } from "./CodeLine";
-import { isCardNote, NoteCard, NoteComposer, noteKey, type NoteAction, type NoteAnswer } from "./DiffNote";
+import { isCardNote, NoteCard, NoteComposer, noteKey, type ComposeAction, type NoteAction, type NoteAnswer } from "./DiffNote";
 import {
   changedRange,
   pairRows,
@@ -85,6 +85,12 @@ export interface DiffPaneProps {
    * a field under it, and what is written comes here. Drawing it is up to
    * the owner, as one of `notes`. */
   onAddNote?: (note: NewNote) => void;
+  /** Several ways to submit a comment written on a line, the first the default; what was picked comes with it as
+   * `action`. Without them it has one Comment button. */
+  composeActions?: readonly ComposeAction[];
+  /** Draws a note in place of its card: what a note that is a thread of the owner's is drawn as. Undefined keeps
+   * the card. */
+  renderNote?: (note: DiffNote) => ReactNode | undefined;
   /** Reads a file whole on either side of the diff, base64: what lets a picture be shown as one and a Markdown
    * file be read rendered, with its pictures. Without it both are diffs of their source. */
   loadFile?: LoadFile;
@@ -96,6 +102,8 @@ export interface NewNote {
   line: number;
   side: "old" | "new";
   text: string;
+  /** The `value` of the `composeActions` one it was submitted with. */
+  action?: string;
 }
 
 /** A line as a comment would name it: a removed line by its old number,
@@ -142,10 +150,24 @@ const Notes = createContext<{
   compose?: {
     at: Spot | null;
     open: (at: Spot) => void;
-    submit: (at: Spot, text: string) => void;
+    submit: (at: Spot, text: string, action?: string) => void;
     cancel: () => void;
+    actions?: readonly ComposeAction[];
   };
+  /** The comments are switched off: only the spots in `opened` show theirs; the others are a dot in the gutter. */
+  hidden?: boolean;
+  opened?: ReadonlySet<string>;
+  /** Shows or hides the comments on the spots given, while the rest are hidden. */
+  toggle?: (spots: readonly string[]) => void;
+  /** Folded notes opened by hand, by `noteKey`. */
+  unfolded?: ReadonlySet<string>;
+  unfold?: (key: string, open: boolean) => void;
+  renderNote?: (note: DiffNote) => ReactNode | undefined;
 }>({ byLine: new Map() });
+
+/** Where a note sits, for opening it while the comments are hidden: its line, or the head of its file. */
+const spotKey = (path: string, side: "old" | "new" | undefined, line: number | undefined): string =>
+  line === undefined ? `${path}\0head` : `${path}\0${side ?? "new"}\0${line}`;
 
 /** The + beside a line that starts a comment on it. */
 function AddNote({ line }: { line: DiffLine }) {
@@ -168,7 +190,39 @@ function AddNote({ line }: { line: DiffLine }) {
   );
 }
 
-/** A note as a plain line, or as a comment card when it is one. */
+/** The notes on a line, by the numbers it has on each side: a review thread left on the old side of a context line
+ * names its old number. */
+function notesOn(line: DiffLine, notes: ReadonlyMap<string, DiffNote[]>): DiffNote[] {
+  const old = line.kind !== "add" && line.oldNo !== undefined ? notes.get(`old:${line.oldNo}`) : undefined;
+  const now = line.newNo === undefined ? undefined : notes.get(`new:${line.newNo}`);
+  return [...(old ?? []), ...(now ?? [])];
+}
+
+/** While the comments are hidden, the dot in the gutter that says a line has some, and shows them. */
+function NoteDot({ line }: { line: DiffLine }) {
+  const { byLine, hidden, opened, toggle } = useContext(Notes);
+  if (!hidden || !toggle) return null;
+  const found = notesOn(line, byLine);
+  if (found.length === 0) return null;
+  const spots = [...new Set(found.map((note) => spotKey(note.path, note.side, note.line)))];
+  const open = spots.some((one) => opened?.has(one));
+  return (
+    <button
+      type="button"
+      className={open ? "line-dot open" : "line-dot"}
+      aria-label={`${open ? "Hide" : "Show"} ${plural(found.length, "comment", "comments")} on line ${spotOf(line)?.line ?? ""}`}
+      title={open ? "Hide the comments on this line" : `Show ${plural(found.length, "comment", "comments")} on this line`}
+      onClick={(event) => {
+        event.stopPropagation();
+        toggle(spots);
+      }}
+    >
+      {found.length}
+    </button>
+  );
+}
+
+/** A note as a plain line, or as a comment card when it is one; one that is done with, folded to a line. */
 function Note({
   note,
   actions,
@@ -180,7 +234,40 @@ function Note({
   onAnswer?: (answer: NoteAnswer) => void;
   file?: boolean;
 }) {
-  if (isCardNote(note, actions)) return <NoteCard note={note} actions={actions} onAnswer={onAnswer} file={file} />;
+  const { unfolded, unfold, renderNote } = useContext(Notes);
+  const key = noteKey(note);
+  if (note.folded && unfold) {
+    if (!unfolded?.has(key)) {
+      return (
+        <button
+          type="button"
+          className={`note-folded${file ? " file" : ""}`}
+          title="Show the whole comment"
+          aria-label={`Show ${note.author ? `${note.author}'s comment` : "the note"}: ${note.folded}`}
+          data-note={key}
+          onClick={() => unfold(key, true)}
+        >
+          <span className="note-folded-caret">▸</span>
+          {note.author ? <strong>{note.author}</strong> : null}
+          <span className="note-folded-text">{note.text.split("\n")[0]}</span>
+          <span className="pr-tag">{note.folded}</span>
+        </button>
+      );
+    }
+  }
+  const drawn = renderNote?.(note) ?? (isCardNote(note, actions) ? <NoteCard note={note} actions={actions} onAnswer={onAnswer} file={file} /> : undefined);
+  if (drawn !== undefined) {
+    return note.folded && unfold ? (
+      <div className="note-unfolded">
+        {drawn}
+        <button type="button" className="gen-button borderless note-fold" onClick={() => unfold(key, false)}>
+          Fold
+        </button>
+      </div>
+    ) : (
+      <>{drawn}</>
+    );
+  }
   return (
     <div className={`line-note ${file ? "file" : ""} ${note.tone ?? ""}`} role="note">
       {note.text}
@@ -190,23 +277,26 @@ function Note({
 
 /** The notes under a line, found by the numbers it has on each side. */
 function LineNotes({ line }: { line?: DiffLine }) {
-  const { byLine: notes, actions, onAnswer, compose } = useContext(Notes);
+  const { byLine: notes, actions, onAnswer, compose, hidden, opened } = useContext(Notes);
   if (!line) return null;
   const at = spotOf(line);
   const writing = compose?.at && at && compose.at.line === at.line && compose.at.side === at.side ? compose.at : null;
-  // A context line has both numbers, and a note about it may be counted in
-  // either file: a review thread left on the old side names its old number.
-  const old = line.kind !== "add" && line.oldNo !== undefined ? notes.get(`old:${line.oldNo}`) : undefined;
-  const now =
-    line.newNo === undefined ? undefined : notes.get(`new:${line.newNo}`);
-  const found = [...(old ?? []), ...(now ?? [])];
+  // A context line has both numbers, and a note about it may be counted in either file.
+  const all = notesOn(line, notes);
+  // Hidden, a line shows its notes only once its dot opened them.
+  const found = hidden ? all.filter((note) => opened?.has(spotKey(note.path, note.side, note.line))) : all;
   return (
     <>
       {found.map((note, i) => (
         <Note key={note.id ?? i} note={note} actions={actions} onAnswer={onAnswer} />
       ))}
       {writing && compose ? (
-        <NoteComposer line={writing.line} onSubmit={(text) => compose.submit(writing, text)} onCancel={compose.cancel} />
+        <NoteComposer
+          line={writing.line}
+          actions={compose.actions}
+          onSubmit={(text, action) => compose.submit(writing, text, action)}
+          onCancel={compose.cancel}
+        />
       ) : null}
     </>
   );
@@ -249,6 +339,7 @@ function Unified({ hunk }: { hunk: Hunk }) {
             <span className="mark" />
             <span className="text">
               <AddNote line={line} />
+              <NoteDot line={line} />
               <Code line={line} side={line.kind === "del" ? "old" : "new"} />
             </span>
           </div>
@@ -300,7 +391,12 @@ function Side({
       />
       <span className="text">
         {/* A context line is on both sides; it takes its comment on the new one. */}
-        {which === "new" || line.kind === "del" ? <AddNote line={line} /> : null}
+        {which === "new" || line.kind === "del" ? (
+          <>
+            <AddNote line={line} />
+            <NoteDot line={line} />
+          </>
+        ) : null}
         <Code line={line} other={other} side={which} />
       </span>
     </span>
@@ -365,6 +461,16 @@ function storedMarkdown(): "rendered" | "source" {
 
 const TREE_KEY = "roer:diff-tree-hidden";
 
+const NOTES_KEY = "roer:diff-notes-hidden";
+
+function storedNotesHidden(): boolean {
+  try {
+    return localStorage.getItem(NOTES_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
 function storedTreeHidden(): boolean {
   try {
     return localStorage.getItem(TREE_KEY) === "1";
@@ -401,6 +507,8 @@ export function DiffPane({
   onNoteAnswer,
   reveal,
   onAddNote,
+  composeActions,
+  renderNote,
   loadFile,
 }: DiffPaneProps) {
   const [selection, setSelection] = useState<Selection | null>(null);
@@ -443,6 +551,42 @@ export function DiffPane({
       /* not kept, still shown */
     }
   };
+
+  // Comments switched off by hand stay off, everywhere and across launches, like the tree. Each line with some
+  // keeps a dot that shows them; stepping to one, or writing one, shows it too.
+  const [notesHidden, setNotesHiddenRaw] = useState(storedNotesHidden);
+  const [opened, setOpened] = useState<ReadonlySet<string>>(new Set());
+  const setNotesHidden = (next: boolean) => {
+    setNotesHiddenRaw(next);
+    setOpened(new Set());
+    try {
+      if (next) localStorage.setItem(NOTES_KEY, "1");
+      else localStorage.removeItem(NOTES_KEY);
+    } catch {
+      /* not kept, still shown */
+    }
+  };
+  const openSpots = useCallback((spots: readonly string[], open?: boolean) => {
+    setOpened((current) => {
+      const show = open ?? !spots.some((one) => current.has(one));
+      const next = new Set(current);
+      for (const one of spots) {
+        if (show) next.add(one);
+        else next.delete(one);
+      }
+      return next;
+    });
+  }, []);
+  // Folded notes opened by hand.
+  const [unfolded, setUnfolded] = useState<ReadonlySet<string>>(new Set());
+  const unfold = useCallback((key: string, open: boolean) => {
+    setUnfolded((current) => {
+      const next = new Set(current);
+      if (open) next.add(key);
+      else next.delete(key);
+      return next;
+    });
+  }, []);
 
   const rootRef = useRef<HTMLDivElement>(null);
   const hunkRefs = useRef<(HTMLDivElement | null)[]>([]);
@@ -492,6 +636,8 @@ export function DiffPane({
     if (reveal.note) {
       setToNote({ path: reveal.path, key: reveal.note });
       setAtNote(reveal.note);
+      openSpots([spotKey(reveal.path, reveal.side, reveal.line), spotKey(reveal.path, undefined, undefined)], true);
+      setUnfolded((current) => new Set(current).add(reveal.note!));
     }
     // Keyed on `seq` alone: pointing at the same line again is still a request.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -612,15 +758,24 @@ export function DiffPane({
           ? {
               at: composing?.path === path ? composing : null,
               open: (at: Spot) => setComposing({ ...at, path }),
-              submit: (at: Spot, text: string) => {
+              submit: (at: Spot, text: string, action?: string) => {
                 setComposing(null);
-                onAddNote({ path, ...at, text });
+                // Written while the comments are hidden, it shows all the same.
+                openSpots([spotKey(path, at.side, at.line)], true);
+                onAddNote({ path, ...at, text, ...(action ? { action } : {}) });
               },
               cancel: () => setComposing(null),
+              actions: composeActions,
             }
           : undefined,
+      hidden: notesHidden,
+      opened,
+      toggle: openSpots,
+      unfolded,
+      unfold,
+      renderNote,
     }),
-    [lineNotes, noteActions, onNoteAnswer, onAddNote, path, composing],
+    [lineNotes, noteActions, onNoteAnswer, onAddNote, path, composing, composeActions, notesHidden, opened, openSpots, unfolded, unfold, renderNote],
   );
 
   const index = useMemo(() => {
@@ -707,11 +862,14 @@ export function DiffPane({
       }
       const next = noteOrder[to];
       const key = noteKey(next);
+      // Stepped to while the comments are hidden, it shows; so does a folded one.
+      openSpots([spotKey(next.path, next.side, next.line), spotKey(next.path, undefined, undefined)], true);
+      if (next.folded) unfold(key, true);
       setAtNote(key);
       select({ path: next.path, at: next.line === undefined ? 0 : { line: next.line, side: next.side ?? "new" } });
       setToNote({ path: next.path, key });
     },
-    [noteOrder, noteAt, order, selection, path, parsed, index, select],
+    [noteOrder, noteAt, order, selection, path, parsed, index, select, openSpots, unfold],
   );
 
   const onKeyDown = (event: KeyboardEvent) => {
@@ -755,7 +913,10 @@ export function DiffPane({
   useEffect(() => {
     if (toNote === null || toNote.path !== path || !parsed) return;
     const notes = [...(diffRef.current?.querySelectorAll<HTMLElement>('[role="note"]') ?? [])];
-    (notes.find((note) => note.dataset.note === toNote.key) ?? notes[0])?.scrollIntoView?.({ block: "center" });
+    const found = notes.find((note) => note.dataset.note === toNote.key) ?? notes[0];
+    found?.scrollIntoView?.({ block: "center" });
+    // A thread stepped to takes the keyboard, so R replies to it; the diff gets it back on a click or Escape.
+    found?.closest<HTMLElement>(".thread")?.focus({ preventScroll: true });
     setToNote(null);
   }, [toNote, path, parsed]);
 
@@ -814,6 +975,20 @@ export function DiffPane({
             </span>
             <button type="button" aria-label="Next comment" title={`Next comment (${shortcutLabel.nextComment()})`} onClick={() => stepNote(1)}>
               ›
+            </button>
+            <button
+              type="button"
+              className={notesHidden ? "on" : undefined}
+              aria-pressed={notesHidden}
+              aria-label={notesHidden ? "Show comments" : "Hide comments"}
+              title={
+                notesHidden
+                  ? "Show every comment under its line"
+                  : "Hide the comments: a dot in the gutter marks each line that has some, and shows them"
+              }
+              onClick={() => setNotesHidden(!notesHidden)}
+            >
+              {notesHidden ? "Show" : "Hide"}
             </button>
           </div>
         ) : null}
@@ -995,11 +1170,22 @@ export function DiffPane({
               </p>
             ) : null}
 
-            {fileNotes.map((note, i) => (
-              <Note key={note.id ?? i} note={note} actions={noteActions} onAnswer={onNoteAnswer} file />
-            ))}
-
             <Notes.Provider value={noteContext}>
+              {notesHidden && path && fileNotes.length > 0 ? (
+                <button
+                  type="button"
+                  className="note-folded file"
+                  aria-expanded={opened.has(spotKey(path, undefined, undefined))}
+                  onClick={() => openSpots([spotKey(path, undefined, undefined)])}
+                >
+                  <span className="note-folded-caret">{opened.has(spotKey(path, undefined, undefined)) ? "▾" : "▸"}</span>
+                  {plural(fileNotes.length, "comment", "comments")} on this file
+                </button>
+              ) : null}
+              {(notesHidden && !(path && opened.has(spotKey(path, undefined, undefined))) ? [] : fileNotes).map((note, i) => (
+                <Note key={note.id ?? i} note={note} actions={noteActions} onAnswer={onNoteAnswer} file />
+              ))}
+
               <Coloured.Provider value={coloured}>
                 {(rendered || picture ? [] : parsed?.hunks ?? []).map((hunk, i) => (
                   <div

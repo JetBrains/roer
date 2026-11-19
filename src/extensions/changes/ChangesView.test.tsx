@@ -5,6 +5,7 @@ import type { Session } from "../api";
 import { HostProvider, type AgentSession, type StartSession } from "../context";
 import { gitBranches, gitCurrentBranch, gitRoot } from "../../lib/git";
 import { sendToSession } from "../../lib/github";
+import { allThreads } from "../../lib/threads";
 import { ChangesView } from "./ChangesView";
 import { storeComments, storedComments, storedRoles, updateRoles } from "./local";
 import type { DiffBrowserViewProps } from "./DiffBrowserView";
@@ -175,7 +176,7 @@ describe("ChangesView", () => {
     expect(send.mock.calls[0][0]).toMatch(/^This is about the branch `spec`, which is not the one checked out here\.[\s\S]*On spec\./);
   });
 
-  it("sends every comment, by commit or on the whole branch, with one button, then clears them", async () => {
+  it("sends every comment, by commit or on the whole branch, with one button, and keeps each as a thread", async () => {
     storeComments("/repo", "feat", [
       { id: "c1", path: "a.ts", line: 2, side: "new", text: "On the branch.", code: "x" },
       { id: "c2", path: "a.ts", line: 5, side: "new", text: "On a commit.", code: "y", commit: { hash: "h1", short: "h1", subject: "Add y" } },
@@ -188,9 +189,44 @@ describe("ChangesView", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Send 2 to Claude" }));
     await waitFor(() => expect(send).toHaveBeenCalledTimes(1));
     expect(send.mock.calls[0][0]).toMatch(/On the branch\.[\s\S]*in commit h1 \("Add y"\)[\s\S]*On a commit\./);
-    expect(await screen.findByText("Sent 2 comments to this session, with Claude.")).toBeInTheDocument();
+    expect(await screen.findByText("Sent 2 comments to this session, with Claude. Their answers show on their lines.")).toBeInTheDocument();
     expect(storedComments("/repo", "feat").map((c) => c.id)).toEqual(["c3"]);
-    expect(onSent).toHaveBeenCalled();
+    // Each goes on as a thread on its line, with the session it went to, waiting for its answer; the prompt names it.
+    const threads = allThreads();
+    expect(threads.map((t) => [t.text, t.intent, t.awaiting, t.session?.pane])).toEqual([
+      ["On the branch.", "change", true, "%1"],
+      ["On a commit.", "change", true, "%1"],
+    ]);
+    expect(threads[1].anchors).toEqual([
+      { kind: "line", path: "a.ts", line: 5, code: "y", commit: { hash: "h1", short: "h1", subject: "Add y" } },
+    ]);
+    for (const thread of threads) expect(send.mock.calls[0][0]).toContain(`Thread "${thread.id}".`);
+    expect(send.mock.calls[0][0]).toContain("threads__answer");
+    // The tab stays: the answers come back to it.
+    expect(onSent).not.toHaveBeenCalled();
+  });
+
+  it("keeps them as comments when the send fails, with no threads left behind", async () => {
+    storeComments("/repo", "feat", [{ id: "c1", path: "a.ts", line: 2, side: "new", text: "On the branch.", code: "x" }]);
+    const send = vi.fn().mockRejectedValue(new Error("pane gone"));
+    render(<ChangesView session={{ ...session, agent: "claude", send }} active />);
+    fireEvent.click(await screen.findByRole("button", { name: "Send 1 to Claude" }));
+    expect(await screen.findByText("Error: pane gone")).toBeInTheDocument();
+    expect(storedComments("/repo", "feat").map((c) => c.id)).toEqual(["c1"]);
+    expect(allThreads()).toEqual([]);
+  });
+
+  it("puts the decision on an agent's comment under it in its thread", async () => {
+    storeComments("/repo", "feat", [
+      { id: "c1", path: "a.ts", line: 2, side: "old", text: "Why remove this?", code: "x", author: "Codex", verdict: { kind: "instruct", text: "Keep it." } },
+    ]);
+    const send = vi.fn().mockResolvedValue(undefined);
+    render(<ChangesView session={{ ...session, agent: "claude", send }} active />);
+    fireEvent.click(await screen.findByRole("button", { name: "Send 1 to Claude" }));
+    await waitFor(() => expect(allThreads()).toHaveLength(1));
+    const [thread] = allThreads();
+    expect(thread).toMatchObject({ author: "Codex", text: "Why remove this?", replies: [{ author: "You", text: "Keep it." }] });
+    expect(thread.anchors[0]).toMatchObject({ kind: "line", line: 2, side: "old" });
   });
 
   it("accepts what is undecided without sending it, the decisions already made kept", async () => {
@@ -282,11 +318,12 @@ describe("ChangesView", () => {
       // Where that session is now cannot be read here, so it is told which repository and branch.
       expect(vi.mocked(sendToSession).mock.calls[0][1]).toMatch(/^This is about the branch `feat` of the repository at `\/repo`/);
       expect(send).not.toHaveBeenCalled();
-      expect(await screen.findByText("Sent 1 comment to the session that asked for the review, with Claude.")).toBeInTheDocument();
+      expect(await screen.findByText("Sent 1 comment to the session that asked for the review, with Claude. Its answer shows on its line.")).toBeInTheDocument();
       expect(storedComments("/repo", "feat")).toEqual([]);
+      expect(allThreads()[0].session).toEqual({ pane: "%1", id: "s1", agent: "claude", cwd: "/repo" });
     });
 
-    it("offers only the other places from the chevron, and brings the one it went to up", async () => {
+    it("offers only the other places from the chevron, and leaves the stage where it is", async () => {
       accepted();
       updateRoles("/repo", "feat", () => ({ asker: { pane: "%1", id: "s1" }, reviewer: { pane: "%2", id: "s2" } }));
       const send = vi.fn().mockResolvedValue(undefined);
@@ -303,7 +340,9 @@ describe("ChangesView", () => {
       await sendVia("The session that reviewed it, with Codex");
       await waitFor(() => expect(sendToSession).toHaveBeenCalledWith("%2", expect.any(String)));
       expect(send).not.toHaveBeenCalled();
-      await waitFor(() => expect(showSession).toHaveBeenCalledWith("%2"));
+      // Its answers come back to the threads here; the stage stays on this session.
+      expect(await screen.findByText(/^Sent 1 comment to the session that reviewed it/)).toBeInTheDocument();
+      expect(showSession).not.toHaveBeenCalled();
     });
 
     it("leaves out a session that has ended", async () => {

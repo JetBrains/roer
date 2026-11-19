@@ -822,6 +822,59 @@ describe("DiffBrowserView — comments", () => {
     expect(screen.queryByText("Why new?")).toBeNull();
   });
 
+  it("asks a comment now when Ask is picked, rather than keeping it for the review", async () => {
+    const onAsk = vi.fn();
+    render(
+      <DiffBrowserView cwd="/work/roer/src" active comments={[]} onComments={(update) => (kept = update(kept))} agent="Claude" onAsk={onAsk} />,
+    );
+    await screen.findByText("All changes");
+    await waitFor(() => expect(screen.getAllByRole("button", { name: "Comment on line 1" })).toHaveLength(2));
+    fireEvent.click(screen.getAllByRole("button", { name: "Comment on line 1" })[1]);
+    fireEvent.change(screen.getByRole("textbox", { name: "Comment on line 1" }), { target: { value: "Why upper?" } });
+    expect(screen.getByRole("button", { name: "Add to review" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Ask" }));
+    await waitFor(() => expect(onAsk).toHaveBeenCalledWith({ path: "src/lib/git.ts", line: 1, side: "new", text: "Why upper?", code: "ONE" }));
+    expect(kept).toEqual([]);
+  });
+
+  it("draws the branch's threads on their lines, found again by their code, and not on a commit's", async () => {
+    const thread = (id: string, line: number, code: string, extra: object = {}) => ({
+      id,
+      root: "/work/roer",
+      anchors: [{ kind: "line" as const, path: "src/lib/git.ts", line, code, ...extra }],
+      text: `thread ${id}`,
+      replies: [],
+      state: "open" as const,
+    });
+    render(
+      <DiffBrowserView
+        cwd="/work/roer/src"
+        active
+        comments={[]}
+        onComments={() => undefined}
+        agent="Claude"
+        threads={[
+          // Written on line 5; its code is on line 9 now.
+          thread("t1", 5, "TWO"),
+          thread("t2", 1, "a", { commit: { hash: "hash-only change", short: "only", subject: "only change" } }),
+        ]}
+        renderThread={(one, outdated) => (
+          <p>
+            card {one.id} {outdated ? "outdated" : "current"}
+          </p>
+        )}
+      />,
+    );
+    await screen.findByText("All changes");
+    expect(await screen.findByText("card t1 current")).toBeInTheDocument();
+    expect(screen.queryByText(/card t2/)).toBeNull();
+    // Under line 9's row, the one that reads TWO.
+    const card = screen.getByText("card t1 current");
+    const rows = [...document.querySelectorAll(".diff-side.add .no, .line.add .no")].map((one) => one.getAttribute("data-no"));
+    expect(rows).toContain("9");
+    expect(card.closest(".hunk")?.querySelector(".hunk-head")?.textContent).toBe("@@ -9,2 +9,2 @@ second");
+  });
+
   it("leaves a comment on the whole branch without a commit, and keeps it off the commits", async () => {
     render(<Commented />);
     await screen.findByText("All changes");

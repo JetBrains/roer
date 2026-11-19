@@ -675,6 +675,10 @@ export function FileView({ root, path, line, branch, active, changed, session, s
     box.scrollTop = target;
     setTop(target);
     setFlash(thread.id);
+    // Once drawn, it takes the keyboard, so R replies to it.
+    window.requestAnimationFrame(() =>
+      box.querySelector<HTMLElement>(`[data-thread="${CSS.escape(thread.id)}"]`)?.focus({ preventScroll: true }),
+    );
     // `rowTop`, `total` and `lineAnchor` follow the rows and the threads, which are here.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reveal, active, rows, rowOfLine, threads, lineHeight, placed]);
