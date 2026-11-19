@@ -8,7 +8,7 @@
  * old note does not undo it and sending anything else wins — the same rule
  * a work item's findings follow.
  */
-import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 
 import { Markdown } from "./Markdown";
@@ -150,6 +150,7 @@ export function NoteCard({
   file,
   collapsed = false,
   onToggle,
+  replyExtra,
 }: {
   note: DiffNote;
   actions?: readonly NoteAction[];
@@ -160,6 +161,8 @@ export function NoteCard({
   collapsed?: boolean;
   /** Offers a caret in the head that collapses the card and opens it again. */
   onToggle?: () => void;
+  /** Drawn under reply `index`'s words: what else came with it, such as an agent's view. */
+  replyExtra?: (index: number) => ReactNode;
 }) {
   const [own, setOwn] = useState<Own | null>(null);
   const [editing, setEditing] = useState(false);
@@ -275,6 +278,7 @@ export function NoteCard({
         <div key={i} className={`note-card-reply ${whose(reply.author)}`}>
           <strong>{reply.author}</strong>
           <Markdown className="file-markdown note-card-md">{reply.text}</Markdown>
+          {replyExtra?.(i)}
         </div>
       ))}
 

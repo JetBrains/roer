@@ -6,6 +6,7 @@
 import { createContext, useContext, useEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent, type ReactNode } from "react";
 
 import { NoteCard, NoteComposer, type NoteAnswer } from "./DiffNote";
+import { pressedText, ThreadView } from "./ThreadView";
 import type { Session } from "./extensions/api";
 import type { DiffNote } from "./lib/diff";
 import { sendToSession } from "./lib/github";
@@ -229,7 +230,9 @@ function collapsedAll(): Record<string, number> {
 }
 
 function setCollapsed(thread: Thread, on: boolean): void {
-  const { [thread.id]: _, ...rest } = collapsedAll();
+  // Threads deleted since are dropped while it is written, so the record never outgrows the threads there are.
+  const live = new Set(allThreads().map((one) => one.id));
+  const rest = Object.fromEntries(Object.entries(collapsedAll()).filter(([id]) => id !== thread.id && live.has(id)));
   const next = on ? { ...rest, [thread.id]: messagesIn(thread) } : rest;
   const raw = JSON.stringify(next);
   collapsedRead = { raw, value: next };
@@ -279,6 +282,7 @@ export function ThreadCards({
   flash = null,
   tagFor,
   extra,
+  onOpenFile,
 }: {
   threads: readonly Thread[];
   sender: ThreadSender;
@@ -292,6 +296,8 @@ export function ThreadCards({
   tagFor?: (thread: Thread) => string | undefined;
   /** More under a thread's card, e.g. a way to see it on the content it was written on. */
   extra?: (thread: Thread) => ReactNode;
+  /** Opens a project file a view in an answer names. */
+  onOpenFile?: (path: string) => void;
 }) {
   const [replying, setReplying] = useState<string | null>(null);
   const collapsed = useSyncExternalStore(subscribeCollapsed, collapsedAll);
@@ -332,6 +338,17 @@ export function ThreadCards({
               onAnswer={answer}
               collapsed={folded && replying !== thread.id}
               onToggle={() => setCollapsed(thread, !folded)}
+              replyExtra={(i) => {
+                const ui = thread.replies[i]?.ui;
+                return ui ? (
+                  <ThreadView
+                    messages={ui}
+                    onOpenFile={onOpenFile}
+                    // A press is the person's reply: it goes to the agent like any other, and shows as theirs.
+                    onPress={(event, component) => sender.reply(thread, pressedText(event, component))}
+                  />
+                ) : null;
+              }}
             />
             {folded && replying !== thread.id ? null : extra?.(thread)}
             {!canReply || (folded && replying !== thread.id) ? null : replying === thread.id ? (

@@ -133,14 +133,16 @@ describe("FileView", () => {
     expect(read).not.toHaveBeenCalled();
   });
 
-  it("shows the pictures a Markdown file names, from beside it, and links the ones on the web", async () => {
+  it("shows the pictures a Markdown file names, from beside it, and loads the ones on the web only when asked", async () => {
     read.mockResolvedValue(text({ text: "![Shot](shots/a.png)\n\n![Badge](https://example.com/b.svg)\n", lines: 3 }));
     vi.mocked(gitBlob).mockResolvedValue("iVBORw0K");
     show({ path: "docs/guide.md" });
     expect(await screen.findByRole("img", { name: "Shot" })).toHaveAttribute("src", "data:image/png;base64,iVBORw0K");
     expect(gitBlob).toHaveBeenCalledWith("/Users/test/project", "docs/shots/a.png");
-    expect(screen.getByRole("link", { name: "[image: Badge]" })).toBeInTheDocument();
+    // Nothing is fetched from the web until Show: then it is a picture like the others.
     expect(screen.queryByRole("img", { name: "Badge" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /Image from .* Badge/ }));
+    expect(screen.getByRole("img", { name: "Badge" })).toBeInTheDocument();
   });
 
   it("reads the file the tab is about", async () => {

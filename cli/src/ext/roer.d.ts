@@ -186,15 +186,20 @@ declare module "roer" {
     text: string;
     /** A question, answered and nothing changed for it, or a change to make; unset, as its words say. */
     intent?: "ask" | "change";
-    replies: { author: string; text: string }[];
+    /** `ui`: an agent's view (A2UI messages, as show_ui takes them), drawn in the thread under the reply. */
+    replies: { author: string; text: string; ui?: unknown[] }[];
     state: "open" | "resolved";
     awaiting?: boolean;
   }
   export function allThreads(): Thread[];
   /** Starts a thread; to send it to an agent, type a prompt naming its id into a session. `replies` are the
    * conversation so far, e.g. the person's decision under an agent's comment. */
-  export function startThread(thread: Omit<Thread, "id" | "replies" | "state"> & { replies?: Thread["replies"] }): Thread;
-  export function replyToThread(id: string, author: string, text: string, mine: boolean): boolean;
+  export function startThread(thread: Omit<Thread, "id" | "replies" | "state"> & { id?: string; replies?: Thread["replies"] }): Thread;
+  /** An id for a thread not started yet: for a prompt that names it before it is kept. */
+  export function newThreadId(): string;
+  /** The thread Needs you last asked the Changes tab to show (one on a removed line or a commit), each ask a new `seq`. */
+  export function useChangesReveal(): { id: string; seq: number } | null;
+  export function replyToThread(id: string, author: string, text: string, mine: boolean, ui?: unknown[]): boolean;
   export function setThread(id: string, change: Partial<Pick<Thread, "state" | "awaiting" | "session">>): void;
   export function deleteThread(id: string): void;
   export function onThreadsChanged(listener: () => void): () => void;

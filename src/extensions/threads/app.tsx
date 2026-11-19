@@ -14,6 +14,20 @@ import {
 /** A trimmed string argument, or "" when it is not one. */
 const text = (value: unknown) => (typeof value === "string" ? value.trim() : "");
 
+/** The most a view in an answer may weigh, as JSON: a thread is kept in shared state with every other. */
+const MAX_VIEW = 200_000;
+
+/** A view for an answer: A2UI messages, each an envelope of the version Roer speaks; an error says what is wrong. */
+function viewOf(value: unknown): unknown[] | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (!Array.isArray(value) || value.some((one) => typeof one !== "object" || one === null || (one as { version?: unknown }).version !== "v1.0")) {
+    throw new Error("`ui` is a list of A2UI v1.0 messages, as show_ui takes them");
+  }
+  if (!value.some((one) => "createSurface" in (one as object))) throw new Error("`ui` needs a createSurface message");
+  if (JSON.stringify(value).length > MAX_VIEW) throw new Error(`\`ui\` is over ${MAX_VIEW / 1000} kB: keep the view small, or show it with show_ui`);
+  return value;
+}
+
 /** A positive whole number argument, or 0. */
 const count = (value: unknown) => (typeof value === "number" && Number.isInteger(value) && value > 0 ? value : 0);
 
@@ -26,13 +40,24 @@ export default defineExtension((roer) => {
       "Answer in a Roer thread: a comment the user left on something on screen (lines of a file, parts of a view). " +
       "Call it with the thread id their prompt names and your answer in markdown: what you did about their " +
       "comment, or your answer to their question. It only adds your reply to the thread; the user reads it where " +
-      "they left the comment and may reply again.",
+      "they left the comment and may reply again. When the answer is better seen than read (a small tool, a " +
+      "form, a chart), put a Generative UI view in `ui`: it is drawn in the thread under your words. Use it " +
+      "rather than show_ui when answering a thread, so the answer is in one place; a button pressed in it comes " +
+      "back to you as the user's reply in this thread.",
     inputSchema: {
       type: "object",
       properties: {
         thread: { type: "string", description: "The thread's id, from the user's prompt." },
         text: { type: "string", description: "Your answer, markdown." },
         author: { type: "string", description: "Your name as the user knows you, e.g. Claude." },
+        ui: {
+          type: "array",
+          items: { type: "object" },
+          description:
+            "A view drawn in the thread under your answer: A2UI v1.0 messages from Roer's component catalog, as " +
+            "show_ui takes them (a createSurface with its components and data model inline). Small: it shows at " +
+            "the thread's width, and scrolls past a few hundred pixels.",
+        },
       },
       required: ["thread", "text"],
     },
@@ -41,12 +66,13 @@ export default defineExtension((roer) => {
       const words = text(args.text);
       if (!id || !words) throw new Error("`thread` and `text` are required");
       const thread = allThreads().find((one) => one.id === id);
-      if (!thread || !replyToThread(id, text(args.author) || "Agent", words, false)) {
+      const ui = viewOf(args.ui);
+      if (!thread || !replyToThread(id, text(args.author) || "Agent", words, false, ui)) {
         throw new Error(`No thread "${id}" in Roer.`);
       }
       // A thread with no session yet is with whoever answers it.
       if (!thread.session && pane) setThread(id, { session: { pane } });
-      return "Added your answer to the thread; the user reads it where they left the comment. Don't act on it further unless they reply.";
+      return `Added your answer${ui ? ", with its view," : ""} to the thread; the user reads it where they left the comment. Don't act on it further unless they reply.`;
     },
   });
 

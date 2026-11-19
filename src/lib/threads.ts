@@ -76,7 +76,7 @@ export interface Thread {
   /** What the person wants: an answer to a question, which leaves the code alone, or a change made. A thread left
    * without saying, as a file's are, is a change or a question as its words say. */
   intent?: "ask" | "change";
-  replies: { author: string; text: string }[];
+  replies: ThreadReply[];
   state: "open" | "resolved";
   /** The last word is the person's, and it has gone to the agent: an answer is due. */
   awaiting?: boolean;
@@ -92,6 +92,14 @@ export interface Thread {
   tries?: number;
   /** A view is typing it now (ms): no other takes the same one meanwhile. */
   sendingSince?: number;
+}
+
+/** A message under a thread's first one. An agent's answer may carry a view: Generative UI messages (A2UI, as
+ * `show_ui` takes them), drawn in the thread under its words rather than in the side panel. */
+export interface ThreadReply {
+  author: string;
+  text: string;
+  ui?: unknown[];
 }
 
 /** One prompt waiting for a thread's session: the thread itself, or one of the person's replies. */
@@ -152,25 +160,28 @@ export const onThreadsChanged = (listener: () => void): (() => void) =>
     if (key === KEY) listener();
   });
 
-const newId = (): string => `t${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+/** A new thread's id: given ahead of the thread itself where a prompt naming it goes out before it is kept. */
+export const newThreadId = (): string => `t${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 
-export function startThread(thread: Omit<Thread, "id" | "replies" | "state"> & { replies?: Thread["replies"] }): Thread {
+export function startThread(
+  thread: Omit<Thread, "id" | "replies" | "state"> & { id?: string; replies?: Thread["replies"] },
+): Thread {
   const replies = thread.replies ?? [];
   // The person has read their own, and every reply of theirs under it; an agent's is for them to see.
   const seen = thread.author ? (replies.length > 0 && replies.every((one) => one.author === "You") ? 1 + replies.length : 0) : 1;
-  const started: Thread = { ...thread, id: newId(), replies, state: "open", seen };
+  const started: Thread = { ...thread, id: thread.id ?? newThreadId(), replies, state: "open", seen };
   updateThreads((current) => [...current, started]);
   return started;
 }
 
 /** Adds `text` under thread `id`; false when there is no such thread. `mine` says an answer is now due. */
-export function replyToThread(id: string, author: string, text: string, mine: boolean): boolean {
+export function replyToThread(id: string, author: string, text: string, mine: boolean, ui?: unknown[]): boolean {
   let found = false;
   updateThreads((current) =>
     current.map((thread) => {
       if (thread.id !== id) return thread;
       found = true;
-      const replies = [...thread.replies, { author, text }];
+      const replies = [...thread.replies, { author, text, ...(ui && ui.length > 0 ? { ui } : {}) }];
       // Their own reply means they have read everything above it.
       return { ...thread, state: "open", awaiting: mine, replies, ...(mine ? { seen: 1 + replies.length } : {}) };
     }),
@@ -195,6 +206,32 @@ export function setThread(
 export function deleteThread(id: string): void {
   updateThreads((current) => current.filter((thread) => thread.id !== id));
 }
+
+/** A thread to show in the Changes tab: one on a removed line or a commit, which only Changes draws. Kept until the
+ * tab asks, since it may come up only after it is asked for. */
+let changesReveal: { id: string; seq: number } | null = null;
+const revealListeners = new Set<() => void>();
+
+export function revealInChanges(id: string): void {
+  changesReveal = { id, seq: (changesReveal?.seq ?? 0) + 1 };
+  for (const listener of revealListeners) listener();
+}
+
+/** The thread last asked to be shown in Changes, each ask a new `seq`. */
+export function useChangesReveal(): { id: string; seq: number } | null {
+  const [asked, setAsked] = useState(changesReveal);
+  useEffect(() => {
+    const listener = () => setAsked(changesReveal);
+    revealListeners.add(listener);
+    listener();
+    return () => void revealListeners.delete(listener);
+  }, []);
+  return asked;
+}
+
+/** Whether only Changes draws the thread: about a removed line, or a line as a commit left it, not the file as it is. */
+export const changesOnly = (thread: Thread): boolean =>
+  thread.anchors.some((a) => a.kind === "line" && (!!a.side || !!a.commit));
 
 /** The threads `pick` keeps, kept in step with every change to any of them. */
 export function useThreads(pick: (thread: Thread) => boolean, deps: readonly unknown[]): Thread[] {

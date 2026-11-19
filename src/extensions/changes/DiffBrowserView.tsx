@@ -540,16 +540,25 @@ export function DiffBrowserView({
     slot: string;
     reveal: { path: string; line: number; side: "old" | "new"; seq: number; note: string };
   } | null>(null);
+  // A thread asked for the same way, from Needs you: where it was written, as a comment says it.
+  const shownSeq = useRef<number | null>(null);
   useEffect(() => {
-    const comment = showComment && comments?.find((one) => one.id === showComment.id);
-    if (!showComment || !comment) return;
-    const own = comment.commit && slots.some((one) => slotKey(one) === comment.commit?.hash) ? comment.commit.hash : null;
+    if (!showComment || shownSeq.current === showComment.seq) return;
+    const comment = comments?.find((one) => one.id === showComment.id);
+    const thread = comment ? undefined : threads?.find((one) => one.id === showComment.id);
+    const a = thread?.anchors[0]?.kind === "line" ? thread.anchors[0] : undefined;
+    const at = comment ?? (a ? { path: a.path, line: a.line, side: a.side ?? ("new" as const), commit: a.commit, id: thread!.id } : undefined);
+    if (!at) return;
+    // A commit's comes up on that commit, once the commits are in: until then, it waits.
+    if (at.commit && commits === null) return;
+    shownSeq.current = showComment.seq;
+    const own = at.commit && slots.some((one) => slotKey(one) === at.commit?.hash) ? at.commit.hash : null;
     const slot = own ?? (slots.some((one) => one.kind === "all") ? "all" : "local");
     setPicked(slot);
-    setToReveal({ slot, reveal: { path: comment.path, line: comment.line, side: comment.side, seq: showComment.seq, note: comment.id } });
-    // Keyed on `seq` alone: asked again for the same comment is still a request.
+    setToReveal({ slot, reveal: { path: at.path, line: at.line, side: at.side, seq: showComment.seq, note: at.id } });
+    // Asked again (a new `seq`) is still a request; the rest is what it waits for.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showComment?.seq]);
+  }, [showComment?.seq, commits, threads]);
   const reveal =
     toReveal && slot && slotKey(slot) === toReveal.slot && files && (slot.kind !== "commit" || commitFilesOf === slot.commit.hash)
       ? toReveal.reveal

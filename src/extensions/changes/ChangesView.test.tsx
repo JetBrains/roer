@@ -1,11 +1,12 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Session } from "../api";
 import { HostProvider, type AgentSession, type StartSession } from "../context";
 import { gitBranches, gitCurrentBranch, gitRoot } from "../../lib/git";
 import { sendToSession } from "../../lib/github";
-import { allThreads } from "../../lib/threads";
+import { useCommentsOn } from "../../lib/experimental";
+import { allThreads, revealInChanges, startThread } from "../../lib/threads";
 import { ChangesView } from "./ChangesView";
 import { storeComments, storedComments, storedRoles, updateRoles } from "./local";
 import type { DiffBrowserViewProps } from "./DiffBrowserView";
@@ -13,12 +14,13 @@ import type { ReviewViewProps } from "./ReviewView";
 
 // The two views have tests of their own; here they only say what they were given.
 vi.mock("./DiffBrowserView", () => ({
-  DiffBrowserView: ({ active, branch, showComment }: DiffBrowserViewProps) => (
+  DiffBrowserView: ({ active, branch, showComment, threads }: DiffBrowserViewProps) => (
     <>
       <p>
         by commit {active ? "active" : "idle"} on {branch ?? "nothing"}
       </p>
       {showComment ? <p>showing {showComment.id}</p> : null}
+      {threads ? <p>threads: {threads.map((one) => one.text).join(", ")}</p> : null}
     </>
   ),
 }));
@@ -48,9 +50,14 @@ vi.mock("../../lib/github", async (importOriginal) => ({
   sendToSession: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock("../../lib/session", () => ({ resolveDir: vi.fn(async (cwd?: string) => cwd ?? "") }));
+vi.mock("../../lib/experimental", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../lib/experimental")>()),
+  useCommentsOn: vi.fn(() => true),
+}));
 
 beforeEach(() => {
   localStorage.clear();
+  vi.mocked(useCommentsOn).mockReturnValue(true);
   vi.mocked(sendToSession).mockClear();
   vi.mocked(gitRoot).mockResolvedValue("/repo");
   vi.mocked(gitCurrentBranch).mockResolvedValue("feat");
@@ -204,6 +211,43 @@ describe("ChangesView", () => {
     expect(send.mock.calls[0][0]).toContain("threads__answer");
     // The tab stays: the answers come back to it.
     expect(onSent).not.toHaveBeenCalled();
+  });
+
+  it("shows its own threads, not a file tab's, and comes up at one Needs you asks for", async () => {
+    const at = (extra: object) => [{ kind: "line" as const, path: "a.ts", line: 2, code: "x", ...extra }];
+    const own = startThread({ root: "/repo", anchors: at({ side: "old" }), text: "Mine" });
+    startThread({ root: "/repo", anchors: at({ blob: "b".repeat(40) }), text: "A file tab's" });
+    render(<ChangesView session={{ ...session, agent: "claude", send: vi.fn() }} active />);
+    expect(await screen.findByText("threads: Mine")).toBeInTheDocument();
+    act(() => revealInChanges(own.id));
+    expect(await screen.findByText(`showing ${own.id}`)).toBeInTheDocument();
+  });
+
+  it("keeps no thread until its prompt has been typed in, so a window closed mid-send leaves none waiting", async () => {
+    storeComments("/repo", "feat", [{ id: "c1", path: "a.ts", line: 2, side: "new", text: "On the branch.", code: "x" }]);
+    let typed: () => void = () => undefined;
+    const send = vi.fn((_text: string) => new Promise<void>((resolve) => (typed = resolve)));
+    render(<ChangesView session={{ ...session, agent: "claude", send }} active />);
+    fireEvent.click(await screen.findByRole("button", { name: "Send 1 to Claude" }));
+    await waitFor(() => expect(send).toHaveBeenCalledTimes(1));
+    expect(allThreads()).toEqual([]);
+    await act(async () => typed());
+    await waitFor(() => expect(allThreads()).toHaveLength(1));
+    // The prompt named it by the id it was then kept under.
+    expect(send.mock.calls[0][0]).toContain(`Thread "${allThreads()[0].id}".`);
+  });
+
+  it("with comments switched off, sends as before: they are done with, and where they went comes up", async () => {
+    vi.mocked(useCommentsOn).mockReturnValue(false);
+    storeComments("/repo", "feat", [{ id: "c1", path: "a.ts", line: 2, side: "new", text: "Fix it.", code: "x" }]);
+    const send = vi.fn().mockResolvedValue(undefined);
+    const onSent = vi.fn();
+    render(<ChangesView session={{ ...session, agent: "claude", send }} active onSent={onSent} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Send 1 to Claude" }));
+    await waitFor(() => expect(onSent).toHaveBeenCalled());
+    expect(send.mock.calls[0][0]).not.toContain("threads__answer");
+    expect(allThreads()).toEqual([]);
+    expect(storedComments("/repo", "feat")).toEqual([]);
   });
 
   it("keeps them as comments when the send fails, with no threads left behind", async () => {

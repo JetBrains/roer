@@ -1,10 +1,10 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, renderHook, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { NeedsYou } from "./NeedsYou";
 import { notify } from "./lib/notify";
 import type { SessionInfo } from "./lib/pty";
-import { allThreads, replyToThread, startThread } from "./lib/threads";
+import { allThreads, replyToThread, startThread, useChangesReveal } from "./lib/threads";
 
 vi.mock("./lib/notify", () => ({ notify: vi.fn().mockResolvedValue(undefined) }));
 
@@ -65,6 +65,26 @@ describe("NeedsYou", () => {
     // Closed, it is off the list.
     fireEvent.click(screen.getByRole("button", { name: /answered/ }));
     expect(screen.queryByRole("region", { name: "Needs you" })).not.toBeInTheDocument();
+  });
+
+  it("opens a thread on a removed line in Changes, the only place that draws it, at the thread", () => {
+    const thread = startThread({
+      root: "/repo",
+      anchors: [{ kind: "line", path: "src/a.ts", line: 4, code: "x", side: "old" }],
+      text: "Why remove it?",
+      session: { pane: "%1", id: "s1" },
+    });
+    replyToThread(thread.id, "Claude", "It was dead code.", false);
+    const onOpenChanges = vi.fn();
+    const props = show({ onOpenChanges });
+    fireEvent.click(screen.getByRole("button", { name: /answered/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^Open a\.ts:4/ }));
+    expect(onOpenChanges).toHaveBeenCalled();
+    expect(props.onOpenFile).not.toHaveBeenCalled();
+    // Its session came up too: Changes shows the stage's session's branch.
+    expect(props.onOpenSession).toHaveBeenCalledWith(expect.objectContaining({ pane: "%1" }));
+    const { result } = renderHook(() => useChangesReveal());
+    expect(result.current?.id).toBe(thread.id);
   });
 
   it("says in a banner that an agent answered, in its own words never, while Roer is not in front", () => {

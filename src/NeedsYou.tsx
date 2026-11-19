@@ -10,7 +10,7 @@ import { ThreadCards, useThreadSender, type ThreadPeople } from "./Threads";
 import type { OpenFile } from "./extensions/api";
 import { notify } from "./lib/notify";
 import type { SessionInfo } from "./lib/pty";
-import { forYou, liveOf, messagesIn, placeOf, sessionLabel, useThreads, type Thread } from "./lib/threads";
+import { changesOnly, forYou, liveOf, messagesIn, placeOf, revealInChanges, sessionLabel, useThreads, type Thread } from "./lib/threads";
 
 export interface NeedsYouProps {
   /** Every live session, the ones out of the sidebar's view included: what waits on the person waits anywhere. */
@@ -21,6 +21,8 @@ export interface NeedsYouProps {
   activePane?: string | null;
   onOpenSession: (session: SessionInfo) => void;
   onOpenFile: OpenFile;
+  /** Brings the Changes tab up: where a thread on a removed line or a commit is, which no file tab shows. */
+  onOpenChanges?: () => void;
   /** Who threads answered from here go to. */
   people: ThreadPeople;
 }
@@ -32,7 +34,7 @@ const FIRST_ROWS = 4;
 
 const FOLD_KEY = "roer:needs-you-folded";
 
-export function NeedsYou({ sessions, waiting, activePane, onOpenSession, onOpenFile, people }: NeedsYouProps) {
+export function NeedsYou({ sessions, waiting, activePane, onOpenSession, onOpenFile, onOpenChanges, people }: NeedsYouProps) {
   const [open, setOpen] = useState<string | null>(null);
   const [all, setAll] = useState(false);
   const [folded, setFoldedRaw] = useState(() => {
@@ -89,7 +91,13 @@ export function NeedsYou({ sessions, waiting, activePane, onOpenSession, onOpenF
 
   const goTo = (thread: Thread) => {
     const line = thread.anchors.find((a): a is Extract<Thread["anchors"][number], { kind: "line" }> => a.kind === "line");
-    if (line) onOpenFile(thread.root, line.path, line.line, { thread: thread.id, ...(line.branch ? { branch: line.branch } : {}) });
+    if (line && changesOnly(thread) && onOpenChanges) {
+      // Changes shows the stage's session's branch: the thread's own session comes up first when it is another.
+      const session = sessionOf(thread);
+      if (session && session.pane !== activePane) onOpenSession(session);
+      onOpenChanges();
+      revealInChanges(thread.id);
+    } else if (line) onOpenFile(thread.root, line.path, line.line, { thread: thread.id, ...(line.branch ? { branch: line.branch } : {}) });
     else {
       // A view's threads live in its session's panel.
       const session = sessionOf(thread);

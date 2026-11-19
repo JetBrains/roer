@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  allThreads,
   baseName,
   buildTree,
-  deleteThread,
   fileOrder,
+  newThreadId,
   gitBranches,
   gitCurrentBranch,
   gitRoot,
@@ -11,8 +12,10 @@ import {
   startThread,
   ThreadCards,
   useActivateTab,
+  useChangesReveal,
   useClaimSessions,
   useCommentsOn,
+  useOpenFile,
   useSessions,
   useShowSession,
   useStartSession,
@@ -126,6 +129,7 @@ export function ChangesView({ session, active, onSent, onOpenCount }: ChangesVie
   const sessions = useSessions();
   const showSession = useShowSession();
   const activateTab = useActivateTab();
+  const openFile = useOpenFile();
   const roles = useReviewRoles(where?.root ?? null, branch, sessions);
   const targets = sendTargets(roles, session, sessions);
 
@@ -135,11 +139,30 @@ export function ChangesView({ session, active, onSent, onOpenCount }: ChangesVie
   const sender = useThreadSender({ stage: session, sessions });
   const threadRoot = threadsOn ? (where?.root ?? null) : null;
   // The branch's threads: on the checkout's own files, or, for a branch not checked out, on that branch read from git.
+  // Not a file tab's: those belong to the revision they were written on (their blob), and only the file tab can move
+  // them from there to what is on screen.
   const threads = useThreads(
-    (t) => !!threadRoot && !t.view && t.root === threadRoot && t.anchors[0]?.kind === "line" && (t.anchors[0].branch ?? undefined) === elsewhere,
+    (t) => {
+      const a = t.anchors[0];
+      return !!threadRoot && !t.view && t.root === threadRoot && a?.kind === "line" && !a.blob && (a.branch ?? undefined) === elsewhere;
+    },
     [threadRoot, elsewhere],
   );
   useClaimSessions(threads, sessions);
+
+  // A thread Needs you asked for: on the branch it was left on, the Branch view, at the thread.
+  const asked = useChangesReveal();
+  const askedSeq = useRef<number | null>(null);
+  useEffect(() => {
+    if (!asked || askedSeq.current === asked.seq || !where) return;
+    const thread = allThreads().find((one) => one.id === asked.id);
+    const a = thread?.anchors[0];
+    if (!thread || a?.kind !== "line" || thread.root !== where.root) return;
+    askedSeq.current = asked.seq;
+    setPicked(a.branch && a.branch !== where.branch ? a.branch : null);
+    setScope("branch");
+    setShowComment((last) => ({ id: thread.id, seq: (last?.seq ?? 0) + 1 }));
+  }, [asked, where]);
   const ask = useCallback(
     (comment: WrittenComment) => {
       if (!where) return;
@@ -152,6 +175,7 @@ export function ChangesView({ session, active, onSent, onOpenCount }: ChangesVie
       threads={[thread]}
       sender={sender}
       seeing={active && scope === "branch"}
+      onOpenFile={where ? (path) => openFile(where.root, path) : undefined}
       name={(one) => {
         const a = one.anchors[0];
         return a?.kind === "line" ? `${a.side === "old" ? "removed line" : "line"} ${a.line}` : "the comment";
@@ -181,35 +205,42 @@ export function ChangesView({ session, active, onSent, onOpenCount }: ChangesVie
     setSending(true);
     setSaid(null);
     // Each goes on as a thread with the session it is sent to, waiting for its answer: the person's own as what to
-    // do, an agent's with their decision as their reply.
-    const started = threadsOn
-      ? sent.map((c) => {
-          const thread = startThread({
-            root: where.root,
-            anchors: [anchorOf(c, elsewhere)],
-            text: c.text,
-            ...(c.author ? { author: c.author, replies: [{ author: "You", text: decisionText(c.verdict) }] } : { intent: "change" as const }),
-            session: sender.pinned(target.pane),
-            awaiting: true,
-          });
-          return [c.id, thread.id] as const;
-        })
-      : [];
+    // do, an agent's with their decision as their reply. Named in the prompt by ids given now, and kept only once it
+    // is typed in: a window closed meanwhile leaves no thread waiting for a prompt that never went.
+    const ids = new Map(threadsOn ? sent.map((c) => [c.id, newThreadId()] as const) : []);
+    const root = where.root;
     try {
-      const prompt = localReviewPrompt(storedBase(where.root, branch) ?? "", sent, threadsOn ? new Map(started) : undefined);
-      await deliver(target, prompt, { session, root: where.root, branch });
+      const prompt = localReviewPrompt(storedBase(root, branch) ?? "", sent, threadsOn ? ids : undefined);
+      await deliver(target, prompt, { session, root, branch });
+      for (const c of sent) {
+        const id = ids.get(c.id);
+        if (!id) continue;
+        startThread({
+          id,
+          root,
+          anchors: [anchorOf(c, elsewhere)],
+          text: c.text,
+          ...(c.author ? { author: c.author, replies: [{ author: "You", text: decisionText(c.verdict) }] } : { intent: "change" as const }),
+          session: sender.pinned(target.pane),
+          awaiting: true,
+        });
+      }
       // Sent comments leave the review: they go on in their threads, or, without threads, are done with.
       update((current) => current.filter((c) => !sent.some((one) => one.id === c.id)));
       const count = `${sent.length} ${sent.length === 1 ? "comment" : "comments"}`;
       // The tab stays where it is: the answers come back to the threads, and Needs you says when one is in.
-      setSaid(
-        threadsOn
-          ? `Sent ${count} to ${targetName(target, session?.pane)}. ${sent.length === 1 ? "Its answer shows" : "Their answers show"} on ${sent.length === 1 ? "its line" : "their lines"}.`
-          : `Sent ${count} to ${targetName(target, session?.pane)}.`,
-      );
+      if (threadsOn) {
+        setSaid(
+          `Sent ${count} to ${targetName(target, session?.pane)}. ${sent.length === 1 ? "Its answer shows" : "Their answers show"} on ${sent.length === 1 ? "its line" : "their lines"}.`,
+        );
+      } else {
+        // Without threads nothing comes back here: where they went comes up, so the agent can be seen taking them on.
+        setSaid(`Sent ${count} to ${targetName(target, session?.pane)}.`);
+        if (target.pane !== session?.pane) showSession?.(target.pane);
+        onSent?.();
+      }
     } catch (cause) {
       // Not sent: they stay comments, to send again.
-      for (const [, id] of started) deleteThread(id);
       setSaid(String(cause));
     } finally {
       setSending(false);

@@ -284,6 +284,12 @@ with a `label`. Inside a template, each item is its own part, `id#index`.
 To point the person at parts yourself, call `threads__comment` with the
 `surface` and the component ids in `parts`.
 
+An answer to a thread (a comment on a view, a file's lines, anything)
+stays in the thread: when it is better seen than read, give the view's
+messages to `threads__answer` as `ui`, not to `show_ui`. It is drawn under
+your words in the thread, and a button pressed in it comes back to you as
+the person's reply there.
+
 ```json
 { "id": "step2", "component": "Commentable", "label": "Migrate the schema", "child": "step2Card" }
 ```

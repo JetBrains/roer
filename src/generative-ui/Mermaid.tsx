@@ -11,6 +11,7 @@
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type RefObject } from "react";
 
 import { NoteCard } from "../DiffNote";
+import { draw } from "../lib/mermaid";
 import { currentTheme, onThemeChange, type Theme } from "../lib/theme";
 
 import { Button, EmptyState, Expandable, Text, TextField, type Common } from "./components";
@@ -30,59 +31,6 @@ export interface DiagramComment {
   thread?: string;
   /** What they wrote, for a comment or a reply. */
   text?: string;
-}
-
-type MermaidApi = typeof import("mermaid").default;
-
-let loading: Promise<MermaidApi> | undefined;
-const loadMermaid = (): Promise<MermaidApi> => (loading ??= import("mermaid").then((m) => m.default));
-
-/** `mermaid` keeps one configuration for the page, so drawings take turns:
- * one diagram's theme must not leak into another's that is being drawn. */
-let queue: Promise<unknown> = Promise.resolve();
-
-async function draw(id: string, source: string, theme: Theme): Promise<string> {
-  const mermaid = await loadMermaid();
-  const turn = queue.then(async () => {
-    mermaid.initialize({
-      startOnLoad: false,
-      securityLevel: "strict",
-      // A syntax error is ours to show, not a bomb drawn into the page.
-      suppressErrorRendering: true,
-      theme: "base",
-      themeVariables: themeVariables(theme),
-      // ELK, mermaid's own default, is left out of the app (see
-      // vite.config.ts), and a diagram may not ask for it back: its config
-      // can change any key but the secure ones.
-      layout: "dagre",
-      secure: [...(mermaid.mermaidAPI.defaultConfig.secure ?? []), "layout"],
-    });
-    const { svg } = await mermaid.render(id, source);
-    return svg;
-  });
-  queue = turn.catch(() => {});
-  return turn;
-}
-
-/** Roer's palette as Mermaid's `base` theme takes it; the rest of its colours
- * are derived from these. Read from the page, so a diagram matches the theme
- * on screen. */
-function themeVariables(theme: Theme): Record<string, string | boolean> {
-  const style = getComputedStyle(document.documentElement);
-  const token = (name: string, fallback: string) => style.getPropertyValue(name).trim() || fallback;
-  const dark = theme === "dark";
-  return {
-    darkMode: dark,
-    background: token("--roer-bg", dark ? "#1e1e1e" : "#ffffff"),
-    primaryColor: token("--roer-panel", dark ? "#252526" : "#f7f8fa"),
-    primaryTextColor: token("--roer-fg", dark ? "#d4d4d4" : "#000000"),
-    primaryBorderColor: token("--roer-border", dark ? "#3a3a3c" : "#d3d5db"),
-    lineColor: token("--roer-muted", dark ? "#8c8c92" : "#6c707e"),
-    textColor: token("--roer-fg", dark ? "#d4d4d4" : "#000000"),
-    edgeLabelBackground: token("--roer-bg", dark ? "#1e1e1e" : "#ffffff"),
-    fontFamily: getComputedStyle(document.body).fontFamily || "sans-serif",
-    fontSize: "13px",
-  };
 }
 
 /** The elements a click can be about: a node, a subgraph, a sequence
