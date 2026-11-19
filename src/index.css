@@ -6741,7 +6741,7 @@ button.tree-add:hover {
   background: var(--roer-hover);
 }
 
-/* Where an extension's tab is shown (ExtensionsDialog's TabPlaces). One
+/* Where an extension's tab is shown (Settings' Extensions, TabPlaces). One
    shown everywhere says nothing, and offers its picker on the row's hover. */
 .ext-places {
   display: flex;
@@ -7210,27 +7210,21 @@ button.needs-you-row .tree-note {
   font-size: 12px;
 }
 
-/* A picture, video or sound from the web, not fetched until asked for: where it is from, and Show. */
+/* A picture, video or sound from the web, not fetched until asked for: where it is from, Show, the host for good,
+   and where the choice lives. */
 .remote-media {
   display: inline-flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 10px;
+  column-gap: 12px;
+  row-gap: 2px;
   max-width: 100%;
   margin: 2px 0;
   padding: 6px 10px;
   border: 1px dashed var(--roer-border);
   border-radius: 6px;
-  background: transparent;
   color: var(--roer-fg);
-  font: inherit;
   font-size: 12px;
-  text-align: left;
-  cursor: pointer;
-}
-
-.remote-media:hover,
-.remote-media:focus-visible {
-  border-color: var(--roer-accent);
 }
 
 .remote-media-what {
@@ -7240,8 +7234,167 @@ button.needs-you-row .tree-note {
   white-space: nowrap;
 }
 
+.remote-media .link {
+  font-size: 12px;
+}
+
 .remote-media-show {
+  font-weight: 600;
+}
+
+/* Settings: its topics in a column on the left, the one picked beside them. One size whichever is picked, so moving
+   between topics never resizes the dialog; the topic scrolls on its own. */
+.popup.shortcuts.settings {
+  flex-direction: row;
+  width: min(780px, 94vw);
+  height: min(600px, 80vh);
+  max-height: none;
+  overflow: hidden;
+  padding: 0;
+}
+
+.settings-nav {
   flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 172px;
+  padding: 14px 8px;
+  border-right: 1px solid var(--ide-border);
+  background: color-mix(in srgb, var(--ide-editor) 40%, var(--ide-head));
+}
+
+.popup.shortcuts .settings-nav h2 {
+  margin: 0 8px 10px;
+}
+
+.settings-nav button {
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--roer-fg);
+  font: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.settings-nav button:hover {
+  background: var(--ide-row);
+}
+
+.settings-nav button.on {
+  background: color-mix(in srgb, var(--roer-accent) 16%, transparent);
   color: var(--roer-accent);
   font-weight: 600;
+}
+
+.settings-pane {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  padding: 14px 18px 18px;
+}
+
+.popup.shortcuts .settings-pane > h3 {
+  margin: 0 0 10px;
+  font-size: 13px;
+  color: var(--roer-fg);
+}
+
+.settings-badge {
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--roer-warn) 18%, transparent);
+  color: var(--roer-warn);
+  font-size: 10px;
+  font-weight: 600;
+  vertical-align: 1px;
+}
+
+/* The hosts loaded without asking: a count and Remove all over them, a filter once there are many, and a list that
+   scrolls in a box of its own however long it gets. */
+.popup.shortcuts .settings-hosts-block {
+  align-items: center;
+}
+
+.settings-filter {
+  width: 100%;
+  margin: 4px 0 6px;
+  padding: 5px 8px;
+  border: 1px solid var(--ide-border);
+  border-radius: 6px;
+  background: var(--ide-editor);
+  color: var(--roer-fg);
+  font: inherit;
+  font-size: 12px;
+}
+
+.settings-hosts {
+  max-height: 220px;
+  overflow-y: auto;
+  margin: 2px 0 0;
+  padding: 2px 8px;
+  border: 1px solid var(--ide-border);
+  border-radius: 6px;
+  list-style: none;
+}
+
+.settings-hosts li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 3px 0;
+  font-size: 12px;
+}
+
+.settings-hosts li + li {
+  border-top: 1px solid var(--ide-border);
+}
+
+/* Extensions inside Settings: its parts in the topic's own scroll, rather than in a dialog of their own. */
+.settings-extensions .ext-head,
+.settings-extensions .ext-body,
+.settings-extensions .ext-apps {
+  padding-left: 0;
+  padding-right: 0;
+}
+
+/* Extensions holds still as a whole: its lists scroll between the intro and the other apps, which stay in view. */
+.settings-pane-split {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding-bottom: 0;
+}
+
+.settings-pane-split > h3 {
+  flex: none;
+}
+
+.settings-extensions {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.settings-extensions .ext-head {
+  padding-top: 0;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--ide-border);
+}
+
+.settings-extensions .ext-apps {
+  padding-bottom: 12px;
+}
+
+.settings-extensions h3 {
+  margin: 14px 0 4px;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--roer-muted);
 }

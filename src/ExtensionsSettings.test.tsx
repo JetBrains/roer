@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { ExtensionsDialog } from "./ExtensionsDialog";
+import { ExtensionsSettings } from "./ExtensionsSettings";
 import { listDisabled, listExtensions, removeExtension, setExtensionEnabled, type ExtensionInfo } from "./extensions/loader";
 import { confirmAction } from "./lib/confirm";
 import { connectOtherApp, otherApps, type OtherApp } from "./lib/otherApps";
@@ -58,11 +58,11 @@ const APPS: OtherApp[] = [
   { id: "codex", name: "Codex", state: "theirs", command: "/mine/roer", config: "/home/.codex/config.toml" },
 ];
 
-describe("ExtensionsDialog", () => {
+describe("ExtensionsSettings", () => {
   it("removes one of yours once asked, and offers no Remove for built-in ones", async () => {
     vi.mocked(removeExtension).mockReset().mockResolvedValue("Removed weather.");
     vi.mocked(confirmAction).mockReset().mockResolvedValueOnce(false).mockResolvedValueOnce(true);
-    render(<ExtensionsDialog onClose={vi.fn()} />);
+    render(<ExtensionsSettings />);
     await screen.findByText("Weather");
     expect(screen.queryByRole("button", { name: "Remove Changes" })).not.toBeInTheDocument();
 
@@ -76,7 +76,7 @@ describe("ExtensionsDialog", () => {
   });
 
   it("lists built-in extensions and yours, with what is wrong with each", async () => {
-    render(<ExtensionsDialog onClose={vi.fn()} />);
+    render(<ExtensionsSettings />);
     expect(await screen.findByText("Weather")).toBeInTheDocument();
     expect(screen.getByText("Changes")).toBeInTheDocument();
     expect(screen.getByRole("switch", { name: "Weather enabled" })).toBeChecked();
@@ -87,7 +87,7 @@ describe("ExtensionsDialog", () => {
   });
 
   it("switches an extension off and on, built-in ones too", async () => {
-    render(<ExtensionsDialog onClose={vi.fn()} />);
+    render(<ExtensionsSettings />);
     await screen.findByText("Weather");
     fireEvent.click(screen.getByRole("switch", { name: "Weather enabled" }));
     expect(setExtensionEnabled).toHaveBeenCalledWith("weather", false);
@@ -102,27 +102,20 @@ describe("ExtensionsDialog", () => {
 
   it("puts a switch back when the backend refuses it", async () => {
     vi.mocked(setExtensionEnabled).mockRejectedValue("permission denied");
-    render(<ExtensionsDialog onClose={vi.fn()} />);
+    render(<ExtensionsSettings />);
     await screen.findByText("Weather");
     fireEvent.click(screen.getByRole("switch", { name: "Weather enabled" }));
     expect(await screen.findByText("permission denied")).toBeInTheDocument();
     await waitFor(() => expect(screen.getByRole("switch", { name: "Weather enabled" })).toBeChecked());
   });
-
-  it("closes on Escape", async () => {
-    const onClose = vi.fn();
-    render(<ExtensionsDialog onClose={onClose} />);
-    fireEvent.keyDown(await screen.findByRole("dialog", { name: "Extensions" }), { key: "Escape" });
-    expect(onClose).toHaveBeenCalled();
-  });
 });
 
-describe("ExtensionsDialog with none of your own", () => {
+describe("ExtensionsSettings with none of your own", () => {
   it("points to a new tab", async () => {
     vi.mocked(listExtensions).mockResolvedValue([]);
     vi.mocked(listDisabled).mockResolvedValue([]);
     const onNewTab = vi.fn();
-    render(<ExtensionsDialog onClose={vi.fn()} onNewTab={onNewTab} />);
+    render(<ExtensionsSettings onNewTab={onNewTab} />);
     expect(await screen.findByText("No extensions of your own yet.")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "New extension…" }));
     expect(onNewTab).toHaveBeenCalled();
@@ -130,7 +123,7 @@ describe("ExtensionsDialog with none of your own", () => {
 
   it("marks the extensions that open in other apps", async () => {
     vi.mocked(listExtensions).mockResolvedValue([info({ hosts: ["mcp-app"] }), info({ id: "central", name: "Central" })]);
-    render(<ExtensionsDialog onClose={vi.fn()} />);
+    render(<ExtensionsSettings />);
     await screen.findByText("Weather");
     const central = screen.getByText("Central").closest("li")!;
     expect(central.textContent).not.toContain("Other apps");
@@ -139,7 +132,7 @@ describe("ExtensionsDialog with none of your own", () => {
 
   it("connects an app, and leaves one the person set up alone", async () => {
     vi.mocked(connectOtherApp).mockResolvedValue([{ ...APPS[0], state: "connected", command: "/app/roer" }, APPS[1]]);
-    render(<ExtensionsDialog onClose={vi.fn()} />);
+    render(<ExtensionsSettings />);
     const claude = (await screen.findByText("Claude app")).closest("li")!;
     const codex = screen.getByText("Codex").closest("li")!;
     expect(codex.querySelector("button")).toBeNull();
@@ -152,7 +145,7 @@ describe("ExtensionsDialog with none of your own", () => {
 
   it("says what went wrong connecting without hiding the extensions' own errors", async () => {
     vi.mocked(connectOtherApp).mockRejectedValue("codex not found");
-    render(<ExtensionsDialog onClose={vi.fn()} />);
+    render(<ExtensionsSettings />);
     fireEvent.click(await screen.findByRole("button", { name: "Connect" }));
     expect(await screen.findByText("codex not found")).toBeInTheDocument();
   });

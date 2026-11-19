@@ -1,7 +1,7 @@
 import { Trash2 } from "lucide-react";
 
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { BUNDLED } from "./extensions/bundled";
 import {
@@ -134,17 +134,14 @@ function TabPlaces({ placement, tabId, label }: { placement: Placement; tabId: s
   );
 }
 
-export function ExtensionsDialog({
-  onClose,
+export function ExtensionsSettings({
   onNewTab,
   placement,
 }: {
-  onClose: () => void;
   onNewTab?: () => void;
   /** Where each extension's tabs are shown, and the way to choose. */
   placement?: Placement;
 }) {
-  const ref = useRef<HTMLDivElement>(null);
   const [found, setFound] = useState<ExtensionInfo[] | null>(null);
   const [disabled, setDisabled] = useState<ReadonlySet<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
@@ -169,14 +166,6 @@ export function ExtensionsDialog({
       setConnecting(null);
     }
   };
-
-  useEffect(() => {
-    const back = document.activeElement;
-    ref.current?.focus();
-    return () => {
-      if (back instanceof HTMLElement) back.focus();
-    };
-  }, []);
 
   const refresh = useCallback(async () => {
     try {
@@ -312,20 +301,8 @@ export function ExtensionsDialog({
   };
 
   return (
-    <div className="popup-scrim" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-      <div
-        ref={ref}
-        className="popup extensions"
-        role="dialog"
-        aria-modal="true"
-        aria-label="Extensions"
-        tabIndex={-1}
-        onKeyDown={(event) => {
-          if (event.key === "Escape") onClose();
-        }}
-      >
+    <div className="settings-extensions">
         <div className="ext-head">
-          <h2>Extensions</h2>
           <p className="muted ext-intro">A switched-off extension is neither built nor loaded: its tabs, Workspace tab sections and tools go away until you switch it on.</p>
           {error ? <p className="error">{error}</p> : null}
         </div>
@@ -391,7 +368,6 @@ export function ExtensionsDialog({
             </ul>
           ) : null}
         </div>
-      </div>
     </div>
   );
 }

@@ -141,7 +141,8 @@ describe("FileView", () => {
     expect(gitBlob).toHaveBeenCalledWith("/Users/test/project", "docs/shots/a.png");
     // Nothing is fetched from the web until Show: then it is a picture like the others.
     expect(screen.queryByRole("img", { name: "Badge" })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: /Image from .* Badge/ }));
+    expect(screen.getByRole("group", { name: "Image from example.com, not loaded" })).toHaveTextContent("Badge");
+    fireEvent.click(screen.getByRole("button", { name: "Show" }));
     expect(screen.getByRole("img", { name: "Badge" })).toBeInTheDocument();
   });
 

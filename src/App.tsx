@@ -65,10 +65,10 @@ import {
   shorten,
   type OpenRequest,
 } from "./SessionBrowser";
-import { ExtensionsDialog } from "./ExtensionsDialog";
 import { NewTabDialog } from "./NewTabDialog";
 import { useAskAgent } from "./lib/askAgent";
 import { SettingsDialog } from "./SettingsDialog";
+import { useSettingsOpener, type SettingsSection } from "./lib/settingsNav";
 import { TerminalView } from "./TerminalView";
 import { WorkspaceSidebar } from "./WorkspaceSidebar";
 import { claudeSetupStatus, onClaudeSetupMenu, type SetupStatus } from "./lib/claudeSetup";
@@ -381,7 +381,14 @@ export function App() {
   const allLiveRef = useRef<readonly SessionInfo[]>([]);
   const [finding, setFinding] = useState(false);
   const [showingShortcuts, setShowingShortcuts] = useState(false);
-  const [showingExtensions, setShowingExtensions] = useState(false);
+  // The part Settings was opened at, when something pointed into it (a picture's placeholder at Privacy).
+  const [settingsSection, setSettingsSection] = useState<SettingsSection | undefined>(undefined);
+  useSettingsOpener(
+    useCallback((section?: SettingsSection) => {
+      setSettingsSection(section);
+      setShowingShortcuts(true);
+    }, []),
+  );
   const [showingNewTab, setShowingNewTab] = useState(false);
   const [showingNewSection, setShowingNewSection] = useState(false);
   // The agent integrations dialog on screen, if it is: put there by the app on the
@@ -2027,7 +2034,10 @@ export function App() {
           className="extensions-toggle"
           aria-label="Extensions"
           title="Extensions"
-          onClick={() => setShowingExtensions(true)}
+          onClick={() => {
+            setSettingsSection("extensions");
+            setShowingShortcuts(true);
+          }}
         >
           <Puzzle size={15} />
         </button>
@@ -2670,21 +2680,6 @@ export function App() {
           />
         ) : null}
 
-        {showingExtensions ? (
-          <ExtensionsDialog
-            onClose={() => setShowingExtensions(false)}
-            placement={{
-              places,
-              tabs: allTabs.flatMap((tab) => (tab.extension ? [{ tabId: tab.tabId, extension: tab.extension, title: tab.title }] : [])),
-              only: onlyTabs,
-              place: placeTab,
-            }}
-            onNewTab={() => {
-              setShowingExtensions(false);
-              setShowingNewTab(true);
-            }}
-          />
-        ) : null}
         {showingNewTab ? (
           <NewTabDialog
             agent={askAgent}
@@ -2706,7 +2701,29 @@ export function App() {
             onClose={() => setShowingNewSection(false)}
           />
         ) : null}
-        {showingShortcuts ? <SettingsDialog tabs={strip.slice(0, 9).map((tab) => tab.title)} onClose={() => setShowingShortcuts(false)} /> : null}
+        {showingShortcuts ? (
+          <SettingsDialog
+            tabs={strip.slice(0, 9).map((tab) => tab.title)}
+            section={settingsSection}
+            extensions={{
+              placement: {
+                places,
+                tabs: allTabs.flatMap((tab) => (tab.extension ? [{ tabId: tab.tabId, extension: tab.extension, title: tab.title }] : [])),
+                only: onlyTabs,
+                place: placeTab,
+              },
+              onNewTab: () => {
+                setShowingShortcuts(false);
+                setSettingsSection(undefined);
+                setShowingNewTab(true);
+              },
+            }}
+            onClose={() => {
+              setShowingShortcuts(false);
+              setSettingsSection(undefined);
+            }}
+          />
+        ) : null}
 
         {finding ? (
           <GoToFile

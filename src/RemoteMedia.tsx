@@ -3,10 +3,14 @@
  * under review, an agent's view. Nothing is fetched until the person asks, since fetching it would tell whoever runs
  * that server the person is reading it, and when; until then it is a placeholder naming where it is from.
  *
- * Drawn at once: a picture carried in the text itself (`data:image/…`), which can call out to no one, and one on
- * GitHub's own hosts, which only GitHub hears of. One shown stays shown for as long as the window is open.
+ * Drawn at once: a picture carried in the text itself (`data:image/…`), which can call out to no one, one on
+ * GitHub's own hosts, which only GitHub hears of, and, as the person chose (`lib/remoteMedia`), one from a host they
+ * let through or from any host at all. One shown stays shown for as long as the window is open.
  */
 import { useState, type ReactNode } from "react";
+
+import { allowHost, remoteMediaPrefs, useRemoteMediaPrefs } from "./lib/remoteMedia";
+import { openSettings, useCanOpenSettings } from "./lib/settingsNav";
 
 /** GitHub's own picture hosts: a pull request's screenshots, avatars, its image proxy. */
 const GITHUB_HOSTS = new Set([
@@ -33,10 +37,12 @@ export function whereFrom(src: string): { kind: "inline" } | { kind: "web"; host
   return { kind: "web", host: url.hostname, direct: github };
 }
 
-/** Whether `src` may be drawn as it is, without asking: inline, on GitHub, or already asked for. */
-export const drawsAtOnce = (src: string): boolean => {
+/** Whether `src` may be drawn as it is, without asking: inline, on GitHub, let through, or already asked for. */
+export const drawsAtOnce = (src: string, prefs = remoteMediaPrefs()): boolean => {
   const at = whereFrom(src);
-  return at.kind === "inline" || (at.kind === "web" && (at.direct || shown.has(src)));
+  if (at.kind === "inline") return true;
+  if (at.kind !== "web") return false;
+  return at.direct || shown.has(src) || prefs.always || prefs.hosts.includes(at.host);
 };
 
 const NOUN = { image: "Image", video: "Video", audio: "Sound" } as const;
@@ -54,25 +60,41 @@ export function RemoteMedia({
   /** The element itself, drawn once it may be. */
   children: ReactNode;
 }) {
-  const [asked, setAsked] = useState(() => drawsAtOnce(src));
+  const prefs = useRemoteMediaPrefs();
+  const [asked, setAsked] = useState(false);
+  const canOpenSettings = useCanOpenSettings();
   const at = whereFrom(src);
   // A path or a scheme that is neither reaches nothing off the page: drawn as it is, or not at all, as before.
-  if (asked || at.kind !== "web") return <>{children}</>;
+  if (asked || at.kind !== "web" || drawsAtOnce(src, prefs)) return <>{children}</>;
   return (
-    <button
-      type="button"
-      className="remote-media"
-      title={`${src}\nNothing is loaded from ${at.host} until you ask`}
-      onClick={() => {
-        shown.add(src);
-        setAsked(true);
-      }}
-    >
-      <span className="remote-media-what">
+    <span className="remote-media" role="group" aria-label={`${NOUN[kind]} from ${at.host}, not loaded`}>
+      <span className="remote-media-what" title={`${src}\nNothing is loaded from ${at.host} until you ask`}>
         {NOUN[kind]} from <strong>{at.host}</strong>
         {alt ? <span className="muted"> · {alt}</span> : null}
       </span>
-      <span className="remote-media-show">Show</span>
-    </button>
+      <button
+        type="button"
+        className="link remote-media-show"
+        onClick={() => {
+          shown.add(src);
+          setAsked(true);
+        }}
+      >
+        Show
+      </button>
+      <button type="button" className="link" title={`Load pictures from ${at.host} without asking, from now on`} onClick={() => allowHost(at.host)}>
+        Always from {at.host}
+      </button>
+      {canOpenSettings ? (
+        <button
+          type="button"
+          className="link muted"
+          title="Choose whether pictures from the web load without asking"
+          onClick={() => openSettings("privacy")}
+        >
+          Settings
+        </button>
+      ) : null}
+    </span>
   );
 }

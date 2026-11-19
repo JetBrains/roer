@@ -1225,7 +1225,8 @@ describe("App", () => {
     /** Opens Extensions, and the picker of where `title`'s tab is shown. */
     const pickPlaces = async (title: string) => {
       fireEvent.click(screen.getByRole("button", { name: "Extensions" }));
-      const dialog = await screen.findByRole("dialog", { name: "Extensions" });
+      // Settings, opened at its Extensions topic.
+      const dialog = await screen.findByRole("region", { name: "Extensions" });
       const row = within(dialog).getByText(title, { selector: "strong" }).closest("li") as HTMLElement;
       return { dialog, row };
     };
