@@ -77,6 +77,7 @@ describe("SettingsDialog", () => {
       return undefined;
     }) as typeof invoke);
     render(<SettingsDialog onClose={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Threads" }));
     const toggle = screen.getByRole("switch", { name: "Comments and Needs you" });
     expect(toggle).toBeChecked();
 

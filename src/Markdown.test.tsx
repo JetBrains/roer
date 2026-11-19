@@ -68,7 +68,7 @@ describe("Markdown", () => {
     expect(p?.getAttribute("onclick")).toBeNull();
     // A picture from the web waits to be asked for; once shown, it has no handler either.
     expect(container.querySelector("img")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: /Image from example\.com/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Show" }));
     expect(container.querySelector("img")?.getAttribute("onerror")).toBeNull();
     expect(container.querySelector("a")?.getAttribute("href") ?? "").not.toContain("javascript:");
   });
